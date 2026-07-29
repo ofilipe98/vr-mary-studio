@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from collections import defaultdict
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from typing import Iterable
 
 from .models import Classification
+
+
+ADM_MODULE = "ADM_FIN_ESTOQUE"
+MODULES = ("Fiscal", ADM_MODULE, "PDV")
 
 
 KEYWORDS: dict[str, dict[str, float]] = {
@@ -21,6 +30,8 @@ KEYWORDS: dict[str, dict[str, float]] = {
         "efd": 1.8,
         "xml": 1.0,
         "nota fiscal": 1.5,
+        "ativo imobilizado": 2.0,
+        "livro fiscal": 1.8,
     },
     "PDV": {
         "pdv": 2.0,
@@ -37,8 +48,11 @@ KEYWORDS: dict[str, dict[str, float]] = {
         "nfc-e": 1.6,
         "totem": 1.7,
         "self-checkout": 2.0,
+        "selfcheckout": 2.0,
+        "microterminal": 1.8,
+        "autorizador": 1.5,
     },
-    "ADM_FIN_ESTOQUE": {
+    ADM_MODULE: {
         "adm": 1.5,
         "administrativo": 1.6,
         "financeiro": 2.0,
@@ -53,10 +67,28 @@ KEYWORDS: dict[str, dict[str, float]] = {
         "mobile": 1.3,
         "connect": 1.4,
         "e-commerce": 1.5,
+        "ecommerce": 1.5,
         "monitoramento": 1.4,
         "etiqueta": 1.2,
+        "cotacao": 1.5,
+        "recebimento": 1.5,
+        "balanca": 1.2,
+        "coletor": 1.5,
+        "central de compra": 1.7,
     },
 }
+
+
+@dataclass(frozen=True)
+class ProductRule:
+    product: str
+    team: str
+    modules: tuple[str, ...]
+    aliases: tuple[str, ...]
+
+    @property
+    def key(self) -> str:
+        return product_key(self.product)
 
 
 def normalize_text(value: str) -> str:
@@ -65,18 +97,216 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
 
-def classify(title: str, text: str, category: str = "", product: str = "") -> Classification:
-    haystack = normalize_text(" ".join([title, title, category, category, product, text]))
+def product_phrase(value: str) -> str:
+    value = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value or "")
+    value = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", value)
+    normalized = normalize_text(value)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    normalized = re.sub(
+        r"\b(antigo|nova|novo|descontinuada|descontinuado)\b",
+        " ",
+        normalized,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def product_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", product_phrase(value))
+
+
+def parse_product_catalog(markdown: str) -> tuple[ProductRule, ...]:
+    heading = ""
+    grouped: dict[str, dict[str, object]] = {}
+    for raw_line in (markdown or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("## "):
+            heading = line[3:].strip()
+            continue
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        product, team = cells[0], cells[1]
+        if (
+            not product
+            or normalize_text(product) == "produto"
+            or set(product) <= {"-", ":", " "}
+        ):
+            continue
+        modules = _modules_for_team(f"{heading} {team}")
+        key = product_key(product)
+        if not key:
+            continue
+        entry = grouped.setdefault(
+            key,
+            {"product": product, "team": team, "modules": set(), "aliases": set()},
+        )
+        entry["modules"].update(modules)  # type: ignore[union-attr]
+        entry["aliases"].update(_aliases_for_product(product))  # type: ignore[union-attr]
+
+    rules = [
+        ProductRule(
+            product=str(entry["product"]),
+            team=str(entry["team"]),
+            modules=tuple(module for module in MODULES if module in entry["modules"]),
+            aliases=tuple(
+                sorted(
+                    entry["aliases"],  # type: ignore[arg-type]
+                    key=lambda alias: (-len(product_key(alias)), alias),
+                )
+            ),
+        )
+        for entry in grouped.values()
+    ]
+    return tuple(sorted(rules, key=lambda rule: (-len(rule.key), rule.product)))
+
+
+def _modules_for_team(value: str) -> tuple[str, ...]:
+    normalized = normalize_text(value)
+    has_fiscal = "fiscal" in normalized
+    has_pdv = bool(re.search(r"\bpdv\b", normalized))
+    has_adm = "adm" in normalized or "administrativo" in normalized
+    if has_fiscal and has_adm:
+        return ("Fiscal", ADM_MODULE)
+    if has_pdv and has_adm:
+        return (ADM_MODULE, "PDV")
+    if has_fiscal:
+        return ("Fiscal",)
+    if has_pdv:
+        return ("PDV",)
+    return (ADM_MODULE,)
+
+
+def _aliases_for_product(product: str) -> set[str]:
+    phrase = product_phrase(product)
+    aliases = {phrase}
+    if phrase.startswith("vr "):
+        without_prefix = phrase[3:]
+        compact = product_key(without_prefix)
+        generic = {
+            "adm",
+            "caixa",
+            "connect",
+            "financeiro",
+            "integracao",
+            "marketing",
+            "master",
+            "mobile",
+            "monitor",
+            "pdv",
+            "portal",
+            "recebimento",
+            "set",
+            "totem",
+        }
+        if len(compact) >= 8 and compact not in generic:
+            aliases.add(without_prefix)
+    return {alias for alias in aliases if alias}
+
+
+def _catalog_candidates() -> Iterable[Path]:
+    explicit = os.environ.get("MARY_PRODUCTS_FILE", "").strip()
+    if explicit:
+        yield Path(explicit)
+    mary_root = os.environ.get("MARY_ROOT", "").strip()
+    if mary_root:
+        yield Path(mary_root) / "agentes" / "produtos_filas.md"
+    yield Path(r"D:\Codex\Projetos\VR_Mary_V2\agentes\produtos_filas.md")
+    yield Path(__file__).resolve().parent / "data" / "produtos_filas.md"
+
+
+@lru_cache(maxsize=12)
+def _parse_catalog_file(path: str, mtime_ns: int) -> tuple[ProductRule, ...]:
+    del mtime_ns
+    return parse_product_catalog(Path(path).read_text(encoding="utf-8"))
+
+
+def load_product_catalog() -> tuple[ProductRule, ...]:
+    merged: dict[str, ProductRule] = {}
+    for candidate in _catalog_candidates():
+        try:
+            resolved = candidate.resolve()
+            if not resolved.is_file():
+                continue
+            rules = _parse_catalog_file(
+                str(resolved),
+                resolved.stat().st_mtime_ns,
+            )
+        except (OSError, UnicodeError):
+            continue
+        for rule in rules:
+            merged.setdefault(rule.key, rule)
+    return tuple(sorted(merged.values(), key=lambda rule: (-len(rule.key), rule.product)))
+
+
+def classify(
+    title: str,
+    text: str,
+    category: str = "",
+    product: str = "",
+    catalog: tuple[ProductRule, ...] | None = None,
+) -> Classification:
+    catalog = load_product_catalog() if catalog is None else catalog
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, list[str]] = defaultdict(list)
-    for module, keywords in KEYWORDS.items():
-        for keyword, weight in keywords.items():
-            token = normalize_text(keyword)
-            occurrences = min(haystack.count(token), 3)
-            if occurrences:
-                contribution = weight * (1.0 + 0.25 * (occurrences - 1))
+
+    _score_product_field(
+        product,
+        "produto informado",
+        9.0,
+        4.5,
+        catalog,
+        scores,
+        reasons,
+        exact=True,
+    )
+    _score_product_field(
+        title,
+        "título",
+        7.0,
+        3.6,
+        catalog,
+        scores,
+        reasons,
+    )
+    _score_product_field(
+        category,
+        "categoria",
+        5.5,
+        3.0,
+        catalog,
+        scores,
+        reasons,
+    )
+
+    keyword_fields = [
+        ("título", title, 1.45),
+        ("categoria", category, 1.30),
+        ("produto", product, 1.50),
+        ("texto", text, 1.0),
+    ]
+    for field_name, value, field_weight in keyword_fields:
+        haystack = (
+            normalize_text(value)
+            if field_name == "texto"
+            else _keyword_haystack(value, catalog)
+        )
+        if not haystack:
+            continue
+        for module, keywords in KEYWORDS.items():
+            for keyword, weight in keywords.items():
+                token = normalize_text(keyword)
+                occurrences = min(haystack.count(token), 3)
+                if not occurrences:
+                    continue
+                contribution = (
+                    weight
+                    * field_weight
+                    * (1.0 + 0.20 * (occurrences - 1))
+                )
                 scores[module] += contribution
-                reasons[module].append(keyword)
+                _append_reason(reasons[module], f"{keyword} ({field_name})")
 
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     if not ranked or ranked[0][1] < 1.5:
@@ -90,10 +320,15 @@ def classify(title: str, text: str, category: str = "", product: str = "") -> Cl
     confidence = min(0.98, 0.52 + dominance * 0.27 + margin * 0.25)
 
     close_modules = [
-        module for module, score in ranked if score >= leader_score * 0.72 and score >= 2.0
+        module
+        for module, score in ranked
+        if score >= leader_score * 0.72 and score >= 2.0
     ]
     if len(close_modules) > 1:
-        combined_reasons = [f"{module}: {', '.join(reasons[module][:4])}" for module in close_modules]
+        combined_reasons = [
+            f"{module}: {', '.join(reasons[module][:5])}"
+            for module in close_modules
+        ]
         return Classification(
             "Multimodulo",
             max(0.68, min(0.92, confidence)),
@@ -106,5 +341,92 @@ def classify(title: str, text: str, category: str = "", product: str = "") -> Cl
     elif confidence >= 0.60:
         status = "pending"
     else:
-        return Classification("Revisar", confidence, "pending", reasons[leader][:6])
-    return Classification(leader, confidence, status, reasons[leader][:6])
+        return Classification(
+            "Revisar",
+            confidence,
+            "pending",
+            reasons[leader][:7],
+        )
+    return Classification(leader, confidence, status, reasons[leader][:7])
+
+
+def _score_product_field(
+    value: str,
+    field_name: str,
+    single_module_score: float,
+    hybrid_module_score: float,
+    catalog: tuple[ProductRule, ...],
+    scores: dict[str, float],
+    reasons: dict[str, list[str]],
+    exact: bool = False,
+) -> None:
+    matches = _match_products(value, catalog, exact=exact)
+    for rule in matches:
+        score = (
+            single_module_score
+            if len(rule.modules) == 1
+            else hybrid_module_score
+        )
+        module_label = "/".join(rule.modules)
+        reason = f"produto {rule.product} -> {module_label} ({field_name})"
+        for module in rule.modules:
+            scores[module] += score
+            _append_reason(reasons[module], reason)
+
+
+def _match_products(
+    value: str,
+    catalog: tuple[ProductRule, ...],
+    exact: bool = False,
+) -> list[ProductRule]:
+    if not value or not catalog:
+        return []
+    value_phrase = product_phrase(value)
+    value_key = product_key(value)
+    padded_value = f" {value_phrase} "
+    token_keys = {
+        product_key(token)
+        for token in re.findall(r"[A-Za-zÀ-ÿ0-9]+", value)
+    }
+    matches: list[tuple[int, ProductRule]] = []
+    for rule in catalog:
+        if exact and value_key == rule.key:
+            return [rule]
+        best = 0
+        for alias in rule.aliases:
+            alias_key = product_key(alias)
+            if exact:
+                matched = value_key == alias_key
+            else:
+                matched = f" {alias} " in padded_value
+                if not matched and alias_key:
+                    matched = alias_key in token_keys
+            if matched:
+                best = max(best, len(alias_key))
+        if best:
+            matches.append((best, rule))
+    if not matches:
+        return []
+    longest = max(length for length, _rule in matches)
+    return [
+        rule
+        for length, rule in matches
+        if length == longest
+    ]
+
+
+def _keyword_haystack(
+    value: str,
+    catalog: tuple[ProductRule, ...],
+) -> str:
+    phrase = product_phrase(value)
+    padded = f" {phrase} "
+    for rule in _match_products(value, catalog):
+        for alias in rule.aliases:
+            padded = padded.replace(f" {alias} ", " ")
+    return normalize_text(padded)
+
+
+def _append_reason(target: list[str], reason: str) -> None:
+    if reason not in target:
+        target.append(reason)

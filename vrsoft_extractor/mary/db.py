@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -8,7 +9,45 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .models import KnowledgeDocument, RuntimeEvent, SyncStats, utc_now
+from .models import (
+    KnowledgeDocument,
+    ReviewFilters,
+    ReviewPage,
+    RuntimeEvent,
+    SyncStats,
+    utc_now,
+)
+
+
+REVIEW_MODULES = {
+    "Fiscal",
+    "ADM_FIN_ESTOQUE",
+    "PDV",
+    "Multimodulo",
+    "Revisar",
+}
+REVIEW_ACTIONS = {"approve", "keep", "defer", "reopen"}
+
+
+def _review_reasons(raw: str) -> list[str]:
+    try:
+        parsed = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(reason).strip() for reason in parsed if str(reason).strip()]
+
+
+def _review_signature(suggested_module: str, reasons: list[str]) -> str:
+    payload = json.dumps(
+        {
+            "module": suggested_module,
+            "reasons": sorted({reason.casefold().strip() for reason in reasons}),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 SCHEMA = """
@@ -67,7 +106,13 @@ CREATE TABLE IF NOT EXISTS classification_reviews (
     reasons_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',
     decided_module TEXT NOT NULL DEFAULT '',
-    decided_at TEXT NOT NULL DEFAULT ''
+    decided_at TEXT NOT NULL DEFAULT '',
+    decision_note TEXT NOT NULL DEFAULT '',
+    queued_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    document_hash TEXT NOT NULL DEFAULT '',
+    suggestion_signature TEXT NOT NULL DEFAULT '',
+    validated_change INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -169,6 +214,35 @@ class MaryDatabase:
                 "effort",
                 "TEXT NOT NULL DEFAULT 'medium'",
             )
+            for column, definition in (
+                ("decision_note", "TEXT NOT NULL DEFAULT ''"),
+                ("queued_at", "TEXT NOT NULL DEFAULT ''"),
+                ("updated_at", "TEXT NOT NULL DEFAULT ''"),
+                ("document_hash", "TEXT NOT NULL DEFAULT ''"),
+                ("suggestion_signature", "TEXT NOT NULL DEFAULT ''"),
+                ("validated_change", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                self._ensure_column(
+                    connection,
+                    "classification_reviews",
+                    column,
+                    definition,
+                )
+            self._migrate_review_metadata(connection)
+            connection.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_review_status
+                    ON classification_reviews(status);
+                CREATE INDEX IF NOT EXISTS idx_review_suggested_confidence
+                    ON classification_reviews(suggested_module,confidence);
+                CREATE INDEX IF NOT EXISTS idx_review_document_status
+                    ON classification_reviews(document_id,status);
+                CREATE INDEX IF NOT EXISTS idx_review_updated
+                    ON classification_reviews(updated_at);
+                CREATE INDEX IF NOT EXISTS idx_documents_review_facets
+                    ON documents(source,module,product,updated_at);
+                """
+            )
 
     @staticmethod
     def _ensure_column(
@@ -184,6 +258,41 @@ class MaryDatabase:
         if column not in existing:
             connection.execute(
                 f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+
+    @staticmethod
+    def _migrate_review_metadata(connection: sqlite3.Connection) -> None:
+        now = utc_now()
+        connection.execute(
+            """UPDATE classification_reviews
+               SET queued_at=CASE WHEN queued_at='' THEN ? ELSE queued_at END,
+                   updated_at=CASE WHEN updated_at='' THEN ? ELSE updated_at END,
+                   document_hash=CASE
+                     WHEN document_hash='' THEN COALESCE(
+                       (SELECT content_hash FROM documents
+                        WHERE documents.id=classification_reviews.document_id),
+                       ''
+                     )
+                     ELSE document_hash
+                   END""",
+            (now, now),
+        )
+        rows = connection.execute(
+            """SELECT id,suggested_module,reasons_json
+               FROM classification_reviews
+               WHERE suggestion_signature=''"""
+        ).fetchall()
+        for row in rows:
+            connection.execute(
+                """UPDATE classification_reviews
+                   SET suggestion_signature=? WHERE id=?""",
+                (
+                    _review_signature(
+                        str(row["suggested_module"]),
+                        _review_reasons(str(row["reasons_json"])),
+                    ),
+                    row["id"],
+                ),
             )
 
     @contextmanager
@@ -235,11 +344,17 @@ class MaryDatabase:
                     synced_at,revision,content_hash,markdown,ocr_text,local_path,assets_json
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(source,source_id) DO UPDATE SET
-                    title=excluded.title,url=excluded.url,module=excluded.module,
+                    title=excluded.title,url=excluded.url,
+                    module=CASE
+                      WHEN documents.review_status='approved'
+                           AND documents.module<>excluded.module
+                        THEN documents.module
+                      ELSE excluded.module END,
                     classification_confidence=excluded.classification_confidence,
                     review_status=CASE
                       WHEN documents.review_status='approved'
                            AND documents.module<>excluded.module THEN 'pending'
+                      WHEN documents.review_status='approved' THEN 'approved'
                       ELSE excluded.review_status END,
                     status=excluded.status,category=excluded.category,product=excluded.product,
                     created_at=excluded.created_at,updated_at=excluded.updated_at,
@@ -282,54 +397,356 @@ class MaryDatabase:
         confidence: float,
         reasons: list[str],
         previous_module: str = "",
-    ) -> None:
+        validated_change: bool = False,
+    ) -> bool:
+        now = utc_now()
+        reasons = [str(reason).strip() for reason in reasons if str(reason).strip()]
+        reasons_json = json.dumps(reasons, ensure_ascii=False)
+        signature = _review_signature(suggested_module, reasons)
         with self.connect() as connection:
-            exists = connection.execute(
-                """SELECT 1 FROM classification_reviews
-                   WHERE document_id=? AND status='pending'""",
+            document = connection.execute(
+                "SELECT content_hash FROM documents WHERE id=?",
                 (document_id,),
             ).fetchone()
-            if not exists:
+            if not document:
+                raise KeyError(f"Documento inexistente: {document_id}")
+            document_hash = str(document["content_hash"])
+            active = connection.execute(
+                """SELECT * FROM classification_reviews
+                   WHERE document_id=? AND status IN ('pending','deferred')
+                   ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,id DESC
+                   LIMIT 1""",
+                (document_id,),
+            ).fetchone()
+            if active:
+                unchanged_deferred = (
+                    active["status"] == "deferred"
+                    and active["document_hash"] == document_hash
+                    and active["suggestion_signature"] == signature
+                )
+                if unchanged_deferred:
+                    return False
                 connection.execute(
-                    """INSERT INTO classification_reviews
-                       (document_id,suggested_module,previous_module,confidence,reasons_json)
-                       VALUES(?,?,?,?,?)""",
+                    """UPDATE classification_reviews
+                       SET suggested_module=?,previous_module=?,confidence=?,
+                           reasons_json=?,status='pending',decided_module='',
+                           decided_at='',decision_note='',updated_at=?,
+                           document_hash=?,suggestion_signature=?,
+                           validated_change=?
+                       WHERE id=?""",
                     (
-                        document_id,
                         suggested_module,
                         previous_module,
                         confidence,
-                        json.dumps(reasons, ensure_ascii=False),
+                        reasons_json,
+                        now,
+                        document_hash,
+                        signature,
+                        int(validated_change),
+                        active["id"],
                     ),
                 )
+                return True
+
+            latest = connection.execute(
+                """SELECT * FROM classification_reviews
+                   WHERE document_id=? ORDER BY id DESC LIMIT 1""",
+                (document_id,),
+            ).fetchone()
+            if (
+                latest
+                and latest["status"] in {"approved", "kept", "deferred"}
+                and latest["document_hash"] == document_hash
+                and latest["suggestion_signature"] == signature
+            ):
+                return False
+            connection.execute(
+                """INSERT INTO classification_reviews
+                   (document_id,suggested_module,previous_module,confidence,
+                    reasons_json,status,queued_at,updated_at,document_hash,
+                    suggestion_signature,validated_change)
+                   VALUES(?,?,?,?,?,'pending',?,?,?,?,?)""",
+                (
+                    document_id,
+                    suggested_module,
+                    previous_module,
+                    confidence,
+                    reasons_json,
+                    now,
+                    now,
+                    document_hash,
+                    signature,
+                    int(validated_change),
+                )
+            )
+            return True
 
     def decide_review(self, review_id: int, module: str) -> None:
+        self.decide_reviews([review_id], "approve", module=module)
+
+    def decide_reviews(
+        self,
+        review_ids: list[int],
+        action: str,
+        module: str = "",
+        note: str = "",
+    ) -> int:
+        unique_ids = list(dict.fromkeys(int(review_id) for review_id in review_ids))
+        if not unique_ids:
+            raise ValueError("Selecione pelo menos uma revisão.")
+        if action not in REVIEW_ACTIONS:
+            raise ValueError(f"Ação de revisão inválida: {action}")
+        destination = module.strip()
+        if action == "approve" and destination not in REVIEW_MODULES:
+            raise ValueError("Selecione um módulo de destino válido.")
+
+        placeholders = ",".join("?" for _ in unique_ids)
         with self.connect() as connection:
-            review = connection.execute(
-                "SELECT document_id FROM classification_reviews WHERE id=?",
-                (review_id,),
-            ).fetchone()
-            if not review:
-                raise KeyError(f"Revisão inexistente: {review_id}")
+            reviews = connection.execute(
+                f"""SELECT r.*,d.module AS current_module
+                    FROM classification_reviews r
+                    JOIN documents d ON d.id=r.document_id
+                    WHERE r.id IN ({placeholders})""",
+                unique_ids,
+            ).fetchall()
+            if len(reviews) != len(unique_ids):
+                raise KeyError("Uma ou mais revisões não existem.")
+            if action in {"approve", "keep", "defer"} and any(
+                row["status"] != "pending" for row in reviews
+            ):
+                raise ValueError(
+                    "Somente revisões pendentes podem receber essa decisão."
+                )
+            if action == "reopen":
+                if any(row["status"] == "pending" for row in reviews):
+                    raise ValueError("A revisão selecionada já está pendente.")
+                for review in reviews:
+                    newer = connection.execute(
+                        """SELECT 1 FROM classification_reviews
+                           WHERE document_id=? AND id>? LIMIT 1""",
+                        (review["document_id"], review["id"]),
+                    ).fetchone()
+                    if newer:
+                        raise ValueError(
+                            "Somente a decisão mais recente de cada documento "
+                            "pode ser reaberta."
+                        )
+
             now = utc_now()
-            connection.execute(
-                """UPDATE classification_reviews SET status='approved',
-                   decided_module=?,decided_at=? WHERE id=?""",
-                (module, now, review_id),
+            for review in reviews:
+                if action == "approve":
+                    connection.execute(
+                        """UPDATE classification_reviews
+                           SET status='approved',decided_module=?,decided_at=?,
+                               decision_note=?,updated_at=?
+                           WHERE id=?""",
+                        (destination, now, note.strip(), now, review["id"]),
+                    )
+                    connection.execute(
+                        """UPDATE documents SET module=?,review_status='approved'
+                           WHERE id=?""",
+                        (destination, review["document_id"]),
+                    )
+                elif action == "keep":
+                    connection.execute(
+                        """UPDATE classification_reviews
+                           SET status='kept',decided_module=?,decided_at=?,
+                               decision_note=?,updated_at=?
+                           WHERE id=?""",
+                        (
+                            review["current_module"],
+                            now,
+                            note.strip(),
+                            now,
+                            review["id"],
+                        ),
+                    )
+                    connection.execute(
+                        """UPDATE documents SET review_status='approved'
+                           WHERE id=?""",
+                        (review["document_id"],),
+                    )
+                elif action == "defer":
+                    connection.execute(
+                        """UPDATE classification_reviews
+                           SET status='deferred',decided_module=?,decided_at=?,
+                               decision_note=?,updated_at=?
+                           WHERE id=?""",
+                        (
+                            review["current_module"],
+                            now,
+                            note.strip(),
+                            now,
+                            review["id"],
+                        ),
+                    )
+                    connection.execute(
+                        """UPDATE documents SET review_status='pending'
+                           WHERE id=?""",
+                        (review["document_id"],),
+                    )
+                else:
+                    connection.execute(
+                        """UPDATE classification_reviews
+                           SET status='pending',decided_module='',decided_at='',
+                               decision_note='',updated_at=?
+                           WHERE id=?""",
+                        (now, review["id"]),
+                    )
+                    connection.execute(
+                        """UPDATE documents SET review_status='pending'
+                           WHERE id=?""",
+                        (review["document_id"],),
+                    )
+        return len(unique_ids)
+
+    def list_reviews(self) -> list[dict[str, Any]]:
+        return self.query_reviews(ReviewFilters(limit=10_000)).items
+
+    def query_reviews(self, filters: ReviewFilters) -> ReviewPage:
+        where = ["d.status='active'"]
+        params: list[Any] = []
+        if filters.status and filters.status != "all":
+            where.append("r.status=?")
+            params.append(filters.status)
+        if filters.source:
+            where.append("d.source=?")
+            params.append(filters.source)
+        if filters.current_module:
+            where.append("d.module=?")
+            params.append(filters.current_module)
+        if filters.suggested_module:
+            where.append("r.suggested_module=?")
+            params.append(filters.suggested_module)
+        if filters.product:
+            where.append("d.product=?")
+            params.append(filters.product)
+        if filters.category:
+            where.append("d.category=?")
+            params.append(filters.category)
+        if filters.confidence_band == "high":
+            where.append("r.confidence>=0.85")
+        elif filters.confidence_band == "medium":
+            where.append("r.confidence>=0.60 AND r.confidence<0.85")
+        elif filters.confidence_band == "low":
+            where.append("r.confidence<0.60")
+        if filters.period_days > 0:
+            where.append(
+                "julianday(COALESCE(NULLIF(r.updated_at,''),d.synced_at)) "
+                ">= julianday('now',?)"
             )
-            connection.execute(
-                """UPDATE documents SET module=?,review_status='approved'
-                   WHERE id=?""",
-                (module, review["document_id"]),
+            params.append(f"-{filters.period_days} days")
+        if filters.query.strip():
+            needle = f"%{filters.query.strip().casefold()}%"
+            where.append(
+                """lower(
+                     d.title || ' ' || d.source_id || ' ' || d.product || ' ' ||
+                     d.category || ' ' || r.reasons_json || ' ' || d.markdown ||
+                     ' ' || d.ocr_text
+                   ) LIKE ?"""
+            )
+            params.append(needle)
+
+        validated_change = "r.validated_change=1"
+        if filters.special == "module_change":
+            where.append(f"({validated_change})")
+        elif filters.special == "no_product":
+            where.append("trim(d.product)=''")
+        elif filters.special == "low_evidence":
+            where.append(
+                "(trim(r.reasons_json) IN ('','[]') "
+                "OR json_array_length(r.reasons_json)=0)"
+            )
+        elif filters.special == "simple":
+            where.extend(
+                [
+                    "r.confidence>=0.85",
+                    f"NOT ({validated_change})",
+                    "trim(d.product)<>''",
+                    "trim(r.reasons_json) NOT IN ('','[]')",
+                ]
             )
 
-    def list_reviews(self) -> list[sqlite3.Row]:
+        where_sql = " AND ".join(where)
+        risk_score = (
+            f"(CASE WHEN {validated_change} THEN 100 ELSE 0 END + "
+            "CASE WHEN r.confidence<0.60 THEN 30 "
+            "WHEN r.confidence<0.85 THEN 15 ELSE 0 END + "
+            "CASE WHEN trim(d.product)='' THEN 10 ELSE 0 END + "
+            "CASE WHEN trim(r.reasons_json) IN ('','[]') THEN 5 ELSE 0 END)"
+        )
+        order_by = {
+            "risk": f"risk_score DESC,r.confidence ASC,r.updated_at DESC,r.id DESC",
+            "confidence_desc": "r.confidence DESC,r.updated_at DESC,r.id DESC",
+            "confidence_asc": "r.confidence ASC,r.updated_at DESC,r.id DESC",
+            "recent": "r.updated_at DESC,r.id DESC",
+            "title": "d.title COLLATE NOCASE ASC,r.id DESC",
+        }.get(filters.sort, f"risk_score DESC,r.confidence ASC,r.id DESC")
+        limit = min(max(int(filters.limit), 1), 500)
+        offset = max(int(filters.offset), 0)
+
         with self.connect() as connection:
-            return connection.execute(
-                """SELECT r.*,d.title,d.source,d.url FROM classification_reviews r
-                   JOIN documents d ON d.id=r.document_id
-                   WHERE r.status='pending' ORDER BY r.confidence DESC"""
+            total = int(
+                connection.execute(
+                    f"""SELECT count(*)
+                        FROM classification_reviews r
+                        JOIN documents d ON d.id=r.document_id
+                        WHERE {where_sql}""",
+                    params,
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""SELECT r.*,d.source_id,d.title,d.source,d.url,
+                           d.module AS current_module,d.review_status,
+                           d.category,d.product,d.created_at,d.updated_at AS document_updated_at,
+                           d.synced_at,d.markdown,d.ocr_text,d.local_path,d.assets_json,
+                           CASE WHEN EXISTS(
+                             SELECT 1 FROM classification_reviews newer
+                             WHERE newer.document_id=r.document_id AND newer.id>r.id
+                           ) THEN 0 ELSE 1 END AS is_latest,
+                           {risk_score} AS risk_score,
+                           CASE
+                             WHEN {validated_change} THEN 'Mudança validada'
+                             WHEN r.confidence<0.60 THEN 'Baixa confiança'
+                             WHEN trim(d.product)='' THEN 'Sem produto'
+                             WHEN trim(r.reasons_json) IN ('','[]') THEN 'Pouca evidência'
+                             ELSE 'Revisão padrão'
+                           END AS risk_label
+                    FROM classification_reviews r
+                    JOIN documents d ON d.id=r.document_id
+                    WHERE {where_sql}
+                    ORDER BY {order_by}
+                    LIMIT ? OFFSET ?""",
+                [*params, limit, offset],
             ).fetchall()
+        return ReviewPage(
+            items=[dict(row) for row in rows],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def review_filter_values(self) -> dict[str, list[str]]:
+        with self.connect() as connection:
+            products = [
+                str(row[0])
+                for row in connection.execute(
+                    """SELECT DISTINCT d.product
+                       FROM classification_reviews r
+                       JOIN documents d ON d.id=r.document_id
+                       WHERE trim(d.product)<>'' ORDER BY d.product COLLATE NOCASE"""
+                ).fetchall()
+            ]
+            categories = [
+                str(row[0])
+                for row in connection.execute(
+                    """SELECT DISTINCT d.category
+                       FROM classification_reviews r
+                       JOIN documents d ON d.id=r.document_id
+                       WHERE trim(d.category)<>'' ORDER BY d.category COLLATE NOCASE"""
+                ).fetchall()
+            ]
+        return {"products": products, "categories": categories}
 
     def search(
         self,

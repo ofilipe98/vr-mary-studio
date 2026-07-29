@@ -9,12 +9,16 @@ com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
 - Sincronização autenticada do Movidesk KB com Chrome/Playwright e diagnóstico de bloqueios.
 - Markdown canônico, imagens locais, OCR por+eng, hash e versionamento.
 - Classificação em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo e Revisar.
+- Catálogo determinístico de 169 produtos/equipes baseado em `produtos_filas.md`.
 - SQLite FTS5, `catalogo.jsonl` e `INDEX.md`.
 - Chat em streaming com Codex App Server e Claude Code, com esforço por conversa.
 - Conversas persistentes, clonagem de provedor, eventos de ferramentas e aprovações.
 - Extrator de vídeos Endoo integrado, sem transcrição.
 - Dashboard separado para Wiki, KB e Vídeos.
-- Interface PySide6 baseada na identidade VR Soft e contraste acessível.
+- Central de Revisão com filtros combináveis, risco, paginação, histórico,
+  contexto completo e ações individuais ou em lote confirmado.
+- Interface PySide6 baseada na identidade VR Soft, contraste WCAG, foco visível
+  e layout validado em 1366×768, 1920×1080 e escalas de 125%/150%.
 
 ## Instalação para desenvolvimento
 
@@ -36,9 +40,26 @@ MOVIDESK_PASSWORD=
 MARY_ROOT=D:\Codex\Projetos\VR_Mary_V2
 MARY_SYNC_INTERVAL_MINUTES=120
 MARY_DEFAULT_EFFORT=medium
+MARY_PRODUCTS_FILE=
 ```
 
 O `.env` e as sessões em `.state` nunca entram no pacote ou nos logs.
+
+### Acesso completo ao Movidesk KB
+
+O sincronizador entra primeiro em `/Account/Login`, reutiliza a sessão salva e
+só então enumera o KB. Isso é necessário porque artigos internos podem retornar
+HTTP 403 e não aparecem na árvore pública. A enumeração lê a página raiz e
+percorre, com a mesma sessão autenticada, todas as categorias e paginações
+descobertas. As categorias são consultadas concorrentemente, com deduplicação
+por ID, timeout e repetição automática para falhas transitórias. O progresso
+mostra páginas analisadas, artigos distintos e categorias pendentes.
+
+Se houver MFA ou CAPTCHA, a sincronização normal abre automaticamente uma
+janela visível. Conclua o acesso e aguarde a sincronização continuar. O botão
+**Sincronizações > Login/KB visível** também permite iniciar diretamente nesse
+modo. A sessão autenticada é salva em
+`VR_Mary_V2\.state\movidesk.json`.
 
 ## Uso
 
@@ -57,8 +78,30 @@ CLI da base:
 .\.venv\Scripts\vr-mary.exe sync-wiki
 .\.venv\Scripts\vr-mary.exe sync-kb --headed
 .\.venv\Scripts\vr-mary.exe search "configuração PIX"
+.\.venv\Scripts\vr-mary.exe audit-classification --examples 10
+.\.venv\Scripts\vr-mary.exe audit-classification --queue-review --examples 0
 .\.venv\Scripts\vr-mary.exe status
 ```
+
+O classificador prioriza o produto mais específico encontrado no título,
+categoria ou campo de produto. Produtos híbridos, como `VRAdm` e `VRCaixa`,
+usam o contexto do artigo para desempate e permanecem em `Multimodulo` quando
+não há evidência suficiente. A auditoria é somente leitura.
+Use `--queue-review` para atualizar apenas as sugestões da tela Revisão,
+mantendo o módulo atual até a aprovação humana.
+
+## Central de Revisão
+
+- A fila abre com itens pendentes e maior risco primeiro.
+- A busca cobre título, ID, produto, categoria, evidências, Markdown e OCR.
+- Os filtros incluem fonte, módulos, confiança, produto, categoria, estado,
+  período e riscos especiais.
+- Cada decisão pode aprovar, manter o módulo atual, adiar ou reabrir e aceitar
+  uma nota opcional.
+- `Selecionar todos` marca os até 100 itens da página atual; após confirmação,
+  o destino escolhido é aplicado ao lote mesmo com sugestões diferentes.
+- Atalhos: `Alt+A` aprovar, `Alt+M` manter, `Alt+D` adiar e
+  `PageUp`/`PageDown` para navegar.
 
 Os comandos antigos permanecem disponíveis:
 

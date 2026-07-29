@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 
+from .classification_audit import audit_classification
 from .config import load_mary_settings
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
@@ -29,6 +30,22 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=10)
     search.add_argument("--module", default="")
     search.add_argument("--source", default="")
+    audit = sub.add_parser(
+        "audit-classification",
+        help="Simula a classificação atual sem alterar documentos",
+    )
+    audit.add_argument("--limit", type=int)
+    audit.add_argument(
+        "--examples",
+        type=int,
+        default=25,
+        help="Quantidade máxima de exemplos divergentes",
+    )
+    audit.add_argument(
+        "--queue-review",
+        action="store_true",
+        help="Atualiza a fila de revisão sem alterar o módulo atual",
+    )
     sub.add_parser("status", help="Mostra estatísticas da base")
     return parser
 
@@ -54,12 +71,28 @@ def main(argv: list[str] | None = None) -> int:
         stats = WikiSync(settings, database, print).sync(args.limit)
         print(json.dumps(stats.to_dict(), ensure_ascii=False))
     elif args.command == "sync-kb":
-        stats = MovideskSync(settings, database, print).sync(args.headed, args.limit)
+        sync = MovideskSync(settings, database, print)
+        if args.headed:
+            sync.login()
+        stats = sync.sync(False, args.limit)
         print(json.dumps(stats.to_dict(), ensure_ascii=False))
     elif args.command == "search":
         print(
             json.dumps(
                 database.search(args.query, args.limit, args.module, args.source),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif args.command == "audit-classification":
+        print(
+            json.dumps(
+                audit_classification(
+                    database,
+                    args.limit,
+                    args.examples,
+                    args.queue_review,
+                ),
                 ensure_ascii=False,
                 indent=2,
             )

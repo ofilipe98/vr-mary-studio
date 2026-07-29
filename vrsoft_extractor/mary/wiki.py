@@ -59,7 +59,12 @@ class WikiSync:
                 try:
                     document = self.fetch_document(page, revision)
                     document_id, action = self.database.upsert_document(document)
-                    if document.review_status != "approved":
+                    validated_module_changed = bool(
+                        current
+                        and current["review_status"] == "approved"
+                        and current["module"] != document.module
+                    )
+                    if document.review_status != "approved" or validated_module_changed:
                         result = classify(
                             document.title,
                             document.markdown,
@@ -72,6 +77,7 @@ class WikiSync:
                             result.confidence,
                             result.reasons,
                             current["module"] if current else "",
+                            validated_module_changed,
                         )
                         stats.review += 1
                     setattr(stats, action, getattr(stats, action) + 1)

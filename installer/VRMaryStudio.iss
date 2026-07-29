@@ -1,5 +1,5 @@
 #define MyAppName "VR Mary Studio"
-#define MyAppVersion "0.2.1"
+#define MyAppVersion "0.3.5"
 #define MyAppPublisher "VR Soft"
 #define MyAppExeName "VRMaryStudio.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\VR Mary Studio
 DefaultGroupName=VR Mary Studio
 OutputDir=..\releases
-OutputBaseFilename=VRMaryStudio-0.2.1-setup
+OutputBaseFilename=VRMaryStudio-0.3.5-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

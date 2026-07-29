@@ -116,7 +116,7 @@ class CodexProvider(AgentProvider):
                 "clientInfo": {
                     "name": "vr_mary_studio",
                     "title": "VR Mary Studio",
-                    "version": "0.2.1",
+                    "version": "0.3.5",
                 },
                 "capabilities": {"experimentalApi": True},
             },
@@ -248,7 +248,7 @@ class CodexProvider(AgentProvider):
             {
                 "model": model or None,
                 "cwd": str(workspace),
-                "approvalPolicy": "unlessTrusted",
+                "approvalPolicy": "on-request",
                 "sandbox": "workspaceWrite",
                 "serviceName": "vr_mary_studio",
             },
@@ -301,7 +301,7 @@ class CodexProvider(AgentProvider):
                 "cwd": str(workspace),
                 "model": model or None,
                 "effort": normalize_effort(effort),
-                "approvalPolicy": "unlessTrusted",
+                "approvalPolicy": "on-request",
                 "sandboxPolicy": {
                     "type": "workspaceWrite",
                     "writableRoots": [str(workspace)],

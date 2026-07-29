@@ -10,6 +10,7 @@ a = Analysis(
     datas=playwright_datas + [
         (".env.example", "."),
         ("README.md", "."),
+        ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
     ],
     hiddenimports=playwright_hidden + [
         "pytesseract",

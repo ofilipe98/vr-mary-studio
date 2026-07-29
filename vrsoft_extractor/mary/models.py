@@ -17,6 +17,31 @@ class Classification:
     reasons: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ReviewFilters:
+    query: str = ""
+    source: str = ""
+    current_module: str = ""
+    suggested_module: str = ""
+    confidence_band: str = ""
+    product: str = ""
+    category: str = ""
+    status: str = "pending"
+    period_days: int = 0
+    special: str = ""
+    sort: str = "risk"
+    limit: int = 100
+    offset: int = 0
+
+
+@dataclass
+class ReviewPage:
+    items: list[dict[str, Any]] = field(default_factory=list)
+    total: int = 0
+    limit: int = 100
+    offset: int = 0
+
+
 @dataclass
 class KnowledgeDocument:
     source: str

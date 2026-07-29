@@ -10,9 +10,27 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QProcess, QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QFontDatabase
+from PySide6.QtCore import (
+    QObject,
+    QProcess,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    QTimer,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QDesktopServices,
+    QFontDatabase,
+    QKeySequence,
+    QPalette,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QFrame,
@@ -42,8 +60,8 @@ from PySide6.QtWidgets import (
 
 from .config import MarySettings, load_mary_settings
 from .migration import migrate
-from .models import RuntimeEvent
-from .movidesk import MovideskSync
+from .models import ReviewFilters, RuntimeEvent
+from .movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from .ocr import OcrManager
 from .orchestrator import ChatOrchestrator
 from .wiki import WikiSync
@@ -57,6 +75,26 @@ BRAND_YELLOW = "#FCBD0F"
 BRAND_NAVY = "#02021E"
 TEXT_MUTED = "#4E4E62"
 BACKGROUND = "#F3F3F3"
+FOCUS_DARK = "#7A3500"
+LINK_VISITED = "#5A2600"
+DISABLED_TEXT = "#5F5F70"
+DISABLED_BACKGROUND = "#ECECF1"
+STATUS_GOOD = "#176B3A"
+STATUS_WARN = "#8A5500"
+SCROLLBAR_HANDLE = "#848493"
+SCROLLBAR_TRACK = "#F0F0F4"
+STATUS_LABELS = {
+    "pending": "Pendente",
+    "approved": "Aprovado",
+    "deferred": "Adiado",
+    "kept": "Mantido",
+    "active": "Ativo",
+    "inactive": "Inativo",
+    "waiting": "Aguardando",
+    "running": "Executando",
+    "completed": "Concluído",
+    "error": "Erro",
+}
 
 
 STYLESHEET = f"""
@@ -85,11 +123,13 @@ QPushButton {{
     background: white; padding: 0 14px; font-weight: 600;
 }}
 QPushButton:hover {{ border-color: {BRAND_ORANGE}; background: #FFF6EF; }}
+QPushButton:focus {{ border: 2px solid {FOCUS_DARK}; }}
 QPushButton#primary {{ background: {ACCESSIBLE_ORANGE}; color: white; border: 0; }}
 QPushButton#primary:hover {{ background: #A84300; }}
+QPushButton#primary:focus {{ border: 2px solid {BRAND_YELLOW}; }}
 QPushButton#danger {{ color: #A1261D; border-color: #E3B8B4; }}
 QPushButton:disabled {{
-    color: #777787; background: #ECECF1; border-color: #DADAE2;
+    color: {DISABLED_TEXT}; background: {DISABLED_BACKGROUND}; border-color: #DADAE2;
 }}
 QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {{
     background: white; border: 1px solid #D6D6DF; border-radius: 8px;
@@ -105,6 +145,10 @@ QListWidget, QTableWidget {{
 }}
 QListWidget::item {{ padding: 9px; border-radius: 7px; }}
 QListWidget::item:selected {{ background: #FFF0E4; color: {BRAND_NAVY}; }}
+QTableWidget::item:selected {{ background: #FFF0E4; color: {BRAND_NAVY}; }}
+QListWidget::item:focus, QTableWidget::item:focus {{
+    border: 2px solid {ACCESSIBLE_ORANGE};
+}}
 QComboBox QAbstractItemView {{
     background: white; color: {BRAND_NAVY}; border: 1px solid #C9C9D4;
     selection-background-color: #FFF0E4; selection-color: {BRAND_NAVY};
@@ -124,11 +168,28 @@ QHeaderView::section {{
     background: #F6F6F9; border: 0; border-bottom: 1px solid #DFDFE6;
     padding: 9px; font-weight: 700;
 }}
+QTableCornerButton::section {{
+    background: #F6F6F9; border: 0; border-bottom: 1px solid #DFDFE6;
+}}
+QScrollBar:vertical, QScrollBar:horizontal {{
+    background: {SCROLLBAR_TRACK}; border: 0; margin: 0;
+}}
+QScrollBar:vertical {{ width: 12px; }}
+QScrollBar:horizontal {{ height: 12px; }}
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+    background: {SCROLLBAR_HANDLE}; border-radius: 5px; min-height: 28px; min-width: 28px;
+}}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+    background: #666677;
+}}
+QScrollBar::add-line, QScrollBar::sub-line {{
+    width: 0; height: 0; background: transparent;
+}}
 QLabel#pageTitle {{ font-size: 24px; font-weight: 700; }}
 QLabel#sectionTitle {{ font-size: 16px; font-weight: 700; }}
 QLabel#muted {{ color: {TEXT_MUTED}; }}
-QLabel#statusGood {{ color: #176B3A; font-weight: 700; }}
-QLabel#statusWarn {{ color: #8A5500; font-weight: 700; }}
+QLabel#statusGood {{ color: {STATUS_GOOD}; font-weight: 700; }}
+QLabel#statusWarn {{ color: {STATUS_WARN}; font-weight: 700; }}
 QTextBrowser {{ background: white; border: 0; padding: 12px; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{
     border: 0; background: white; color: {BRAND_NAVY};
@@ -141,6 +202,20 @@ QToolTip {{
     background: {BRAND_NAVY}; color: white; border: 1px solid #303052;
     padding: 5px;
 }}
+QDialog, QMessageBox {{
+    background: {BACKGROUND}; color: {BRAND_NAVY};
+}}
+QMessageBox QLabel {{
+    background: transparent; color: {BRAND_NAVY};
+}}
+QMessageBox QLabel#qt_msgbox_label {{
+    min-width: 420px; max-width: 560px;
+    qproperty-wordWrap: true;
+}}
+QMessageBox QPushButton {{
+    min-width: 64px; background: white; color: {BRAND_NAVY};
+}}
+QToolButton#navButton:focus {{ border: 2px solid {BRAND_YELLOW}; }}
 """
 
 
@@ -173,7 +248,12 @@ class MainWindow(QMainWindow):
     runtime_event_signal = Signal(object)
     sync_progress_signal = Signal(str)
 
-    def __init__(self, settings: MarySettings, smoke_test: bool = False):
+    def __init__(
+        self,
+        settings: MarySettings,
+        smoke_test: bool = False,
+        auto_close_smoke: bool = True,
+    ):
         super().__init__()
         self.smoke_test = smoke_test
         self.settings = settings
@@ -184,6 +264,7 @@ class MainWindow(QMainWindow):
         self.assistant_widget: QTextBrowser | None = None
         self.assistant_markdown = ""
         self.video_process: QProcess | None = None
+        self.sync_running = False
         self.model_metadata: dict[str, dict[str, Any]] = {}
         self.pending_model = ""
         self.pending_effort = ""
@@ -197,7 +278,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._refresh_all()
         self._setup_auto_sync()
-        if smoke_test:
+        if smoke_test and auto_close_smoke:
             QTimer.singleShot(800, QApplication.instance().quit)
 
     def _build_ui(self) -> None:
@@ -225,13 +306,14 @@ class MainWindow(QMainWindow):
 
     def _build_nav(self) -> QWidget:
         frame = QFrame(objectName="navRail")
+        self.nav_frame = frame
         frame.setFixedWidth(178)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(12, 18, 12, 14)
-        brand = QLabel("VR Mary", objectName="brandTitle")
-        subtitle = QLabel("STUDIO", objectName="brandSub")
-        layout.addWidget(brand)
-        layout.addWidget(subtitle)
+        self.nav_brand = QLabel("VR Mary", objectName="brandTitle")
+        self.nav_subtitle = QLabel("STUDIO", objectName="brandSub")
+        layout.addWidget(self.nav_brand)
+        layout.addWidget(self.nav_subtitle)
         layout.addSpacing(22)
         for index, label in enumerate(
             [
@@ -410,40 +492,60 @@ class MainWindow(QMainWindow):
         self.conversation_list = QListWidget()
         self.conversation_list.currentItemChanged.connect(self.load_conversation)
         left.addWidget(self.conversation_list, 1)
+        self.conversation_empty = QLabel(
+            "Nenhuma conversa ainda.\nUse “+ Nova” para começar.",
+            objectName="muted",
+        )
+        self.conversation_empty.setAlignment(Qt.AlignCenter)
+        self.conversation_empty.setWordWrap(True)
+        self.conversation_empty.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Expanding,
+        )
+        left.addWidget(self.conversation_empty)
         splitter.addWidget(conversations)
 
         center = QWidget(objectName="chatCenter")
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(16, 14, 16, 14)
-        header = QHBoxLayout()
+        header = QGridLayout()
         self.chat_title = QLabel("Nova conversa", objectName="sectionTitle")
+        self.chat_title.setWordWrap(True)
         self.provider_combo = QComboBox()
+        self.provider_combo.setAccessibleName("Provedor da conversa")
+        self.provider_combo.setToolTip("Provedor local usado nesta conversa.")
         self.provider_combo.addItems(["codex", "claude"])
         self.provider_combo.currentTextChanged.connect(self.load_models)
         self.model_combo = QComboBox()
+        self.model_combo.setAccessibleName("Modelo da conversa")
+        self.model_combo.setToolTip("Modelo disponibilizado pelo provedor selecionado.")
         self.model_combo.setMinimumWidth(150)
         self.model_combo.currentIndexChanged.connect(self.load_efforts)
         self.effort_combo = QComboBox()
+        self.effort_combo.setAccessibleName("Nível de esforço")
         self.effort_combo.setMinimumWidth(96)
         self.effort_combo.setToolTip(
             "Controla quanto raciocínio o agente usa nesta conversa."
         )
         self.effort_combo.currentTextChanged.connect(self._chat_option_changed)
-        clone_button = QPushButton("Clonar para outro provedor")
-        clone_button.clicked.connect(self.clone_conversation)
-        header.addWidget(self.chat_title)
-        header.addStretch()
-        header.addWidget(self.provider_combo)
-        header.addWidget(self.model_combo)
-        header.addWidget(QLabel("Esforço:"))
-        header.addWidget(self.effort_combo)
-        header.addWidget(clone_button)
+        self.clone_button = QPushButton("Clonar para outro provedor")
+        self.clone_button.clicked.connect(self.clone_conversation)
+        header.addWidget(self.chat_title, 0, 0)
+        header.addWidget(self.clone_button, 0, 2)
+        header.setColumnStretch(1, 1)
+        chat_options = QHBoxLayout()
+        chat_options.addWidget(self.provider_combo)
+        chat_options.addWidget(self.model_combo, 1)
+        chat_options.addWidget(QLabel("Esforço:"))
+        chat_options.addWidget(self.effort_combo)
+        header.addLayout(chat_options, 1, 0, 1, 3)
         center_layout.addLayout(header)
         self.message_scroll = QScrollArea(objectName="messageScroll")
         self.message_scroll.setWidgetResizable(True)
         self.message_container = QWidget(objectName="messageContainer")
         self.message_layout = QVBoxLayout(self.message_container)
         self.message_layout.setAlignment(Qt.AlignTop)
+        self._add_chat_empty_state()
         self.message_layout.addStretch()
         self.message_scroll.setWidget(self.message_container)
         center_layout.addWidget(self.message_scroll, 1)
@@ -499,6 +601,7 @@ class MainWindow(QMainWindow):
         )
         filters = QHBoxLayout()
         self.knowledge_query = QLineEdit()
+        self.knowledge_query.setAccessibleName("Pesquisar conhecimento")
         self.knowledge_query.setPlaceholderText("Ex.: configuração PIX, erro TEF, cadastro de produto")
         self.knowledge_query.returnPressed.connect(self.search_knowledge)
         self.knowledge_module = QComboBox()
@@ -514,6 +617,11 @@ class MainWindow(QMainWindow):
         filters.addWidget(self.knowledge_source)
         filters.addWidget(search_button)
         layout.addLayout(filters)
+        self.knowledge_count = QLabel(
+            "Carregando documentos…",
+            objectName="muted",
+        )
+        layout.addWidget(self.knowledge_count)
         splitter = QSplitter(Qt.Horizontal)
         self.knowledge_table = QTableWidget(0, 4)
         self.knowledge_table.setHorizontalHeaderLabels(["Título", "Módulo", "Fonte", "Status"])
@@ -522,6 +630,10 @@ class MainWindow(QMainWindow):
         self.knowledge_table.itemSelectionChanged.connect(self.preview_knowledge)
         self.knowledge_preview = QTextBrowser()
         self.knowledge_preview.setOpenExternalLinks(True)
+        self.knowledge_preview.setMarkdown(
+            "### Visualização do documento\n\n"
+            "Selecione um resultado para consultar o texto, as imagens e o OCR."
+        )
         splitter.addWidget(self.knowledge_table)
         splitter.addWidget(self.knowledge_preview)
         splitter.setSizes([620, 560])
@@ -553,35 +665,291 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sync_status)
         self.sync_log = QPlainTextEdit()
         self.sync_log.setReadOnly(True)
+        self.sync_log.setPlaceholderText(
+            "O progresso aparecerá aqui. Escolha uma fonte acima para iniciar."
+        )
         layout.addWidget(self.sync_log, 1)
         return page
 
     def _build_review(self) -> QWidget:
         page, layout = self._page(
             "Revisão",
-            "Conteúdo de confiança intermediária/baixa e mudanças de módulo.",
+            "Triagem auditável por risco, evidência, produto e módulo.",
         )
-        self.review_table = QTableWidget(0, 5)
+
+        self.review_query_timer = QTimer(self)
+        self.review_query_timer.setSingleShot(True)
+        self.review_query_timer.setInterval(300)
+        self.review_query_timer.timeout.connect(self.reset_review_page)
+
+        filters = QGridLayout()
+        filters.setHorizontalSpacing(8)
+        filters.setVerticalSpacing(8)
+        self.review_query = QLineEdit()
+        self.review_query.setAccessibleName("Pesquisar revisões")
+        self.review_query.setPlaceholderText(
+            "Buscar título, ID, produto, categoria, motivo ou conteúdo"
+        )
+        self.review_query.textChanged.connect(
+            lambda _text: self.review_query_timer.start()
+        )
+        self.review_query.returnPressed.connect(self.reset_review_page)
+
+        self.review_source = QComboBox()
+        for label, value in (("Todas as fontes", ""), ("Wiki", "wiki"), ("KB", "kb")):
+            self.review_source.addItem(label, value)
+        self.review_current_module = self._module_filter_combo("Módulo atual")
+        self.review_suggested_module = self._module_filter_combo("Módulo sugerido")
+
+        self.review_confidence = QComboBox()
+        for label, value in (
+            ("Toda confiança", ""),
+            ("Alta · 85% ou mais", "high"),
+            ("Intermediária · 60–84%", "medium"),
+            ("Baixa · menos de 60%", "low"),
+        ):
+            self.review_confidence.addItem(label, value)
+
+        self.review_status_filter = QComboBox()
+        for label, value in (
+            ("Pendentes", "pending"),
+            ("Adiados", "deferred"),
+            ("Aprovados", "approved"),
+            ("Mantidos", "kept"),
+            ("Todos os estados", "all"),
+        ):
+            self.review_status_filter.addItem(label, value)
+
+        self.review_product = QComboBox()
+        self.review_product.setEditable(True)
+        self.review_product.setInsertPolicy(QComboBox.NoInsert)
+        self.review_category = QComboBox()
+        self.review_category.setEditable(True)
+        self.review_category.setInsertPolicy(QComboBox.NoInsert)
+        for combo in (self.review_product, self.review_category):
+            combo.currentIndexChanged.connect(
+                lambda _index, current=combo: current.lineEdit().setCursorPosition(0)
+            )
+
+        self.review_period = QComboBox()
+        for label, days in (
+            ("Qualquer período", 0),
+            ("Últimos 7 dias", 7),
+            ("Últimos 30 dias", 30),
+            ("Últimos 90 dias", 90),
+        ):
+            self.review_period.addItem(label, days)
+
+        self.review_special = QComboBox()
+        for label, value in (
+            ("Todos os riscos", ""),
+            ("Mudança de módulo validado", "module_change"),
+            ("Sem produto identificado", "no_product"),
+            ("Pouca evidência", "low_evidence"),
+            ("Aprovação simples", "simple"),
+        ):
+            self.review_special.addItem(label, value)
+
+        self.review_sort = QComboBox()
+        for label, value in (
+            ("Maior risco primeiro", "risk"),
+            ("Maior confiança", "confidence_desc"),
+            ("Menor confiança", "confidence_asc"),
+            ("Mais recentes", "recent"),
+            ("Título A–Z", "title"),
+        ):
+            self.review_sort.addItem(label, value)
+
+        filter_combos = [
+            self.review_source,
+            self.review_current_module,
+            self.review_suggested_module,
+            self.review_confidence,
+            self.review_status_filter,
+            self.review_product,
+            self.review_category,
+            self.review_period,
+            self.review_special,
+            self.review_sort,
+        ]
+        for combo in filter_combos:
+            combo.currentIndexChanged.connect(self.reset_review_page)
+
+        filters.addWidget(self.review_query, 0, 0, 1, 4)
+        filters.addWidget(self.review_source, 0, 4)
+        filters.addWidget(self.review_status_filter, 0, 5)
+        filters.addWidget(self.review_confidence, 0, 6)
+        filters.addWidget(self.review_current_module, 1, 0)
+        filters.addWidget(self.review_suggested_module, 1, 1)
+        filters.addWidget(self.review_product, 1, 2)
+        filters.addWidget(self.review_category, 1, 3)
+        filters.addWidget(self.review_period, 1, 4)
+        filters.addWidget(self.review_special, 1, 5)
+        filters.addWidget(self.review_sort, 1, 6)
+        filters.setColumnStretch(0, 1)
+        filters.setColumnStretch(1, 1)
+        filters.setColumnStretch(2, 1)
+        filters.setColumnStretch(3, 1)
+        layout.addLayout(filters)
+
+        presets = QHBoxLayout()
+        for label, preset in (
+            ("Maior risco", "risk"),
+            ("Aprovação simples", "simple"),
+            ("Sem produto", "no_product"),
+            ("Adiados", "deferred"),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(
+                lambda _checked=False, value=preset: self.apply_review_preset(value)
+            )
+            presets.addWidget(button)
+        clear_filters = QPushButton("Limpar filtros")
+        clear_filters.clicked.connect(self.clear_review_filters)
+        presets.addWidget(clear_filters)
+        presets.addStretch()
+        layout.addLayout(presets)
+
+        selection_bar = QHBoxLayout()
+        self.review_select_all = QPushButton("Selecionar todos")
+        self.review_select_all.setToolTip(
+            "Seleciona os até 100 itens exibidos na página atual."
+        )
+        self.review_select_all.clicked.connect(self.select_all_reviews)
+        selection_bar.addWidget(self.review_select_all)
+        self.review_clear_selection = QPushButton("Limpar seleção")
+        self.review_clear_selection.clicked.connect(self.clear_review_selection)
+        selection_bar.addWidget(self.review_clear_selection)
+        selection_bar.addStretch()
+        self.review_summary = QLabel("Carregando revisões…", objectName="muted")
+        selection_bar.addWidget(self.review_summary)
+        layout.addLayout(selection_bar)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.review_table = QTableWidget(0, 10)
         self.review_table.setHorizontalHeaderLabels(
-            ["Título", "Fonte", "Sugestão", "Confiança", "Motivos"]
+            [
+                "✓",
+                "Título",
+                "Fonte",
+                "Atual",
+                "Sugestão",
+                "Confiança",
+                "Produto",
+                "Categoria",
+                "Risco / motivo",
+                "Atualização",
+            ]
         )
-        self.review_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.review_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        review_header = self.review_table.horizontalHeader()
+        review_header.setSectionResizeMode(QHeaderView.Interactive)
+        review_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        for column, width in {
+            1: 240,
+            2: 70,
+            3: 120,
+            4: 120,
+            5: 90,
+            6: 140,
+            7: 150,
+            8: 280,
+            9: 150,
+        }.items():
+            self.review_table.setColumnWidth(column, width)
+        self.review_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.review_table.setAlternatingRowColors(True)
         self.review_table.setSelectionBehavior(QTableWidget.SelectRows)
-        layout.addWidget(self.review_table, 1)
-        actions = QHBoxLayout()
+        self.review_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.review_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.review_table.itemSelectionChanged.connect(self.preview_review)
+        self.review_table.itemChanged.connect(self.review_selection_changed)
+        splitter.addWidget(self.review_table)
+
+        detail = QFrame(objectName="panel")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(12, 12, 12, 12)
+        self.review_detail_title = QLabel("Selecione uma revisão", objectName="sectionTitle")
+        self.review_detail_title.setWordWrap(True)
+        detail_layout.addWidget(self.review_detail_title)
+        self.review_preview = QTextBrowser()
+        self.review_preview.setOpenExternalLinks(True)
+        detail_layout.addWidget(self.review_preview, 1)
+
+        source_actions = QHBoxLayout()
+        self.review_open_source = QPushButton("Abrir fonte")
+        self.review_open_source.clicked.connect(self.open_review_source)
+        self.review_open_local = QPushButton("Abrir arquivo local")
+        self.review_open_local.clicked.connect(self.open_review_local)
+        self.review_copy_citation = QPushButton("Copiar citação")
+        self.review_copy_citation.clicked.connect(self.copy_review_citation)
+        source_actions.addWidget(self.review_open_source)
+        source_actions.addWidget(self.review_open_local)
+        source_actions.addWidget(self.review_copy_citation)
+        detail_layout.addLayout(source_actions)
+
+        self.review_note = QTextEdit()
+        self.review_note.setPlaceholderText("Nota de auditoria opcional")
+        self.review_note.setMaximumHeight(72)
+        detail_layout.addWidget(self.review_note)
+
+        actions = QGridLayout()
         self.review_module = QComboBox()
         self.review_module.addItems(
             ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"]
         )
-        approve = QPushButton("Aprovar classificação", objectName="primary")
-        approve.clicked.connect(self.approve_review)
-        actions.addWidget(QLabel("Destino:"))
-        actions.addWidget(self.review_module)
-        actions.addWidget(approve)
-        actions.addStretch()
-        layout.addLayout(actions)
-        self.review_rows: list[Any] = []
+        self.review_module.currentTextChanged.connect(self._update_review_actions)
+        self.review_approve = QPushButton("Aprovar", objectName="primary")
+        self.review_approve.clicked.connect(self.approve_review)
+        self.review_keep = QPushButton("Manter atual")
+        self.review_keep.clicked.connect(self.keep_review)
+        self.review_defer = QPushButton("Adiar")
+        self.review_defer.clicked.connect(self.defer_review)
+        self.review_reopen = QPushButton("Reabrir")
+        self.review_reopen.clicked.connect(self.reopen_review)
+        actions.addWidget(QLabel("Destino:"), 0, 0)
+        actions.addWidget(self.review_module, 0, 1, 1, 3)
+        actions.addWidget(self.review_approve, 1, 0)
+        actions.addWidget(self.review_keep, 1, 1)
+        actions.addWidget(self.review_defer, 1, 2)
+        actions.addWidget(self.review_reopen, 1, 3)
+        detail_layout.addLayout(actions)
+        self.review_action_hint = QLabel("", objectName="muted")
+        self.review_action_hint.setWordWrap(True)
+        detail_layout.addWidget(self.review_action_hint)
+        splitter.addWidget(detail)
+        splitter.setSizes([930, 410])
+        layout.addWidget(splitter, 1)
+
+        pagination = QHBoxLayout()
+        self.review_previous_page = QPushButton("← Anterior")
+        self.review_previous_page.clicked.connect(self.previous_review_page)
+        self.review_next_page = QPushButton("Próxima →")
+        self.review_next_page.clicked.connect(self.next_review_page)
+        self.review_page_label = QLabel("Página 1")
+        pagination.addWidget(self.review_previous_page)
+        pagination.addWidget(self.review_page_label)
+        pagination.addWidget(self.review_next_page)
+        pagination.addStretch()
+        pagination.addWidget(QLabel("100 itens por página", objectName="muted"))
+        layout.addLayout(pagination)
+
+        self.review_rows: list[dict[str, Any]] = []
+        self.review_total = 0
+        self.review_offset = 0
+        self.review_loading = False
+        self._load_review_filter_values()
+        for sequence, callback in (
+            ("Alt+A", self.approve_review),
+            ("Alt+M", self.keep_review),
+            ("Alt+D", self.defer_review),
+            ("PageUp", self.previous_review_page),
+            ("PageDown", self.next_review_page),
+        ):
+            shortcut = QShortcut(QKeySequence(sequence), page)
+            shortcut.activated.connect(callback)
+        self._update_review_actions()
         return page
 
     def _build_videos(self) -> QWidget:
@@ -608,6 +976,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.video_status)
         self.video_log = QPlainTextEdit()
         self.video_log.setReadOnly(True)
+        self.video_log.setPlaceholderText(
+            "O inventário, os downloads e eventuais falhas aparecerão aqui."
+        )
         layout.addWidget(self.video_log, 1)
         return page
 
@@ -618,7 +989,7 @@ class MainWindow(QMainWindow):
         )
         form = QFrame(objectName="card")
         grid = QGridLayout(form)
-        self.settings_fields: dict[str, QLineEdit] = {}
+        self.settings_fields: dict[str, QLineEdit | QComboBox] = {}
         fields = [
             ("Raiz Mary", "MARY_ROOT", str(self.settings.root), False),
             ("Email Movidesk", "MOVIDESK_EMAIL", os.environ.get("MOVIDESK_EMAIL", ""), False),
@@ -640,9 +1011,25 @@ class MainWindow(QMainWindow):
         ]
         for row, (label, key, value, secret) in enumerate(fields):
             grid.addWidget(QLabel(label), row, 0)
-            edit = QLineEdit(value)
-            if secret:
-                edit.setEchoMode(QLineEdit.Password)
+            if key == "MARY_DEFAULT_EFFORT":
+                edit = QComboBox()
+                edit.setAccessibleName(label)
+                for effort_label, effort_value in (
+                    ("Baixo", "low"),
+                    ("Médio", "medium"),
+                    ("Alto", "high"),
+                    ("Muito alto", "xhigh"),
+                    ("Máximo", "max"),
+                    ("Ultra", "ultra"),
+                ):
+                    edit.addItem(effort_label, effort_value)
+                selected = edit.findData(value)
+                edit.setCurrentIndex(selected if selected >= 0 else 1)
+            else:
+                edit = QLineEdit(value)
+                edit.setAccessibleName(label)
+                if secret:
+                    edit.setEchoMode(QLineEdit.Password)
             self.settings_fields[key] = edit
             grid.addWidget(edit, row, 1)
         self.provider_diagnostic = QLabel("", objectName="muted")
@@ -666,6 +1053,9 @@ class MainWindow(QMainWindow):
         page, layout = self._page("Logs", "Eventos operacionais sem credenciais.")
         self.app_log = QPlainTextEdit()
         self.app_log.setReadOnly(True)
+        self.app_log.setPlaceholderText(
+            "Nenhum evento nesta sessão. Senhas e cookies nunca são exibidos."
+        )
         layout.addWidget(self.app_log, 1)
         return page
 
@@ -765,7 +1155,7 @@ class MainWindow(QMainWindow):
                 f"Atualizados {updated} · Erros {errors}"
             )
             if run["error"]:
-                detail += f"\n{str(run['error'])[:180]}"
+                detail += f"\n{self._friendly_sync_error(str(run['error']))}"
             self._set_source_status(source, status_text, detail, success)
 
         inventory_path = self.settings.root / "metadata" / "videos.json"
@@ -806,6 +1196,15 @@ class MainWindow(QMainWindow):
         label.style().polish(label)
         self.source_detail_labels[source].setText(detail)
 
+    @staticmethod
+    def _friendly_sync_error(error: str) -> str:
+        normalized = error.lower()
+        if "target page, context or browser has been closed" in normalized:
+            return "Sessão do navegador encerrada. Use “Login/KB visível”."
+        if "mfa" in normalized or "captcha" in normalized or "intera" in normalized:
+            return "Autenticação necessária. Use “Login/KB visível”."
+        return error.strip().splitlines()[0][:140]
+
     def refresh_conversations(self, *_args: Any) -> None:
         selected = self.current_conversation
         term = self.conversation_search.text().lower() if hasattr(self, "conversation_search") else ""
@@ -816,13 +1215,17 @@ class MainWindow(QMainWindow):
                 continue
             item = QListWidgetItem(
                 f"{row['title']}\n{row['provider'].title()} · "
-                f"{row['model'] or 'padrão'} · esforço {row['effort']} · {row['status']}"
+                f"{row['model'] or 'padrão'} · esforço {row['effort']} · "
+                f"{self._status_label(row['status'])}"
             )
             item.setData(Qt.UserRole, row["id"])
             self.conversation_list.addItem(item)
             if row["id"] == selected:
                 self.conversation_list.setCurrentItem(item)
         self.conversation_list.blockSignals(False)
+        is_empty = self.conversation_list.count() == 0
+        self.conversation_list.setVisible(not is_empty)
+        self.conversation_empty.setVisible(is_empty)
 
     def new_conversation(self) -> None:
         provider = self.provider_combo.currentText() or "codex"
@@ -872,7 +1275,7 @@ class MainWindow(QMainWindow):
         for message in self.database.messages(conversation_id):
             if message["role"] != "system":
                 self._add_message(message["role"], message["content"])
-        self.chat_status.setText(row["status"])
+        self.chat_status.setText(self._status_label(row["status"]))
 
     def _clear_messages(self) -> None:
         while self.message_layout.count() > 1:
@@ -880,10 +1283,34 @@ class MainWindow(QMainWindow):
             widget = item.widget()
             if widget:
                 widget.deleteLater()
+        self._add_chat_empty_state()
         self.assistant_widget = None
         self.assistant_markdown = ""
 
+    def _add_chat_empty_state(self) -> None:
+        empty = QFrame(objectName="card")
+        empty.setMinimumWidth(360)
+        empty.setMinimumHeight(140)
+        empty.setMaximumWidth(620)
+        empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.setContentsMargins(20, 18, 20, 18)
+        title = QLabel("Pronto para criar um fluxo Mary", objectName="sectionTitle")
+        title.setWordWrap(True)
+        description = QLabel(
+            "Crie uma conversa, escolha o provedor e descreva o treinamento "
+            "ou problema. A base local relevante será pesquisada automaticamente.",
+            objectName="muted",
+        )
+        description.setWordWrap(True)
+        empty_layout.addWidget(title)
+        empty_layout.addWidget(description)
+        self.chat_empty_state = empty
+        self.message_layout.insertWidget(0, empty, 0, Qt.AlignHCenter)
+
     def _add_message(self, role: str, content: str) -> QTextBrowser:
+        if hasattr(self, "chat_empty_state"):
+            self.chat_empty_state.hide()
         card = QFrame(objectName="card")
         card.setMaximumWidth(860)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -1163,10 +1590,23 @@ class MainWindow(QMainWindow):
                 result["title"],
                 result["module"],
                 result["source"].upper(),
-                result["review_status"],
+                self._status_label(result["review_status"]),
             ]
             for column, value in enumerate(values):
                 self.knowledge_table.setItem(row_index, column, QTableWidgetItem(str(value)))
+        plural = len(results) != 1
+        self.knowledge_count.setText(
+            f"{len(results)} documento{'s' if plural else ''} "
+            f"encontrado{'s' if plural else ''}"
+        )
+        if results:
+            self.knowledge_table.setCurrentCell(0, 0)
+            self.preview_knowledge()
+        else:
+            self.knowledge_preview.setMarkdown(
+                "### Nenhum documento encontrado\n\n"
+                "Tente remover filtros ou pesquisar por outro termo."
+            )
 
     def preview_knowledge(self) -> None:
         row = self.knowledge_table.currentRow()
@@ -1179,29 +1619,459 @@ class MainWindow(QMainWindow):
         else:
             self.knowledge_preview.setMarkdown(result.get("markdown", ""))
 
+    @staticmethod
+    def _module_filter_combo(placeholder: str) -> QComboBox:
+        combo = QComboBox()
+        combo.addItem(placeholder, "")
+        for module in (
+            "Fiscal",
+            "ADM_FIN_ESTOQUE",
+            "PDV",
+            "Multimodulo",
+            "Revisar",
+        ):
+            combo.addItem(module, module)
+        return combo
+
+    @staticmethod
+    def _status_label(status: str) -> str:
+        value = str(status or "").strip()
+        return STATUS_LABELS.get(value.lower(), value.replace("_", " ").title())
+
+    def _load_review_filter_values(self) -> None:
+        values = self.database.review_filter_values()
+        for combo, label, entries in (
+            (self.review_product, "Todos os produtos", values["products"]),
+            (self.review_category, "Todas as categorias", values["categories"]),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(label, "")
+            for entry in entries:
+                combo.addItem(entry, entry)
+            combo.setCurrentIndex(0)
+            if combo.lineEdit():
+                combo.lineEdit().setCursorPosition(0)
+            combo.blockSignals(False)
+            if combo.lineEdit():
+                combo.lineEdit().editingFinished.connect(self.reset_review_page)
+
+    @staticmethod
+    def _review_combo_value(combo: QComboBox) -> str:
+        data = combo.currentData()
+        if data is not None:
+            return str(data)
+        text = combo.currentText().strip()
+        return "" if text.lower().startswith(("todos", "todas")) else text
+
+    @staticmethod
+    def _review_json_list(raw: str) -> list[str]:
+        try:
+            values = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            return []
+        return [str(value) for value in values] if isinstance(values, list) else []
+
+    def _review_filters(self) -> ReviewFilters:
+        return ReviewFilters(
+            query=self.review_query.text().strip(),
+            source=self._review_combo_value(self.review_source),
+            current_module=self._review_combo_value(self.review_current_module),
+            suggested_module=self._review_combo_value(
+                self.review_suggested_module
+            ),
+            confidence_band=self._review_combo_value(self.review_confidence),
+            product=self._review_combo_value(self.review_product),
+            category=self._review_combo_value(self.review_category),
+            status=self._review_combo_value(self.review_status_filter) or "pending",
+            period_days=int(self.review_period.currentData() or 0),
+            special=self._review_combo_value(self.review_special),
+            sort=self._review_combo_value(self.review_sort) or "risk",
+            limit=100,
+            offset=self.review_offset,
+        )
+
+    def reset_review_page(self, *_args: Any) -> None:
+        if not hasattr(self, "review_table"):
+            return
+        self.review_offset = 0
+        self.refresh_reviews()
+
     def refresh_reviews(self) -> None:
-        self.review_rows = self.database.list_reviews()
+        if not hasattr(self, "review_table"):
+            return
+        try:
+            page = self.database.query_reviews(self._review_filters())
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        self.review_loading = True
+        self.review_rows = page.items
+        self.review_total = page.total
+        self.review_offset = page.offset
+        self.review_table.clearContents()
         self.review_table.setRowCount(len(self.review_rows))
         for row_index, row in enumerate(self.review_rows):
-            reasons = ", ".join(json.loads(row["reasons_json"] or "[]"))
+            reasons = self._review_json_list(row["reasons_json"])
+            main_reason = reasons[0] if reasons else "Sem evidência registrada"
+            risk = f"{row['risk_label']} · {main_reason}"
             values = [
+                "",
                 row["title"],
                 row["source"].upper(),
+                row["current_module"],
                 row["suggested_module"],
                 f"{row['confidence']:.0%}",
-                reasons,
+                row["product"] or "Não identificado",
+                row["category"] or "Sem categoria",
+                risk,
+                row["updated_at"] or row["document_updated_at"] or row["synced_at"],
             ]
             for column, value in enumerate(values):
-                self.review_table.setItem(row_index, column, QTableWidgetItem(str(value)))
+                item = QTableWidgetItem(str(value))
+                item.setData(Qt.UserRole, int(row["id"]))
+                if column == 0:
+                    item.setFlags(
+                        Qt.ItemIsEnabled
+                        | Qt.ItemIsSelectable
+                        | Qt.ItemIsUserCheckable
+                    )
+                    item.setCheckState(Qt.Unchecked)
+                    item.setTextAlignment(Qt.AlignCenter)
+                self.review_table.setItem(row_index, column, item)
+        self.review_loading = False
 
-    def approve_review(self) -> None:
+        first = self.review_offset + 1 if self.review_total else 0
+        last = min(self.review_offset + len(self.review_rows), self.review_total)
+        self.review_summary.setText(
+            f"{self.review_total} resultados · exibindo {first}–{last} · "
+            "0 selecionados"
+        )
+        current_page = self.review_offset // page.limit + 1
+        total_pages = max(1, (self.review_total + page.limit - 1) // page.limit)
+        self.review_page_label.setText(f"Página {current_page} de {total_pages}")
+        self.review_previous_page.setEnabled(self.review_offset > 0)
+        self.review_next_page.setEnabled(
+            self.review_offset + page.limit < self.review_total
+        )
+        self.review_note.clear()
+        if self.review_rows:
+            self.review_table.setCurrentCell(0, 1)
+        else:
+            self.review_detail_title.setText("Nenhuma revisão encontrada")
+            self.review_preview.setMarkdown(
+                "Ajuste os filtros ou escolha outro estado da revisão."
+            )
+        self._update_review_actions()
+
+    def review_selection_changed(self, _item: QTableWidgetItem) -> None:
+        if self.review_loading:
+            return
+        self._refresh_review_selection_state()
+
+    def _refresh_review_selection_state(self) -> None:
+        selected = len(self._checked_review_rows())
+        first = self.review_offset + 1 if self.review_total else 0
+        last = min(self.review_offset + len(self.review_rows), self.review_total)
+        self.review_summary.setText(
+            f"{self.review_total} resultados · exibindo {first}–{last} · "
+            f"{selected} selecionados"
+        )
+        self._update_review_actions()
+
+    def select_all_reviews(self) -> None:
+        self.review_loading = True
+        try:
+            for row_index in range(len(self.review_rows)):
+                item = self.review_table.item(row_index, 0)
+                if item:
+                    item.setCheckState(Qt.Checked)
+        finally:
+            self.review_loading = False
+        self._refresh_review_selection_state()
+
+    def clear_review_selection(self) -> None:
+        self.review_loading = True
+        try:
+            for row_index in range(len(self.review_rows)):
+                item = self.review_table.item(row_index, 0)
+                if item:
+                    item.setCheckState(Qt.Unchecked)
+        finally:
+            self.review_loading = False
+        self._refresh_review_selection_state()
+
+    def _checked_review_rows(self) -> list[dict[str, Any]]:
+        checked: list[dict[str, Any]] = []
+        for row_index, row in enumerate(self.review_rows):
+            item = self.review_table.item(row_index, 0)
+            if item and item.checkState() == Qt.Checked:
+                checked.append(row)
+        return checked
+
+    def _selected_review_rows(self) -> list[dict[str, Any]]:
+        checked = self._checked_review_rows()
+        if checked:
+            return checked
         row_index = self.review_table.currentRow()
-        if row_index < 0:
+        if 0 <= row_index < len(self.review_rows):
+            return [self.review_rows[row_index]]
+        return []
+
+    def preview_review(self) -> None:
+        row_index = self.review_table.currentRow()
+        if row_index < 0 or row_index >= len(self.review_rows):
+            self._update_review_actions()
             return
         review = self.review_rows[row_index]
-        self.database.decide_review(review["id"], self.review_module.currentText())
+        self.review_detail_title.setText(review["title"])
+        if review["suggested_module"] in [
+            self.review_module.itemText(index)
+            for index in range(self.review_module.count())
+        ]:
+            self.review_module.setCurrentText(review["suggested_module"])
+
+        reasons = self._review_json_list(review["reasons_json"])
+        evidence = "\n".join(f"- {reason}" for reason in reasons) or "- Sem evidência"
+        assets = self._review_json_list(review["assets_json"])
+        asset_lines = []
+        for raw_path in assets:
+            asset_path = Path(raw_path)
+            if not asset_path.is_absolute():
+                asset_path = self.settings.root / asset_path
+            asset_url = QUrl.fromLocalFile(str(asset_path)).toString()
+            asset_lines.append(f"- [{asset_path.name}]({asset_url})")
+        asset_markdown = "\n".join(asset_lines) or "- Nenhuma imagem associada"
+        note = review["decision_note"] or "Sem nota"
+        content = review["markdown"] or "_Documento sem Markdown._"
+        ocr = review["ocr_text"] or "_Sem OCR associado._"
+        metadata = f"""\
+- **Estado:** {self._status_label(review['status'])}
+- **Risco:** {review['risk_label']}
+- **Fonte / ID:** {review['source'].upper()} · {review['source_id']}
+- **Módulo atual → sugerido:** {review['current_module']} → {review['suggested_module']}
+- **Confiança:** {review['confidence']:.0%}
+- **Produto:** {review['product'] or 'Não identificado'}
+- **Categoria:** {review['category'] or 'Sem categoria'}
+- **Atualização:** {review['document_updated_at'] or review['synced_at']}
+- **Nota registrada:** {note}
+
+## Evidências
+
+{evidence}
+
+## Imagens
+
+{asset_markdown}
+
+## Conteúdo
+
+{content}
+
+## OCR
+
+{ocr}
+"""
+        local_path = Path(review["local_path"]) if review["local_path"] else None
+        if local_path:
+            self.review_preview.document().setBaseUrl(
+                QUrl.fromLocalFile(str(local_path.parent) + os.sep)
+            )
+        self.review_preview.setMarkdown(metadata)
+        self.review_note.setPlainText(review["decision_note"] or "")
+        self._update_review_actions()
+
+    def _update_review_actions(self) -> None:
+        if not hasattr(self, "review_approve"):
+            return
+        rows = self._selected_review_rows()
+        pending = bool(rows) and all(row["status"] == "pending" for row in rows)
+        reopenable = bool(rows) and all(
+            row["status"] != "pending" and row["is_latest"] for row in rows
+        )
+        hint = ""
+        if len(rows) > 1:
+            hint = (
+                f"Lote: {len(rows)} itens receberão o destino "
+                f"{self.review_module.currentText()}."
+            )
+        elif rows:
+            hint = "Atalhos: Alt+A aprovar · Alt+M manter · Alt+D adiar."
+        self.review_approve.setEnabled(pending)
+        self.review_keep.setEnabled(pending)
+        self.review_defer.setEnabled(pending)
+        self.review_reopen.setEnabled(reopenable)
+        self.review_module.setEnabled(pending)
+        self.review_select_all.setEnabled(bool(self.review_rows))
+        self.review_clear_selection.setEnabled(bool(self._checked_review_rows()))
+        self.review_open_source.setEnabled(bool(rows))
+        self.review_open_local.setEnabled(
+            bool(rows and rows[0]["local_path"] and Path(rows[0]["local_path"]).exists())
+        )
+        self.review_copy_citation.setEnabled(bool(rows))
+        self.review_action_hint.setText(hint)
+
+    def previous_review_page(self) -> None:
+        if self.review_offset <= 0:
+            return
+        self.review_offset = max(0, self.review_offset - 100)
         self.refresh_reviews()
+
+    def next_review_page(self) -> None:
+        if self.review_offset + 100 >= self.review_total:
+            return
+        self.review_offset += 100
+        self.refresh_reviews()
+
+    def clear_review_filters(self) -> None:
+        self.review_query.blockSignals(True)
+        self.review_query.clear()
+        self.review_query.blockSignals(False)
+        for combo in (
+            self.review_source,
+            self.review_current_module,
+            self.review_suggested_module,
+            self.review_confidence,
+            self.review_product,
+            self.review_category,
+            self.review_period,
+            self.review_special,
+            self.review_sort,
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        self.review_status_filter.blockSignals(True)
+        self.review_status_filter.setCurrentIndex(
+            self.review_status_filter.findData("pending")
+        )
+        self.review_status_filter.blockSignals(False)
+        self.reset_review_page()
+
+    def apply_review_preset(self, preset: str) -> None:
+        self.clear_review_filters()
+        for combo in (
+            self.review_status_filter,
+            self.review_special,
+            self.review_sort,
+        ):
+            combo.blockSignals(True)
+        if preset == "deferred":
+            self.review_status_filter.setCurrentIndex(
+                self.review_status_filter.findData("deferred")
+            )
+        elif preset == "simple":
+            self.review_special.setCurrentIndex(
+                self.review_special.findData("simple")
+            )
+            self.review_sort.setCurrentIndex(
+                self.review_sort.findData("confidence_desc")
+            )
+        elif preset == "no_product":
+            self.review_special.setCurrentIndex(
+                self.review_special.findData("no_product")
+            )
+        else:
+            self.review_sort.setCurrentIndex(self.review_sort.findData("risk"))
+        for combo in (
+            self.review_status_filter,
+            self.review_special,
+            self.review_sort,
+        ):
+            combo.blockSignals(False)
+        self.reset_review_page()
+
+    def open_review_source(self) -> None:
+        rows = self._selected_review_rows()
+        if rows and rows[0]["url"]:
+            QDesktopServices.openUrl(QUrl(rows[0]["url"]))
+
+    def open_review_local(self) -> None:
+        rows = self._selected_review_rows()
+        if not rows or not rows[0]["local_path"]:
+            return
+        path = Path(rows[0]["local_path"])
+        if path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def copy_review_citation(self) -> None:
+        rows = self._selected_review_rows()
+        if not rows:
+            return
+        row = rows[0]
+        citation = (
+            f"[{row['title']}]({row['url']}) — "
+            f"{row['current_module']} · {row['source'].upper()} · ID {row['source_id']}"
+        )
+        QApplication.clipboard().setText(citation)
+        self.review_action_hint.setText("Citação copiada.")
+
+    def _confirm_bulk_review(self, action: str, rows: list[dict[str, Any]]) -> bool:
+        if len(rows) <= 1:
+            return True
+        labels = {
+            "approve": "aprovar",
+            "keep": "manter o módulo atual de",
+            "defer": "adiar",
+            "reopen": "reabrir",
+        }
+        destination = (
+            f"\nDestino: {self.review_module.currentText()}"
+            if action == "approve"
+            else ""
+        )
+        answer = QMessageBox.question(
+            self,
+            "Confirmar ação em lote",
+            f"Deseja {labels[action]} {len(rows)} revisões selecionadas?"
+            f"{destination}\n\n"
+            + (
+                "O destino escolhido será aplicado a todos os itens, "
+                "independentemente das sugestões individuais.\n\n"
+                if action == "approve"
+                else ""
+            )
+            + "A ação ficará registrada no histórico.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _run_review_action(self, action: str) -> None:
+        rows = self._selected_review_rows()
+        if not rows or not self._confirm_bulk_review(action, rows):
+            return
+        try:
+            count = self.database.decide_reviews(
+                [int(row["id"]) for row in rows],
+                action,
+                module=self.review_module.currentText(),
+                note=self.review_note.toPlainText().strip(),
+            )
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        verbs = {
+            "approve": "aprovadas",
+            "keep": "mantidas",
+            "defer": "adiadas",
+            "reopen": "reabertas",
+        }
+        self.refresh_reviews()
+        self.review_action_hint.setText(f"{count} revisões {verbs[action]}.")
         self.refresh_dashboard()
+
+    def approve_review(self) -> None:
+        self._run_review_action("approve")
+
+    def keep_review(self) -> None:
+        self._run_review_action("keep")
+
+    def defer_review(self) -> None:
+        self._run_review_action("defer")
+
+    def reopen_review(self) -> None:
+        self._run_review_action("reopen")
 
     def sync_wiki(self) -> None:
         self._run_sync(
@@ -1212,20 +2082,47 @@ class MainWindow(QMainWindow):
     def sync_kb(self, headed: bool = False) -> None:
         self._run_sync(
             "KB",
-            lambda: MovideskSync(self.settings, self.database, self._sync_progress).sync(
-                headed=headed
-            ),
+            lambda: self._sync_kb_with_auth_fallback(headed=headed),
         )
+
+    def _sync_kb_with_auth_fallback(self, headed: bool = False):
+        sync = MovideskSync(
+            self.settings,
+            self.database,
+            self._sync_progress,
+        )
+        if headed:
+            sync.login()
+            return sync.sync(headed=False)
+        try:
+            return sync.sync(headed=False)
+        except MovideskInteractiveLoginRequired:
+            self._sync_progress(
+                "KB: o Movidesk exige confirmação. Abrindo uma janela "
+                "exclusiva para login, MFA ou CAPTCHA."
+            )
+            sync.login()
+            return sync.sync(headed=False)
 
     def sync_all(self) -> None:
         def operation():
             wiki = WikiSync(self.settings, self.database, self._sync_progress).sync()
-            kb = MovideskSync(self.settings, self.database, self._sync_progress).sync()
+            kb = self._sync_kb_with_auth_fallback()
             return {"wiki": wiki.to_dict(), "kb": kb.to_dict()}
 
         self._run_sync("Wiki + KB", operation)
 
     def _run_sync(self, label: str, operation: Callable[[], Any]) -> None:
+        if self.sync_running:
+            QMessageBox.information(
+                self,
+                APP_TITLE,
+                "Já existe uma sincronização em andamento. "
+                "Acompanhe o progresso nesta tela.",
+            )
+            self._navigate(self.pages["Sincronizações"])
+            return
+        self.sync_running = True
         self.sync_status.setText(f"Sincronizando {label}…")
         self._navigate(self.pages["Sincronizações"])
         worker = Worker(operation)
@@ -1242,6 +2139,7 @@ class MainWindow(QMainWindow):
         self.sync_log.appendPlainText(message)
 
     def _sync_finished(self, label: str, result: Any) -> None:
+        self.sync_running = False
         self.sync_status.setText(f"{label}: concluído")
         value = result.to_dict() if hasattr(result, "to_dict") else result
         self.sync_log.appendPlainText(json.dumps(value, ensure_ascii=False, indent=2))
@@ -1249,6 +2147,7 @@ class MainWindow(QMainWindow):
         self.refresh_reviews()
 
     def _sync_error(self, error: str) -> None:
+        self.sync_running = False
         self.sync_status.setText("Falha na sincronização")
         self.sync_log.appendPlainText(error)
         self._show_error(error)
@@ -1293,7 +2192,10 @@ class MainWindow(QMainWindow):
                     key, value = line.split("=", 1)
                     values[key.strip()] = value
         for key, field in self.settings_fields.items():
-            values[key] = field.text()
+            if isinstance(field, QComboBox):
+                values[key] = str(field.currentData() or field.currentText())
+            else:
+                values[key] = field.text()
         env_path.write_text(
             "\n".join(f"{key}={value}" for key, value in values.items()) + "\n",
             encoding="utf-8",
@@ -1379,6 +2281,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--screenshot", default="")
     parser.add_argument("--screenshot-page", default="Dashboard")
+    parser.add_argument("--screenshot-width", type=int, default=1480)
+    parser.add_argument("--screenshot-height", type=int, default=900)
     return parser
 
 
@@ -1390,25 +2294,85 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_TITLE)
     app.setOrganizationName("VR Soft")
-    app.setStyle("Fusion")
-    font_family = _load_application_font()
-    app.setStyleSheet(STYLESHEET.replace("__APP_FONT__", font_family))
+    apply_application_theme(app)
     app_dir = args.project_dir or (
         str(Path(sys.executable).resolve().parent) if getattr(sys, "frozen", False) else "."
     )
     settings = load_mary_settings(app_dir, args.mary_root)
-    window = MainWindow(settings, smoke_test=args.smoke_test or bool(args.screenshot))
-    if args.screenshot_page in window.pages:
-        window._navigate(window.pages[args.screenshot_page])
+    window = MainWindow(
+        settings,
+        smoke_test=args.smoke_test or bool(args.screenshot),
+        auto_close_smoke=not bool(args.screenshot),
+    )
+    if args.screenshot:
+        window.resize(
+            max(window.minimumWidth(), args.screenshot_width),
+            max(window.minimumHeight(), args.screenshot_height),
+        )
     window.show()
     if args.screenshot:
-        def capture() -> None:
+        app.processEvents()
+    if args.screenshot_page in window.pages:
+        window._navigate(window.pages[args.screenshot_page])
+    if args.screenshot:
+        def save_capture() -> None:
             target = Path(args.screenshot).resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
+            window.repaint()
+            app.processEvents()
             window.grab().save(str(target), "PNG")
             app.quit()
+
+        def capture() -> None:
+            window.stack.setFocus()
+            window.nav_frame.hide()
+            app.processEvents()
+            window.nav_frame.show()
+            window.repaint()
+            app.processEvents()
+            QTimer.singleShot(150, save_capture)
+
         QTimer.singleShot(600, capture)
     return app.exec()
+
+
+def apply_application_theme(app: QApplication) -> None:
+    """Apply a deterministic light palette, including modal system dialogs."""
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(BACKGROUND))
+    palette.setColor(QPalette.WindowText, QColor(BRAND_NAVY))
+    palette.setColor(QPalette.Base, QColor("#FFFFFF"))
+    palette.setColor(QPalette.AlternateBase, QColor("#FAFAFC"))
+    palette.setColor(QPalette.ToolTipBase, QColor(BRAND_NAVY))
+    palette.setColor(QPalette.ToolTipText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.Text, QColor(BRAND_NAVY))
+    palette.setColor(QPalette.Button, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ButtonText, QColor(BRAND_NAVY))
+    palette.setColor(QPalette.BrightText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.Highlight, QColor(ACCESSIBLE_ORANGE))
+    palette.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.PlaceholderText, QColor(TEXT_MUTED))
+    palette.setColor(QPalette.Link, QColor(FOCUS_DARK))
+    palette.setColor(QPalette.LinkVisited, QColor(LINK_VISITED))
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.WindowText,
+        QColor(DISABLED_TEXT),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Text,
+        QColor(DISABLED_TEXT),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor(DISABLED_TEXT),
+    )
+    app.setPalette(palette)
+    font_family = _load_application_font()
+    app.setStyleSheet(STYLESHEET.replace("__APP_FONT__", font_family))
 
 
 def _load_application_font() -> str:
