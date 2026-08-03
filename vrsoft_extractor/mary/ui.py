@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from typing import Any, Callable
 from PySide6.QtCore import (
     QObject,
     QProcess,
+    QProcessEnvironment,
     QRunnable,
     Qt,
     QThreadPool,
@@ -25,18 +27,22 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFontDatabase,
+    QIcon,
     QKeySequence,
     QPalette,
+    QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -54,21 +60,35 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from .config import MarySettings, load_mary_settings
+from .chat_widgets import (
+    ApprovalDialog,
+    ModelPickerCombo,
+    SpellReviewDialog,
+    SpellcheckPlainTextEdit,
+    ToolSelectionDialog,
+)
 from .migration import migrate
-from .models import ReviewFilters, RuntimeEvent
+from .models import APPROVAL_PRESETS, ConversationOptions, ReviewFilters, RuntimeEvent
 from .movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from .ocr import OcrManager
 from .orchestrator import ChatOrchestrator
+from .spellcheck import LocalSpellChecker
 from .wiki import WikiSync
 from .workspace import initialize_workspace
 
 
 APP_TITLE = "VR Mary Studio"
+ORGANIZATION_NAME = "VRNorte"
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
+APP_ICON_PATH = ASSET_DIR / "vrnorte-app.ico"
+BRAND_SYMBOL_PATH = ASSET_DIR / "vrnorte-symbol.png"
 BRAND_ORANGE = "#FF7200"
 ACCESSIBLE_ORANGE = "#C45100"
 BRAND_YELLOW = "#FCBD0F"
@@ -95,6 +115,17 @@ STATUS_LABELS = {
     "completed": "Concluído",
     "error": "Erro",
 }
+
+
+def video_process_environment() -> QProcessEnvironment:
+    environment = QProcessEnvironment.systemEnvironment()
+    environment.insert("PYTHONUTF8", "1")
+    environment.insert("PYTHONIOENCODING", "utf-8")
+    return environment
+
+
+def new_video_output_decoder():
+    return codecs.getincrementaldecoder("utf-8")("replace")
 
 
 STYLESHEET = f"""
@@ -259,18 +290,35 @@ class MainWindow(QMainWindow):
         self.settings = settings
         self.database = initialize_workspace(settings)
         self.orchestrator = ChatOrchestrator(settings, self.database)
+        self.spell_checker = LocalSpellChecker(
+            settings.state_dir / "spellcheck_pt_br.json",
+            [
+                "VRNorte", "VRSoft", "Mary", "Movidesk", "VRWiki", "VRMaster",
+                "VRCaixa", "VRPdv", "Sitef", "Pix", "NFCe", "PostgreSQL",
+            ],
+        )
         self.pool = QThreadPool.globalInstance()
         self.current_conversation = ""
+        self.conversation_state = "active"
+        self.draft_conversation = True
+        self.draft_dynamic_tools: list[str] = []
+        self.draft_mcp_tools: list[dict[str, str]] = []
+        self.mcp_tool_catalog: list[dict[str, Any]] = []
+        self._pending_first_message = ""
         self.assistant_widget: QTextBrowser | None = None
         self.assistant_markdown = ""
         self.video_process: QProcess | None = None
+        self._video_decoder = new_video_output_decoder()
         self.sync_running = False
         self.model_metadata: dict[str, dict[str, Any]] = {}
         self.pending_model = ""
         self.pending_effort = ""
+        self.pending_tier = ""
         self.nav_buttons: list[QToolButton] = []
         self.pages: dict[str, int] = {}
         self.setWindowTitle(APP_TITLE)
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1480, 900)
         self.setMinimumSize(1120, 700)
         self.runtime_event_signal.connect(self._on_runtime_event)
@@ -307,13 +355,32 @@ class MainWindow(QMainWindow):
     def _build_nav(self) -> QWidget:
         frame = QFrame(objectName="navRail")
         self.nav_frame = frame
-        frame.setFixedWidth(178)
+        frame.setFixedWidth(188)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(12, 18, 12, 14)
-        self.nav_brand = QLabel("VR Mary", objectName="brandTitle")
-        self.nav_subtitle = QLabel("STUDIO", objectName="brandSub")
-        layout.addWidget(self.nav_brand)
-        layout.addWidget(self.nav_subtitle)
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(9)
+        self.nav_brand_symbol = QLabel()
+        self.nav_brand_symbol.setFixedSize(42, 42)
+        self.nav_brand_symbol.setAccessibleName("Logotipo VRNorte")
+        if BRAND_SYMBOL_PATH.exists():
+            symbol = QPixmap(str(BRAND_SYMBOL_PATH))
+            self.nav_brand_symbol.setPixmap(
+                symbol.scaled(
+                    self.nav_brand_symbol.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            )
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(0)
+        self.nav_brand = QLabel("VR NORTE", objectName="brandTitle")
+        self.nav_subtitle = QLabel("MARY STUDIO", objectName="brandSub")
+        brand_text.addWidget(self.nav_brand)
+        brand_text.addWidget(self.nav_subtitle)
+        brand_row.addWidget(self.nav_brand_symbol)
+        brand_row.addLayout(brand_text, 1)
+        layout.addLayout(brand_row)
         layout.addSpacing(22)
         for index, label in enumerate(
             [
@@ -489,6 +556,14 @@ class MainWindow(QMainWindow):
         self.conversation_search.setPlaceholderText("Buscar conversas")
         self.conversation_search.textChanged.connect(self.refresh_conversations)
         left.addWidget(self.conversation_search)
+        self.conversation_state_combo = QComboBox()
+        self.conversation_state_combo.addItem("Ativas", "active")
+        self.conversation_state_combo.addItem("Arquivadas", "archived")
+        self.conversation_state_combo.addItem("Lixeira", "trash")
+        self.conversation_state_combo.currentIndexChanged.connect(
+            self._conversation_state_changed
+        )
+        left.addWidget(self.conversation_state_combo)
         self.conversation_list = QListWidget()
         self.conversation_list.currentItemChanged.connect(self.load_conversation)
         left.addWidget(self.conversation_list, 1)
@@ -516,11 +591,12 @@ class MainWindow(QMainWindow):
         self.provider_combo.setToolTip("Provedor local usado nesta conversa.")
         self.provider_combo.addItems(["codex", "claude"])
         self.provider_combo.currentTextChanged.connect(self.load_models)
-        self.model_combo = QComboBox()
+        self.model_combo = ModelPickerCombo()
         self.model_combo.setAccessibleName("Modelo da conversa")
         self.model_combo.setToolTip("Modelo disponibilizado pelo provedor selecionado.")
         self.model_combo.setMinimumWidth(150)
         self.model_combo.currentIndexChanged.connect(self.load_efforts)
+        self.model_combo.providerModelSelected.connect(self._model_picker_selected)
         self.effort_combo = QComboBox()
         self.effort_combo.setAccessibleName("Nível de esforço")
         self.effort_combo.setMinimumWidth(96)
@@ -528,17 +604,42 @@ class MainWindow(QMainWindow):
             "Controla quanto raciocínio o agente usa nesta conversa."
         )
         self.effort_combo.currentTextChanged.connect(self._chat_option_changed)
+        self.tier_combo = QComboBox()
+        self.tier_combo.setAccessibleName("Camada de serviço")
+        self.tier_combo.setToolTip("Camada de serviço anunciada pelo modelo.")
+        self.tier_combo.currentTextChanged.connect(self._chat_option_changed)
+        self.approval_combo = QComboBox()
+        self.approval_combo.setAccessibleName("Perfil de aprovação")
+        for preset in APPROVAL_PRESETS.values():
+            self.approval_combo.addItem(preset.label, preset.id)
+            self.approval_combo.setItemData(
+                self.approval_combo.count() - 1,
+                preset.description,
+                Qt.ToolTipRole,
+            )
+        self.approval_combo.setCurrentIndex(self.approval_combo.findData("auto"))
+        self.approval_combo.currentIndexChanged.connect(self._chat_option_changed)
+        self.mode_combo = QComboBox()
+        self.mode_combo.setAccessibleName("Modo de colaboração")
+        self.mode_combo.addItem("Build", "default")
+        self.mode_combo.addItem("Plan", "plan")
+        self.mode_combo.currentIndexChanged.connect(self._chat_option_changed)
+        self.tools_button = QPushButton("Tools (0)")
+        self.tools_button.clicked.connect(self.open_tools)
         self.clone_button = QPushButton("Clonar para outro provedor")
         self.clone_button.clicked.connect(self.clone_conversation)
+        self.archive_button = QPushButton("Arquivar")
+        self.archive_button.clicked.connect(self.archive_current_conversation)
+        self.delete_conversation_button = QPushButton("Excluir")
+        self.delete_conversation_button.setObjectName("danger")
+        self.delete_conversation_button.clicked.connect(self.delete_current_conversation)
         header.addWidget(self.chat_title, 0, 0)
-        header.addWidget(self.clone_button, 0, 2)
+        conversation_actions = QHBoxLayout()
+        conversation_actions.addWidget(self.clone_button)
+        conversation_actions.addWidget(self.archive_button)
+        conversation_actions.addWidget(self.delete_conversation_button)
+        header.addLayout(conversation_actions, 0, 2)
         header.setColumnStretch(1, 1)
-        chat_options = QHBoxLayout()
-        chat_options.addWidget(self.provider_combo)
-        chat_options.addWidget(self.model_combo, 1)
-        chat_options.addWidget(QLabel("Esforço:"))
-        chat_options.addWidget(self.effort_combo)
-        header.addLayout(chat_options, 1, 0, 1, 3)
         center_layout.addLayout(header)
         self.message_scroll = QScrollArea(objectName="messageScroll")
         self.message_scroll.setWidgetResizable(True)
@@ -551,20 +652,37 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.message_scroll, 1)
         composer_card = QFrame(objectName="card")
         composer_layout = QVBoxLayout(composer_card)
-        self.composer = QPlainTextEdit()
+        self.composer = SpellcheckPlainTextEdit(self.spell_checker)
         self.composer.setPlaceholderText(
             "Digite Mary: para ativar o fluxo e pesquisar a base local…"
         )
         self.composer.setMaximumHeight(130)
         composer_layout.addWidget(self.composer)
+        selector_primary = QHBoxLayout()
+        selector_primary.setSpacing(6)
+        selector_primary.addWidget(self.provider_combo)
+        selector_primary.addWidget(self.model_combo, 1)
+        selector_primary.addWidget(self.tools_button)
+        composer_layout.addLayout(selector_primary)
+        selector_secondary = QHBoxLayout()
+        selector_secondary.setSpacing(6)
+        selector_secondary.addWidget(self.effort_combo)
+        selector_secondary.addWidget(self.tier_combo)
+        selector_secondary.addWidget(self.approval_combo, 1)
+        selector_secondary.addWidget(self.mode_combo)
+        composer_layout.addLayout(selector_secondary)
         actions = QHBoxLayout()
         self.chat_status = QLabel("Pronto", objectName="muted")
+        correct_button = QPushButton("Corrigir texto")
+        correct_button.setToolTip("Correção ortográfica local em português.")
+        correct_button.clicked.connect(self.correct_composer_text)
         stop_button = QPushButton("Parar", objectName="danger")
         stop_button.clicked.connect(self.stop_turn)
         send_button = QPushButton("Enviar", objectName="primary")
         send_button.clicked.connect(self.send_message)
         actions.addWidget(self.chat_status)
         actions.addStretch()
+        actions.addWidget(correct_button)
         actions.addWidget(stop_button)
         actions.addWidget(send_button)
         composer_layout.addLayout(actions)
@@ -955,31 +1073,103 @@ class MainWindow(QMainWindow):
     def _build_videos(self) -> QWidget:
         page, layout = self._page(
             "Vídeos",
-            "O extrator existente foi incorporado; não há transcrição nesta versão.",
+            "Cursos e Biblioteca classificados por módulo; não há transcrição nesta versão.",
         )
         actions = QHBoxLayout()
         for label, action in [
             ("Login", "login"),
+            ("Atualizar cursos", "courses"),
             ("Inventariar", "scan"),
+            ("Classificar", "classify-videos"),
             ("Baixar", "download"),
             ("Executar tudo", "run"),
         ]:
             button = QPushButton(label, objectName="primary" if action == "run" else "")
             button.clicked.connect(lambda _checked=False, value=action: self.run_video_action(value))
             actions.addWidget(button)
+        enroll = QPushButton("Inscrever selecionados")
+        enroll.clicked.connect(self.enroll_selected_courses)
+        actions.addWidget(enroll)
+        organize = QPushButton("Organizar downloads")
+        organize.clicked.connect(self.organize_video_downloads)
+        actions.addWidget(organize)
         stop = QPushButton("Parar", objectName="danger")
         stop.clicked.connect(self.stop_video_action)
         actions.addWidget(stop)
         actions.addStretch()
         layout.addLayout(actions)
+
+        filters = QHBoxLayout()
+        self.video_source_filter = QComboBox()
+        self.video_source_filter.addItem("Todas as fontes", "")
+        self.video_source_filter.addItem("Cursos", "curso")
+        self.video_source_filter.addItem("Biblioteca/Arquivos", "biblioteca")
+        self.video_module_filter = QComboBox()
+        self.video_module_filter.addItem("Todos os módulos", "")
+        for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"):
+            self.video_module_filter.addItem(module, module)
+        self.video_status_filter = QComboBox()
+        self.video_status_filter.addItem("Todas as situações", "")
+        for label, value in (
+            ("Disponível", "available"),
+            ("Inscrito", "enrolled"),
+            ("Baixado", "downloaded"),
+            ("Pendente", "found"),
+            ("Revisar", "review"),
+            ("Indisponível", "unavailable"),
+        ):
+            self.video_status_filter.addItem(label, value)
+        self.video_search = QLineEdit()
+        self.video_search.setPlaceholderText("Filtrar por curso, pasta, capítulo ou vídeo")
+        filters.addWidget(self.video_source_filter)
+        filters.addWidget(self.video_module_filter)
+        filters.addWidget(self.video_status_filter)
+        filters.addWidget(self.video_search, 1)
+        layout.addLayout(filters)
+
+        classification = QHBoxLayout()
+        classification.addWidget(QLabel("Classificar seleção como:"))
+        self.video_manual_module = QComboBox()
+        for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"):
+            self.video_manual_module.addItem(module, module)
+        classification.addWidget(self.video_manual_module)
+        apply_module = QPushButton("Aplicar módulo")
+        apply_module.clicked.connect(self.apply_video_module_override)
+        classification.addWidget(apply_module)
+        self.video_selection_detail = QLabel("", objectName="muted")
+        classification.addWidget(self.video_selection_detail, 1)
+        layout.addLayout(classification)
+
+        splitter = QSplitter(Qt.Vertical)
+        self.video_tree = QTreeWidget()
+        self.video_tree.setColumnCount(5)
+        self.video_tree.setHeaderLabels(
+            ["Curso, pasta ou vídeo", "Fonte", "Módulo", "Situação", "Confiança"]
+        )
+        self.video_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.video_tree.setAlternatingRowColors(True)
+        self.video_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in range(1, 5):
+            self.video_tree.header().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.video_tree.itemSelectionChanged.connect(self._video_selection_changed)
+        splitter.addWidget(self.video_tree)
         self.video_status = QLabel("Pronto", objectName="muted")
         layout.addWidget(self.video_status)
         self.video_log = QPlainTextEdit()
         self.video_log.setReadOnly(True)
         self.video_log.setPlaceholderText(
-            "O inventário, os downloads e eventuais falhas aparecerão aqui."
+            "O inventário, as inscrições, os downloads e eventuais falhas aparecerão aqui."
         )
-        layout.addWidget(self.video_log, 1)
+        splitter.addWidget(self.video_log)
+        splitter.setSizes([520, 180])
+        layout.addWidget(splitter, 1)
+        for widget in (
+            self.video_source_filter,
+            self.video_module_filter,
+            self.video_status_filter,
+        ):
+            widget.currentIndexChanged.connect(self.refresh_video_tree)
+        self.video_search.textChanged.connect(self.refresh_video_tree)
         return page
 
     def _build_settings(self) -> QWidget:
@@ -1061,6 +1251,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_all(self) -> None:
         self.refresh_dashboard()
+        self.refresh_video_tree()
         self.refresh_conversations()
         self.refresh_reviews()
         if not self.smoke_test:
@@ -1210,7 +1401,7 @@ class MainWindow(QMainWindow):
         term = self.conversation_search.text().lower() if hasattr(self, "conversation_search") else ""
         self.conversation_list.blockSignals(True)
         self.conversation_list.clear()
-        for row in self.database.list_conversations():
+        for row in self.database.list_conversations(state=self.conversation_state):
             if term and term not in row["title"].lower():
                 continue
             item = QListWidgetItem(
@@ -1228,6 +1419,28 @@ class MainWindow(QMainWindow):
         self.conversation_empty.setVisible(is_empty)
 
     def new_conversation(self) -> None:
+        if self.conversation_state != "active":
+            self.conversation_state_combo.setCurrentIndex(
+                self.conversation_state_combo.findData("active")
+            )
+        self.current_conversation = ""
+        self.draft_conversation = True
+        self._pending_first_message = ""
+        self.draft_dynamic_tools = []
+        self.draft_mcp_tools = []
+        self.provider_combo.setEnabled(True)
+        self.composer.setReadOnly(False)
+        self.chat_title.setText("Nova conversa")
+        self._clear_messages()
+        self.conversation_list.clearSelection()
+        self.chat_status.setText("Configure a conversa e envie a primeira mensagem")
+        self.archive_button.setEnabled(False)
+        self.delete_conversation_button.setEnabled(False)
+        self.clone_button.setEnabled(False)
+        self._update_tools_label()
+        self._update_codex_controls()
+
+    def _create_draft_conversation(self) -> None:
         provider = self.provider_combo.currentText() or "codex"
         model = self.model_combo.currentData() or self.model_combo.currentText()
         effort = self.effort_combo.currentData() or self.effort_combo.currentText()
@@ -1238,6 +1451,11 @@ class MainWindow(QMainWindow):
             provider,
             model,
             effort or self.settings.default_effort,
+            self.tier_combo.currentData() or "",
+            self.approval_combo.currentData() or "auto",
+            self.mode_combo.currentData() or "default",
+            self.draft_dynamic_tools,
+            self.draft_mcp_tools,
         )
         worker.signals.finished.connect(self._conversation_created)
         worker.signals.error.connect(self._show_error)
@@ -1245,6 +1463,7 @@ class MainWindow(QMainWindow):
 
     def _conversation_created(self, conversation_id: str) -> None:
         self.current_conversation = conversation_id
+        self.draft_conversation = False
         self.refresh_conversations()
         for index in range(self.conversation_list.count()):
             item = self.conversation_list.item(index)
@@ -1252,6 +1471,26 @@ class MainWindow(QMainWindow):
                 self.conversation_list.setCurrentItem(item)
                 break
         self.chat_status.setText("Pronto")
+        self.archive_button.setEnabled(True)
+        self.delete_conversation_button.setEnabled(True)
+        self.clone_button.setEnabled(True)
+        self._update_codex_controls()
+        is_active = self.conversation_state == "active"
+        self.composer.setReadOnly(not is_active)
+        self.archive_button.setText(
+            "Restaurar da lixeira"
+            if self.conversation_state == "trash"
+            else "Restaurar"
+            if self.conversation_state == "archived"
+            else "Arquivar"
+        )
+        self.delete_conversation_button.setText(
+            "Excluir definitivamente" if self.conversation_state == "trash" else "Excluir"
+        )
+        if self._pending_first_message:
+            text = self._pending_first_message
+            self._pending_first_message = ""
+            self._send_current_message(text)
 
     def load_conversation(
         self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
@@ -1263,19 +1502,49 @@ class MainWindow(QMainWindow):
         if not row:
             return
         self.current_conversation = conversation_id
+        self.draft_conversation = False
         self.chat_title.setText(row["title"])
         self.pending_model = str(row["model"])
         self.pending_effort = str(row["effort"] or self.settings.default_effort)
+        self.pending_tier = str(row["service_tier"] or "")
         self.provider_combo.blockSignals(True)
         self.provider_combo.setCurrentText(row["provider"])
         self.provider_combo.setEnabled(False)
         self.provider_combo.blockSignals(False)
+        for combo, value in (
+            (self.approval_combo, row["approval_profile"]),
+            (self.mode_combo, row["collaboration_mode"]),
+        ):
+            combo.blockSignals(True)
+            index = combo.findData(value)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            combo.blockSignals(False)
         self.load_models()
         self._clear_messages()
         for message in self.database.messages(conversation_id):
             if message["role"] != "system":
-                self._add_message(message["role"], message["content"])
+                self._add_message(
+                    message["role"], message["content"], int(message["id"])
+                )
         self.chat_status.setText(self._status_label(row["status"]))
+        self._update_tools_label()
+        is_active = self.conversation_state == "active"
+        self.composer.setReadOnly(not is_active)
+        self.archive_button.setText(
+            "Restaurar da lixeira"
+            if self.conversation_state == "trash"
+            else "Restaurar"
+            if self.conversation_state == "archived"
+            else "Arquivar"
+        )
+        self.delete_conversation_button.setText(
+            "Excluir definitivamente" if self.conversation_state == "trash" else "Excluir"
+        )
+        self.archive_button.setEnabled(True)
+        self.delete_conversation_button.setEnabled(True)
+        self.clone_button.setEnabled(True)
+        self._update_codex_controls()
 
     def _clear_messages(self) -> None:
         while self.message_layout.count() > 1:
@@ -1308,7 +1577,9 @@ class MainWindow(QMainWindow):
         self.chat_empty_state = empty
         self.message_layout.insertWidget(0, empty, 0, Qt.AlignHCenter)
 
-    def _add_message(self, role: str, content: str) -> QTextBrowser:
+    def _add_message(
+        self, role: str, content: str, message_id: int | None = None
+    ) -> QTextBrowser:
         if hasattr(self, "chat_empty_state"):
             self.chat_empty_state.hide()
         card = QFrame(objectName="card")
@@ -1327,7 +1598,19 @@ class MainWindow(QMainWindow):
                 min(520, max(58, int(widget.document().size().height()) + 22))
             )
         )
-        layout.addWidget(role_label)
+        message_header = QHBoxLayout()
+        message_header.addWidget(role_label)
+        message_header.addStretch()
+        if role == "user" and message_id is not None:
+            edit_button = QPushButton("Editar")
+            edit_button.setToolTip("Corrigir esta mensagem em uma nova ramificação.")
+            edit_button.clicked.connect(
+                lambda _checked=False, mid=message_id, original=content: self.edit_message(
+                    mid, original
+                )
+            )
+            message_header.addWidget(edit_button)
+        layout.addLayout(message_header)
         layout.addWidget(browser)
         self.message_layout.insertWidget(self.message_layout.count() - 1, card)
         QTimer.singleShot(
@@ -1343,8 +1626,15 @@ class MainWindow(QMainWindow):
         if not text:
             return
         if not self.current_conversation:
-            QMessageBox.information(self, APP_TITLE, "Crie uma conversa antes de enviar.")
+            if self.draft_conversation:
+                self._pending_first_message = text
+                self._create_draft_conversation()
+            else:
+                QMessageBox.information(self, APP_TITLE, "Crie uma conversa antes de enviar.")
             return
+        self._send_current_message(text)
+
+    def _send_current_message(self, text: str) -> None:
         self.composer.clear()
         self._add_message("user", text)
         self.assistant_markdown = ""
@@ -1376,6 +1666,8 @@ class MainWindow(QMainWindow):
             self._add_runtime_card(event.text, event.payload)
         elif event.kind == "approval_requested":
             self._request_approval(event)
+        elif event.kind == "dynamic_tool_approval_requested":
+            self._request_dynamic_tool_approval(event)
         elif event.kind == "error":
             self.chat_status.setText("Erro")
             self._add_runtime_card("Erro", {"message": event.text})
@@ -1390,17 +1682,30 @@ class MainWindow(QMainWindow):
         self.message_layout.insertWidget(self.message_layout.count() - 1, details)
 
     def _request_approval(self, event: RuntimeEvent) -> None:
-        answer = QMessageBox.question(
-            self,
-            "Aprovação solicitada",
-            event.text or "O agente solicitou uma ação.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
+        dialog = ApprovalDialog(event.payload, self)
+        accepted = dialog.exec() == QDialog.Accepted
         request_id = str(event.payload.get("request_id", ""))
+        request = dict(event.payload)
+        request["_decision"] = dialog.action
+        if dialog.approved:
+            request["content"] = dialog.response_content()
         try:
             self.orchestrator.approve(
-                event.conversation_id, request_id, answer == QMessageBox.Yes
+                event.conversation_id,
+                request_id,
+                accepted and dialog.approved,
+                dialog.session,
+                request,
+            )
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def _request_dynamic_tool_approval(self, event: RuntimeEvent) -> None:
+        dialog = ApprovalDialog(event.payload, self)
+        accepted = dialog.exec() == QDialog.Accepted and dialog.approved
+        try:
+            self.orchestrator.approve_dynamic_tool(
+                str(event.payload.get("request_id") or ""), accepted
             )
         except Exception as exc:
             self._show_error(str(exc))
@@ -1425,6 +1730,186 @@ class MainWindow(QMainWindow):
             return
         self._conversation_created(new_id)
 
+    def _conversation_state_changed(self) -> None:
+        self.conversation_state = str(self.conversation_state_combo.currentData() or "active")
+        self.current_conversation = ""
+        self.draft_conversation = False
+        self.refresh_conversations()
+        self._clear_messages()
+        self.chat_title.setText(
+            {"active": "Conversas ativas", "archived": "Conversas arquivadas", "trash": "Lixeira"}[
+                self.conversation_state
+            ]
+        )
+        self.composer.setReadOnly(True)
+        self.archive_button.setEnabled(False)
+        self.delete_conversation_button.setEnabled(False)
+        self.clone_button.setEnabled(False)
+        self._update_codex_controls()
+
+    def archive_current_conversation(self) -> None:
+        if not self.current_conversation:
+            return
+        operation = (
+            self.orchestrator.restore
+            if self.conversation_state == "trash"
+            else self.orchestrator.unarchive
+            if self.conversation_state == "archived"
+            else self.orchestrator.archive
+        )
+        self._run_conversation_operation(operation)
+
+    def delete_current_conversation(self) -> None:
+        if not self.current_conversation:
+            return
+        if self.conversation_state == "trash":
+            confirmation, accepted = QInputDialog.getText(
+                self,
+                "Excluir definitivamente",
+                "Digite EXCLUIR para apagar definitivamente a conversa e seus arquivos:",
+            )
+            if not accepted or confirmation.strip() != "EXCLUIR":
+                return
+            self._run_conversation_operation(self.orchestrator.purge)
+            return
+        answer = QMessageBox.question(
+            self,
+            "Mover para a lixeira",
+            "A conversa e sua pasta serão movidas para a lixeira recuperável. Continuar?",
+        )
+        if answer == QMessageBox.Yes:
+            self._run_conversation_operation(self.orchestrator.trash)
+
+    def _run_conversation_operation(self, operation: Callable[[str], None]) -> None:
+        conversation_id = self.current_conversation
+        self.chat_status.setText("Processando conversa…")
+        worker = Worker(operation, conversation_id)
+        worker.signals.finished.connect(lambda _result: self._conversation_operation_done())
+        worker.signals.error.connect(self._show_error)
+        self.pool.start(worker)
+
+    def _conversation_operation_done(self) -> None:
+        self.current_conversation = ""
+        self._clear_messages()
+        self.refresh_conversations()
+        self.chat_status.setText("Pronto")
+        self.composer.setReadOnly(True)
+        self.archive_button.setEnabled(False)
+        self.delete_conversation_button.setEnabled(False)
+        self.clone_button.setEnabled(False)
+        self._update_codex_controls()
+
+    def open_tools(self) -> None:
+        if self.provider_combo.currentText() != "codex":
+            QMessageBox.information(
+                self, APP_TITLE, "Tools dinâmicas e MCP estão disponíveis nas conversas Codex."
+            )
+            return
+        if self.mcp_tool_catalog:
+            self._show_tool_dialog()
+            return
+        self.chat_status.setText("Carregando tools MCP…")
+        worker = Worker(self.orchestrator.mcp_tools, "codex")
+        worker.signals.finished.connect(self._mcp_tools_loaded)
+        worker.signals.error.connect(lambda error: self._mcp_tools_loaded([], error))
+        self.pool.start(worker)
+
+    def _mcp_tools_loaded(self, tools: list[dict[str, Any]], error: str = "") -> None:
+        self.mcp_tool_catalog = tools
+        if error:
+            self._append_log(error)
+        self.chat_status.setText("Pronto")
+        self._show_tool_dialog()
+
+    def _show_tool_dialog(self) -> None:
+        selected = (
+            self.database.conversation_tools(self.current_conversation)
+            if self.current_conversation
+            else {"dynamic": self.draft_dynamic_tools, "mcp": self.draft_mcp_tools}
+        )
+        dialog = ToolSelectionDialog(
+            self.database, self.mcp_tool_catalog, selected, self
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        dynamic_ids, mcp_tools = dialog.selection()
+        if self.current_conversation:
+            if dynamic_ids == selected["dynamic"] and mcp_tools == selected["mcp"]:
+                return
+            answer = QMessageBox.question(
+                self,
+                "Alterar tools",
+                "Alterar tools cria uma ramificação e preserva a conversa atual. Continuar?",
+            )
+            if answer != QMessageBox.Yes:
+                return
+            worker = Worker(
+                self.orchestrator.clone,
+                self.current_conversation,
+                "codex",
+                "",
+                str(self.effort_combo.currentData() or self.settings.default_effort),
+                dynamic_ids,
+                mcp_tools,
+            )
+            worker.signals.finished.connect(self._conversation_created)
+            worker.signals.error.connect(self._show_error)
+            self.pool.start(worker)
+        else:
+            self.draft_dynamic_tools = dynamic_ids
+            self.draft_mcp_tools = mcp_tools
+            self._update_tools_label()
+
+    def _update_tools_label(self) -> None:
+        if self.current_conversation:
+            selected = self.database.conversation_tools(self.current_conversation)
+            count = len(selected["dynamic"]) + len(selected["mcp"])
+        else:
+            count = len(self.draft_dynamic_tools) + len(self.draft_mcp_tools)
+        self.tools_button.setText(f"Tools ({count})")
+
+    def correct_composer_text(self) -> None:
+        text = self.composer.toPlainText()
+        if not text.strip():
+            return
+        if not self.spell_checker.available:
+            QMessageBox.warning(
+                self,
+                APP_TITLE,
+                "O corretor local não está instalado neste pacote.",
+            )
+            return
+        dialog = SpellReviewDialog(self.spell_checker, text, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.composer.setPlainText(dialog.corrected_text())
+
+    def edit_message(self, message_id: int, original: str) -> None:
+        replacement, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Editar mensagem",
+            "A correção será enviada em uma nova ramificação:",
+            original,
+        )
+        replacement = replacement.strip()
+        if not accepted or not replacement or replacement == original.strip():
+            return
+        source_id = self.current_conversation
+        worker = Worker(
+            self.orchestrator.branch_from_message,
+            source_id,
+            message_id,
+            replacement,
+        )
+        worker.signals.finished.connect(
+            lambda new_id, text=replacement: self._branch_created_and_send(new_id, text)
+        )
+        worker.signals.error.connect(self._show_error)
+        self.pool.start(worker)
+
+    def _branch_created_and_send(self, conversation_id: str, text: str) -> None:
+        self._conversation_created(conversation_id)
+        self._send_current_message(text)
+
     def load_models(self, *_args: Any) -> None:
         provider = self.provider_combo.currentText() or "codex"
         current_model = self.pending_model or self.model_combo.currentData() or ""
@@ -1432,6 +1917,7 @@ class MainWindow(QMainWindow):
         self.model_combo.addItem("Carregando…", "")
 
         def loaded(models: list[dict[str, Any]]) -> None:
+            self.model_combo.set_provider_models(provider, models)
             self.model_combo.blockSignals(True)
             self.model_combo.clear()
             self.model_metadata = {}
@@ -1452,6 +1938,10 @@ class MainWindow(QMainWindow):
             self.model_combo.blockSignals(False)
             self.pending_model = ""
             self.load_efforts()
+            self.load_service_tiers()
+            if provider == "codex":
+                self.load_collaboration_modes()
+            self._preload_other_models(provider)
 
         worker = Worker(self.orchestrator.models, provider)
         worker.signals.finished.connect(loaded)
@@ -1463,6 +1953,98 @@ class MainWindow(QMainWindow):
             )
         )
         self.pool.start(worker)
+
+    def load_collaboration_modes(self) -> None:
+        selected = str(self.mode_combo.currentData() or "default")
+
+        def loaded(modes: list[dict[str, Any]]) -> None:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.clear()
+            for mode in modes:
+                value = str(mode.get("mode") or "")
+                if value in {"default", "plan"}:
+                    self.mode_combo.addItem(
+                        str(mode.get("name") or ("Build" if value == "default" else "Plan")),
+                        value,
+                    )
+            if not self.mode_combo.count():
+                self.mode_combo.addItem("Build", "default")
+                self.mode_combo.addItem("Plan", "plan")
+            index = self.mode_combo.findData(selected)
+            self.mode_combo.setCurrentIndex(max(0, index))
+            self.mode_combo.blockSignals(False)
+
+        worker = Worker(self.orchestrator.collaboration_modes, "codex")
+        worker.signals.finished.connect(loaded)
+        worker.signals.error.connect(
+            lambda error: (self._append_log(error), loaded([]))
+        )
+        self.pool.start(worker)
+
+    def _preload_other_models(self, current_provider: str) -> None:
+        other = "claude" if current_provider == "codex" else "codex"
+        if other in self.model_combo._catalogs:
+            return
+        worker = Worker(self.orchestrator.models, other)
+        worker.signals.finished.connect(
+            lambda models, name=other: self.model_combo.set_provider_models(name, models)
+        )
+        worker.signals.error.connect(lambda error: self._append_log(error))
+        self.pool.start(worker)
+
+    def _model_picker_selected(self, provider: str, model_id: str) -> None:
+        if provider != self.provider_combo.currentText():
+            if self.current_conversation:
+                answer = QMessageBox.question(
+                    self,
+                    "Trocar provedor",
+                    "Trocar o provedor cria uma ramificação e preserva a conversa atual. Continuar?",
+                )
+                if answer != QMessageBox.Yes:
+                    return
+                try:
+                    new_id = self.orchestrator.clone(
+                        self.current_conversation,
+                        provider,
+                        model=model_id,
+                        effort=self.effort_combo.currentData() or self.settings.default_effort,
+                    )
+                except Exception as exc:
+                    self._show_error(str(exc))
+                    return
+                self._conversation_created(new_id)
+                return
+            self.provider_combo.setCurrentText(provider)
+        index = self.model_combo.findData(model_id)
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
+
+    def load_service_tiers(self) -> None:
+        model_id = str(self.model_combo.currentData() or "")
+        metadata = self.model_metadata.get(model_id, {})
+        tiers = metadata.get("serviceTiers") or []
+        selected = self.pending_tier or self.tier_combo.currentData() or ""
+        self.tier_combo.blockSignals(True)
+        self.tier_combo.clear()
+        if not tiers:
+            self.tier_combo.addItem("Padrão", "")
+        else:
+            default_tier = str(metadata.get("defaultServiceTier") or "")
+            for tier in tiers:
+                tier_id = str(tier.get("id") or "")
+                self.tier_combo.addItem(str(tier.get("name") or tier_id), tier_id)
+                self.tier_combo.setItemData(
+                    self.tier_combo.count() - 1,
+                    str(tier.get("description") or ""),
+                    Qt.ToolTipRole,
+                )
+                if tier_id == default_tier:
+                    self.tier_combo.setCurrentIndex(self.tier_combo.count() - 1)
+        index = self.tier_combo.findData(str(selected))
+        if index >= 0:
+            self.tier_combo.setCurrentIndex(index)
+        self.tier_combo.blockSignals(False)
+        self.pending_tier = ""
 
     def load_efforts(self, *_args: Any) -> None:
         provider = self.provider_combo.currentText() or "codex"
@@ -1523,20 +2105,49 @@ class MainWindow(QMainWindow):
             self.effort_combo.setCurrentIndex(index)
         self.effort_combo.blockSignals(False)
         self.pending_effort = ""
+        self.load_service_tiers()
+        self._update_codex_controls()
         self._chat_option_changed()
 
     def _chat_option_changed(self, *_args: Any) -> None:
-        if not self.current_conversation:
+        if not self.current_conversation or self.conversation_state != "active":
             return
         model = self.model_combo.currentData() or self.model_combo.currentText()
         effort = self.effort_combo.currentData() or self.effort_combo.currentText()
         if effort:
-            self.database.update_conversation(
-                self.current_conversation,
+            options = ConversationOptions(
                 model=str(model or ""),
                 effort=str(effort),
+                service_tier=str(self.tier_combo.currentData() or ""),
+                approval_profile=str(self.approval_combo.currentData() or "auto"),
+                collaboration_mode=str(self.mode_combo.currentData() or "default"),
             )
-            self.refresh_conversations()
+            worker = Worker(
+                self.orchestrator.update_options,
+                self.current_conversation,
+                options,
+            )
+            worker.signals.finished.connect(lambda _result: self.refresh_conversations())
+            worker.signals.error.connect(self._show_error)
+            self.pool.start(worker)
+
+    def _update_codex_controls(self) -> None:
+        is_active = self.conversation_state == "active"
+        self.model_combo.setEnabled(is_active)
+        self.effort_combo.setEnabled(is_active)
+        is_codex = (
+            self.provider_combo.currentText() == "codex"
+            and is_active
+        )
+        for widget in (
+            self.tier_combo,
+            self.approval_combo,
+            self.mode_combo,
+            self.tools_button,
+        ):
+            widget.setEnabled(is_codex)
+        if not is_codex:
+            self.tools_button.setToolTip("Tools compartilhadas são exclusivas do Codex.")
 
     def search_context(self) -> None:
         query = self.context_search.text().strip()
@@ -2152,23 +2763,332 @@ class MainWindow(QMainWindow):
         self.sync_log.appendPlainText(error)
         self._show_error(error)
 
-    def run_video_action(self, action: str) -> None:
+    def refresh_video_tree(self, *_args) -> None:
+        if not hasattr(self, "video_tree"):
+            return
+        from ..courses import load_course_catalog
+        from ..models import VideoItem
+        from ..video_classification import load_module_overrides
+
+        inventory_path = self.settings.root / "metadata" / "videos.json"
+        course_path = self.settings.root / "metadata" / "courses.json"
+        override_path = self.settings.root / "metadata" / "video_module_overrides.json"
+        rows: list[VideoItem] = []
+        if inventory_path.exists():
+            try:
+                raw = json.loads(inventory_path.read_text(encoding="utf-8"))
+                rows = [VideoItem.from_dict(value) for value in raw if isinstance(value, dict)]
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                rows = []
+        courses = load_course_catalog(course_path)
+        overrides = load_module_overrides(override_path)
+        source_filter = str(self.video_source_filter.currentData() or "")
+        module_filter = str(self.video_module_filter.currentData() or "")
+        status_filter = str(self.video_status_filter.currentData() or "")
+        query = self.video_search.text().strip().casefold()
+
+        def matches(
+            *, source: str, module: str, status: str, text: str
+        ) -> bool:
+            if source_filter and source != source_filter:
+                return False
+            if module_filter and module != module_filter:
+                return False
+            effective_status = "review" if module == "Revisar" else status
+            if status_filter and status_filter != effective_status:
+                return False
+            return not query or query in text.casefold()
+
+        self.video_tree.clear()
+        roots: dict[str, QTreeWidgetItem] = {}
+        modules: dict[tuple[str, str], QTreeWidgetItem] = {}
+
+        def source_node(source: str) -> QTreeWidgetItem:
+            if source not in roots:
+                label = "Cursos" if source == "curso" else "Biblioteca/Arquivos"
+                roots[source] = QTreeWidgetItem(self.video_tree, [label, label, "", "", ""])
+                roots[source].setExpanded(True)
+            return roots[source]
+
+        def module_node(source: str, module: str) -> QTreeWidgetItem:
+            key = (source, module)
+            if key not in modules:
+                modules[key] = QTreeWidgetItem(
+                    source_node(source), [module, "", module, "", ""]
+                )
+                modules[key].setExpanded(True)
+            return modules[key]
+
+        course_nodes: dict[tuple[str, str], QTreeWidgetItem] = {}
+        hierarchy_nodes: dict[tuple[int, str], QTreeWidgetItem] = {}
+        represented_courses: set[str] = set()
+        for item in sorted(
+            rows,
+            key=lambda value: (
+                value.area,
+                value.business_module,
+                value.course.casefold(),
+                value.source_order,
+                value.lesson_title.casefold(),
+            ),
+        ):
+            text = " ".join(
+                [item.course, item.module, *item.folder_path, item.lesson_title]
+            )
+            if not matches(
+                source=item.area,
+                module=item.business_module,
+                status=item.status,
+                text=text,
+            ):
+                continue
+            parent = module_node(item.area, item.business_module)
+            if item.area == "curso":
+                represented_courses.add(item.source_course_id or item.course.casefold())
+                course_key = (item.business_module, item.source_course_id or item.course.casefold())
+                if course_key not in course_nodes:
+                    course_node = QTreeWidgetItem(
+                        parent,
+                        [item.course or "Curso", "Cursos", item.business_module, "Inscrito", ""],
+                    )
+                    course_node.setData(
+                        0,
+                        Qt.UserRole,
+                        {"kind": "group", "scope": "groups", "key": item.group_key()},
+                    )
+                    course_nodes[course_key] = course_node
+                parent = course_nodes[course_key]
+                hierarchy = item.folder_path[1:] if len(item.folder_path) > 1 else (
+                    [item.module] if item.module else []
+                )
+            else:
+                hierarchy = item.folder_path
+
+            for part in hierarchy:
+                node_key = (id(parent), part)
+                if node_key not in hierarchy_nodes:
+                    child = QTreeWidgetItem(
+                        parent,
+                        [part, "", item.business_module, "Pasta", ""],
+                    )
+                    if item.area == "biblioteca" and part == hierarchy[-1]:
+                        child.setData(
+                            0,
+                            Qt.UserRole,
+                            {"kind": "group", "scope": "groups", "key": item.group_key()},
+                        )
+                    hierarchy_nodes[node_key] = child
+                parent = hierarchy_nodes[node_key]
+            confidence = (
+                f"{item.classification_confidence:.0%}"
+                if item.classification_confidence
+                else ""
+            )
+            video_node = QTreeWidgetItem(
+                parent,
+                [
+                    item.lesson_title,
+                    "Cursos" if item.area == "curso" else "Biblioteca",
+                    item.business_module,
+                    item.status,
+                    confidence,
+                ],
+            )
+            video_node.setToolTip(0, "\n".join(item.classification_reasons))
+            video_node.setData(
+                0,
+                Qt.UserRole,
+                {
+                    "kind": "video",
+                    "scope": "items",
+                    "key": item.dedupe_key(),
+                    "reasons": item.classification_reasons,
+                },
+            )
+
+        for course in courses:
+            represented_key = course.course_id or course.name.casefold()
+            if course.status == "enrolled" and represented_key in represented_courses:
+                continue
+            group_key = f"course:{represented_key}"
+            module = overrides["groups"].get(group_key, course.business_module)
+            text = f"{course.name} {course.reason}"
+            if not matches(
+                source="curso",
+                module=module,
+                status=course.status,
+                text=text,
+            ):
+                continue
+            node = QTreeWidgetItem(
+                module_node("curso", module),
+                [
+                    course.name,
+                    "Cursos",
+                    module,
+                    course.reason or course.status,
+                    f"{course.classification_confidence:.0%}"
+                    if course.classification_confidence
+                    else "",
+                ],
+            )
+            data = {
+                "kind": "catalog",
+                "scope": "groups",
+                "key": group_key,
+                "course_id": course.course_id,
+                "class_id": course.selected_class_id,
+                "name": course.name,
+                "selectable": course.selectable,
+            }
+            node.setData(0, Qt.UserRole, data)
+            if course.selectable:
+                node.setFlags(node.flags() | Qt.ItemIsUserCheckable)
+                node.setCheckState(0, Qt.Unchecked)
+
+        self.video_tree.sortItems(0, Qt.AscendingOrder)
+        self.video_status.setText(
+            f"{len(rows)} vídeos · {len(courses)} cursos no catálogo"
+        )
+
+    def _video_selection_changed(self) -> None:
+        selected = self.video_tree.selectedItems()
+        if not selected:
+            self.video_selection_detail.setText("")
+            return
+        data = selected[0].data(0, Qt.UserRole) or {}
+        reasons = data.get("reasons") or []
+        self.video_selection_detail.setText(
+            f"{len(selected)} item(ns) selecionado(s)"
+            + (f" · {'; '.join(reasons[:2])}" if reasons else "")
+        )
+
+    def apply_video_module_override(self) -> None:
+        targets: set[tuple[str, str]] = set()
+        for node in self.video_tree.selectedItems():
+            data = node.data(0, Qt.UserRole) or {}
+            if data.get("scope") in {"groups", "items"} and data.get("key"):
+                targets.add((str(data["scope"]), str(data["key"])))
+        if not targets:
+            QMessageBox.information(
+                self, APP_TITLE, "Selecione um curso, uma pasta final ou um vídeo."
+            )
+            return
+        module = str(self.video_manual_module.currentData())
+        answer = QMessageBox.question(
+            self,
+            "Classificação manual",
+            f"Aplicar o módulo {module} a {len(targets)} seleção(ões)?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        from ..inventory import load_inventory, save_inventory
+        from ..settings import load_settings
+        from ..video_classification import classify_inventory, save_module_override
+
+        extractor_settings = load_settings(project_dir=self.settings.root)
+        for scope, key in targets:
+            save_module_override(
+                extractor_settings.video_overrides_path,
+                key=key,
+                module=module,
+                scope=scope,
+            )
+        items = load_inventory(extractor_settings.inventory_json_path)
+        classify_inventory(items, extractor_settings.video_overrides_path)
+        save_inventory(
+            items,
+            extractor_settings.inventory_json_path,
+            extractor_settings.inventory_csv_path,
+        )
+        self.refresh_video_tree()
+        self.refresh_dashboard()
+
+    def enroll_selected_courses(self) -> None:
+        selected: list[dict[str, Any]] = []
+
+        def visit(node: QTreeWidgetItem) -> None:
+            data = node.data(0, Qt.UserRole) or {}
+            if (
+                data.get("kind") == "catalog"
+                and data.get("selectable")
+                and node.checkState(0) == Qt.Checked
+            ):
+                selected.append(data)
+            for index in range(node.childCount()):
+                visit(node.child(index))
+
+        for index in range(self.video_tree.topLevelItemCount()):
+            visit(self.video_tree.topLevelItem(index))
+        if not selected:
+            QMessageBox.information(
+                self, APP_TITLE, "Marque pelo menos um curso disponível."
+            )
+            return
+        names = "\n".join(f"• {value['name']}" for value in selected[:12])
+        if len(selected) > 12:
+            names += f"\n• e mais {len(selected) - 12} curso(s)"
+        answer = QMessageBox.question(
+            self,
+            "Confirmar inscrições",
+            "Inscrever a conta Endoo nos cursos abaixo?\n\n" + names,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        selections = [
+            f"{value['course_id']}:{value['class_id']}" for value in selected
+        ]
+        self.run_video_action(
+            "enroll",
+            [*selections, "--confirm", "--scan-after"],
+        )
+
+    def organize_video_downloads(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Organizar downloads",
+            "Mover os vídeos já baixados para as pastas classificadas?\n"
+            "Arquivos existentes no destino não serão sobrescritos.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        from ..downloader import organize_downloads
+        from ..settings import load_settings
+
+        result = organize_downloads(load_settings(project_dir=self.settings.root))
+        QMessageBox.information(
+            self,
+            APP_TITLE,
+            "Organização concluída: "
+            f"{result['moved']} movidos, {result['collisions']} colisões, "
+            f"{result['missing']} ausentes.",
+        )
+        self.refresh_video_tree()
+
+    def run_video_action(self, action: str, extra_args: list[str] | None = None) -> None:
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
             QMessageBox.information(self, APP_TITLE, "Já existe uma ação de vídeo em execução.")
             return
         self.video_process = QProcess(self)
+        self.video_process.setProcessEnvironment(video_process_environment())
         self.video_process.setWorkingDirectory(str(self.settings.app_dir))
         self.video_process.setProcessChannelMode(QProcess.MergedChannels)
         self.video_process.readyReadStandardOutput.connect(self._read_video_output)
-        self.video_process.finished.connect(
-            lambda code, _status: self.video_status.setText(f"Concluído · código {code}")
-        )
+        self.video_process.finished.connect(self._video_process_finished)
+        self._video_decoder = new_video_output_decoder()
         args = [
             "-m",
             "vrsoft_extractor",
             "--project-dir",
             str(self.settings.root),
             action,
+            *(extra_args or []),
         ]
         self.video_status.setText(f"Executando {action}…")
         self.video_log.appendPlainText("$ python " + " ".join(args))
@@ -2176,8 +3096,19 @@ class MainWindow(QMainWindow):
 
     def _read_video_output(self) -> None:
         if self.video_process:
-            text = bytes(self.video_process.readAllStandardOutput()).decode("utf-8", "replace")
-            self.video_log.appendPlainText(text.rstrip())
+            text = self._video_decoder.decode(
+                bytes(self.video_process.readAllStandardOutput()), final=False
+            )
+            if text:
+                self.video_log.appendPlainText(text.rstrip())
+
+    def _video_process_finished(self, code: int, _status) -> None:
+        tail = self._video_decoder.decode(b"", final=True)
+        if tail:
+            self.video_log.appendPlainText(tail.rstrip())
+        self.video_status.setText(f"Concluído · código {code}")
+        self.refresh_video_tree()
+        self.refresh_dashboard()
 
     def stop_video_action(self) -> None:
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
@@ -2293,7 +3224,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_TITLE)
-    app.setOrganizationName("VR Soft")
+    app.setOrganizationName(ORGANIZATION_NAME)
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     apply_application_theme(app)
     app_dir = args.project_dir or (
         str(Path(sys.executable).resolve().parent) if getattr(sys, "frozen", False) else "."

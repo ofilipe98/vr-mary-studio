@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.3.5"
+version = "0.3.6"
 description = "VR Mary Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,7 @@ dependencies = [
   "PySide6>=6.8.0",
   "pytesseract>=0.3.13",
   "python-dotenv>=1.0.1",
+  "pyspellchecker>=0.9.0,<1",
   "yt-dlp>=2024.07.01"
 ]
 

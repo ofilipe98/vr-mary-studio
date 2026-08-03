@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import sys
 import unittest
 import urllib.parse
 import uuid
@@ -9,12 +10,26 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 from vrsoft_extractor.mary.classifier import classify, parse_product_catalog
+from vrsoft_extractor.mary.chat_tools import (
+    MAX_TOOL_OUTPUT_BYTES,
+    ToolExecutionError,
+    ToolValidationError,
+    mcp_thread_config,
+    run_local_tool,
+    validate_tool_definition,
+)
+from vrsoft_extractor.mary.chat_widgets import ModelPickerCombo
 from vrsoft_extractor.mary.classification_audit import audit_classification
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.content import canonical_markdown, html_to_markdown, sha256_text
 from vrsoft_extractor.mary.db import MaryDatabase, _fts_query
 from vrsoft_extractor.mary.migration import build_manifest, migrate
-from vrsoft_extractor.mary.models import KnowledgeDocument, ReviewFilters
+from vrsoft_extractor.mary.models import (
+    APPROVAL_PRESETS,
+    ConversationOptions,
+    KnowledgeDocument,
+    ReviewFilters,
+)
 from vrsoft_extractor.mary.movidesk import (
     MovideskInteractiveLoginRequired,
     MovideskSync,
@@ -22,6 +37,7 @@ from vrsoft_extractor.mary.movidesk import (
 from vrsoft_extractor.mary.providers import CodexProvider, _resolve_codex_command
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.ocr import latest_windows_installer_url
+from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
 from vrsoft_extractor.mary.workspace import initialize_workspace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -138,6 +154,8 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("documents", tables)
         self.assertIn("knowledge_fts", tables)
         self.assertIn("conversations", tables)
+        self.assertIn("tool_definitions", tables)
+        self.assertIn("conversation_tools", tables)
 
     def test_conversation_effort_is_persisted_and_legacy_schema_is_migrated(self):
         path = self.settings.database_path
@@ -168,6 +186,10 @@ class MaryCoreTest(unittest.TestCase):
         )
         row = database.get_conversation(conversation_id)
         self.assertEqual(row["effort"], "high")
+        self.assertEqual(row["approval_profile"], "auto")
+        self.assertEqual(row["collaboration_mode"], "default")
+        self.assertEqual(row["service_tier"], "")
+        self.assertEqual(row["trashed_at"], "")
         database.update_conversation(conversation_id, effort="xhigh")
         self.assertEqual(database.get_conversation(conversation_id)["effort"], "xhigh")
 
@@ -183,6 +205,58 @@ class MaryCoreTest(unittest.TestCase):
             "TEF, pinpad e pagamento da venda no PDV.",
         )
         self.assertEqual(pdv.module, "PDV")
+
+    def test_explicit_category_module_overrides_other_evidence(self):
+        fiscal = classify(
+            "CFOP de entrada no cadastro de Tipo Saida",
+            "Cadastro do VRMaster com evidencias administrativas.",
+            "Pagina inicial / Voltar para a pesquisa / FISCAL / "
+            "VR MASTER / CADASTRO / FISCAL / TIPO SAIDA",
+        )
+        self.assertEqual(fiscal.module, "Fiscal")
+        self.assertEqual(fiscal.status, "approved")
+        self.assertGreaterEqual(fiscal.confidence, 0.95)
+        self.assertIn("modulo explicito na categoria", fiscal.reasons[0])
+
+        pdv = classify(
+            "Nota fiscal emitida no checkout",
+            "ICMS e cadastro tributario.",
+            "Pagina inicial / Voltar para a pesquisa / PDV / NFC-e",
+        )
+        self.assertEqual(pdv.module, "PDV")
+
+        administrative = classify(
+            "Venda e TEF",
+            "Operacao de caixa e pinpad.",
+            "Pagina inicial / Voltar para a pesquisa / FINANCEIRO",
+        )
+        self.assertEqual(administrative.module, "ADM_FIN_ESTOQUE")
+
+        canonical_administrative = classify(
+            "Venda e TEF",
+            "Operacao de caixa e pinpad.",
+            "Pagina inicial / ADM_FIN_ESTOQUE / Cadastro",
+        )
+        self.assertEqual(canonical_administrative.module, "ADM_FIN_ESTOQUE")
+
+    def test_non_explicit_or_conflicting_category_requires_review(self):
+        ambiguous = classify(
+            "Configuracao CliSiTef no checkout",
+            "TEF, pinpad e pagamento da venda no PDV.",
+            "Pagina inicial / Voltar para a pesquisa / VR MASTER",
+        )
+        self.assertEqual(ambiguous.module, "Revisar")
+        self.assertEqual(ambiguous.status, "pending")
+        self.assertIn("categoria sem modulo explicito", ambiguous.reasons)
+
+        conflicting = classify(
+            "Configuracao geral",
+            "Conteudo misto.",
+            "Pagina inicial / FISCAL / PDV",
+        )
+        self.assertEqual(conflicting.module, "Revisar")
+        self.assertEqual(conflicting.status, "pending")
+        self.assertIn("categoria com modulos conflitantes", conflicting.reasons[0])
 
     def test_product_catalog_improves_module_classification(self):
         catalog_path = (
@@ -662,6 +736,275 @@ class MaryCoreTest(unittest.TestCase):
             )
         params = rpc.call_args.args[1]
         self.assertEqual(params["approvalPolicy"], "on-request")
+        self.assertEqual(params["sandbox"], "workspace-write")
+
+    def test_all_approval_profiles_serialize_exact_thread_and_turn_contracts(self):
+        expected = {
+            "supervised": ("read-only", "readOnly", "on-request", "user"),
+            "auto_edits": ("workspace-write", "workspaceWrite", "untrusted", "user"),
+            "auto": ("workspace-write", "workspaceWrite", "on-request", "auto_review"),
+            "full_access": ("danger-full-access", "dangerFullAccess", "never", "user"),
+        }
+        self.assertEqual(set(APPROVAL_PRESETS), set(expected))
+        for profile, contract in expected.items():
+            with self.subTest(profile=profile):
+                provider = CodexProvider()
+                calls: list[tuple[str, dict]] = []
+
+                def rpc(method, params, timeout=45):
+                    calls.append((method, params))
+                    return {"thread": {"id": f"native-{profile}"}} if method == "thread/start" else {}
+
+                options = ConversationOptions(
+                    model="gpt-test",
+                    effort="high",
+                    approval_profile=profile,
+                    collaboration_mode="plan",
+                )
+                with patch.object(provider, "_ensure_started"), patch.object(provider, "_rpc", side_effect=rpc):
+                    native = provider.start_conversation(
+                        profile, "gpt-test", "high", self.root, options
+                    )
+                    provider.send_message(
+                        profile,
+                        native,
+                        "gpt-test",
+                        "high",
+                        self.root,
+                        "teste",
+                        lambda _event: None,
+                        options,
+                    )
+                thread = next(params for method, params in calls if method == "thread/start")
+                turn = next(params for method, params in calls if method == "turn/start")
+                self.assertEqual(thread["sandbox"], contract[0])
+                self.assertEqual(turn["sandboxPolicy"]["type"], contract[1])
+                self.assertEqual(thread["approvalPolicy"], contract[2])
+                self.assertEqual(turn["approvalPolicy"], contract[2])
+                self.assertEqual(thread["approvalsReviewer"], contract[3])
+                self.assertEqual(turn["approvalsReviewer"], contract[3])
+                self.assertEqual(turn["collaborationMode"]["mode"], "plan")
+
+    def test_codex_approval_responses_cover_decision_permissions_and_mcp(self):
+        provider = CodexProvider()
+        with patch.object(provider, "_send") as send:
+            provider.approve_action("1", True, True, {"method": "item/fileChange/requestApproval"})
+            provider.approve_action(
+                "2",
+                True,
+                False,
+                {
+                    "method": "item/permissions/requestApproval",
+                    "permissions": {"network": {"enabled": True}},
+                },
+            )
+            provider.approve_action(
+                "3",
+                False,
+                False,
+                {"method": "mcpServer/elicitation/request", "_decision": "cancel"},
+            )
+        self.assertEqual(send.call_args_list[0].args[0]["result"], {"decision": "acceptForSession"})
+        self.assertEqual(
+            send.call_args_list[1].args[0]["result"],
+            {"permissions": {"network": {"enabled": True}}, "scope": "turn"},
+        )
+        self.assertEqual(send.call_args_list[2].args[0]["result"]["action"], "cancel")
+
+    def test_local_tool_runner_validates_schema_and_stdio_failures(self):
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": False,
+        }
+        tool = {
+            "name": "echo_json",
+            "description": "Ecoa o JSON recebido",
+            "input_schema": schema,
+            "executable": sys.executable,
+            "arguments": ["-c", "import sys; print(sys.stdin.read())"],
+            "timeout_seconds": 5,
+        }
+        result = run_local_tool(tool, {"name": "Mary"}, self.root)
+        self.assertEqual(result.parsed, {"name": "Mary"})
+        with self.assertRaises(ToolExecutionError):
+            run_local_tool(tool, {}, self.root)
+        with self.assertRaises(ToolValidationError):
+            validate_tool_definition(
+                "apply_patch", "reservada", {"type": "object"}, sys.executable, []
+            )
+        with self.assertRaises(ToolValidationError):
+            validate_tool_definition(
+                "schema_ruim",
+                "inválido",
+                {"type": "object", "properties": []},
+                sys.executable,
+                [],
+            )
+
+        failing = {**tool, "arguments": ["-c", "import sys; sys.stderr.write('falhou'); sys.exit(7)"]}
+        with self.assertRaises(ToolExecutionError) as failed:
+            run_local_tool(failing, {"name": "Mary"}, self.root)
+        self.assertIn("7", str(failed.exception))
+        stderr_only = {
+            **tool,
+            "arguments": ["-c", "import sys; sys.stderr.write('aviso')"],
+        }
+        with self.assertRaisesRegex(ToolExecutionError, "stderr"):
+            run_local_tool(stderr_only, {"name": "Mary"}, self.root)
+        oversized = {
+            **tool,
+            "arguments": ["-c", f"print('x'*{MAX_TOOL_OUTPUT_BYTES + 1})"],
+        }
+        with self.assertRaisesRegex(ToolExecutionError, "64 KiB"):
+            run_local_tool(oversized, {"name": "Mary"}, self.root)
+        timed = {**tool, "arguments": ["-c", "import time; time.sleep(2)"], "timeout_seconds": 1}
+        with self.assertRaisesRegex(ToolExecutionError, "timeout"):
+            run_local_tool(timed, {"name": "Mary"}, self.root)
+
+    def test_tool_persistence_selection_and_mcp_thread_config(self):
+        database = initialize_workspace(self.settings)
+        conversation_id = database.create_conversation(
+            "Tools", "codex", "gpt-test", self.settings.work_dir
+        )
+        tool_id = database.create_tool(
+            "consulta_vr",
+            "Consulta local",
+            {"type": "object"},
+            sys.executable,
+            ["-V"],
+            safety="read_only",
+        )
+        database.set_conversation_tools(
+            conversation_id,
+            [tool_id],
+            [{"server": "vrwiki", "tool": "buscar"}],
+        )
+        selected = database.conversation_tools(conversation_id)
+        self.assertEqual(selected["dynamic"], [tool_id])
+        self.assertEqual(selected["mcp"], [{"server": "vrwiki", "tool": "buscar"}])
+        config = mcp_thread_config(
+            selected["mcp"],
+            ["vrwiki", "outro"],
+            {
+                "vrwiki": {"command": "vrwiki.exe"},
+                "outro": {"url": "https://example.com/mcp"},
+            },
+        )
+        self.assertTrue(config["mcp_servers"]["vrwiki"]["enabled"])
+        self.assertEqual(config["mcp_servers"]["vrwiki"]["enabled_tools"], ["buscar"])
+        self.assertEqual(config["mcp_servers"]["vrwiki"]["command"], "vrwiki.exe")
+        self.assertFalse(config["mcp_servers"]["outro"]["enabled"])
+
+    def test_local_portuguese_spellcheck_ignores_technical_text_and_persists_words(self):
+        dictionary = self.settings.root / "state" / "spellcheck.json"
+        checker = LocalSpellChecker(dictionary, ["VRMaster"])
+        issues = [issue.word.casefold() for issue in checker.misspellings(
+            "Conversa com errro em https://vr.local e `git status` no VRMaster"
+        )]
+        self.assertIn("errro", issues)
+        self.assertNotIn("vrmaster", issues)
+        checker.add_word("MaryLocal")
+        reloaded = LocalSpellChecker(dictionary)
+        self.assertNotIn("marylocal", [issue.word.casefold() for issue in reloaded.misspellings("MaryLocal")])
+
+    def test_model_picker_ranks_favorites_and_ctrl_shortcut_target(self):
+        from PySide6.QtWidgets import QApplication
+
+        class FavoriteSettings:
+            def value(self, *_args):
+                return ["claude:claude-favorite"]
+
+        application = QApplication.instance() or QApplication([])
+        picker = ModelPickerCombo()
+        picker._settings = FavoriteSettings()
+        picker.set_provider_models(
+            "codex",
+            [{"id": "gpt-default", "displayName": "GPT", "isDefault": True}],
+        )
+        picker.set_provider_models(
+            "claude",
+            [{"id": "claude-favorite", "displayName": "Claude", "isDefault": False}],
+        )
+        selected = []
+        picker.providerModelSelected.connect(lambda provider, model: selected.append((provider, model)))
+        picker._select_ranked_model(0)
+        application.processEvents()
+        self.assertEqual(selected, [("claude", "claude-favorite")])
+        picker.close()
+
+    def test_message_edit_forks_at_previous_codex_turn_and_preserves_original(self):
+        class FakeProvider:
+            def __init__(self):
+                self.forks = []
+
+            def available(self):
+                return True
+
+            def fork_thread(self, *args):
+                self.forks.append(args)
+                return "native-fork"
+
+            def start_conversation(self, *_args):
+                return "native-new"
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        fake = FakeProvider()
+        orchestrator.providers = {"codex": fake}
+        source = database.create_conversation(
+            "Original",
+            "codex",
+            "gpt-test",
+            self.settings.work_dir / "source",
+        )
+        database.update_conversation(source, native_id="native-source")
+        first = database.add_message(source, "user", "Primeira", turn_id="turn-1")
+        database.add_message(source, "assistant", "Resposta", turn_id="turn-1")
+        target = database.add_message(source, "user", "Texto original", turn_id="turn-2")
+        branch = orchestrator.branch_from_message(source, target, "Texto corrigido")
+        self.assertEqual(fake.forks[0][2], "turn-1")
+        self.assertEqual(database.get_conversation(branch)["native_id"], "native-fork")
+        self.assertEqual(database.messages(source)[-1]["content"], "Texto original")
+        self.assertEqual(database.messages(branch)[0]["id"] > first, True)
+
+    def test_claude_archive_is_local_and_trash_restore_purge_preserve_database_until_delete(self):
+        class OfflineClaude:
+            def available(self):
+                return False
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": OfflineClaude()}
+        conversation_id = database.create_conversation(
+            "Claude local",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "pending",
+        )
+        workspace = self.settings.work_dir / conversation_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "artefato.txt").write_text("preservar", encoding="utf-8")
+        database.update_conversation(conversation_id, workspace=str(workspace))
+        orchestrator.archive(conversation_id)
+        self.assertEqual(database.get_conversation(conversation_id)["archived"], 1)
+        orchestrator.unarchive(conversation_id)
+        orchestrator.trash(conversation_id)
+        trashed = database.get_conversation(conversation_id)
+        self.assertTrue(trashed["trashed_at"])
+        self.assertTrue(Path(trashed["workspace"]).exists())
+        orchestrator.restore(conversation_id)
+        self.assertTrue(workspace.exists())
+        orchestrator.trash(conversation_id)
+        orchestrator.purge(conversation_id)
+        self.assertIsNone(database.get_conversation(conversation_id))
 
     def test_movidesk_recognizes_current_localized_article_routes(self):
         self.assertTrue(
@@ -992,28 +1335,48 @@ class MaryCoreTest(unittest.TestCase):
             auto_close_smoke=False,
         )
         try:
-            window.resize(1120, 700)
-            window.show()
-            window._navigate(window.pages["Chat Mary"])
-            application.processEvents()
+            from PySide6.QtCore import QPoint
 
-            self.assertLess(
-                window.chat_title.geometry().right(),
-                window.clone_button.geometry().left(),
-            )
-            self.assertLess(
-                window.provider_combo.geometry().right(),
-                window.model_combo.geometry().left(),
-            )
-            self.assertLess(
-                window.model_combo.geometry().right(),
-                window.effort_combo.geometry().left(),
-            )
-            self.assertLess(
-                window.effort_combo.geometry().bottom(),
-                window.message_scroll.geometry().top(),
-            )
+            for width, height in ((1120, 700), (1366, 768), (1920, 1080)):
+                with self.subTest(size=(width, height)):
+                    window.resize(width, height)
+                    window.show()
+                    window._navigate(window.pages["Chat Mary"])
+                    application.processEvents()
+                    self.assertLess(
+                        window.chat_title.geometry().right(),
+                        window.clone_button.geometry().left(),
+                    )
+                    self.assertLess(
+                        window.provider_combo.geometry().right(),
+                        window.model_combo.geometry().left(),
+                    )
+                    model_bottom = window.model_combo.mapTo(
+                        window, QPoint(0, window.model_combo.height())
+                    ).y()
+                    effort_top = window.effort_combo.mapTo(window, QPoint(0, 0)).y()
+                    self.assertLessEqual(model_bottom, effort_top)
+                    self.assertLess(
+                        window.effort_combo.geometry().right(),
+                        window.tier_combo.geometry().left(),
+                    )
+                    self.assertLess(
+                        window.tier_combo.geometry().right(),
+                        window.approval_combo.geometry().left(),
+                    )
+                    self.assertLess(
+                        window.approval_combo.geometry().right(),
+                        window.mode_combo.geometry().left(),
+                    )
             self.assertTrue(window.chat_empty_state.isVisible())
+            self.assertFalse(window.windowIcon().isNull())
+            self.assertEqual(window.nav_brand.text(), "VR NORTE")
+            self.assertEqual(window.nav_subtitle.text(), "MARY STUDIO")
+            self.assertFalse(window.nav_brand_symbol.pixmap().isNull())
+            self.assertEqual(
+                window.nav_brand_symbol.accessibleName(),
+                "Logotipo VRNorte",
+            )
             self.assertEqual(
                 window.effort_combo.accessibleName(),
                 "Nível de esforço",

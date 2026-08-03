@@ -50,6 +50,14 @@ class Settings:
         return self.metadata_dir / "videos.csv"
 
     @property
+    def courses_json_path(self) -> Path:
+        return self.metadata_dir / "courses.json"
+
+    @property
+    def video_overrides_path(self) -> Path:
+        return self.metadata_dir / "video_module_overrides.json"
+
+    @property
     def downloads_dir(self) -> Path:
         return self.project_dir / "downloads"
 
@@ -141,4 +149,3 @@ def sensitive_values() -> Iterable[str]:
         value = os.environ.get(key)
         if value:
             yield value
-

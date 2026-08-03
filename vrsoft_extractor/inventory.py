@@ -13,6 +13,17 @@ CSV_FIELDS = [
     "area",
     "course",
     "module",
+    "folder_path",
+    "source_course_id",
+    "source_chapter_id",
+    "source_task_id",
+    "source_file_id",
+    "source_order",
+    "business_module",
+    "classification_confidence",
+    "classification_status",
+    "classification_reasons",
+    "classification_source",
     "lesson_title",
     "page_url",
     "media_url",
@@ -46,6 +57,10 @@ def save_inventory(items: Iterable[VideoItem], json_path: Path, csv_path: Path) 
         writer.writeheader()
         for item in item_list:
             row = item.to_dict()
+            row["folder_path"] = json.dumps(item.folder_path, ensure_ascii=False)
+            row["classification_reasons"] = json.dumps(
+                item.classification_reasons, ensure_ascii=False
+            )
             writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
 
 
@@ -56,13 +71,19 @@ def merge_inventory(existing: Iterable[VideoItem], discovered: Iterable[VideoIte
     for item in discovered:
         key = item.dedupe_key()
         previous = merged.get(key)
-        if previous and previous.status in {"downloaded", "skipped"}:
-            item.status = previous.status
-            item.local_path = previous.local_path
-            item.error = previous.error
+        if previous:
+            if previous.status in {"downloaded", "skipped"}:
+                item.status = previous.status
+                item.local_path = previous.local_path
+                item.error = previous.error
+            if previous.classification_source.startswith("manual"):
+                item.business_module = previous.business_module
+                item.classification_confidence = 1.0
+                item.classification_status = "approved"
+                item.classification_reasons = list(previous.classification_reasons)
+                item.classification_source = previous.classification_source
         merged[key] = item
     return sorted(
         merged.values(),
         key=lambda item: (item.area, item.course, item.module, item.lesson_title, item.media_url),
     )
-

@@ -11,8 +11,10 @@ com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
 - Classificação em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo e Revisar.
 - Catálogo determinístico de 169 produtos/equipes baseado em `produtos_filas.md`.
 - SQLite FTS5, `catalogo.jsonl` e `INDEX.md`.
-- Chat em streaming com Codex App Server e Claude Code, com esforço por conversa.
-- Conversas persistentes, clonagem de provedor, eventos de ferramentas e aprovações.
+- Chat em streaming com Codex App Server e Claude Code, com seletor pesquisável,
+  favoritos, esforço, service tier e modos Build/Plan por conversa.
+- Quatro perfis de aprovação, tools locais/MCP, correção ortográfica portuguesa,
+  ramificações por edição e conversas com arquivo e lixeira recuperável.
 - Extrator de vídeos Endoo integrado, sem transcrição.
 - Dashboard separado para Wiki, KB e Vídeos.
 - Central de Revisão com filtros combináveis, risco, paginação, histórico,
@@ -83,10 +85,14 @@ CLI da base:
 .\.venv\Scripts\vr-mary.exe status
 ```
 
-O classificador prioriza o produto mais específico encontrado no título,
-categoria ou campo de produto. Produtos híbridos, como `VRAdm` e `VRCaixa`,
-usam o contexto do artigo para desempate e permanecem em `Multimodulo` quando
-não há evidência suficiente. A auditoria é somente leitura.
+Quando a categoria informa explicitamente `FISCAL`, `PDV` ou a família
+`ADM`/`FINANCEIRO`/`ESTOQUE`, esse módulo prevalece sobre título, produto e
+conteúdo. Se uma categoria preenchida não informa um módulo de forma explícita
+e inequívoca, o item permanece em `Revisar`. Sem categoria, o classificador
+prioriza o produto mais específico encontrado no título ou campo de produto.
+Produtos híbridos, como `VRAdm` e `VRCaixa`, usam o contexto do artigo para
+desempate e permanecem em `Multimodulo` quando não há evidência suficiente. A
+auditoria é somente leitura.
 Use `--queue-review` para atualizar apenas as sugestões da tela Revisão,
 mantendo o módulo atual até a aprovação humana.
 
@@ -114,11 +120,23 @@ Os comandos antigos permanecem disponíveis:
 
 ## Codex e Claude
 
-- Codex usa `codex app-server`, JSON-RPC em stdio e o sandbox `workspaceWrite`.
+- Codex usa `codex app-server` e JSON-RPC em stdio. A criação da thread envia
+  os valores kebab-case `read-only`, `workspace-write` ou
+  `danger-full-access`; cada turno envia o `sandboxPolicy.type` correspondente
+  em camelCase (`readOnly`, `workspaceWrite` ou `dangerFullAccess`).
 - Claude usa `stream-json`, retoma por `session_id` e recebe permissões de escrita
   apenas para a pasta da conversa.
 - Cada conversa grava arquivos em `VR_Mary_V2\TrabalhoMary\<id>`.
-- O modelo e o nível de esforço ficam persistidos em cada conversa.
+- Modelo, esforço, tier, perfil de aprovação, modo e seleção de tools ficam
+  persistidos em cada conversa. `Auto` é o perfil padrão.
+- Tools locais executam sem shell, recebem JSON por `stdin` e devolvem
+  texto/JSON por `stdout`, com timeout e limite de 64 KiB. A seleção MCP é
+  aplicada somente à configuração da thread, sem alterar o `config.toml`.
+- O corretor é ortográfico, local e em português; ele não promete revisão
+  gramatical avançada. Palavras pessoais ficam na pasta de estado do Mary.
+- Alterar provedor/tools ou editar uma mensagem cria uma ramificação e mantém a
+  conversa original. Arquivar/restaurar sincroniza com o Codex; Claude usa
+  somente o estado local.
 - Use **Clonar para outro provedor** para transferir o contexto entre agentes.
 
 ## OCR

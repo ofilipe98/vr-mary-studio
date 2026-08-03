@@ -2,17 +2,19 @@
 from PyInstaller.utils.hooks import collect_all
 
 playwright_datas, playwright_binaries, playwright_hidden = collect_all("playwright")
+spellchecker_datas, spellchecker_binaries, spellchecker_hidden = collect_all("spellchecker")
 
 a = Analysis(
     ["VRMaryStudio.pyw"],
     pathex=[],
-    binaries=playwright_binaries,
-    datas=playwright_datas + [
+    binaries=playwright_binaries + spellchecker_binaries,
+    datas=playwright_datas + spellchecker_datas + [
         (".env.example", "."),
         ("README.md", "."),
         ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/assets", "vrsoft_extractor/mary/assets"),
     ],
-    hiddenimports=playwright_hidden + [
+    hiddenimports=playwright_hidden + spellchecker_hidden + [
         "pytesseract",
         "PIL.Image",
         "bs4",
@@ -43,6 +45,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="vrsoft_extractor/mary/assets/vrnorte-app.ico",
 )
 
 coll = COLLECT(

@@ -15,6 +15,18 @@ from .models import Classification
 ADM_MODULE = "ADM_FIN_ESTOQUE"
 MODULES = ("Fiscal", ADM_MODULE, "PDV")
 
+CATEGORY_MODULE_SEGMENTS = {
+    "fiscal": "Fiscal",
+    "pdv": "PDV",
+    "adm": ADM_MODULE,
+    "administrativo": ADM_MODULE,
+    "financeiro": ADM_MODULE,
+    "estoque": ADM_MODULE,
+    "adm fin estoque": ADM_MODULE,
+    "adm_fin_estoque": ADM_MODULE,
+    "adm financeiro estoque": ADM_MODULE,
+}
+
 
 KEYWORDS: dict[str, dict[str, float]] = {
     "Fiscal": {
@@ -248,6 +260,10 @@ def classify(
     catalog: tuple[ProductRule, ...] | None = None,
 ) -> Classification:
     catalog = load_product_catalog() if catalog is None else catalog
+    category_result = _classify_explicit_category(category)
+    if category_result is not None:
+        return category_result
+
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, list[str]] = defaultdict(list)
 
@@ -348,6 +364,46 @@ def classify(
             reasons[leader][:7],
         )
     return Classification(leader, confidence, status, reasons[leader][:7])
+
+
+def _classify_explicit_category(category: str) -> Classification | None:
+    if not (category or "").strip():
+        return None
+
+    explicit_modules: dict[str, list[str]] = defaultdict(list)
+    for raw_segment in re.split(r"[/|>]+", category):
+        segment = normalize_text(raw_segment)
+        module = CATEGORY_MODULE_SEGMENTS.get(segment)
+        if module and segment not in explicit_modules[module]:
+            explicit_modules[module].append(segment)
+
+    if not explicit_modules:
+        return Classification(
+            "Revisar",
+            0.35,
+            "pending",
+            ["categoria sem modulo explicito"],
+        )
+
+    if len(explicit_modules) > 1:
+        evidence = ", ".join(
+            f"{module}: {'/'.join(segments)}"
+            for module, segments in explicit_modules.items()
+        )
+        return Classification(
+            "Revisar",
+            0.35,
+            "pending",
+            [f"categoria com modulos conflitantes: {evidence}"],
+        )
+
+    module, segments = next(iter(explicit_modules.items()))
+    return Classification(
+        module,
+        0.98,
+        "approved",
+        [f"modulo explicito na categoria: {'/'.join(segments)} -> {module}"],
+    )
 
 
 def _score_product_field(

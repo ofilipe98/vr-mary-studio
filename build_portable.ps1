@@ -19,7 +19,7 @@ try {
 
     $ReleaseRoot = Join-Path $ProjectRoot "releases"
     New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-    $Archive = Join-Path $ReleaseRoot "VRMaryStudio-0.3.5-portable.zip"
+    $Archive = Join-Path $ReleaseRoot "VRMaryStudio-0.3.6-portable.zip"
     if (Test-Path -LiteralPath $Archive) {
         Remove-Item -LiteralPath $Archive -Force
     }

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse, urlunparse
 
 
 WINDOWS_RESERVED_NAMES = {
@@ -33,7 +34,8 @@ EMBED_HOST_PARTS = (
 
 
 def sanitize_filename(value: str, fallback: str = "sem-titulo", max_length: int = 120) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value or "")
+    cleaned = unicodedata.normalize("NFC", value or "")
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
     cleaned = re.sub(r"_+", "_", cleaned)
     if not cleaned:
@@ -41,6 +43,25 @@ def sanitize_filename(value: str, fallback: str = "sem-titulo", max_length: int 
     if cleaned.upper() in WINDOWS_RESERVED_NAMES:
         cleaned = f"{cleaned}_"
     return cleaned[:max_length].rstrip(" .") or fallback
+
+
+def media_stem(value: str) -> str:
+    """Return a display title without a media extension added by the source."""
+    normalized = unicodedata.normalize("NFC", value or "")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    suffix = Path(normalized).suffix.lower()
+    if suffix in {*MEDIA_EXTENSIONS, ".mkv", ".avi"}:
+        normalized = normalized[: -len(suffix)].rstrip(" .")
+    return normalized or "video"
+
+
+def resource_identity(url: str) -> str:
+    """Stable URL identity that ignores expiring query strings and fragments."""
+    clean, _fragment = urldefrag(url or "")
+    parsed = urlparse(clean)
+    if not parsed.scheme:
+        return clean.rstrip("/")
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, "", "", ""))
 
 
 def classify_media_url(url: str) -> str:
@@ -111,14 +132,28 @@ def looks_like_html_page(url: str) -> bool:
     return not path.endswith(blocked_ext)
 
 
-def output_base_path(downloads_dir: Path, area: str, course: str, module: str, title: str) -> Path:
+def output_base_path(
+    downloads_dir: Path,
+    area: str,
+    course: str,
+    module: str,
+    title: str,
+    *,
+    business_module: str = "",
+    folder_path: list[str] | tuple[str, ...] | None = None,
+) -> Path:
     area_dir = "Biblioteca" if area == "biblioteca" else "Cursos"
     parts = [downloads_dir, Path(area_dir)]
-    if area != "biblioteca":
-        parts.append(Path(sanitize_filename(course or "Curso")))
-    elif course:
-        parts.append(Path(sanitize_filename(course)))
-    if module:
-        parts.append(Path(sanitize_filename(module)))
+    if business_module:
+        parts.append(Path(sanitize_filename(business_module, "Revisar")))
+    hierarchy = [part for part in (folder_path or []) if str(part).strip()]
+    if not hierarchy:
+        if area != "biblioteca":
+            hierarchy.append(course or "Curso")
+        elif course:
+            hierarchy.append(course)
+        if module:
+            hierarchy.append(module)
+    parts.extend(Path(sanitize_filename(str(part))) for part in hierarchy)
     directory = Path(*parts)
-    return directory / sanitize_filename(title or "video")
+    return directory / sanitize_filename(media_stem(title))

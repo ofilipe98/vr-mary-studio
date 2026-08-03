@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .chat_tools import validate_tool_definition
 from .models import (
     KnowledgeDocument,
     ReviewFilters,
@@ -125,6 +126,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     workspace TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle',
     archived INTEGER NOT NULL DEFAULT 0,
+    service_tier TEXT NOT NULL DEFAULT '',
+    approval_profile TEXT NOT NULL DEFAULT 'auto',
+    collaboration_mode TEXT NOT NULL DEFAULT 'default',
+    trashed_at TEXT NOT NULL DEFAULT '',
+    original_workspace TEXT NOT NULL DEFAULT '',
     cloned_from TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -136,6 +142,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     provider_message_id TEXT NOT NULL DEFAULT '',
+    turn_id TEXT NOT NULL DEFAULT '',
+    edited_from_message_id INTEGER,
     created_at TEXT NOT NULL
 );
 
@@ -155,6 +163,29 @@ CREATE TABLE IF NOT EXISTS approvals (
     decision TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     decided_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS tool_definitions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    input_schema_json TEXT NOT NULL DEFAULT '{}',
+    executable TEXT NOT NULL,
+    arguments_json TEXT NOT NULL DEFAULT '[]',
+    timeout_seconds INTEGER NOT NULL DEFAULT 60,
+    safety TEXT NOT NULL DEFAULT 'side_effecting',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_tools (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    tool_kind TEXT NOT NULL,
+    tool_id TEXT NOT NULL DEFAULT '',
+    server_name TEXT NOT NULL DEFAULT '',
+    tool_name TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(conversation_id,tool_kind,tool_id,server_name,tool_name)
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -214,6 +245,19 @@ class MaryDatabase:
                 "effort",
                 "TEXT NOT NULL DEFAULT 'medium'",
             )
+            for column, definition in (
+                ("service_tier", "TEXT NOT NULL DEFAULT ''"),
+                ("approval_profile", "TEXT NOT NULL DEFAULT 'auto_edits'"),
+                ("collaboration_mode", "TEXT NOT NULL DEFAULT 'default'"),
+                ("trashed_at", "TEXT NOT NULL DEFAULT ''"),
+                ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                self._ensure_column(connection, "conversations", column, definition)
+            for column, definition in (
+                ("turn_id", "TEXT NOT NULL DEFAULT ''"),
+                ("edited_from_message_id", "INTEGER"),
+            ):
+                self._ensure_column(connection, "messages", column, definition)
             for column, definition in (
                 ("decision_note", "TEXT NOT NULL DEFAULT ''"),
                 ("queued_at", "TEXT NOT NULL DEFAULT ''"),
@@ -299,6 +343,7 @@ class MaryDatabase:
     def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         try:
             yield connection
             connection.commit()
@@ -822,20 +867,27 @@ class MaryDatabase:
         workspace: Path,
         cloned_from: str = "",
         effort: str = "medium",
+        service_tier: str = "",
+        approval_profile: str = "auto",
+        collaboration_mode: str = "default",
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO conversations
-                   (id,title,provider,model,effort,workspace,cloned_from,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                   (id,title,provider,model,effort,service_tier,approval_profile,
+                    collaboration_mode,workspace,cloned_from,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
                     provider,
                     model,
                     effort,
+                    service_tier,
+                    approval_profile,
+                    collaboration_mode,
                     str(workspace),
                     cloned_from,
                     now,
@@ -844,12 +896,28 @@ class MaryDatabase:
             )
         return conversation_id
 
-    def list_conversations(self, include_archived: bool = False) -> list[sqlite3.Row]:
+    def list_conversations(
+        self, include_archived: bool = False, state: str = "active"
+    ) -> list[sqlite3.Row]:
         with self.connect() as connection:
+            if state == "trash":
+                where = "trashed_at<>''"
+                params: tuple[Any, ...] = ()
+            elif include_archived:
+                where = "trashed_at=''"
+                params = ()
+            elif state == "archived":
+                where = "archived=1 AND trashed_at=''"
+                params = ()
+            elif state == "all":
+                where = "trashed_at=''"
+                params = ()
+            else:
+                where = "archived=0 AND trashed_at=''"
+                params = ()
             return connection.execute(
-                """SELECT * FROM conversations WHERE archived IN (0,?)
-                   ORDER BY updated_at DESC""",
-                (1 if include_archived else 0,),
+                f"SELECT * FROM conversations WHERE {where} ORDER BY updated_at DESC",
+                params,
             ).fetchall()
 
     def get_conversation(self, conversation_id: str) -> sqlite3.Row | None:
@@ -859,7 +927,11 @@ class MaryDatabase:
             ).fetchone()
 
     def update_conversation(self, conversation_id: str, **fields: Any) -> None:
-        allowed = {"title", "model", "effort", "native_id", "status", "archived"}
+        allowed = {
+            "title", "model", "effort", "native_id", "status", "archived",
+            "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
+            "workspace", "original_workspace",
+        }
         values = {key: value for key, value in fields.items() if key in allowed}
         if not values:
             return
@@ -871,12 +943,27 @@ class MaryDatabase:
                 [*values.values(), conversation_id],
             )
 
-    def add_message(self, conversation_id: str, role: str, content: str) -> int:
+    def add_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        turn_id: str = "",
+        edited_from_message_id: int | None = None,
+    ) -> int:
         with self.connect() as connection:
             cursor = connection.execute(
-                """INSERT INTO messages(conversation_id,role,content,created_at)
-                   VALUES(?,?,?,?)""",
-                (conversation_id, role, content, utc_now()),
+                """INSERT INTO messages
+                   (conversation_id,role,content,turn_id,edited_from_message_id,created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (
+                    conversation_id,
+                    role,
+                    content,
+                    turn_id,
+                    edited_from_message_id,
+                    utc_now(),
+                ),
             )
             connection.execute(
                 "UPDATE conversations SET updated_at=? WHERE id=?",
@@ -890,6 +977,183 @@ class MaryDatabase:
                 "SELECT * FROM messages WHERE conversation_id=? ORDER BY id",
                 (conversation_id,),
             ).fetchall()
+
+    def update_message_turn(self, message_id: int, turn_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE messages SET turn_id=? WHERE id=?", (turn_id, message_id)
+            )
+
+    def messages_through(self, conversation_id: str, message_id: int) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """SELECT * FROM messages
+                   WHERE conversation_id=? AND id<=? ORDER BY id""",
+                (conversation_id, message_id),
+            ).fetchall()
+
+    def save_approval(self, approval_id: str, conversation_id: str, request: dict[str, Any]) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO approvals
+                   (id,conversation_id,request_json,decision,created_at,decided_at)
+                   VALUES(?,?,?,'',?,'')""",
+                (approval_id, conversation_id, json.dumps(request, ensure_ascii=False), utc_now()),
+            )
+
+    def decide_approval(self, approval_id: str, decision: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE approvals SET decision=?,decided_at=? WHERE id=?",
+                (decision, utc_now(), approval_id),
+            )
+
+    def create_tool(
+        self,
+        name: str,
+        description: str,
+        input_schema: dict[str, Any],
+        executable: str,
+        arguments: list[str] | None = None,
+        timeout_seconds: int = 60,
+        safety: str = "side_effecting",
+        tool_id: str = "",
+    ) -> str:
+        validate_tool_definition(
+            name, description, input_schema, executable, arguments or []
+        )
+        identifier = tool_id or uuid.uuid4().hex
+        now = utc_now()
+        timeout = min(300, max(1, int(timeout_seconds)))
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO tool_definitions
+                   (id,name,description,input_schema_json,executable,arguments_json,
+                    timeout_seconds,safety,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    identifier, name, description,
+                    json.dumps(input_schema, ensure_ascii=False), executable,
+                    json.dumps(arguments or [], ensure_ascii=False), timeout,
+                    safety if safety in {"read_only", "side_effecting"} else "side_effecting",
+                    now, now,
+                ),
+            )
+        return identifier
+
+    def update_tool(self, tool_id: str, **fields: Any) -> None:
+        current = next(
+            (tool for tool in self.list_tools() if str(tool["id"]) == str(tool_id)),
+            None,
+        )
+        if not current:
+            raise KeyError(tool_id)
+        candidate = {**current, **fields}
+        validate_tool_definition(
+            str(candidate["name"]),
+            str(candidate["description"]),
+            candidate["input_schema"],
+            str(candidate["executable"]),
+            list(candidate["arguments"]),
+        )
+        mapping = {
+            "name": "name", "description": "description", "executable": "executable",
+            "timeout_seconds": "timeout_seconds", "safety": "safety", "enabled": "enabled",
+            "input_schema": "input_schema_json", "arguments": "arguments_json",
+        }
+        values: dict[str, Any] = {}
+        for key, column in mapping.items():
+            if key not in fields:
+                continue
+            value = fields[key]
+            if key in {"input_schema", "arguments"}:
+                value = json.dumps(value, ensure_ascii=False)
+            elif key == "timeout_seconds":
+                value = min(300, max(1, int(value)))
+            elif key == "safety" and value not in {"read_only", "side_effecting"}:
+                value = "side_effecting"
+            values[column] = value
+        if not values:
+            return
+        values["updated_at"] = utc_now()
+        columns = ",".join(f"{column}=?" for column in values)
+        with self.connect() as connection:
+            connection.execute(
+                f"UPDATE tool_definitions SET {columns} WHERE id=?",
+                [*values.values(), tool_id],
+            )
+
+    def delete_tool(self, tool_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM conversation_tools WHERE tool_kind='dynamic' AND tool_id=?",
+                (tool_id,),
+            )
+            connection.execute("DELETE FROM tool_definitions WHERE id=?", (tool_id,))
+
+    def list_tools(self, enabled_only: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM tool_definitions"
+        if enabled_only:
+            sql += " WHERE enabled=1"
+        sql += " ORDER BY name COLLATE NOCASE"
+        with self.connect() as connection:
+            rows = connection.execute(sql).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["input_schema"] = json.loads(item.pop("input_schema_json") or "{}")
+            item["arguments"] = json.loads(item.pop("arguments_json") or "[]")
+            result.append(item)
+        return result
+
+    def set_conversation_tools(
+        self,
+        conversation_id: str,
+        dynamic_ids: list[str],
+        mcp_tools: list[dict[str, str]],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM conversation_tools WHERE conversation_id=?", (conversation_id,)
+            )
+            connection.executemany(
+                """INSERT INTO conversation_tools
+                   (conversation_id,tool_kind,tool_id) VALUES(?,'dynamic',?)""",
+                [(conversation_id, tool_id) for tool_id in dict.fromkeys(dynamic_ids)],
+            )
+            connection.executemany(
+                """INSERT INTO conversation_tools
+                   (conversation_id,tool_kind,server_name,tool_name)
+                   VALUES(?,'mcp',?,?)""",
+                [
+                    (conversation_id, item.get("server", ""), item.get("tool", ""))
+                    for item in mcp_tools
+                    if item.get("server") and item.get("tool")
+                ],
+            )
+
+    def conversation_tools(self, conversation_id: str) -> dict[str, list[Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM conversation_tools WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchall()
+        return {
+            "dynamic": [str(row["tool_id"]) for row in rows if row["tool_kind"] == "dynamic"],
+            "mcp": [
+                {"server": str(row["server_name"]), "tool": str(row["tool_name"])}
+                for row in rows if row["tool_kind"] == "mcp"
+            ],
+        }
+
+    def purge_conversation(self, conversation_id: str) -> None:
+        with self.connect() as connection:
+            for table in (
+                "source_citations", "artifacts", "approvals", "runtime_events",
+                "conversation_tools", "messages",
+            ):
+                connection.execute(f"DELETE FROM {table} WHERE conversation_id=?", (conversation_id,))
+            connection.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
 
     def add_event(self, event: RuntimeEvent) -> int:
         with self.connect() as connection:

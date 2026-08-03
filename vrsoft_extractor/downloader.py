@@ -90,6 +90,8 @@ def _download_one(item: VideoItem, settings: Settings, redownload: bool) -> Vide
         item.course,
         item.module,
         item.lesson_title,
+        business_module=item.business_module or "Revisar",
+        folder_path=item.folder_path,
     )
     target_base.parent.mkdir(parents=True, exist_ok=True)
 
@@ -170,3 +172,62 @@ def _extract_downloaded_path(info: dict | None, ydl) -> Path | None:
 def _looks_protected(message: str) -> bool:
     lower = message.lower()
     return any(term in lower for term in PROTECTED_ERROR_TERMS)
+
+
+def organize_downloads(settings: Settings) -> dict[str, int]:
+    """Move known downloads into the classified hierarchy without overwriting."""
+    items = load_inventory(settings.inventory_json_path)
+    downloads_root = settings.downloads_dir.resolve()
+    moved = 0
+    collisions = 0
+    missing = 0
+    unchanged = 0
+    for item in items:
+        if item.status not in {"downloaded", "skipped"} or not item.local_path:
+            continue
+        source = Path(item.local_path)
+        if not source.is_absolute():
+            source = settings.project_dir / source
+        try:
+            source = source.resolve()
+        except OSError:
+            missing += 1
+            continue
+        if not source.exists() or not source.is_file():
+            missing += 1
+            continue
+        if not source.is_relative_to(downloads_root):
+            LOGGER.warning("Arquivo fora de downloads preservado: %s", source)
+            unchanged += 1
+            continue
+        target_base = output_base_path(
+            settings.downloads_dir,
+            item.area,
+            item.course,
+            item.module,
+            item.lesson_title,
+            business_module=item.business_module or "Revisar",
+            folder_path=item.folder_path,
+        )
+        target = target_base.with_suffix(source.suffix).resolve()
+        if not target.is_relative_to(downloads_root):
+            LOGGER.warning("Destino inseguro rejeitado: %s", target)
+            unchanged += 1
+            continue
+        if target == source:
+            unchanged += 1
+            continue
+        if target.exists():
+            collisions += 1
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(target)
+        item.local_path = str(target)
+        moved += 1
+    save_inventory(items, settings.inventory_json_path, settings.inventory_csv_path)
+    return {
+        "moved": moved,
+        "collisions": collisions,
+        "missing": missing,
+        "unchanged": unchanged,
+    }

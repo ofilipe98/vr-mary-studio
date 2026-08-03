@@ -12,6 +12,7 @@ from .inventory import load_inventory, merge_inventory, save_inventory
 from .models import VideoItem
 from .runtime import configure_playwright_runtime
 from .settings import ConfigError, Settings, ensure_runtime_dirs, sensitive_values
+from .video_classification import classify_inventory
 from .utils import (
     absolutize_url,
     classify_media_url,
@@ -207,6 +208,7 @@ def scan(
 
     existing = load_inventory(settings.inventory_json_path)
     merged = merge_inventory(existing, discovered)
+    classify_inventory(merged, settings.video_overrides_path)
     save_inventory(merged, settings.inventory_json_path, settings.inventory_csv_path)
     LOGGER.info("Inventario salvo com %s videos", len(merged))
     return merged
@@ -287,7 +289,9 @@ def _crawl_files_api(page, recorder: MediaRecorder, settings: Settings) -> list[
             continue
         seen_folders.add(folder_id)
         data = _api_get_json(page, recorder, f"{API_BASE_URL}/files/files/{folder_id}")
-        for item in data.get("files", []) if isinstance(data, dict) else []:
+        for item_order, item in enumerate(
+            data.get("files", []) if isinstance(data, dict) else [], start=1
+        ):
             name = str(item.get("name") or item.get("file_name") or item.get("id") or "item")
             item_path = [*folder_path, name]
             if item.get("type") == "folder":
@@ -303,6 +307,9 @@ def _crawl_files_api(page, recorder: MediaRecorder, settings: Settings) -> list[
                         area="biblioteca",
                         course=item_path[0] if len(item_path) > 1 else "",
                         module=" / ".join(item_path[1:-1]),
+                        folder_path=item_path[:-1],
+                        source_file_id=str(item.get("id") or ""),
+                        source_order=item_order,
                         lesson_title=name,
                         page_url=f"{settings.base_url}/arquivos#file-{item.get('id', '')}",
                         media_url=media_url,
@@ -317,6 +324,7 @@ def _crawl_files_api(page, recorder: MediaRecorder, settings: Settings) -> list[
 
 def _crawl_courses_api(page, recorder: MediaRecorder, settings: Settings) -> list[VideoItem]:
     found: list[VideoItem] = []
+    catalog_items = []
     page_index = 0
     visited_courses = 0
 
@@ -338,6 +346,19 @@ def _crawl_courses_api(page, recorder: MediaRecorder, settings: Settings) -> lis
             participant_id = participant.get("id")
             course_id = course.get("id")
             if not participant_id or not course_id:
+                from .courses import course_from_payload
+
+                detail = _api_get_json(
+                    page,
+                    recorder,
+                    f"{API_BASE_URL}/courses/{course_id}/0",
+                )
+                catalog_items.append(
+                    course_from_payload(
+                        course,
+                        detail if isinstance(detail, dict) else course,
+                    )
+                )
                 LOGGER.info(
                     "[Cursos] Ignorando curso sem inscricao ativa: %s",
                     course.get("name") or course_id,
@@ -349,6 +370,14 @@ def _crawl_courses_api(page, recorder: MediaRecorder, settings: Settings) -> lis
                 page,
                 recorder,
                 f"{API_BASE_URL}/courses/{course_id}/{participant_id}",
+            )
+            from .courses import course_from_payload
+
+            catalog_items.append(
+                course_from_payload(
+                    course,
+                    course_detail if isinstance(course_detail, dict) else course,
+                )
             )
             found.extend(
                 _videos_from_course_detail(
@@ -366,6 +395,13 @@ def _crawl_courses_api(page, recorder: MediaRecorder, settings: Settings) -> lis
     LOGGER.info("[Cursos] Paginas API de cursos visitadas: %s", page_index)
     LOGGER.info("[Cursos] Cursos inscritos processados: %s", visited_courses)
     LOGGER.info("[Cursos] Videos API encontrados: %s", len(found))
+    if catalog_items:
+        from .courses import save_course_catalog
+
+        save_course_catalog(
+            sorted(catalog_items, key=lambda item: item.name.casefold()),
+            settings.courses_json_path,
+        )
     return found
 
 
@@ -384,9 +420,9 @@ def _videos_from_course_detail(
     if not course_id:
         return found
 
-    for chapter in course.get("chapters", []) or []:
+    for chapter_order, chapter in enumerate(course.get("chapters", []) or [], start=1):
         chapter_name = str(chapter.get("name") or "")
-        for task in chapter.get("tasks", []) or []:
+        for task_order, task in enumerate(chapter.get("tasks", []) or [], start=1):
             if task.get("enabled") in (False, 0):
                 continue
             task_id = task.get("id")
@@ -419,6 +455,11 @@ def _videos_from_course_detail(
                         area="curso",
                         course=course_name,
                         module=chapter_name,
+                        folder_path=[value for value in (course_name, chapter_name) if value],
+                        source_course_id=str(course_id),
+                        source_chapter_id=str(chapter.get("id") or ""),
+                        source_task_id=str(task_id),
+                        source_order=(chapter_order * 10000) + task_order,
                         lesson_title=title,
                         page_url=route_url,
                         media_url=media_url,

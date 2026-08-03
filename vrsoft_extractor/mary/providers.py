@@ -12,7 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import RuntimeEvent
+from .chat_tools import mcp_thread_config
+from .models import ConversationOptions, RuntimeEvent, approval_preset
 
 
 EventCallback = Callable[[RuntimeEvent], None]
@@ -33,7 +34,12 @@ class AgentProvider(abc.ABC):
 
     @abc.abstractmethod
     def start_conversation(
-        self, conversation_id: str, model: str, effort: str, workspace: Path
+        self,
+        conversation_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str: ...
 
     @abc.abstractmethod
@@ -44,6 +50,7 @@ class AgentProvider(abc.ABC):
         model: str,
         effort: str,
         workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str: ...
 
     @abc.abstractmethod
@@ -56,13 +63,53 @@ class AgentProvider(abc.ABC):
         workspace: Path,
         message: str,
         callback: EventCallback,
+        options: ConversationOptions | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
     def interrupt(self, conversation_id: str) -> None: ...
 
     @abc.abstractmethod
-    def approve_action(self, request_id: str, approved: bool, session: bool = False) -> None: ...
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def list_collaboration_modes(self) -> list[dict[str, Any]]:
+        return [
+            {"name": "Build", "mode": "default"},
+            {"name": "Plan", "mode": "plan"},
+        ]
+
+    def list_mcp_tools(self) -> list[dict[str, Any]]:
+        return []
+
+    def update_settings(
+        self, conversation_id: str, native_id: str, workspace: Path, options: ConversationOptions
+    ) -> None:
+        return None
+
+    def archive_thread(self, native_id: str) -> None:
+        return None
+
+    def unarchive_thread(self, native_id: str) -> None:
+        return None
+
+    def delete_thread(self, native_id: str) -> None:
+        return None
+
+    def fork_thread(
+        self,
+        conversation_id: str,
+        native_id: str,
+        last_turn_id: str,
+        workspace: Path,
+        options: ConversationOptions,
+    ) -> str:
+        return ""
 
     @abc.abstractmethod
     def close(self) -> None: ...
@@ -83,6 +130,8 @@ class CodexProvider(AgentProvider):
         self._active_turns: dict[str, str] = {}
         self._lock = threading.Lock()
         self._stderr_lines: deque[str] = deque(maxlen=30)
+        self._known_mcp_servers: list[str] = []
+        self._mcp_server_configs: dict[str, dict[str, Any]] = {}
 
     def available(self) -> bool:
         return bool(self.command)
@@ -116,7 +165,7 @@ class CodexProvider(AgentProvider):
                 "clientInfo": {
                     "name": "vr_mary_studio",
                     "title": "VR Mary Studio",
-                    "version": "0.3.5",
+                    "version": "0.3.6",
                 },
                 "capabilities": {"experimentalApi": True},
             },
@@ -206,12 +255,22 @@ class CodexProvider(AgentProvider):
             "item/commandExecution/requestApproval",
             "item/fileChange/requestApproval",
             "item/permissions/requestApproval",
+            "mcpServer/elicitation/request",
         }:
             callback(
                 RuntimeEvent(
                     conversation_id,
                     "approval_requested",
                     str(params.get("reason") or params.get("command") or method),
+                    {"request_id": str(message.get("id")), "method": method, **params},
+                )
+            )
+        elif method == "item/tool/call":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "dynamic_tool_requested",
+                    str(params.get("tool") or "tool"),
                     {"request_id": str(message.get("id")), "method": method, **params},
                 )
             )
@@ -235,23 +294,111 @@ class CodexProvider(AgentProvider):
         self._ensure_started()
         return list(self._rpc("model/list", {"limit": 100, "includeHidden": False}).get("data", []))
 
+    def list_collaboration_modes(self) -> list[dict[str, Any]]:
+        self._ensure_started()
+        try:
+            data = list(self._rpc("collaborationMode/list", {}).get("data", []))
+        except ProviderError:
+            return super().list_collaboration_modes()
+        result = []
+        for item in data:
+            mode = str(item.get("mode") or "")
+            if mode in {"default", "plan"}:
+                result.append({**item, "name": "Build" if mode == "default" else "Plan"})
+        return result or super().list_collaboration_modes()
+
+    def _load_mcp_server_configs(self) -> None:
+        try:
+            config_result = self._rpc("config/read", {"includeLayers": False})
+            effective = config_result.get("config") or {}
+            raw_configs = effective.get("mcp_servers") or {}
+            self._mcp_server_configs = {
+                str(name): dict(value)
+                for name, value in raw_configs.items()
+                if isinstance(value, dict)
+            }
+            self._known_mcp_servers = list(
+                dict.fromkeys([*self._known_mcp_servers, *self._mcp_server_configs])
+            )
+        except ProviderError:
+            self._mcp_server_configs = {}
+
+    def list_mcp_tools(self) -> list[dict[str, Any]]:
+        self._ensure_started()
+        self._load_mcp_server_configs()
+        result = self._rpc(
+            "mcpServerStatus/list",
+            {"limit": 100, "detail": "toolsAndAuthOnly"},
+        )
+        flattened: list[dict[str, Any]] = []
+        self._known_mcp_servers = []
+        for server in result.get("data", []):
+            server_name = str(server.get("name") or "")
+            if not server_name:
+                continue
+            self._known_mcp_servers.append(server_name)
+            raw_tools = server.get("tools") or {}
+            iterable = raw_tools.values() if isinstance(raw_tools, dict) else raw_tools
+            server_info = server.get("serverInfo") or {}
+            server_description = str(server_info.get("description") or "")
+            tool_count = 0
+            for tool in iterable:
+                tool_count += 1
+                flattened.append(
+                    {
+                        "server": server_name,
+                        "tool": str(tool.get("name") or ""),
+                        "description": str(tool.get("description") or ""),
+                        "authStatus": server.get("authStatus"),
+                        "serverDescription": server_description,
+                        "configurable": server_name in self._mcp_server_configs,
+                    }
+                )
+            if not tool_count:
+                flattened.append(
+                    {
+                        "server": server_name,
+                        "tool": "",
+                        "description": "Nenhuma tool anunciada pelo servidor.",
+                        "authStatus": server.get("authStatus"),
+                        "serverDescription": server_description,
+                        "configurable": server_name in self._mcp_server_configs,
+                    }
+                )
+        return flattened
+
     def start_conversation(
         self,
         conversation_id: str,
         model: str,
         effort: str,
         workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str:
         self._ensure_started()
+        self._load_mcp_server_configs()
+        options = options or ConversationOptions(model=model, effort=effort)
+        preset = approval_preset(options.approval_profile)
+        params: dict[str, Any] = {
+            "model": options.model or model or None,
+            "cwd": str(workspace),
+            "approvalPolicy": preset.approval_policy,
+            "approvalsReviewer": preset.reviewer,
+            "sandbox": preset.sandbox,
+            "serviceName": "vr_mary_studio",
+        }
+        if options.service_tier:
+            params["serviceTier"] = options.service_tier
+        if options.dynamic_tools:
+            params["dynamicTools"] = list(options.dynamic_tools)
+        config = mcp_thread_config(
+            list(options.mcp_tools), self._known_mcp_servers, self._mcp_server_configs
+        )
+        if config:
+            params["config"] = config
         result = self._rpc(
             "thread/start",
-            {
-                "model": model or None,
-                "cwd": str(workspace),
-                "approvalPolicy": "on-request",
-                "sandbox": "workspaceWrite",
-                "serviceName": "vr_mary_studio",
-            },
+            params,
         )
         native_id = str((result.get("thread") or {}).get("id", ""))
         if not native_id:
@@ -266,11 +413,30 @@ class CodexProvider(AgentProvider):
         model: str,
         effort: str,
         workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str:
         self._ensure_started()
+        self._load_mcp_server_configs()
+        options = options or ConversationOptions(model=model, effort=effort)
+        preset = approval_preset(options.approval_profile)
+        params: dict[str, Any] = {
+            "threadId": native_id,
+            "model": options.model or model or None,
+            "cwd": str(workspace),
+            "approvalPolicy": preset.approval_policy,
+            "approvalsReviewer": preset.reviewer,
+            "sandbox": preset.sandbox,
+        }
+        if options.service_tier:
+            params["serviceTier"] = options.service_tier
+        config = mcp_thread_config(
+            list(options.mcp_tools), self._known_mcp_servers, self._mcp_server_configs
+        )
+        if config:
+            params["config"] = config
         result = self._rpc(
             "thread/resume",
-            {"threadId": native_id, "model": model or None, "cwd": str(workspace)},
+            params,
         )
         resumed_id = str((result.get("thread") or {}).get("id", native_id))
         self._native_to_local[resumed_id] = conversation_id
@@ -285,30 +451,45 @@ class CodexProvider(AgentProvider):
         workspace: Path,
         message: str,
         callback: EventCallback,
+        options: ConversationOptions | None = None,
     ) -> None:
         self._ensure_started()
+        options = options or ConversationOptions(model=model, effort=effort)
         if native_id not in self._native_to_local:
             native_id = self.resume_conversation(
-                conversation_id, native_id, model, effort, workspace
+                conversation_id, native_id, model, effort, workspace, options
             )
         self._callbacks[conversation_id] = callback
         self._native_to_local[native_id] = conversation_id
-        self._rpc(
-            "turn/start",
-            {
-                "threadId": native_id,
-                "input": [{"type": "text", "text": message}],
-                "cwd": str(workspace),
-                "model": model or None,
-                "effort": normalize_effort(effort),
-                "approvalPolicy": "on-request",
-                "sandboxPolicy": {
-                    "type": "workspaceWrite",
-                    "writableRoots": [str(workspace)],
-                    "networkAccess": False,
+        preset = approval_preset(options.approval_profile)
+        sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
+        if preset.sandbox_policy_type == "workspaceWrite":
+            sandbox_policy.update(
+                {"writableRoots": [str(workspace)], "networkAccess": False}
+            )
+        selected_model = options.model or model
+        params: dict[str, Any] = {
+            "threadId": native_id,
+            "input": [{"type": "text", "text": message}],
+            "cwd": str(workspace),
+            "model": selected_model or None,
+            "effort": normalize_effort(options.effort or effort),
+            "approvalPolicy": preset.approval_policy,
+            "approvalsReviewer": preset.reviewer,
+            "sandboxPolicy": sandbox_policy,
+        }
+        if selected_model:
+            params["collaborationMode"] = {
+                "mode": "plan" if options.collaboration_mode == "plan" else "default",
+                "settings": {
+                    "model": selected_model,
+                    "reasoning_effort": normalize_effort(options.effort or effort),
+                    "developer_instructions": None,
                 },
-            },
-        )
+            }
+        if options.service_tier:
+            params["serviceTier"] = options.service_tier
+        self._rpc("turn/start", params)
 
     def interrupt(self, conversation_id: str) -> None:
         native_id = next(
@@ -319,13 +500,142 @@ class CodexProvider(AgentProvider):
         if native_id and turn_id:
             self._rpc("turn/interrupt", {"threadId": native_id, "turnId": turn_id})
 
-    def approve_action(self, request_id: str, approved: bool, session: bool = False) -> None:
-        decision = "acceptForSession" if approved and session else "accept" if approved else "decline"
-        self._send({"id": int(request_id), "result": {"decision": decision}})
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
+        request = request or {}
+        method = str(request.get("method") or "")
+        if method == "item/permissions/requestApproval":
+            requested = request.get("permissions") or request.get("requestedPermissions") or []
+            result = {
+                "permissions": requested if approved else {},
+                "scope": "session" if approved and session else "turn",
+            }
+        elif method == "mcpServer/elicitation/request":
+            action = str(request.get("_decision") or ("accept" if approved else "decline"))
+            if action not in {"accept", "decline", "cancel"}:
+                action = "decline"
+            result = {
+                "action": action,
+                "content": request.get("content") if action == "accept" else None,
+            }
+        else:
+            decision = (
+                "acceptForSession" if approved and session else "accept" if approved else "decline"
+            )
+            result = {"decision": decision}
+        self._send({"id": int(request_id), "result": result})
+
+    def respond_dynamic_tool(
+        self,
+        request_id: str,
+        content_items: list[dict[str, Any]],
+        success: bool = True,
+    ) -> None:
+        self._send(
+            {
+                "id": int(request_id),
+                "result": {"contentItems": content_items, "success": success},
+            }
+        )
+
+    def update_settings(
+        self,
+        conversation_id: str,
+        native_id: str,
+        workspace: Path,
+        options: ConversationOptions,
+    ) -> None:
+        if not native_id:
+            return
+        self._ensure_started()
+        preset = approval_preset(options.approval_profile)
+        sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
+        if preset.sandbox_policy_type == "workspaceWrite":
+            sandbox_policy.update(
+                {"writableRoots": [str(workspace)], "networkAccess": False}
+            )
+        selected_model = options.model
+        params: dict[str, Any] = {
+                "threadId": native_id,
+                "model": selected_model or None,
+                "effort": normalize_effort(options.effort),
+                "serviceTier": options.service_tier or None,
+                "approvalPolicy": preset.approval_policy,
+                "approvalsReviewer": preset.reviewer,
+                "sandboxPolicy": sandbox_policy,
+        }
+        if selected_model:
+            params["collaborationMode"] = {
+                    "mode": "plan" if options.collaboration_mode == "plan" else "default",
+                    "settings": {
+                        "model": selected_model,
+                        "reasoning_effort": normalize_effort(options.effort),
+                        "developer_instructions": None,
+                    },
+                }
+        try:
+            self._rpc("thread/settings/update", params)
+        except ProviderError as exc:
+            message = str(exc).casefold()
+            if "method" not in message and "not found" not in message and "unknown" not in message:
+                raise
+
+    def archive_thread(self, native_id: str) -> None:
+        if native_id:
+            self._ensure_started()
+            self._rpc("thread/archive", {"threadId": native_id})
+
+    def unarchive_thread(self, native_id: str) -> None:
+        if native_id:
+            self._ensure_started()
+            self._rpc("thread/unarchive", {"threadId": native_id})
+
+    def delete_thread(self, native_id: str) -> None:
+        if native_id:
+            self._ensure_started()
+            self._rpc("thread/delete", {"threadId": native_id})
+
+    def fork_thread(
+        self,
+        conversation_id: str,
+        native_id: str,
+        last_turn_id: str,
+        workspace: Path,
+        options: ConversationOptions,
+    ) -> str:
+        if not native_id or not last_turn_id:
+            return ""
+        self._ensure_started()
+        preset = approval_preset(options.approval_profile)
+        params: dict[str, Any] = {
+            "threadId": native_id,
+            "lastTurnId": last_turn_id,
+            "cwd": str(workspace),
+            "model": options.model or None,
+            "approvalPolicy": preset.approval_policy,
+            "approvalsReviewer": preset.reviewer,
+            "sandbox": preset.sandbox,
+            "serviceTier": options.service_tier or None,
+        }
+        result = self._rpc("thread/fork", params)
+        forked_id = str((result.get("thread") or {}).get("id") or "")
+        if forked_id:
+            self._native_to_local[forked_id] = conversation_id
+        return forked_id
 
     def close(self) -> None:
         if self.process and self.process.poll() is None:
             self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
         self.process = None
 
 
@@ -358,6 +668,7 @@ class ClaudeProvider(AgentProvider):
         model: str,
         effort: str,
         workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str:
         session_id = str(uuid.uuid4())
         self._new_sessions.add(session_id)
@@ -370,6 +681,7 @@ class ClaudeProvider(AgentProvider):
         model: str,
         effort: str,
         workspace: Path,
+        options: ConversationOptions | None = None,
     ) -> str:
         return native_id
 
@@ -382,6 +694,7 @@ class ClaudeProvider(AgentProvider):
         workspace: Path,
         message: str,
         callback: EventCallback,
+        options: ConversationOptions | None = None,
     ) -> None:
         if not self.command:
             raise ProviderError("Claude não foi encontrado no PATH.")
@@ -492,7 +805,13 @@ class ClaudeProvider(AgentProvider):
         if process and process.poll() is None:
             process.terminate()
 
-    def approve_action(self, request_id: str, approved: bool, session: bool = False) -> None:
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
         raise ProviderError("Aprovação interativa não é exposta pelo modo headless do Claude.")
 
     def close(self) -> None:

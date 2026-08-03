@@ -1,6 +1,6 @@
 #define MyAppName "VR Mary Studio"
-#define MyAppVersion "0.3.5"
-#define MyAppPublisher "VR Soft"
+#define MyAppVersion "0.3.6"
+#define MyAppPublisher "VRNorte"
 #define MyAppExeName "VRMaryStudio.exe"
 
 [Setup]
@@ -11,10 +11,12 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\VR Mary Studio
 DefaultGroupName=VR Mary Studio
 OutputDir=..\releases
-OutputBaseFilename=VRMaryStudio-0.3.5-setup
+OutputBaseFilename=VRMaryStudio-0.3.6-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\vrsoft_extractor\mary\assets\vrnorte-app.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest

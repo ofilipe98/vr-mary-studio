@@ -5,10 +5,13 @@ import logging
 import sys
 
 from .auth import login
+from .courses import enroll_courses, parse_course_selections, refresh_courses
 from .downloader import download_inventory
+from .inventory import load_inventory, save_inventory
 from .logging_utils import setup_logging
 from .scanner import scan
 from .settings import ConfigError, load_settings, sensitive_values
+from .video_classification import classify_inventory
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +48,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Salva HTML, screenshot e URLs de paginas sem video em metadata/debug.",
     )
 
+    subparsers.add_parser("courses", help="Atualiza o catalogo de cursos e turmas.")
+
+    subparsers.add_parser(
+        "classify-videos",
+        help="Classifica o inventario em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo ou Revisar.",
+    )
+
+    enroll_parser = subparsers.add_parser(
+        "enroll",
+        help="Inscreve em cursos selecionados no formato CURSO:TURMA.",
+    )
+    enroll_parser.add_argument("selections", nargs="+", help="Pares CURSO:TURMA.")
+    enroll_parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Confirma explicitamente a alteracao externa de inscricao.",
+    )
+    enroll_parser.add_argument(
+        "--scan-after",
+        action="store_true",
+        help="Atualiza inventario e classificacao depois de uma inscricao confirmada.",
+    )
+
     download_parser = subparsers.add_parser("download", help="Baixa videos do inventario.")
     download_parser.add_argument("--concurrency", type=int, default=2, help="Downloads simultaneos.")
     download_parser.add_argument("--redownload", action="store_true", help="Baixa novamente arquivos existentes.")
@@ -79,6 +105,25 @@ def main(argv: list[str] | None = None) -> int:
             login(settings, headless=args.headless, force=args.force)
         elif args.command == "scan":
             scan(settings, headless=not args.headed, diagnostic=args.diagnostic)
+        elif args.command == "courses":
+            refresh_courses(settings, headless=True)
+        elif args.command == "classify-videos":
+            items = load_inventory(settings.inventory_json_path)
+            classify_inventory(items, settings.video_overrides_path)
+            save_inventory(items, settings.inventory_json_path, settings.inventory_csv_path)
+            LOGGER.info("Inventario classificado com %s videos", len(items))
+        elif args.command == "enroll":
+            result = enroll_courses(
+                settings,
+                parse_course_selections(args.selections),
+                confirmed=args.confirm,
+                scan_after=args.scan_after,
+            )
+            LOGGER.info(
+                "Inscricoes confirmadas: %s de %s",
+                result["successful"],
+                result["selected"],
+            )
         elif args.command == "download":
             download_inventory(
                 settings,

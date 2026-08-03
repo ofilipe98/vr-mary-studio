@@ -91,3 +91,84 @@ class RuntimeEvent:
     text: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
+
+
+@dataclass(frozen=True)
+class ConversationOptions:
+    """Sticky runtime options shared by the UI, orchestrator and providers."""
+
+    model: str = ""
+    effort: str = "medium"
+    service_tier: str = ""
+    approval_profile: str = "auto"
+    collaboration_mode: str = "default"
+    dynamic_tools: tuple[dict[str, Any], ...] = ()
+    mcp_tools: tuple[dict[str, str], ...] = ()
+
+    @classmethod
+    def from_mapping(cls, value: Any) -> "ConversationOptions":
+        keys = value.keys() if hasattr(value, "keys") else ()
+        get = value.__getitem__ if hasattr(value, "__getitem__") else lambda _key: ""
+
+        def field_value(name: str, default: str = "") -> str:
+            return str(get(name) if name in keys else default)
+
+        return cls(
+            model=field_value("model"),
+            effort=field_value("effort", "medium") or "medium",
+            service_tier=field_value("service_tier"),
+            approval_profile=field_value("approval_profile", "auto") or "auto",
+            collaboration_mode=field_value("collaboration_mode", "default") or "default",
+        )
+
+
+@dataclass(frozen=True)
+class ApprovalPreset:
+    id: str
+    label: str
+    description: str
+    sandbox: str
+    sandbox_policy_type: str
+    approval_policy: str
+    reviewer: str = "user"
+
+
+APPROVAL_PRESETS: dict[str, ApprovalPreset] = {
+    "supervised": ApprovalPreset(
+        "supervised",
+        "Supervisionado",
+        "Perguntar antes de comandos e alterações de arquivo.",
+        "read-only",
+        "readOnly",
+        "on-request",
+    ),
+    "auto_edits": ApprovalPreset(
+        "auto_edits",
+        "Aceitar edições",
+        "Aceitar edições e perguntar antes das demais ações.",
+        "workspace-write",
+        "workspaceWrite",
+        "untrusted",
+    ),
+    "auto": ApprovalPreset(
+        "auto",
+        "Auto",
+        "O revisor do Codex decide ações rotineiras e pergunta nas arriscadas.",
+        "workspace-write",
+        "workspaceWrite",
+        "on-request",
+        "auto_review",
+    ),
+    "full_access": ApprovalPreset(
+        "full_access",
+        "Acesso completo",
+        "Permitir comandos, internet e arquivos sem solicitar aprovação.",
+        "danger-full-access",
+        "dangerFullAccess",
+        "never",
+    ),
+}
+
+
+def approval_preset(profile: str) -> ApprovalPreset:
+    return APPROVAL_PRESETS.get(str(profile), APPROVAL_PRESETS["auto"])

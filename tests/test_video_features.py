@@ -1,0 +1,272 @@
+import shutil
+import uuid
+from pathlib import Path
+
+from vrsoft_extractor.courses import (
+    _enroll_one,
+    course_from_payload,
+    parse_course_selections,
+)
+from vrsoft_extractor.downloader import organize_downloads
+from vrsoft_extractor.inventory import merge_inventory, save_inventory
+from vrsoft_extractor.models import VideoItem
+from vrsoft_extractor.settings import ConfigError, Settings
+from vrsoft_extractor.utils import output_base_path
+from vrsoft_extractor.video_classification import (
+    classify_inventory,
+    save_module_override,
+)
+
+
+def video(
+    *,
+    area="curso",
+    course="Integração Squad Fiscal",
+    chapter="Apresentação",
+    title="Introdução",
+    page="https://example.com/course/1/task/1",
+    media="https://cdn.example.com/shared.mp4?token=one",
+    course_id="1",
+    task_id="1",
+):
+    return VideoItem(
+        area=area,
+        course=course,
+        module=chapter,
+        folder_path=[course, chapter] if area == "curso" else [course, chapter],
+        source_course_id=course_id if area == "curso" else "",
+        source_task_id=task_id if area == "curso" else "",
+        source_file_id=task_id if area == "biblioteca" else "",
+        lesson_title=title,
+        page_url=page,
+        media_url=media,
+        media_type="mp4",
+    )
+
+
+def test_shared_media_is_not_deduplicated_across_lessons():
+    first = video(task_id="1", page="https://example.com/task/1")
+    second = video(task_id="2", page="https://example.com/task/2")
+    merged = merge_inventory([], [first, second])
+    assert len(merged) == 2
+
+
+def test_expiring_query_does_not_duplicate_same_task():
+    first = video(media="https://cdn.example.com/aula.mp4?token=old")
+    second = video(media="https://cdn.example.com/aula.mp4?token=new")
+    merged = merge_inventory([first], [second])
+    assert len(merged) == 1
+    assert merged[0].media_url.endswith("token=new")
+
+
+def test_legacy_inventory_builds_folder_path():
+    item = VideoItem.from_dict(
+        {
+            "area": "biblioteca",
+            "course": "VR Master",
+            "module": "Financeiro / Contas a pagar",
+            "lesson_title": "Introdução.mp4",
+            "page_url": "https://example.com/file/1",
+            "media_url": "https://cdn.example.com/1.mp4",
+            "media_type": "mp4",
+        }
+    )
+    assert item.folder_path == ["VR Master", "Financeiro", "Contas a pagar"]
+
+
+def test_classification_inherits_course_module():
+    rows = classify_inventory([video()])
+    assert rows[0].business_module == "Fiscal"
+    assert rows[0].classification_status == "approved"
+    assert rows[0].classification_source == "course_inherited"
+
+
+def _test_dir() -> Path:
+    path = Path(".test-tmp") / f"video-features-{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_manual_group_override_has_precedence():
+    tmp_path = _test_dir()
+    item = video(course="Database Lab", chapter="Database Lab")
+    try:
+        override_path = tmp_path / "overrides.json"
+        save_module_override(
+            override_path,
+            key=item.group_key(),
+            module="ADM_FIN_ESTOQUE",
+            scope="groups",
+        )
+        classify_inventory([item], override_path)
+        assert item.business_module == "ADM_FIN_ESTOQUE"
+        assert item.classification_source == "manual_group"
+        assert item.classification_confidence == 1.0
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_classified_output_path_preserves_hierarchy_and_extension():
+    path = output_base_path(
+        Path("downloads"),
+        "curso",
+        "Curso",
+        "Capítulo",
+        "Introdução.mp4",
+        business_module="Fiscal",
+        folder_path=["Curso", "Capítulo"],
+    )
+    assert path == Path("downloads/Cursos/Fiscal/Curso/Capítulo/Introdução")
+
+
+def test_course_catalog_statuses():
+    enrolled = course_from_payload(
+        {"id": 1, "name": "Treinamento PDV Pro", "participant": {"id": 9}},
+        {"id": 1, "name": "Treinamento PDV Pro", "participant": {"id": 9}},
+    )
+    assert enrolled.status == "enrolled"
+    assert enrolled.business_module == "PDV"
+
+    available = course_from_payload(
+        {"id": 2, "name": "VR Master - Financeiro"},
+        {
+            "id": 2,
+            "name": "VR Master - Financeiro",
+            "application_method": "1",
+            "available_classes": [{"id": 22, "closed": 0, "date_start": "2026-08-01"}],
+        },
+    )
+    assert available.status == "available"
+    assert available.selected_class_id == "22"
+    assert available.selectable
+
+    waitlist = course_from_payload(
+        {"id": 3, "name": "Curso"},
+        {
+            "id": 3,
+            "name": "Curso",
+            "application_method": "3",
+            "available_classes": [{"id": 33, "closed": 0}],
+        },
+    )
+    assert waitlist.status == "waitlist"
+    assert not waitlist.selectable
+
+    unavailable = course_from_payload(
+        {"id": 4, "name": "Curso"},
+        {"id": 4, "name": "Curso", "application_method": "1", "available_classes": []},
+    )
+    assert unavailable.status == "unavailable"
+
+
+def test_parse_course_selection_requires_course_and_class():
+    assert parse_course_selections(["10:20", "30:40"]) == [("10", "20"), ("30", "40")]
+    try:
+        parse_course_selections(["10"])
+    except ConfigError:
+        pass
+    else:
+        raise AssertionError("Invalid selection was accepted")
+
+
+class _Response:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+
+    def json(self):
+        return self.payload
+
+
+class _Request:
+    def __init__(self, details, post_payload=None):
+        self.details = list(details)
+        self.post_payload = post_payload or {"redirect": "/cursos"}
+        self.posts = []
+
+    def get(self, _url, headers=None):
+        del headers
+        return _Response(self.details.pop(0))
+
+    def post(self, url, headers=None, data=None):
+        del headers
+        self.posts.append((url, data))
+        return _Response(self.post_payload)
+
+
+class _Page:
+    def __init__(self, request):
+        self.request = request
+
+    def wait_for_timeout(self, _milliseconds):
+        return None
+
+
+def test_enroll_one_posts_selected_course_and_verifies_participant():
+    available = {
+        "id": 10,
+        "name": "VR Master - Financeiro",
+        "application_method": "1",
+        "available_classes": [{"id": 20, "closed": 0}],
+        "participant": None,
+    }
+    verified = {**available, "participant": {"id": 30, "course_class_id": 20}}
+    request = _Request([available, verified])
+    result = _enroll_one(_Page(request), {}, "10", "20")
+    assert result["success"]
+    assert request.posts[0][1] == {"id": 10, "class_id": 20}
+
+
+def test_enroll_one_does_not_post_waitlist_course():
+    waitlist = {
+        "id": 10,
+        "name": "Curso",
+        "application_method": "3",
+        "available_classes": [{"id": 20, "closed": 0}],
+        "participant": None,
+    }
+    request = _Request([waitlist])
+    result = _enroll_one(_Page(request), {}, "10", "20")
+    assert not result["success"]
+    assert request.posts == []
+
+
+def test_video_output_decoder_preserves_split_utf8_character():
+    from vrsoft_extractor.mary.ui import (
+        new_video_output_decoder,
+        video_process_environment,
+    )
+
+    decoder = new_video_output_decoder()
+    encoded = "Treinamento Força de Vendas".encode("utf-8")
+    split = encoded.index("ç".encode("utf-8")) + 1
+    text = decoder.decode(encoded[:split], final=False)
+    text += decoder.decode(encoded[split:], final=True)
+    assert text == "Treinamento Força de Vendas"
+    environment = video_process_environment()
+    assert environment.value("PYTHONUTF8") == "1"
+    assert environment.value("PYTHONIOENCODING") == "utf-8"
+
+
+def test_organize_downloads_moves_without_overwriting():
+    tmp_path = _test_dir()
+    settings = Settings(project_dir=tmp_path.resolve())
+    tmp_path = settings.project_dir
+    try:
+        source = tmp_path / "downloads" / "old" / "aula.mp4"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"video")
+        item = video(title="Aula")
+        item.business_module = "Fiscal"
+        item.status = "downloaded"
+        item.local_path = str(source)
+        settings.metadata_dir.mkdir(parents=True)
+        save_inventory([item], settings.inventory_json_path, settings.inventory_csv_path)
+
+        result = organize_downloads(settings)
+        expected = tmp_path / "downloads" / "Cursos" / "Fiscal" / item.course / item.module / "Aula.mp4"
+        assert result["moved"] == 1
+        assert expected.exists()
+        assert not source.exists()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
