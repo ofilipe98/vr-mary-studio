@@ -56,6 +56,13 @@ class VideoItem:
             return f"file:{self.source_file_id}:media:{media_key}"
         return f"item:{self.area}:{resource_identity(self.page_url)}:{media_key}"
 
+    def compatibility_key(self) -> str:
+        """Identity shared by legacy and source-ID aware inventories."""
+        return (
+            f"legacy:{self.area}:{resource_identity(self.page_url)}:"
+            f"{resource_identity(self.media_url)}"
+        )
+
     def group_key(self) -> str:
         if self.area == "curso":
             return f"course:{self.source_course_id or self.course.casefold()}"

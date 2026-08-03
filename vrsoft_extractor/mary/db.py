@@ -18,6 +18,7 @@ from .models import (
     SyncStats,
     utc_now,
 )
+from .paths import to_portable_path
 
 
 REVIEW_MODULES = {
@@ -234,8 +235,15 @@ END;
 
 
 class MaryDatabase:
-    def __init__(self, path: Path):
+    def __init__(
+        self,
+        path: Path,
+        root: Path | None = None,
+        *,
+        backup_portable_migration: bool = True,
+    ):
         self.path = path
+        self.root = root.resolve() if root else None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
@@ -272,7 +280,11 @@ class MaryDatabase:
                     column,
                     definition,
                 )
+            if self.root and backup_portable_migration:
+                self._backup_before_portable_migration(connection)
             self._migrate_review_metadata(connection)
+            if self.root:
+                self._migrate_portable_paths(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_review_status
@@ -287,6 +299,69 @@ class MaryDatabase:
                     ON documents(source,module,product,updated_at);
                 """
             )
+
+    def _backup_before_portable_migration(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        assert self.root is not None
+        absolute_pattern = "%:\\%"
+        checks = (
+            ("documents", "local_path LIKE ? OR assets_json LIKE ?"),
+            ("conversations", "workspace LIKE ? OR original_workspace LIKE ?"),
+            ("artifacts", "path LIKE ? OR path LIKE ?"),
+        )
+        has_absolute_paths = any(
+            connection.execute(
+                f"SELECT 1 FROM {table} WHERE {where} LIMIT 1",
+                (absolute_pattern, "%:/%"),
+            ).fetchone()
+            for table, where in checks
+        )
+        if not has_absolute_paths:
+            return
+        backup_path = (
+            self.root / ".state" / "backups" / "conhecimento-pre-portable.sqlite"
+        )
+        if backup_path.exists():
+            return
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(backup_path) as target:
+            connection.backup(target)
+
+    def _migrate_portable_paths(self, connection: sqlite3.Connection) -> None:
+        assert self.root is not None
+        rows = connection.execute(
+            "SELECT id,local_path,assets_json FROM documents"
+        ).fetchall()
+        for row in rows:
+            try:
+                assets = json.loads(row["assets_json"] or "[]")
+            except (TypeError, ValueError):
+                assets = []
+            local_path = to_portable_path(self.root, row["local_path"])
+            portable_assets = [to_portable_path(self.root, item) for item in assets]
+            assets_json = json.dumps(portable_assets, ensure_ascii=False)
+            if local_path != row["local_path"] or assets_json != row["assets_json"]:
+                connection.execute(
+                    "UPDATE documents SET local_path=?,assets_json=? WHERE id=?",
+                    (local_path, assets_json, row["id"]),
+                )
+
+        for table in ("conversations", "artifacts"):
+            columns = (
+                ("workspace", "original_workspace")
+                if table == "conversations"
+                else ("path",)
+            )
+            selected = ",".join(("id", *columns))
+            for row in connection.execute(f"SELECT {selected} FROM {table}").fetchall():
+                values = {column: to_portable_path(self.root, row[column]) for column in columns}
+                if any(values[column] != row[column] for column in columns):
+                    assignments = ",".join(f"{column}=?" for column in columns)
+                    connection.execute(
+                        f"UPDATE {table} SET {assignments} WHERE id=?",
+                        (*[values[column] for column in columns], row["id"]),
+                    )
 
     @staticmethod
     def _ensure_column(
@@ -358,6 +433,11 @@ class MaryDatabase:
             ).fetchone()
 
     def upsert_document(self, document: KnowledgeDocument) -> tuple[int, str]:
+        if self.root:
+            document.local_path = to_portable_path(self.root, document.local_path)
+            document.assets = [
+                to_portable_path(self.root, asset) for asset in document.assets
+            ]
         current = self.get_document(document.source, document.source_id)
         if current and current["content_hash"] == document.content_hash:
             with self.connect() as connection:
@@ -888,7 +968,7 @@ class MaryDatabase:
                     service_tier,
                     approval_profile,
                     collaboration_mode,
-                    str(workspace),
+                    to_portable_path(self.root, workspace) if self.root else str(workspace),
                     cloned_from,
                     now,
                     now,
@@ -933,6 +1013,10 @@ class MaryDatabase:
             "workspace", "original_workspace",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
+        if self.root:
+            for key in ("workspace", "original_workspace"):
+                if key in values:
+                    values[key] = to_portable_path(self.root, values[key])
         if not values:
             return
         values["updated_at"] = utc_now()

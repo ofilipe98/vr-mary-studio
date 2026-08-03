@@ -31,9 +31,11 @@ Decisoes tomadas durante o chat:
 - Usar `yt-dlp` para downloads diretos, HLS e embeds suportados.
 - Usar `ffmpeg` como pre-requisito para streams HLS.
 - Baixar somente videos acessiveis pela conta autenticada.
-- Nao fazer autoinscricao automatica em cursos na v1.
+- Permitir inscricao apenas em cursos selecionados pelo usuario, com turma
+  aberta e confirmacao explicita; nunca inscrever todos automaticamente.
 - Nao contornar DRM, criptografia, paywall ou bloqueios tecnicos.
-- Organizar downloads por area, curso, modulo e aula.
+- Organizar downloads por area, modulo de negocio, hierarquia original, curso,
+  capitulo e aula.
 - Gerar metadata em JSON e CSV.
 
 Durante a implementacao, o usuario chegou a pedir arquivos `.bat` de start/stop, mas depois descartou essa abordagem. A decisao final foi criar uma interface grafica desktop em Tkinter que controla a CLI real.
@@ -127,7 +129,8 @@ Esses numeros dependem da conta, inscricoes, permissoes e do valor de `--max-pag
 ## Regras Importantes Para Qualquer Agente
 
 1. Nao registre senha em codigo, logs, screenshots, metadata, README ou respostas.
-2. Nao faca autoinscricao em cursos sem pedido explicito.
+2. Nao faca inscricao sem selecao e confirmacao explicitas. Nao tente cursos
+   fechados, fila de espera, compra, matricula paga ou qualquer contorno.
 3. Nao tente contornar DRM, criptografia, links protegidos sem permissao ou bloqueios de acesso.
 4. Preserve `.env`, `.state/`, `downloads/`, `logs/`, `metadata/` e `.test-tmp/` fora do Git.
 5. Antes de mudar scraping ou download, rode testes unitarios.

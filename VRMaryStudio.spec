@@ -12,6 +12,8 @@ a = Analysis(
         (".env.example", "."),
         ("README.md", "."),
         ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/mary-search.ps1", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/Abrir-Mary-no-Codex.cmd", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/assets", "vrsoft_extractor/mary/assets"),
     ],
     hiddenimports=playwright_hidden + spellchecker_hidden + [

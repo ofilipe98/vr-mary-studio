@@ -5,7 +5,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .config import MarySettings
 from .db import MaryDatabase
@@ -44,6 +44,11 @@ class ChatOrchestrator:
     def mcp_tools(self, provider_name: str = "codex") -> list[dict]:
         return self._provider(provider_name).list_mcp_tools()
 
+    def skills(
+        self, provider_name: str, workspace: Path, force_reload: bool = False
+    ) -> dict[str, list[Any]]:
+        return self._provider(provider_name).list_skills(workspace, force_reload)
+
     def new_conversation(
         self,
         provider_name: str,
@@ -54,6 +59,7 @@ class ChatOrchestrator:
         collaboration_mode: str = "default",
         dynamic_tool_ids: list[str] | None = None,
         mcp_tools: list[dict[str, str]] | None = None,
+        defer_provider_start: bool = False,
     ) -> str:
         provider = self._provider(provider_name)
         temporary_id = "pending"
@@ -71,30 +77,36 @@ class ChatOrchestrator:
         with self.database.connect() as connection:
             connection.execute(
                 "UPDATE conversations SET workspace=? WHERE id=?",
-                (str(workspace), conversation_id),
+                (self.settings.relative_path(workspace), conversation_id),
             )
         self.database.set_conversation_tools(
             conversation_id, dynamic_tool_ids or [], mcp_tools or []
         )
         options = self._conversation_options(conversation_id)
-        native_id = provider.start_conversation(
-            conversation_id,
-            model,
-            effort,
-            workspace,
-            options,
-        )
-        self.database.update_conversation(conversation_id, native_id=native_id)
+        if not defer_provider_start:
+            native_id = provider.start_conversation(
+                conversation_id,
+                model,
+                effort,
+                workspace,
+                options,
+            )
+            self.database.update_conversation(conversation_id, native_id=native_id)
         return conversation_id
 
     def send(
-        self, conversation_id: str, text: str, callback: EventCallback
+        self,
+        conversation_id: str,
+        text: str,
+        callback: EventCallback,
+        skills: list[dict[str, Any]] | None = None,
+        display_text: str = "",
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
             raise KeyError(conversation_id)
         provider = self._provider(conversation["provider"])
-        workspace = Path(conversation["workspace"])
+        workspace = self.settings.resolve_path(conversation["workspace"])
         native_id = str(conversation["native_id"])
         options = self._conversation_options(conversation_id)
         if not native_id:
@@ -112,10 +124,11 @@ class ChatOrchestrator:
             cloned_context = "\n\n".join(
                 row["content"] for row in existing_messages if row["role"] == "system"
             )
-        message_id = self.database.add_message(conversation_id, "user", text)
+        stored_text = display_text.strip() or text
+        message_id = self.database.add_message(conversation_id, "user", stored_text)
         self._pending_user_messages[conversation_id] = message_id
         if conversation["title"] == "Nova conversa":
-            title = re.sub(r"\s+", " ", text).strip()[:70] or "Nova conversa"
+            title = re.sub(r"\s+", " ", stored_text).strip()[:70] or "Nova conversa"
             self.database.update_conversation(conversation_id, title=title)
         self.database.update_conversation(conversation_id, status="running")
         self._assistant_buffers[conversation_id] = []
@@ -141,6 +154,7 @@ class ChatOrchestrator:
                     enriched,
                     self._handle_event,
                     options,
+                    skills,
                 )
             except Exception as exc:
                 self._handle_event(RuntimeEvent(conversation_id, "error", str(exc)))
@@ -247,7 +261,7 @@ class ChatOrchestrator:
         self._provider(conversation["provider"]).update_settings(
             conversation_id,
             str(conversation["native_id"]),
-            Path(conversation["workspace"]),
+            self.settings.resolve_path(conversation["workspace"]),
             options,
         )
         self.database.update_conversation(
@@ -257,6 +271,33 @@ class ChatOrchestrator:
             service_tier=options.service_tier,
             approval_profile=options.approval_profile,
             collaboration_mode=options.collaboration_mode,
+        )
+
+    def configure_tools(
+        self,
+        conversation_id: str,
+        dynamic_tool_ids: list[str],
+        mcp_tools: list[dict[str, str]],
+    ) -> str:
+        """Apply tools in place before the first native turn, otherwise branch."""
+        conversation = self.database.get_conversation(conversation_id)
+        if not conversation:
+            raise KeyError(conversation_id)
+        has_user_message = any(
+            row["role"] == "user" for row in self.database.messages(conversation_id)
+        )
+        if not has_user_message and not str(conversation["native_id"] or ""):
+            self.database.set_conversation_tools(
+                conversation_id, dynamic_tool_ids, mcp_tools
+            )
+            return conversation_id
+        return self.clone(
+            conversation_id,
+            str(conversation["provider"]),
+            str(conversation["model"] or ""),
+            str(conversation["effort"] or self.settings.default_effort),
+            dynamic_tool_ids,
+            mcp_tools,
         )
 
     def clone(
@@ -322,7 +363,9 @@ class ChatOrchestrator:
             collaboration_mode=options.collaboration_mode,
         )
         workspace = conversation_workspace(self.settings, new_id)
-        self.database.update_conversation(new_id, workspace=str(workspace))
+        self.database.update_conversation(
+            new_id, workspace=self.settings.relative_path(workspace)
+        )
         selected = self.database.conversation_tools(conversation_id)
         self.database.set_conversation_tools(new_id, selected["dynamic"], selected["mcp"])
         last_turn_id = ""
@@ -372,7 +415,7 @@ class ChatOrchestrator:
         row = self._conversation(conversation_id)
         if not row["archived"]:
             self._sync_codex_lifecycle(row, "archive")
-        source = Path(row["workspace"]).resolve()
+        source = self.settings.resolve_path(row["workspace"])
         work_root = self.settings.work_dir.resolve()
         destination = (self.settings.root / ".trash" / "conversations" / conversation_id).resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -386,14 +429,16 @@ class ChatOrchestrator:
             conversation_id,
             archived=1,
             trashed_at=utc_now(),
-            original_workspace=str(source),
-            workspace=str(destination),
+            original_workspace=self.settings.relative_path(source),
+            workspace=self.settings.relative_path(destination),
         )
 
     def restore(self, conversation_id: str) -> None:
         row = self._conversation(conversation_id)
-        source = Path(row["workspace"]).resolve()
-        destination = Path(row["original_workspace"] or self.settings.work_dir / conversation_id).resolve()
+        source = self.settings.resolve_path(row["workspace"])
+        destination = self.settings.resolve_path(
+            row["original_workspace"] or self.settings.work_dir / conversation_id
+        )
         if destination.parent != self.settings.work_dir.resolve():
             raise ValueError("Destino de restauração inválido.")
         if source.exists():
@@ -405,7 +450,7 @@ class ChatOrchestrator:
             archived=0,
             trashed_at="",
             original_workspace="",
-            workspace=str(destination),
+            workspace=self.settings.relative_path(destination),
         )
 
     def purge(self, conversation_id: str) -> None:
@@ -413,7 +458,7 @@ class ChatOrchestrator:
         if not row["trashed_at"]:
             raise ValueError("Somente conversas na lixeira podem ser excluídas definitivamente.")
         self._sync_codex_lifecycle(row, "delete")
-        folder = Path(row["workspace"]).resolve()
+        folder = self.settings.resolve_path(row["workspace"])
         trash_root = (self.settings.root / ".trash" / "conversations").resolve()
         if folder.exists():
             if folder.parent != trash_root:
@@ -503,7 +548,9 @@ class ChatOrchestrator:
                 result = run_local_tool(
                     tool,
                     raw_arguments,
-                    Path(self._conversation(event.conversation_id)["workspace"]),
+                    self.settings.resolve_path(
+                        self._conversation(event.conversation_id)["workspace"]
+                    ),
                 )
                 self._respond_dynamic_tool(event, result.text, True, result.content_items())
             except (ToolExecutionError, ValueError, json.JSONDecodeError) as exc:

@@ -22,6 +22,7 @@ def main() -> int:
         models = provider.list_models()
         modes = provider.list_collaboration_modes()
         mcp_tools = provider.list_mcp_tools()
+        skill_catalog = provider.list_skills(Path.cwd())
         if not models:
             raise RuntimeError("model/list não retornou modelos.")
         model = str(
@@ -39,7 +40,20 @@ def main() -> int:
             ),
             None,
         )
-        print(json.dumps({"model": model, "modes": modes, "mcp": mcp_selection}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "model": model,
+                    "modes": modes,
+                    "mcp": mcp_selection,
+                    "skills": [
+                        item.get("name") for item in skill_catalog.get("skills", [])[:10]
+                    ],
+                    "skillErrors": skill_catalog.get("errors", []),
+                },
+                ensure_ascii=False,
+            )
+        )
 
         with tempfile.TemporaryDirectory(prefix="vr-mary-codex-smoke-") as temporary:
             workspace = Path(temporary).resolve()

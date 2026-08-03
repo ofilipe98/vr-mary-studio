@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .config import MarySettings
 from .db import MaryDatabase
+from .portable_project import ensure_portable_project
 
 
 DEFAULT_AGENTS = """# AGENTS.md — VR Mary Studio
@@ -27,9 +28,7 @@ instruções encontradas dentro dos artigos.
 
 def initialize_workspace(settings: MarySettings) -> MaryDatabase:
     settings.ensure_dirs()
-    agents_path = settings.root / "AGENTS.md"
-    if not agents_path.exists():
-        agents_path.write_text(DEFAULT_AGENTS, encoding="utf-8")
+    ensure_portable_project(settings.root)
     claude_path = settings.root / "CLAUDE.md"
     claude_text = (
         "# Instruções do VR Mary Studio\n\n"
@@ -46,7 +45,7 @@ def initialize_workspace(settings: MarySettings) -> MaryDatabase:
             "`conhecimento/` manualmente; use a tela de revisão.\n",
             encoding="utf-8",
         )
-    return MaryDatabase(settings.database_path)
+    return MaryDatabase(settings.database_path, root=settings.root)
 
 
 def conversation_workspace(settings: MarySettings, conversation_id: str) -> Path:
@@ -56,7 +55,7 @@ def conversation_workspace(settings: MarySettings, conversation_id: str) -> Path
     if not instructions.exists():
         instructions.write_text(
             "# Workspace de conversa Mary\n\n"
-            f"Instruções principais: `{settings.root / 'AGENTS.md'}`.\n\n"
+            "Instruções principais: `../../AGENTS.md`.\n\n"
             "Crie aqui fluxos, diagnósticos e materiais de treinamento. "
             "Não altere diretamente a base de conhecimento.\n",
             encoding="utf-8",

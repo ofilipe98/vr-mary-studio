@@ -7,7 +7,7 @@ from vrsoft_extractor.courses import (
     course_from_payload,
     parse_course_selections,
 )
-from vrsoft_extractor.downloader import organize_downloads
+from vrsoft_extractor.downloader import _download_target_bases, organize_downloads
 from vrsoft_extractor.inventory import merge_inventory, save_inventory
 from vrsoft_extractor.models import VideoItem
 from vrsoft_extractor.settings import ConfigError, Settings
@@ -57,6 +57,18 @@ def test_expiring_query_does_not_duplicate_same_task():
     merged = merge_inventory([first], [second])
     assert len(merged) == 1
     assert merged[0].media_url.endswith("token=new")
+
+
+def test_legacy_item_is_upgraded_without_duplication():
+    legacy = video(course_id="", task_id="")
+    discovered = video(course_id="99", task_id="101")
+    legacy.status = "downloaded"
+    legacy.local_path = "downloads/old.mp4"
+    merged = merge_inventory([legacy], [discovered])
+    assert len(merged) == 1
+    assert merged[0].source_course_id == "99"
+    assert merged[0].status == "downloaded"
+    assert merged[0].local_path == "downloads/old.mp4"
 
 
 def test_legacy_inventory_builds_folder_path():
@@ -117,6 +129,16 @@ def test_classified_output_path_preserves_hierarchy_and_extension():
         folder_path=["Curso", "Capítulo"],
     )
     assert path == Path("downloads/Cursos/Fiscal/Curso/Capítulo/Introdução")
+
+
+def test_duplicate_lesson_titles_receive_deterministic_suffix():
+    settings = Settings(project_dir=Path("D:/project"))
+    first = video(task_id="10", title="Introdução")
+    second = video(task_id="11", title="Introdução", page="https://example.com/task/11")
+    first.business_module = second.business_module = "Fiscal"
+    targets = _download_target_bases([second, first], settings)
+    assert targets[first.id].name == "Introdução"
+    assert targets[second.id].name == "Introdução - 11"
 
 
 def test_course_catalog_statuses():

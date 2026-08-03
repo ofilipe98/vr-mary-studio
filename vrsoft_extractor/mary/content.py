@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from .models import KnowledgeDocument
+from .paths import to_portable_path
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -146,8 +147,9 @@ def target_path(root: Path, document: KnowledgeDocument) -> Path:
 def write_document(root: Path, document: KnowledgeDocument) -> Path:
     path = target_path(root, document)
     path.parent.mkdir(parents=True, exist_ok=True)
+    document.assets = [to_portable_path(root, asset) for asset in document.assets]
     path.write_text(canonical_markdown(document), encoding="utf-8")
-    document.local_path = str(path)
+    document.local_path = to_portable_path(root, path)
     return path
 
 

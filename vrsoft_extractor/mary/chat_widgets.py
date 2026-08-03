@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import QPoint, QSettings, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QKeySequence,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -53,10 +54,47 @@ class SpellHighlighter(QSyntaxHighlighter):
 
 
 class SpellcheckPlainTextEdit(QPlainTextEdit):
+    submitRequested = Signal()
+    interactionStarted = Signal()
+
     def __init__(self, checker: LocalSpellChecker, parent: QWidget | None = None):
         super().__init__(parent)
         self.checker = checker
         self.highlighter = SpellHighlighter(self.document(), checker)
+        self.slash_palette: SlashCommandPalette | None = None
+
+    def set_slash_palette(self, palette: "SlashCommandPalette") -> None:
+        self.slash_palette = palette
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self.interactionStarted.emit()
+        if self.slash_palette and self.slash_palette.isVisible():
+            if event.key() == Qt.Key_Escape:
+                self.slash_palette.dismiss()
+                event.accept()
+                return
+            if event.key() in (Qt.Key_Up, Qt.Key_Down):
+                self.slash_palette.move_selection(-1 if event.key() == Qt.Key_Up else 1)
+                event.accept()
+                return
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab) and not (
+                event.modifiers() & Qt.ShiftModifier
+            ):
+                self.slash_palette.activate_current()
+                event.accept()
+                return
+        if (
+            event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            and not event.modifiers() & Qt.ShiftModifier
+        ):
+            event.accept()
+            self.submitRequested.emit()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self.interactionStarted.emit()
+        super().mousePressEvent(event)
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt API
         menu = self.createStandardContextMenu()
@@ -82,6 +120,99 @@ class SpellcheckPlainTextEdit(QPlainTextEdit):
     def _add_word(self, word: str) -> None:
         self.checker.add_word(word)
         self.highlighter.rehighlight()
+
+
+class SlashCommandPalette(QFrame):
+    """Keyboard-first overlay used by the Mary composer slash menu."""
+
+    itemChosen = Signal(object)
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("slashPalette")
+        self.setFrameShape(QFrame.NoFrame)
+        self.setMinimumWidth(360)
+        self.setMaximumWidth(760)
+        self.hide()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(5)
+        self.title = QLabel("Comandos e ferramentas")
+        self.title.setObjectName("slashPaletteTitle")
+        layout.addWidget(self.title)
+        self.list = QListWidget()
+        self.list.setObjectName("slashPaletteList")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.itemClicked.connect(self._activate_item)
+        layout.addWidget(self.list)
+
+    def set_entries(
+        self, entries: list[dict[str, Any]], title: str = "Comandos e ferramentas"
+    ) -> None:
+        self.title.setText(title)
+        self.list.clear()
+        for entry in entries:
+            kind = str(entry.get("kind") or "")
+            if kind == "section":
+                item = QListWidgetItem(str(entry.get("name") or ""))
+                item.setData(Qt.UserRole, entry)
+                item.setFlags(Qt.NoItemFlags)
+            else:
+                name = str(entry.get("name") or "")
+                description = str(entry.get("description") or "").strip()
+                source = str(entry.get("source") or "").strip()
+                detail = " \u00b7 ".join(value for value in (description, source) if value)
+                item = QListWidgetItem(name + (f"\n{detail}" if detail else ""))
+                item.setData(Qt.UserRole, entry)
+                if not entry.get("enabled", True):
+                    item.setFlags(Qt.NoItemFlags)
+                    item.setToolTip(str(entry.get("disabledReason") or description))
+            self.list.addItem(item)
+        self._select_first()
+        rows = max(1, min(9, self.list.count()))
+        self.setFixedHeight(min(430, 46 + rows * 48))
+
+    def show_above(self, editor: QWidget, host: QWidget) -> None:
+        width = max(360, min(760, editor.width()))
+        self.setFixedWidth(width)
+        origin = editor.mapTo(host, QPoint(0, 0))
+        x = max(8, min(origin.x(), max(8, host.width() - width - 8)))
+        y = max(8, origin.y() - self.height() - 8)
+        self.move(x, y)
+        self.raise_()
+        self.show()
+
+    def dismiss(self) -> None:
+        self.hide()
+
+    def move_selection(self, step: int) -> None:
+        if not self.list.count():
+            return
+        start = self.list.currentRow()
+        for offset in range(1, self.list.count() + 1):
+            row = (start + step * offset) % self.list.count()
+            item = self.list.item(row)
+            if item.flags() != Qt.NoItemFlags:
+                self.list.setCurrentRow(row)
+                self.list.scrollToItem(item)
+                return
+
+    def activate_current(self) -> None:
+        self._activate_item(self.list.currentItem())
+
+    def _activate_item(self, item: QListWidgetItem | None) -> None:
+        if not item or item.flags() == Qt.NoItemFlags:
+            return
+        payload = item.data(Qt.UserRole)
+        if isinstance(payload, dict):
+            self.itemChosen.emit(payload)
+
+    def _select_first(self) -> None:
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if item.flags() != Qt.NoItemFlags:
+                self.list.setCurrentRow(row)
+                return
 
 
 class SpellReviewDialog(QDialog):
@@ -122,10 +253,15 @@ class SpellReviewDialog(QDialog):
 
 class ModelPickerCombo(QComboBox):
     providerModelSelected = Signal(str, str)
+    retryRequested = Signal(str)
+    catalogChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._catalogs: dict[str, list[dict[str, Any]]] = {}
+        self._catalog_states: dict[str, str] = {}
+        self._catalog_errors: dict[str, str] = {}
+        self._active_provider = "codex"
         self._settings = QSettings()
         self._favorite_shortcuts: list[QShortcut] = []
         for number in range(1, 10):
@@ -138,6 +274,23 @@ class ModelPickerCombo(QComboBox):
 
     def set_provider_models(self, provider: str, models: list[dict[str, Any]]) -> None:
         self._catalogs[provider] = list(models)
+        self._catalog_states[provider] = "ready"
+        self._catalog_errors.pop(provider, None)
+        self.catalogChanged.emit()
+
+    def set_active_provider(self, provider: str) -> None:
+        self._active_provider = provider
+
+    def set_catalog_state(self, provider: str, state: str, error: str = "") -> None:
+        self._catalog_states[provider] = state
+        if error:
+            self._catalog_errors[provider] = error
+        elif state != "error":
+            self._catalog_errors.pop(provider, None)
+        self.catalogChanged.emit()
+
+    def catalog_state(self, provider: str) -> str:
+        return self._catalog_states.get(provider, "idle")
 
     def _ranked_models(self) -> list[tuple[str, str]]:
         favorites = set(self._settings.value("chat/model_favorites", [], list) or [])
@@ -171,9 +324,8 @@ class ModelPickerCombo(QComboBox):
         all_index = provider.addTab("★ Todos")
         provider.setTabData(all_index, "")
         for name in ("codex", "claude"):
-            if name in self._catalogs:
-                index = provider.addTab("◉ Codex" if name == "codex" else "◆ Claude")
-                provider.setTabData(index, name)
+            index = provider.addTab("◉ Codex" if name == "codex" else "◆ Claude")
+            provider.setTabData(index, name)
         search = QLineEdit()
         search.setPlaceholderText("Pesquisar modelos…")
         filters.addWidget(provider)
@@ -181,6 +333,12 @@ class ModelPickerCombo(QComboBox):
         layout.addLayout(filters)
         model_list = QListWidget()
         layout.addWidget(model_list, 1)
+        status = QLabel()
+        status.setWordWrap(True)
+        status.setObjectName("muted")
+        layout.addWidget(status)
+        retry = QPushButton("Tentar novamente")
+        layout.addWidget(retry)
         favorite = QPushButton("☆ Favoritar")
         layout.addWidget(favorite)
         buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
@@ -241,6 +399,28 @@ class ModelPickerCombo(QComboBox):
                 )
                 item.setData(Qt.UserRole, (provider_name, model_id))
                 model_list.addItem(item)
+            state_providers = (
+                [selected_provider]
+                if selected_provider
+                else [name for name in ("codex", "claude") if name in self._catalog_states]
+            )
+            loading = [
+                name for name in state_providers if self._catalog_states.get(name) == "loading"
+            ]
+            errors = [
+                self._catalog_errors.get(name, "")
+                for name in state_providers
+                if self._catalog_states.get(name) == "error"
+            ]
+            if rows:
+                status.clear()
+            elif loading:
+                status.setText("Carregando modelos…")
+            elif errors:
+                status.setText(errors[0])
+            else:
+                status.setText("Nenhum modelo disponível neste provedor.")
+            retry.setVisible(bool(errors) or (not rows and not loading))
 
         def choose() -> None:
             item = model_list.currentItem()
@@ -263,12 +443,21 @@ class ModelPickerCombo(QComboBox):
             self._settings.setValue("chat/model_favorites", sorted(favorites))
             refresh()
 
+        def retry_models() -> None:
+            selected_provider = str(provider.tabData(provider.currentIndex()) or "")
+            self.retryRequested.emit(selected_provider or self._active_provider)
+
         search.textChanged.connect(refresh)
         provider.currentChanged.connect(refresh)
         model_list.itemDoubleClicked.connect(lambda _item: choose())
         favorite.clicked.connect(toggle_favorite)
+        retry.clicked.connect(retry_models)
+        self.catalogChanged.connect(refresh)
         refresh()
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            self.catalogChanged.disconnect(refresh)
 
 
 class ApprovalDialog(QDialog):

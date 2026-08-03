@@ -1,5 +1,6 @@
 import json
 import os
+import queue
 import sqlite3
 import sys
 import unittest
@@ -18,7 +19,7 @@ from vrsoft_extractor.mary.chat_tools import (
     run_local_tool,
     validate_tool_definition,
 )
-from vrsoft_extractor.mary.chat_widgets import ModelPickerCombo
+from vrsoft_extractor.mary.chat_widgets import ModelPickerCombo, SpellcheckPlainTextEdit
 from vrsoft_extractor.mary.classification_audit import audit_classification
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.content import canonical_markdown, html_to_markdown, sha256_text
@@ -34,7 +35,7 @@ from vrsoft_extractor.mary.movidesk import (
     MovideskInteractiveLoginRequired,
     MovideskSync,
 )
-from vrsoft_extractor.mary.providers import CodexProvider, _resolve_codex_command
+from vrsoft_extractor.mary.providers import CodexProvider, ProviderError, _resolve_codex_command
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.ocr import latest_windows_installer_url
 from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
@@ -663,6 +664,45 @@ class MaryCoreTest(unittest.TestCase):
         self.assertTrue(command)
         self.assertIn(Path(command).suffix.lower(), {".exe", ".cmd", ".ps1", ""})
 
+    def test_codex_process_exit_releases_pending_rpc_immediately(self):
+        provider = CodexProvider()
+        pending = queue.Queue(maxsize=1)
+        provider._pending[7] = pending
+        process = MagicMock()
+        process.stdout = [""]
+        process.poll.return_value = 1
+        provider.process = process
+
+        provider._read_loop(process)
+
+        response = pending.get_nowait()
+        self.assertIn("encerrou com código 1", response["error"]["message"])
+        self.assertIsNone(provider.process)
+        self.assertFalse(provider._pending)
+
+    def test_codex_rpc_timeout_resets_process_and_catalog_uses_ten_seconds(self):
+        provider = CodexProvider()
+        process = MagicMock()
+        process.poll.return_value = None
+        provider.process = process
+        response_queue = MagicMock()
+        response_queue.get.side_effect = queue.Empty
+        with (
+            patch("vrsoft_extractor.mary.providers.queue.Queue", return_value=response_queue),
+            patch.object(provider, "_send"),
+            patch.object(provider, "_stop_process") as stop,
+        ):
+            with self.assertRaisesRegex(ProviderError, "Timeout do Codex em model/list"):
+                provider._rpc("model/list", timeout=0.01)
+        stop.assert_called_once_with(process)
+
+        with (
+            patch.object(provider, "_ensure_started"),
+            patch.object(provider, "_rpc", return_value={"data": []}) as rpc,
+        ):
+            provider.list_models()
+        self.assertEqual(rpc.call_args.kwargs["timeout"], 10)
+
     def test_selects_latest_tesseract_windows_installer(self):
         listing = (
             '<a href="tesseract-ocr-w64-setup-5.3.0.exe">old</a>'
@@ -717,6 +757,61 @@ class MaryCoreTest(unittest.TestCase):
         params = rpc.call_args.args[1]
         self.assertEqual(params["effort"], "xhigh")
         self.assertEqual(params["approvalPolicy"], "on-request")
+
+    def test_codex_lists_skills_and_sends_structured_skill_input(self):
+        provider = CodexProvider()
+        skill_path = str((self.root / "skills" / "review" / "SKILL.md").resolve())
+        with (
+            patch.object(provider, "_ensure_started"),
+            patch.object(
+                provider,
+                "_rpc",
+                return_value={
+                    "data": [
+                        {
+                            "cwd": str(self.root),
+                            "skills": [
+                                {
+                                    "name": "review",
+                                    "description": "Revisar altera\u00e7\u00f5es",
+                                    "path": skill_path,
+                                    "enabled": True,
+                                    "interface": {"displayName": "Code Review"},
+                                }
+                            ],
+                            "errors": [],
+                        }
+                    ]
+                },
+            ) as rpc,
+        ):
+            catalog = provider.list_skills(self.root, force_reload=True)
+        self.assertEqual(catalog["skills"][0]["name"], "review")
+        self.assertEqual(catalog["skills"][0]["displayName"], "Code Review")
+        self.assertEqual(rpc.call_args.args[0], "skills/list")
+        self.assertEqual(rpc.call_args.kwargs["timeout"], 10)
+
+        provider._native_to_local["native-1"] = "local-1"
+        with (
+            patch.object(provider, "_ensure_started"),
+            patch.object(provider, "_rpc", return_value={}) as rpc,
+        ):
+            provider.send_message(
+                "local-1",
+                "native-1",
+                "gpt-test",
+                "medium",
+                self.root,
+                "Analise este patch",
+                lambda _event: None,
+                skills=[{"name": "review", "path": skill_path}],
+            )
+        turn = rpc.call_args.args[1]
+        self.assertEqual(turn["input"][0]["text"], "$review Analise este patch")
+        self.assertEqual(
+            turn["input"][1],
+            {"type": "skill", "name": "review", "path": skill_path},
+        )
 
     def test_codex_thread_uses_supported_approval_policy(self):
         provider = CodexProvider()
@@ -897,6 +992,42 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(config["mcp_servers"]["vrwiki"]["command"], "vrwiki.exe")
         self.assertFalse(config["mcp_servers"]["outro"]["enabled"])
 
+    def test_deferred_conversation_configures_tools_without_empty_branch(self):
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        provider = MagicMock()
+        orchestrator.providers["codex"] = provider
+        tool_id = database.create_tool(
+            "consulta_slash",
+            "Consulta selecionada pela paleta",
+            {"type": "object"},
+            sys.executable,
+            ["-V"],
+            safety="read_only",
+        )
+        conversation_id = orchestrator.new_conversation(
+            "codex", defer_provider_start=True
+        )
+        provider.start_conversation.assert_not_called()
+        same_id = orchestrator.configure_tools(
+            conversation_id,
+            [tool_id],
+            [{"server": "vrwiki", "tool": "buscar"}],
+        )
+        self.assertEqual(same_id, conversation_id)
+        self.assertEqual(
+            database.conversation_tools(conversation_id),
+            {
+                "dynamic": [tool_id],
+                "mcp": [{"server": "vrwiki", "tool": "buscar"}],
+            },
+        )
+        database.add_message(conversation_id, "user", "Conversa iniciada")
+        with patch.object(orchestrator, "clone", return_value="branch-id") as clone:
+            branch_id = orchestrator.configure_tools(conversation_id, [], [])
+        self.assertEqual(branch_id, "branch-id")
+        clone.assert_called_once()
+
     def test_local_portuguese_spellcheck_ignores_technical_text_and_persists_words(self):
         dictionary = self.settings.root / "state" / "spellcheck.json"
         checker = LocalSpellChecker(dictionary, ["VRMaster"])
@@ -933,6 +1064,30 @@ class MaryCoreTest(unittest.TestCase):
         application.processEvents()
         self.assertEqual(selected, [("claude", "claude-favorite")])
         picker.close()
+
+    def test_composer_enter_submits_and_shift_enter_inserts_newline(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QTextCursor
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        checker = LocalSpellChecker(self.settings.state_dir / "composer-spellcheck.json")
+        editor = SpellcheckPlainTextEdit(checker)
+        submitted = []
+        editor.submitRequested.connect(lambda: submitted.append(editor.toPlainText()))
+        editor.setPlainText("Mensagem")
+        editor.moveCursor(QTextCursor.End)
+
+        QTest.keyClick(editor, Qt.Key_Return)
+        application.processEvents()
+        self.assertEqual(submitted, ["Mensagem"])
+        self.assertEqual(editor.toPlainText(), "Mensagem")
+
+        QTest.keyClick(editor, Qt.Key_Return, Qt.ShiftModifier)
+        application.processEvents()
+        self.assertEqual(editor.toPlainText(), "Mensagem\n")
+        editor.close()
 
     def test_message_edit_forks_at_previous_codex_turn_and_preserves_original(self):
         class FakeProvider:
@@ -999,7 +1154,7 @@ class MaryCoreTest(unittest.TestCase):
         orchestrator.trash(conversation_id)
         trashed = database.get_conversation(conversation_id)
         self.assertTrue(trashed["trashed_at"])
-        self.assertTrue(Path(trashed["workspace"]).exists())
+        self.assertTrue(self.settings.resolve_path(trashed["workspace"]).exists())
         orchestrator.restore(conversation_id)
         self.assertTrue(workspace.exists())
         orchestrator.trash(conversation_id)
@@ -1344,31 +1499,33 @@ class MaryCoreTest(unittest.TestCase):
                     window._navigate(window.pages["Chat Mary"])
                     application.processEvents()
                     self.assertLess(
-                        window.chat_title.geometry().right(),
-                        window.clone_button.geometry().left(),
+                        window.chat_title.mapTo(window, QPoint(0, 0)).x()
+                        + window.chat_title.width(),
+                        window.conversation_menu_button.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLess(
-                        window.provider_combo.geometry().right(),
-                        window.model_combo.geometry().left(),
-                    )
-                    model_bottom = window.model_combo.mapTo(
-                        window, QPoint(0, window.model_combo.height())
-                    ).y()
-                    effort_top = window.effort_combo.mapTo(window, QPoint(0, 0)).y()
-                    self.assertLessEqual(model_bottom, effort_top)
-                    self.assertLess(
-                        window.effort_combo.geometry().right(),
-                        window.tier_combo.geometry().left(),
+                        window.model_combo.mapTo(window, QPoint(0, 0)).x()
+                        + window.model_combo.width(),
+                        window.effort_combo.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLess(
-                        window.tier_combo.geometry().right(),
-                        window.approval_combo.geometry().left(),
+                        window.effort_combo.mapTo(window, QPoint(0, 0)).x()
+                        + window.effort_combo.width(),
+                        window.options_button.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLess(
-                        window.approval_combo.geometry().right(),
-                        window.mode_combo.geometry().left(),
+                        window.options_button.mapTo(window, QPoint(0, 0)).x()
+                        + window.options_button.width(),
+                        window.send_button.mapTo(window, QPoint(0, 0)).x(),
                     )
             self.assertTrue(window.chat_empty_state.isVisible())
+            self.assertTrue(window.provider_combo.isHidden())
+            self.assertTrue(window.tier_combo.isHidden())
+            self.assertTrue(window.approval_combo.isHidden())
+            self.assertTrue(window.mode_combo.isHidden())
+            self.assertEqual(window.conversation_state_tabs.count(), 3)
+            self.assertTrue(window.stop_button.isHidden())
+            self.assertFalse(window.send_button.isHidden())
             self.assertFalse(window.windowIcon().isNull())
             self.assertEqual(window.nav_brand.text(), "VR NORTE")
             self.assertEqual(window.nav_subtitle.text(), "MARY STUDIO")
@@ -1386,6 +1543,286 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIsInstance(effort_field, QComboBox)
             self.assertEqual(effort_field.currentText(), "Médio")
             self.assertEqual(effort_field.currentData(), "medium")
+        finally:
+            window.close()
+
+    def test_chat_context_menu_targets_clicked_conversation_and_changes_by_state(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            first = window.database.create_conversation(
+                "Primeira", "codex", "gpt-test", self.settings.work_dir / "first"
+            )
+            second = window.database.create_conversation(
+                "Segunda", "codex", "gpt-test", self.settings.work_dir / "second"
+            )
+            window.refresh_conversations()
+            first_item = next(
+                window.conversation_list.item(index)
+                for index in range(window.conversation_list.count())
+                if window.conversation_list.item(index).data(Qt.UserRole) == first
+            )
+            second_item = next(
+                window.conversation_list.item(index)
+                for index in range(window.conversation_list.count())
+                if window.conversation_list.item(index).data(Qt.UserRole) == second
+            )
+            window.conversation_list.setCurrentItem(first_item)
+            application.processEvents()
+            menu = window._build_conversation_menu(second)
+            application.processEvents()
+            self.assertEqual(window.current_conversation, second)
+            self.assertIs(window.conversation_list.currentItem(), second_item)
+            self.assertEqual(
+                [action.text() for action in menu.actions() if not action.isSeparator()],
+                ["Clonar para outro provedor", "Arquivar", "Mover para a lixeira"],
+            )
+
+            window.conversation_state = "archived"
+            archived = window._build_conversation_menu(second)
+            self.assertEqual(
+                [action.text() for action in archived.actions() if not action.isSeparator()],
+                ["Restaurar", "Mover para a lixeira"],
+            )
+            window.conversation_state = "trash"
+            trash = window._build_conversation_menu(second)
+            self.assertEqual(
+                [action.text() for action in trash.actions() if not action.isSeparator()],
+                ["Restaurar", "Excluir definitivamente…"],
+            )
+        finally:
+            window.close()
+
+    def test_model_catalog_ignores_stale_results_and_exposes_retry_state(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            models = [{"id": "gpt-new", "displayName": "GPT New", "isDefault": True}]
+            window._model_request_ids["codex"] = 2
+            with (
+                patch.object(window, "load_collaboration_modes"),
+                patch.object(window, "_preload_other_models"),
+            ):
+                window._model_catalog_loaded("codex", 1, [{"id": "gpt-old"}])
+                self.assertNotIn("codex", window.model_cache)
+                window._model_catalog_loaded("codex", 2, models)
+            self.assertEqual(window.model_cache["codex"], models)
+            self.assertEqual(window.model_combo.currentData(), "gpt-new")
+
+            window._model_request_ids["codex"] = 3
+            window._model_catalog_failed("codex", 3, "Falha simulada")
+            self.assertEqual(window.model_combo.catalog_state("codex"), "error")
+            self.assertIn("Falha simulada", window.model_combo.toolTip())
+
+            window.show()
+            window._navigate(window.pages["Chat Mary"])
+            application.processEvents()
+            window._set_turn_running(True)
+            self.assertTrue(window.send_button.isHidden())
+            self.assertFalse(window.stop_button.isHidden())
+            window._set_turn_running(False)
+            self.assertFalse(window.send_button.isHidden())
+            self.assertTrue(window.stop_button.isHidden())
+        finally:
+            window.close()
+
+    def test_model_catalog_worker_updates_combo_on_the_ui_thread(self):
+        import time
+
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            models = [{"id": "gpt-live", "displayName": "GPT Live", "isDefault": True}]
+            window.orchestrator.models = MagicMock(return_value=models)
+            window.load_collaboration_modes = MagicMock()
+            window._preload_other_models = MagicMock()
+            window.load_models(force=True)
+            deadline = time.monotonic() + 2
+            while (
+                window.model_combo.catalog_state("codex") == "loading"
+                and time.monotonic() < deadline
+            ):
+                application.processEvents()
+                time.sleep(0.01)
+            self.assertEqual(window.model_combo.catalog_state("codex"), "ready")
+            self.assertEqual(window.model_combo.currentData(), "gpt-live")
+            self.assertIn("GPT Live", [
+                window.model_combo.itemText(index)
+                for index in range(window.model_combo.count())
+            ])
+        finally:
+            window.close()
+
+    def test_first_composer_interaction_creates_one_draft_with_default_model_id(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.show()
+            window._navigate(window.pages["Chat Mary"])
+            application.processEvents()
+            with patch.object(window.pool, "start") as start:
+                QTest.mouseClick(window.composer.viewport(), Qt.LeftButton)
+                application.processEvents()
+                start.assert_called_once()
+                worker = start.call_args.args[0]
+                self.assertEqual(worker.args[1], "codex")
+                self.assertEqual(worker.args[2], "")
+                self.assertTrue(window._conversation_creation_in_progress)
+                window._ensure_draft_conversation()
+                start.assert_called_once()
+        finally:
+            window.close()
+
+    def test_slash_palette_keyboard_plan_and_inline_plan_prompt(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.show()
+            window._navigate(window.pages["Chat Mary"])
+            application.processEvents()
+            with (
+                patch.object(window, "_request_slash_catalogs"),
+                patch.object(window, "_ensure_draft_conversation"),
+            ):
+                window.composer.setPlainText("/")
+                application.processEvents()
+                self.assertTrue(window.slash_palette.isVisible())
+                commands = [
+                    window.slash_palette.list.item(index).text().splitlines()[0]
+                    for index in range(window.slash_palette.list.count())
+                ]
+                self.assertIn("/plan", commands)
+                self.assertIn("/tools", commands)
+                QTest.keyClick(window.composer, Qt.Key_Return)
+                application.processEvents()
+            self.assertEqual(window.mode_combo.currentData(), "plan")
+            self.assertEqual(window.composer.toPlainText(), "")
+            self.assertFalse(window.slash_palette.isVisible())
+
+            conversation_id = window.database.create_conversation(
+                "Inline", "codex", "gpt-test", self.settings.work_dir / "inline"
+            )
+            window.current_conversation = conversation_id
+            window.draft_conversation = False
+            window.mode_combo.setCurrentIndex(window.mode_combo.findData("default"))
+            with patch.object(window.pool, "start"):
+                text, handled = window._parse_slash_submission(
+                    "/plan Proponha a migra\u00e7\u00e3o"
+                )
+            self.assertFalse(handled)
+            self.assertEqual(text, "Proponha a migra\u00e7\u00e3o")
+            self.assertEqual(window.mode_combo.currentData(), "plan")
+            self.assertEqual(
+                window.database.get_conversation(conversation_id)["collaboration_mode"],
+                "plan",
+            )
+        finally:
+            window.close()
+
+    def test_slash_skill_is_one_turn_attachment_and_tool_change_has_no_modal(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            conversation_id = window.database.create_conversation(
+                "Slash", "codex", "gpt-test", self.settings.work_dir / "slash"
+            )
+            window.current_conversation = conversation_id
+            window.draft_conversation = False
+            skill = {
+                "name": "review",
+                "displayName": "Code Review",
+                "path": str(self.settings.root / "skills" / "review" / "SKILL.md"),
+            }
+            window.pending_skills = [skill]
+            with patch.object(window.orchestrator, "send") as send:
+                window._send_current_message("Analise este patch")
+            self.assertEqual(send.call_args.args[3], [skill])
+            self.assertEqual(
+                send.call_args.args[4], "/review Analise este patch"
+            )
+            self.assertEqual(window.pending_skills, [])
+
+            tool = {
+                "id": "tool-id",
+                "name": "consulta_vr",
+                "description": "Consulta local",
+            }
+            with (
+                patch.object(window.pool, "start") as start,
+                patch("vrsoft_extractor.mary.ui.QMessageBox.question") as question,
+            ):
+                window._toggle_slash_tool(
+                    {"kind": "local_tool", "id": "tool-id", "payload": tool}
+                )
+            question.assert_not_called()
+            start.assert_called_once()
+            worker = start.call_args.args[0]
+            self.assertEqual(worker.function, window.orchestrator.configure_tools)
+            self.assertEqual(worker.args[0], conversation_id)
+            self.assertEqual(worker.args[1], ["tool-id"])
+        finally:
+            window.close()
+
+    def test_delete_conversation_runs_without_confirmation(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.current_conversation = "conversation-id"
+            with patch.object(window, "_run_conversation_operation") as operation:
+                window.conversation_state = "active"
+                window.delete_current_conversation()
+                self.assertEqual(operation.call_args.args[0], window.orchestrator.trash)
+                operation.reset_mock()
+                window.conversation_state = "trash"
+                window.delete_current_conversation()
+                self.assertEqual(operation.call_args.args[0], window.orchestrator.purge)
         finally:
             window.close()
 

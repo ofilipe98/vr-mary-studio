@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.3.6"
+version = "0.3.7"
 description = "VR Mary Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,4 +36,4 @@ vr-mary-studio = "vrsoft_extractor.mary.ui:main"
 include = ["vrsoft_extractor*"]
 
 [tool.setuptools.package-data]
-"vrsoft_extractor.mary" = ["data/*.md"]
+"vrsoft_extractor.mary" = ["data/*.md", "data/*.ps1", "data/*.cmd"]

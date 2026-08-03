@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from .classification_audit import audit_classification
 from .config import load_mary_settings
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
+from .portable_export import audit_portable_project, export_portable_project
+from .portable_project import ensure_portable_project
+from .indexer import export_catalog
 from .wiki import WikiSync
 from .workspace import initialize_workspace
 
@@ -47,6 +51,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Atualiza a fila de revisão sem alterar o módulo atual",
     )
     sub.add_parser("status", help="Mostra estatísticas da base")
+    sub.add_parser(
+        "prepare-codex",
+        help="Prepara a base atual para ser aberta diretamente no Codex",
+    )
+    portable = sub.add_parser(
+        "export-portable",
+        help="Exporta um projeto Mary sem credenciais nem vídeos completos",
+    )
+    portable.add_argument("destination")
+    sub.add_parser(
+        "audit-portable",
+        help="Verifica caminhos absolutos e arquivos sensíveis no projeto Mary",
+    )
     return parser
 
 
@@ -113,6 +130,27 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+    elif args.command == "prepare-codex":
+        result = ensure_portable_project(settings.root)
+        export_catalog(database, settings.index_dir)
+        print(
+            json.dumps(
+                {
+                    "root": str(result.root),
+                    "written": result.written,
+                    "preserved": result.preserved,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif args.command == "export-portable":
+        result = export_portable_project(settings.root, Path(args.destination))
+        print(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str))
+    elif args.command == "audit-portable":
+        result = audit_portable_project(settings.root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     return 0
 
 

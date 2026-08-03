@@ -22,6 +22,25 @@ com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
 - Interface PySide6 baseada na identidade VR Soft, contraste WCAG, foco visível
   e layout validado em 1366×768, 1920×1080 e escalas de 125%/150%.
 
+## Mary como projeto Codex portátil
+
+A Mary não depende do aplicativo Python para responder perguntas. A própria
+pasta da base é preparada como projeto Codex com `AGENTS.md`, especialistas em
+`.codex/agents/` e pesquisa local PowerShell em `tools/mary-search.ps1`.
+
+Em uma máquina nova:
+
+1. Copie a pasta `MaryProject`.
+2. Instale e autentique o Codex normalmente, sem cadastrar outra API key.
+3. Execute `MaryProject\Abrir-Mary-no-Codex.cmd` ou abra essa pasta no Codex.
+4. Faça a pergunta diretamente; o prefixo `Mary:` é opcional.
+
+O Codex pesquisa o catálogo e os documentos localmente, encaminha a análise aos
+especialistas Mary e cita os arquivos usados. O VR Mary Studio continua sendo o
+gerenciador opcional para sincronizar Wiki/KB, revisar classificações, executar
+OCR e administrar vídeos. Credenciais, cookies, logs e vídeos completos não são
+incluídos no projeto portátil.
+
 ## Instalação para desenvolvimento
 
 ```powershell
@@ -39,7 +58,8 @@ ENDOO_EMAIL=
 ENDOO_PASSWORD=
 MOVIDESK_EMAIL=
 MOVIDESK_PASSWORD=
-MARY_ROOT=D:\Codex\Projetos\VR_Mary_V2
+MARY_ROOT=MaryProject
+MARY_OLD_ROOT=
 MARY_SYNC_INTERVAL_MINUTES=120
 MARY_DEFAULT_EFFORT=medium
 MARY_PRODUCTS_FILE=
@@ -83,6 +103,8 @@ CLI da base:
 .\.venv\Scripts\vr-mary.exe audit-classification --examples 10
 .\.venv\Scripts\vr-mary.exe audit-classification --queue-review --examples 0
 .\.venv\Scripts\vr-mary.exe status
+.\.venv\Scripts\vr-mary.exe prepare-codex
+.\.venv\Scripts\vr-mary.exe export-portable D:\Destino\MaryProject
 ```
 
 Quando a categoria informa explicitamente `FISCAL`, `PDV` ou a família
@@ -118,6 +140,35 @@ Os comandos antigos permanecem disponíveis:
 .\.venv\Scripts\vrsoft-extractor.exe run
 ```
 
+### Cursos, inscrição e classificação dos vídeos
+
+A aba **Vídeos** mostra o catálogo Endoo e o inventário em árvore. Cursos com
+turma aberta podem ser marcados e inscritos somente depois de confirmação
+explícita. Cursos fechados e de fila de espera permanecem visíveis, mas não
+são selecionáveis. Depois de uma inscrição confirmada, o inventário é
+atualizado; o download continua manual.
+
+Os vídeos são classificados por metadados em `Fiscal`, `ADM_FIN_ESTOQUE`,
+`PDV`, `Multimodulo` ou `Revisar`. A classificação não analisa o áudio. As
+correções manuais feitas na árvore são persistidas em
+`metadata/video_module_overrides.json`.
+
+```text
+downloads/Cursos/<Módulo>/<Curso>/<Capítulo>/<Vídeo>.<ext>
+downloads/Biblioteca/<Módulo>/<Pastas originais>/<Vídeo>.<ext>
+```
+
+Comandos adicionais:
+
+```powershell
+.\.venv\Scripts\vrsoft-extractor.exe courses
+.\.venv\Scripts\vrsoft-extractor.exe classify-videos
+.\.venv\Scripts\vrsoft-extractor.exe enroll 10009:491503 --confirm --scan-after
+```
+
+`enroll` exige o par `CURSO:TURMA` e `--confirm`; sem confirmação nenhuma
+inscrição é enviada ao Endoo.
+
 ## Codex e Claude
 
 - Codex usa `codex app-server` e JSON-RPC em stdio. A criação da thread envia
@@ -151,8 +202,12 @@ serviço online.
 .\build_portable.ps1
 ```
 
-O ZIP portátil é gerado em `releases`. Se Inno Setup estiver instalado, compile
-`installer\VRMaryStudio.iss` para produzir o instalador Windows.
+São gerados em `releases` um ZIP apenas do aplicativo e o
+`VRMaryPortable-0.3.7.zip`, que reúne `App` e `MaryProject`. No pacote completo,
+use `Abrir-VR-Mary-Studio.cmd` para o gerenciador ou
+`MaryProject\Abrir-Mary-no-Codex.cmd` para trabalhar diretamente no Codex. Se
+Inno Setup estiver instalado, compile `installer\VRMaryStudio.iss` para produzir
+o instalador Windows.
 
 ## Testes
 

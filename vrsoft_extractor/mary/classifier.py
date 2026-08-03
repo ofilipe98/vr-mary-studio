@@ -224,7 +224,6 @@ def _catalog_candidates() -> Iterable[Path]:
     mary_root = os.environ.get("MARY_ROOT", "").strip()
     if mary_root:
         yield Path(mary_root) / "agentes" / "produtos_filas.md"
-    yield Path(r"D:\Codex\Projetos\VR_Mary_V2\agentes\produtos_filas.md")
     yield Path(__file__).resolve().parent / "data" / "produtos_filas.md"
 
 

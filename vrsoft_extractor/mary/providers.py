@@ -64,6 +64,7 @@ class AgentProvider(abc.ABC):
         message: str,
         callback: EventCallback,
         options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
@@ -86,6 +87,11 @@ class AgentProvider(abc.ABC):
 
     def list_mcp_tools(self) -> list[dict[str, Any]]:
         return []
+
+    def list_skills(
+        self, workspace: Path, force_reload: bool = False
+    ) -> dict[str, list[Any]]:
+        return {"skills": [], "errors": []}
 
     def update_settings(
         self, conversation_id: str, native_id: str, workspace: Path, options: ConversationOptions
@@ -128,7 +134,9 @@ class CodexProvider(AgentProvider):
         self._callbacks: dict[str, EventCallback] = {}
         self._native_to_local: dict[str, str] = {}
         self._active_turns: dict[str, str] = {}
-        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._state_lock = threading.RLock()
+        self._start_lock = threading.Lock()
         self._stderr_lines: deque[str] = deque(maxlen=30)
         self._known_mcp_servers: list[str] = []
         self._mcp_server_configs: dict[str, dict[str, Any]] = {}
@@ -137,70 +145,93 @@ class CodexProvider(AgentProvider):
         return bool(self.command)
 
     def _ensure_started(self) -> None:
-        if self.process and self.process.poll() is None:
-            return
-        if not self.command:
-            raise ProviderError("Codex não foi encontrado no PATH.")
-        startup_info: dict[str, Any] = {}
-        if os.name == "nt":
-            startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
-        self.process = subprocess.Popen(
-            [self.command, "app-server"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            **startup_info,
-        )
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader.start()
-        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
-        self._stderr_reader.start()
-        self._rpc(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": "vr_mary_studio",
-                    "title": "VR Mary Studio",
-                    "version": "0.3.6",
-                },
-                "capabilities": {"experimentalApi": True},
-            },
-        )
-        self._notify("initialized", {})
+        with self._start_lock:
+            if self.process and self.process.poll() is None:
+                return
+            if not self.command:
+                raise ProviderError("Codex não foi encontrado no PATH.")
+            self._stderr_lines.clear()
+            startup_info: dict[str, Any] = {}
+            if os.name == "nt":
+                startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
+            process = subprocess.Popen(
+                [self.command, "app-server"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **startup_info,
+            )
+            with self._state_lock:
+                self.process = process
+            self._reader = threading.Thread(
+                target=self._read_loop, args=(process,), daemon=True
+            )
+            self._reader.start()
+            self._stderr_reader = threading.Thread(
+                target=self._read_stderr, args=(process,), daemon=True
+            )
+            self._stderr_reader.start()
+            try:
+                self._rpc(
+                    "initialize",
+                    {
+                        "clientInfo": {
+                            "name": "vr_mary_studio",
+                            "title": "VR Mary Studio",
+                            "version": "0.3.7",
+                        },
+                        "capabilities": {"experimentalApi": True},
+                    },
+                    timeout=10,
+                )
+                self._notify("initialized", {})
+            except Exception:
+                self._stop_process(process)
+                raise
 
     def _send(self, message: dict[str, Any]) -> None:
-        if not self.process or not self.process.stdin:
+        process = self.process
+        if not process or process.poll() is not None or not process.stdin:
             raise ProviderError("Codex App Server não está ativo.")
         line = json.dumps(message, ensure_ascii=False)
-        with self._lock:
-            self.process.stdin.write(line + "\n")
-            self.process.stdin.flush()
+        try:
+            with self._write_lock:
+                process.stdin.write(line + "\n")
+                process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            raise ProviderError(self._process_error(process)) from exc
 
     def _rpc(
         self, method: str, params: dict[str, Any] | None = None, timeout: float = 45
     ) -> dict[str, Any]:
-        self._request_id += 1
-        request_id = self._request_id
         response_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
-        self._pending[request_id] = response_queue
+        with self._state_lock:
+            self._request_id += 1
+            request_id = self._request_id
+            self._pending[request_id] = response_queue
         message: dict[str, Any] = {"method": method, "id": request_id}
         if params is not None:
             message["params"] = params
-        self._send(message)
+        try:
+            self._send(message)
+        except Exception:
+            with self._state_lock:
+                self._pending.pop(request_id, None)
+            raise
         try:
             response = response_queue.get(timeout=timeout)
         except queue.Empty as exc:
-            self._pending.pop(request_id, None)
+            with self._state_lock:
+                self._pending.pop(request_id, None)
+            process = self.process
+            if process and process.poll() is not None:
+                raise ProviderError(self._process_error(process)) from exc
             detail = "\n".join(self._stderr_lines)
-            if self.process and self.process.poll() is not None:
-                raise ProviderError(
-                    f"Codex App Server encerrou com código {self.process.returncode}."
-                    + (f"\n{detail}" if detail else "")
-                ) from exc
+            self._stop_process(process)
             raise ProviderError(
                 f"Timeout do Codex em {method}." + (f"\n{detail}" if detail else "")
             ) from exc
@@ -212,23 +243,74 @@ class CodexProvider(AgentProvider):
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         self._send({"method": method, "params": params})
 
-    def _read_loop(self) -> None:
-        assert self.process and self.process.stdout
-        for line in self.process.stdout:
+    def _read_loop(self, process: subprocess.Popen[str]) -> None:
+        assert process.stdout
+        try:
+            for line in process.stdout:
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                response_id = message.get("id")
+                target = None
+                if "result" in message or "error" in message:
+                    with self._state_lock:
+                        target = self._pending.pop(response_id, None)
+                if target:
+                    target.put(message)
+                    continue
+                self._handle_server_message(message)
+        finally:
             try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            response_id = message.get("id")
-            if response_id in self._pending and ("result" in message or "error" in message):
-                self._pending.pop(response_id).put(message)
-                continue
-            self._handle_server_message(message)
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+            with self._state_lock:
+                is_current = self.process is process
+                if is_current:
+                    self.process = None
+            if is_current:
+                self._fail_pending(self._process_error(process))
 
-    def _read_stderr(self) -> None:
-        assert self.process and self.process.stderr
-        for line in self.process.stderr:
+    def _read_stderr(self, process: subprocess.Popen[str]) -> None:
+        assert process.stderr
+        for line in process.stderr:
             self._stderr_lines.append(line.rstrip())
+
+    def _process_error(self, process: subprocess.Popen[str] | None) -> str:
+        code = process.poll() if process else None
+        detail = "\n".join(self._stderr_lines)
+        message = (
+            f"Codex App Server encerrou com código {code}."
+            if code is not None
+            else "Codex App Server foi encerrado."
+        )
+        return message + (f"\n{detail}" if detail else "")
+
+    def _fail_pending(self, message: str) -> None:
+        with self._state_lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        response = {"error": {"message": message}}
+        for target in pending:
+            try:
+                target.put_nowait(response)
+            except queue.Full:
+                pass
+
+    def _stop_process(self, process: subprocess.Popen[str] | None = None) -> None:
+        with self._state_lock:
+            target = process or self.process
+            if target is self.process:
+                self.process = None
+        if target and target.poll() is None:
+            target.terminate()
+            try:
+                target.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                target.kill()
+                target.wait(timeout=5)
+        self._fail_pending("Codex App Server foi reiniciado.")
 
     def _handle_server_message(self, message: dict[str, Any]) -> None:
         method = str(message.get("method", "event"))
@@ -292,7 +374,11 @@ class CodexProvider(AgentProvider):
 
     def list_models(self) -> list[dict[str, Any]]:
         self._ensure_started()
-        return list(self._rpc("model/list", {"limit": 100, "includeHidden": False}).get("data", []))
+        return list(
+            self._rpc(
+                "model/list", {"limit": 100, "includeHidden": False}, timeout=10
+            ).get("data", [])
+        )
 
     def list_collaboration_modes(self) -> list[dict[str, Any]]:
         self._ensure_started()
@@ -329,6 +415,7 @@ class CodexProvider(AgentProvider):
         result = self._rpc(
             "mcpServerStatus/list",
             {"limit": 100, "detail": "toolsAndAuthOnly"},
+            timeout=10,
         )
         flattened: list[dict[str, Any]] = []
         self._known_mcp_servers = []
@@ -366,6 +453,51 @@ class CodexProvider(AgentProvider):
                     }
                 )
         return flattened
+
+    def list_skills(
+        self, workspace: Path, force_reload: bool = False
+    ) -> dict[str, list[Any]]:
+        self._ensure_started()
+        resolved = str(workspace.resolve())
+        result = self._rpc(
+            "skills/list",
+            {"cwds": [resolved], "forceReload": bool(force_reload)},
+            timeout=10,
+        )
+        skills: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for group in result.get("data", []):
+            if not isinstance(group, dict):
+                continue
+            for error in group.get("errors", []):
+                if isinstance(error, dict):
+                    message = str(error.get("message") or error.get("error") or error)
+                else:
+                    message = str(error)
+                if message:
+                    errors.append(message)
+            for item in group.get("skills", []):
+                if not isinstance(item, dict) or item.get("enabled") is False:
+                    continue
+                name = str(item.get("name") or "").strip()
+                path = str(item.get("path") or item.get("skillPath") or "").strip()
+                if not name or not path:
+                    continue
+                interface = item.get("interface") or {}
+                skills.append(
+                    {
+                        "name": name,
+                        "path": path,
+                        "displayName": str(interface.get("displayName") or name),
+                        "description": str(
+                            interface.get("shortDescription")
+                            or item.get("description")
+                            or ""
+                        ),
+                        "scope": str(item.get("scope") or "codex"),
+                    }
+                )
+        return {"skills": skills, "errors": errors}
 
     def start_conversation(
         self,
@@ -452,6 +584,7 @@ class CodexProvider(AgentProvider):
         message: str,
         callback: EventCallback,
         options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
     ) -> None:
         self._ensure_started()
         options = options or ConversationOptions(model=model, effort=effort)
@@ -468,9 +601,30 @@ class CodexProvider(AgentProvider):
                 {"writableRoots": [str(workspace)], "networkAccess": False}
             )
         selected_model = options.model or model
+        turn_input: list[dict[str, Any]] = []
+        valid_skills = [
+            item
+            for item in (skills or [])
+            if str(item.get("name") or "") and str(item.get("path") or "")
+        ]
+        skill_prefix = " ".join(f"${item['name']}" for item in valid_skills)
+        turn_input.append(
+            {
+                "type": "text",
+                "text": f"{skill_prefix} {message}".strip() if skill_prefix else message,
+            }
+        )
+        turn_input.extend(
+            {
+                "type": "skill",
+                "name": str(item["name"]),
+                "path": str(item["path"]),
+            }
+            for item in valid_skills
+        )
         params: dict[str, Any] = {
             "threadId": native_id,
-            "input": [{"type": "text", "text": message}],
+            "input": turn_input,
             "cwd": str(workspace),
             "model": selected_model or None,
             "effort": normalize_effort(options.effort or effort),
@@ -629,14 +783,7 @@ class CodexProvider(AgentProvider):
         return forked_id
 
     def close(self) -> None:
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        self.process = None
+        self._stop_process()
 
 
 class ClaudeProvider(AgentProvider):
@@ -695,6 +842,7 @@ class ClaudeProvider(AgentProvider):
         message: str,
         callback: EventCallback,
         options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
     ) -> None:
         if not self.command:
             raise ProviderError("Claude não foi encontrado no PATH.")

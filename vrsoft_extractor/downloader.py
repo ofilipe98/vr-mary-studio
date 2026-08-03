@@ -55,11 +55,18 @@ def download_inventory(
         return items
 
     by_id = {item.id: item for item in items}
+    target_bases = _download_target_bases(items, settings)
     workers = max(1, int(concurrency))
     LOGGER.info("Baixando %s videos com concorrencia %s", len(candidates), workers)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_download_one, item, settings, redownload): item.id
+            executor.submit(
+                _download_one,
+                item,
+                settings,
+                redownload,
+                target_bases.get(item.id),
+            ): item.id
             for item in candidates
         }
         for future in as_completed(futures):
@@ -78,21 +85,18 @@ def download_inventory(
     return updated
 
 
-def _download_one(item: VideoItem, settings: Settings, redownload: bool) -> VideoItem:
+def _download_one(
+    item: VideoItem,
+    settings: Settings,
+    redownload: bool,
+    target_base: Path | None = None,
+) -> VideoItem:
     try:
         import yt_dlp
     except ImportError as exc:
         raise ConfigError("yt-dlp nao esta instalado. Execute: python -m pip install -e .") from exc
 
-    target_base = output_base_path(
-        settings.downloads_dir,
-        item.area,
-        item.course,
-        item.module,
-        item.lesson_title,
-        business_module=item.business_module or "Revisar",
-        folder_path=item.folder_path,
-    )
+    target_base = target_base or _base_path_for_item(item, settings)
     target_base.parent.mkdir(parents=True, exist_ok=True)
 
     if not redownload:
@@ -182,6 +186,7 @@ def organize_downloads(settings: Settings) -> dict[str, int]:
     collisions = 0
     missing = 0
     unchanged = 0
+    target_bases = _download_target_bases(items, settings)
     for item in items:
         if item.status not in {"downloaded", "skipped"} or not item.local_path:
             continue
@@ -200,15 +205,7 @@ def organize_downloads(settings: Settings) -> dict[str, int]:
             LOGGER.warning("Arquivo fora de downloads preservado: %s", source)
             unchanged += 1
             continue
-        target_base = output_base_path(
-            settings.downloads_dir,
-            item.area,
-            item.course,
-            item.module,
-            item.lesson_title,
-            business_module=item.business_module or "Revisar",
-            folder_path=item.folder_path,
-        )
+        target_base = target_bases.get(item.id) or _base_path_for_item(item, settings)
         target = target_base.with_suffix(source.suffix).resolve()
         if not target.is_relative_to(downloads_root):
             LOGGER.warning("Destino inseguro rejeitado: %s", target)
@@ -231,3 +228,47 @@ def organize_downloads(settings: Settings) -> dict[str, int]:
         "missing": missing,
         "unchanged": unchanged,
     }
+
+
+def _base_path_for_item(item: VideoItem, settings: Settings) -> Path:
+    return output_base_path(
+        settings.downloads_dir,
+        item.area,
+        item.course,
+        item.module,
+        item.lesson_title,
+        business_module=item.business_module or "Revisar",
+        folder_path=item.folder_path,
+    )
+
+
+def _download_target_bases(
+    items: list[VideoItem], settings: Settings
+) -> dict[str, Path]:
+    grouped: dict[str, list[tuple[VideoItem, Path]]] = {}
+    for item in items:
+        base = _base_path_for_item(item, settings)
+        grouped.setdefault(str(base).casefold(), []).append((item, base))
+    result: dict[str, Path] = {}
+    for group in grouped.values():
+        ordered = sorted(
+            group,
+            key=lambda pair: (
+                pair[0].source_order,
+                pair[0].source_task_id,
+                pair[0].source_file_id,
+                pair[0].id,
+            ),
+        )
+        for index, (item, base) in enumerate(ordered):
+            if index == 0:
+                result[item.id] = base
+                continue
+            identifier = (
+                item.source_task_id
+                or item.source_file_id
+                or item.id[:8]
+                or str(index + 1)
+            )
+            result[item.id] = base.with_name(f"{base.name} - {identifier}")
+    return result

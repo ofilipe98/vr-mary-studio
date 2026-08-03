@@ -66,12 +66,19 @@ def save_inventory(items: Iterable[VideoItem], json_path: Path, csv_path: Path) 
 
 def merge_inventory(existing: Iterable[VideoItem], discovered: Iterable[VideoItem]) -> list[VideoItem]:
     merged: dict[str, VideoItem] = {}
+    existing_by_compatibility: dict[str, VideoItem] = {}
     for item in existing:
         merged[item.dedupe_key()] = item
+        existing_by_compatibility[item.compatibility_key()] = item
     for item in discovered:
         key = item.dedupe_key()
-        previous = merged.get(key)
+        previous = merged.get(key) or existing_by_compatibility.get(
+            item.compatibility_key()
+        )
         if previous:
+            previous_key = previous.dedupe_key()
+            if previous_key != key:
+                merged.pop(previous_key, None)
             if previous.status in {"downloaded", "skipped"}:
                 item.status = previous.status
                 item.local_path = previous.local_path

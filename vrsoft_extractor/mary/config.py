@@ -5,9 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..settings import load_dotenv_file
+from .paths import resolve_portable_path, to_portable_path
 
 
-DEFAULT_MARY_ROOT = Path(r"D:\Codex\Projetos\VR_Mary_V2")
+DEFAULT_MARY_ROOT = Path("MaryProject")
+LEGACY_MARY_ROOT = Path(r"D:\Codex\Projetos\VR_Mary_V2")
+LEGACY_OLD_ROOT = Path(r"D:\Codex\VR")
 DEFAULT_WIKI_API = "https://wiki.vrsoft.com.br/wiki/api.php"
 DEFAULT_WIKI_BASE = "https://wiki.vrsoft.com.br/wiki/"
 DEFAULT_KB_URL = "https://vrsoftware.movidesk.com/kb"
@@ -64,6 +67,12 @@ class MarySettings:
     def movidesk_state_path(self) -> Path:
         return self.state_dir / "movidesk.json"
 
+    def relative_path(self, value: str | Path | None) -> str:
+        return to_portable_path(self.root, value)
+
+    def resolve_path(self, value: str | Path | None) -> Path:
+        return resolve_portable_path(self.root, value)
+
     def ensure_dirs(self) -> None:
         directories = [
             self.state_dir,
@@ -89,23 +98,58 @@ class MarySettings:
 def load_mary_settings(
     app_dir: str | Path | None = None,
     root: str | Path | None = None,
-    old_root: str | Path = r"D:\Codex\VR",
+    old_root: str | Path | None = None,
 ) -> MarySettings:
     app = Path(app_dir or Path.cwd()).resolve()
     load_dotenv_file(app / ".env")
-    configured_root = root or os.environ.get("MARY_ROOT") or DEFAULT_MARY_ROOT
+    configured_root = _discover_root(app, root or os.environ.get("MARY_ROOT"))
+    configured_old_root = old_root or os.environ.get("MARY_OLD_ROOT")
+    if configured_old_root:
+        old_path = _resolve_from_app(app, configured_old_root)
+    elif LEGACY_OLD_ROOT.exists():
+        old_path = LEGACY_OLD_ROOT.resolve()
+    else:
+        old_path = configured_root / "legacy-source"
     try:
         interval = int(os.environ.get("MARY_SYNC_INTERVAL_MINUTES", "120"))
     except ValueError:
         interval = 120
     return MarySettings(
         app_dir=app,
-        root=Path(configured_root).resolve(),
-        old_root=Path(old_root).resolve(),
+        root=configured_root,
+        old_root=old_path,
         wiki_api=os.environ.get("MARY_WIKI_API", DEFAULT_WIKI_API).rstrip("/"),
         wiki_base=os.environ.get("MARY_WIKI_BASE", DEFAULT_WIKI_BASE),
         kb_url=os.environ.get("MARY_KB_URL", DEFAULT_KB_URL).rstrip("/"),
         sync_interval_minutes=max(15, interval),
         default_effort=os.environ.get("MARY_DEFAULT_EFFORT", "medium").strip().lower()
         or "medium",
+    )
+
+
+def _discover_root(app: Path, configured: str | Path | None) -> Path:
+    if configured:
+        return _resolve_from_app(app, configured)
+    candidates = (
+        app / "MaryProject",
+        app.parent / "MaryProject",
+        app,
+        LEGACY_MARY_ROOT,
+    )
+    for candidate in candidates:
+        if _looks_like_mary_root(candidate):
+            return candidate.resolve()
+    return (app / DEFAULT_MARY_ROOT).resolve()
+
+
+def _resolve_from_app(app: Path, value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else app / path).resolve()
+
+
+def _looks_like_mary_root(path: Path) -> bool:
+    return path.is_dir() and (
+        (path / "conhecimento").is_dir()
+        or (path / "indice" / "conhecimento.sqlite").is_file()
+        or (path / "agentes" / "AGENTS.md").is_file()
     )
