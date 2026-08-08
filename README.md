@@ -1,4 +1,4 @@
-# VR Mary Studio
+# VR Norte Studio
 
 Aplicativo desktop Windows para manter a base de conhecimento Mary, conversar
 com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
@@ -36,10 +36,17 @@ Em uma máquina nova:
 4. Faça a pergunta diretamente; o prefixo `Mary:` é opcional.
 
 O Codex pesquisa o catálogo e os documentos localmente, encaminha a análise aos
-especialistas Mary e cita os arquivos usados. O VR Mary Studio continua sendo o
+especialistas Mary e cita os arquivos usados. O VR Norte Studio continua sendo o
 gerenciador opcional para sincronizar Wiki/KB, revisar classificações, executar
 OCR e administrar vídeos. Credenciais, cookies, logs e vídeos completos não são
 incluídos no projeto portátil.
+
+No chat do VR Norte Studio, o botão animado **VR** controla a pesquisa local no
+Codex e no Claude. Ligado, ele pesquisa a base e preserva o assunto em perguntas
+curtas de continuação; desligado, a mensagem segue diretamente para a LLM. O
+prefixo `Mary:` continua opcional quando o fluxo VR está ligado. As respostas
+citam a URL original da Wiki/KB como link web e mantêm o caminho local em texto
+copiável.
 
 ## Instalação para desenvolvimento
 
@@ -153,6 +160,10 @@ Os vídeos são classificados por metadados em `Fiscal`, `ADM_FIN_ESTOQUE`,
 correções manuais feitas na árvore são persistidas em
 `metadata/video_module_overrides.json`.
 
+As colunas **Download** e **Tamanho** consultam os arquivos reais no disco.
+Cada vídeo mostra se está baixado, pendente ou com arquivo ausente; cursos,
+módulos e pastas exibem a quantidade baixada e o tamanho total agregado.
+
 ```text
 downloads/Cursos/<Módulo>/<Curso>/<Capítulo>/<Vídeo>.<ext>
 downloads/Biblioteca/<Módulo>/<Pastas originais>/<Vídeo>.<ext>
@@ -202,9 +213,9 @@ serviço online.
 .\build_portable.ps1
 ```
 
-São gerados em `releases` um ZIP apenas do aplicativo e o
-`VRMaryPortable-0.3.7.zip`, que reúne `App` e `MaryProject`. No pacote completo,
-use `Abrir-VR-Mary-Studio.cmd` para o gerenciador ou
+É gerado em `releases` somente o `VRMaryPortable-0.3.8.zip`, que reúne `App` e
+`MaryProject`. O pacote completo já inclui o aplicativo. Nele, use
+`Abrir-VR-Mary-Studio.cmd` para o gerenciador ou
 `MaryProject\Abrir-Mary-no-Codex.cmd` para trabalhar diretamente no Codex. Se
 Inno Setup estiver instalado, compile `installer\VRMaryStudio.iss` para produzir
 o instalador Windows.

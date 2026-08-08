@@ -19,6 +19,15 @@ from .models import (
     utc_now,
 )
 from .paths import to_portable_path
+from .search import (
+    infer_search_module,
+    matched_search_terms,
+    minimum_term_matches,
+    normalize_search_text,
+    search_excerpt,
+    search_terms,
+    term_coverage,
+)
 
 
 REVIEW_MODULES = {
@@ -879,29 +888,73 @@ class MaryDatabase:
         limit: int = 12,
         module: str = "",
         source: str = "",
+        include_unvalidated: bool = False,
     ) -> list[dict[str, Any]]:
         filters = ["d.status='active'"]
-        fts_query = _fts_query(query)
-        if not fts_query:
+        terms = search_terms(query)
+        if not terms:
             return []
-        params: list[Any] = [fts_query]
+        if not include_unvalidated:
+            filters.extend(
+                [
+                    "d.module<>'Revisar'",
+                    "d.review_status IN ('approved','kept')",
+                ]
+            )
+        filter_params: list[Any] = []
         if module:
             filters.append("d.module=?")
-            params.append(module)
+            filter_params.append(module)
         if source:
             filters.append("d.source=?")
-            params.append(source)
-        params.append(limit)
+            filter_params.append(source)
+        exact_limit = max(60, min(240, int(limit) * 10))
+        broad_limit = max(140, min(500, int(limit) * 24))
         sql = f"""
-            SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank,
-                   snippet(knowledge_fts,1,'<mark>','</mark>',' … ',28) AS excerpt
-            FROM knowledge_fts
-            JOIN documents d ON d.id=knowledge_fts.rowid
-            WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
-            ORDER BY rank LIMIT ?
+            SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+              FROM knowledge_fts
+              JOIN documents d ON d.id=knowledge_fts.rowid
+             WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
+             ORDER BY rank LIMIT ?
         """
+        rows_by_id: dict[int, dict[str, Any]] = {}
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute(sql, params).fetchall()]
+            params = [_fts_and_query(terms), *filter_params, exact_limit]
+            for row in connection.execute(sql, params).fetchall():
+                rows_by_id[int(row["id"])] = dict(row)
+            results = _score_search_rows(rows_by_id.values(), terms)
+            _expand_reference_results(
+                connection,
+                results,
+                terms,
+                filters,
+                filter_params,
+            )
+            if len(results) < max(1, int(limit)):
+                params = [_fts_query(query), *filter_params, broad_limit]
+                for row in connection.execute(sql, params).fetchall():
+                    rows_by_id.setdefault(int(row["id"]), dict(row))
+                results = _score_search_rows(rows_by_id.values(), terms)
+                _expand_reference_results(
+                    connection,
+                    results,
+                    terms,
+                    filters,
+                    filter_params,
+                )
+        results.sort(
+            key=lambda item: (
+                -float(item.get("score") or 0.0),
+                normalize_search_text(item.get("title") or ""),
+            )
+        )
+        selected = results[: max(1, int(limit))]
+        for result in selected:
+            result["excerpt"] = search_excerpt(
+                result.get("markdown") or str(result.get("ocr_text") or ""),
+                terms,
+            )
+        return selected
 
     def start_sync(self, source: str) -> int:
         with self.connect() as connection:
@@ -1008,7 +1061,7 @@ class MaryDatabase:
 
     def update_conversation(self, conversation_id: str, **fields: Any) -> None:
         allowed = {
-            "title", "model", "effort", "native_id", "status", "archived",
+            "title", "provider", "model", "effort", "native_id", "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
             "workspace", "original_workspace",
         }
@@ -1257,15 +1310,143 @@ class MaryDatabase:
 
 
 def _fts_query(query: str) -> str:
-    stopwords = {
-        "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos",
-        "e", "em", "na", "nas", "no", "nos", "o", "os", "para", "por", "que",
-        "um", "uma", "mary",
-    }
-    words = [
-        word.lower()
-        for word in re.findall(r"[\w-]{2,}", query, flags=re.UNICODE)
-        if word.lower() not in stopwords
+    return " OR ".join(_fts_literal(term) for term in search_terms(query))
+
+
+def _fts_and_query(terms: list[str]) -> str:
+    return " AND ".join(_fts_literal(term) for term in terms)
+
+
+def _fts_literal(value: str) -> str:
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _score_search_row(
+    row: dict[str, Any], terms: list[str]
+) -> dict[str, Any] | None:
+    title = str(row.get("title") or "")
+    markdown = str(row.get("markdown") or "")
+    metadata = " ".join(
+        str(row.get(field) or "")
+        for field in ("module", "source", "category", "product")
+    )
+    normalized_title = normalize_search_text(title)
+    normalized_metadata = normalize_search_text(metadata)
+    normalized_content = normalize_search_text(
+        markdown + " " + str(row.get("ocr_text") or "")
+    )
+    title_matches = [term for term in terms if term in normalized_title]
+    matched = [
+        term
+        for term in terms
+        if term in normalized_title
+        or term in normalized_metadata
+        or term in normalized_content
     ]
-    unique = list(dict.fromkeys(words))[:12]
-    return " OR ".join('"' + word.replace('"', '""') + '"' for word in unique)
+    if len(matched) < minimum_term_matches(len(terms)):
+        return None
+    coverage = term_coverage(terms, matched)
+    title_coverage = term_coverage(terms, title_matches)
+    phrase = " ".join(terms)
+    inferred_module = infer_search_module(terms)
+    score = coverage * 400.0 + title_coverage * 220.0
+    if phrase and phrase in normalized_title:
+        score += 220.0
+    if phrase and phrase in normalized_content:
+        score += 120.0
+    if inferred_module and str(row.get("module") or "") == inferred_module:
+        score += 180.0
+    score += min(36, sum(normalized_content.count(term) for term in terms) * 3)
+    if len(markdown) > 150_000 and not title_matches:
+        score -= 30.0
+    result = dict(row)
+    result.update(
+        {
+            "score": round(score, 3),
+            "matched_terms": matched,
+            "coverage": round(coverage, 4),
+            "confidence": round(
+                min(0.97, 0.40 + coverage * 0.42 + title_coverage * 0.12),
+                3,
+            ),
+        }
+    )
+    return result
+
+
+def _score_search_rows(
+    rows: Any, terms: list[str]
+) -> list[dict[str, Any]]:
+    return [
+        scored
+        for row in rows
+        if (scored := _score_search_row(row, terms)) is not None
+    ]
+
+
+def _expand_reference_results(
+    connection: sqlite3.Connection,
+    results: list[dict[str, Any]],
+    terms: list[str],
+    filters: list[str],
+    filter_params: list[Any],
+) -> None:
+    if not results:
+        return
+    results.sort(key=lambda item: -float(item.get("score") or 0.0))
+    by_title = {
+        normalize_search_text(item.get("title") or ""): item for item in results
+    }
+    link_pattern = re.compile(
+        r"\[([^]]+)]\((https?://[^\s)]+)(?:\s+[^)]*)?\)", flags=re.I
+    )
+    for referring in list(results[:30]):
+        markdown = str(referring.get("markdown") or "")
+        for label, url in link_pattern.findall(markdown):
+            label_matches = matched_search_terms(terms, label)
+            if len(label_matches) != len(terms):
+                continue
+            target_key = normalize_search_text(_reference_target_title(label, url))
+            target = by_title.get(target_key)
+            if target is None and target_key:
+                target_terms = search_terms(target_key)
+                if target_terms:
+                    sql = f"""
+                        SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                          FROM knowledge_fts
+                          JOIN documents d ON d.id=knowledge_fts.rowid
+                         WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
+                         ORDER BY rank LIMIT 30
+                    """
+                    params = [_fts_and_query(target_terms), *filter_params]
+                    for row in connection.execute(sql, params).fetchall():
+                        candidate = dict(row)
+                        if normalize_search_text(candidate.get("title") or "") != target_key:
+                            continue
+                        target = _score_search_row(candidate, terms) or candidate
+                        results.append(target)
+                        by_title[target_key] = target
+                        break
+            if target is None or int(target.get("id") or 0) == int(referring.get("id") or -1):
+                continue
+            target["score"] = round(
+                max(
+                    float(target.get("score") or 0.0),
+                    float(referring.get("score") or 0.0) + 300.0,
+                ),
+                3,
+            )
+            target["matched_terms"] = list(terms)
+            target["coverage"] = 1.0
+            target["confidence"] = max(float(target.get("confidence") or 0.0), 0.98)
+            target["resolved_from"] = str(referring.get("title") or "")
+
+
+def _reference_target_title(label: str, url: str) -> str:
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    title = parse_qs(urlparse(url).query).get("title", [""])[0]
+    if title:
+        return unquote(title).replace("_", " ")
+    match = re.match(r"\s*(fun(?:c|ç)[aã]o\s+\d+)", label, flags=re.I)
+    return match.group(1) if match else label

@@ -53,8 +53,24 @@ class LocalSpellChecker:
             if word.casefold() in self.personal_words:
                 continue
             if word.casefold() not in self._checker:
-                candidates = self._checker.candidates(word.casefold()) or set()
-                ranked = sorted(candidates, key=lambda value: (value != self._checker.correction(word), value))
+                normalized = word.casefold()
+                candidates = self._checker.candidates(normalized) or set()
+                correction = self._checker.correction(normalized)
+                # Accent omissions such as "correcao" can be two edits away
+                # from the Portuguese dictionary entry. Keep the fast lookup
+                # first and widen it only for short words without candidates.
+                if not candidates and normalized.isascii() and len(normalized) <= 14:
+                    original_distance = self._checker.distance
+                    try:
+                        self._checker.distance = 2
+                        candidates = self._checker.candidates(normalized) or set()
+                        correction = self._checker.correction(normalized)
+                    finally:
+                        self._checker.distance = original_distance
+                ranked = sorted(
+                    candidates,
+                    key=lambda value: (value != correction, value),
+                )
                 result.append(
                     Misspelling(word, match.start(), len(word), tuple(ranked[:6]))
                 )

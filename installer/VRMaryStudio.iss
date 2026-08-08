@@ -1,5 +1,5 @@
-#define MyAppName "VR Mary Studio"
-#define MyAppVersion "0.3.7"
+#define MyAppName "VR Norte Studio"
+#define MyAppVersion "0.3.8"
 #define MyAppPublisher "VRNorte"
 #define MyAppExeName "VRMaryStudio.exe"
 
@@ -8,10 +8,10 @@ AppId={{88340B2C-B18C-4A09-9F01-82D0DC28E1BD}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\VR Mary Studio
-DefaultGroupName=VR Mary Studio
+DefaultDirName={autopf}\VR Norte Studio
+DefaultGroupName=VR Norte Studio
 OutputDir=..\releases
-OutputBaseFilename=VRMaryStudio-0.3.7-setup
+OutputBaseFilename=VRNorteStudio-0.3.8-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -25,11 +25,11 @@ PrivilegesRequired=lowest
 Source: "..\dist\VRMaryStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\VR Mary Studio"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\VR Mary Studio"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\VR Norte Studio"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\VR Norte Studio"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho na area de trabalho"; GroupDescription: "Atalhos:"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir VR Mary Studio"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir VR Norte Studio"; Flags: nowait postinstall skipifsilent

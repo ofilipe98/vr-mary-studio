@@ -17,7 +17,7 @@ from .workspace import initialize_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="vr-mary", description="VR Mary Studio")
+    parser = argparse.ArgumentParser(prog="vr-mary", description="VR Norte Studio")
     parser.add_argument("--app-dir", default=".", help="Pasta do aplicativo e .env")
     parser.add_argument("--root", default=None, help="Raiz da base VR_Mary_V2")
     sub = parser.add_subparsers(dest="command", required=True)

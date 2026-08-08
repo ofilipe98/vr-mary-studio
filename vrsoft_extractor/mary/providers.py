@@ -181,8 +181,8 @@ class CodexProvider(AgentProvider):
                     {
                         "clientInfo": {
                             "name": "vr_mary_studio",
-                            "title": "VR Mary Studio",
-                            "version": "0.3.7",
+                            "title": "VR Norte Studio",
+                            "version": "0.3.8",
                         },
                         "capabilities": {"experimentalApi": True},
                     },
@@ -322,7 +322,16 @@ class CodexProvider(AgentProvider):
         callback = self._callbacks.get(conversation_id)
         if not callback:
             return
-        if method == "item/agentMessage/delta":
+        if method == "thread/settings/updated":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "settings_updated",
+                    "Configuração efetiva atualizada",
+                    params,
+                )
+            )
+        elif method == "item/agentMessage/delta":
             callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
         elif method == "item/plan/delta":
             callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
@@ -574,6 +583,40 @@ class CodexProvider(AgentProvider):
         self._native_to_local[resumed_id] = conversation_id
         return resumed_id
 
+    @staticmethod
+    def _is_archived_session_error(error: Exception) -> bool:
+        message = str(error).casefold()
+        return "archiv" in message and (
+            "unarchive" in message
+            or "desarquiv" in message
+            or "is archived" in message
+        )
+
+    def _reactivate_archived_conversation(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions,
+    ) -> str:
+        try:
+            self.unarchive_thread(native_id)
+            return self.resume_conversation(
+                conversation_id,
+                native_id,
+                model,
+                effort,
+                workspace,
+                options,
+            )
+        except ProviderError as exc:
+            raise ProviderError(
+                "A sessão do Codex foi arquivada e não pôde ser reativada "
+                f"automaticamente: {exc}"
+            ) from exc
+
     def send_message(
         self,
         conversation_id: str,
@@ -589,9 +632,21 @@ class CodexProvider(AgentProvider):
         self._ensure_started()
         options = options or ConversationOptions(model=model, effort=effort)
         if native_id not in self._native_to_local:
-            native_id = self.resume_conversation(
-                conversation_id, native_id, model, effort, workspace, options
-            )
+            try:
+                native_id = self.resume_conversation(
+                    conversation_id, native_id, model, effort, workspace, options
+                )
+            except ProviderError as exc:
+                if not self._is_archived_session_error(exc):
+                    raise
+                native_id = self._reactivate_archived_conversation(
+                    conversation_id,
+                    native_id,
+                    model,
+                    effort,
+                    workspace,
+                    options,
+                )
         self._callbacks[conversation_id] = callback
         self._native_to_local[native_id] = conversation_id
         preset = approval_preset(options.approval_profile)
@@ -632,9 +687,9 @@ class CodexProvider(AgentProvider):
             "approvalsReviewer": preset.reviewer,
             "sandboxPolicy": sandbox_policy,
         }
-        if selected_model:
+        if selected_model and options.collaboration_mode == "plan":
             params["collaborationMode"] = {
-                "mode": "plan" if options.collaboration_mode == "plan" else "default",
+                "mode": "plan",
                 "settings": {
                     "model": selected_model,
                     "reasoning_effort": normalize_effort(options.effort or effort),
@@ -643,7 +698,23 @@ class CodexProvider(AgentProvider):
             }
         if options.service_tier:
             params["serviceTier"] = options.service_tier
-        self._rpc("turn/start", params)
+        try:
+            self._rpc("turn/start", params)
+        except ProviderError as exc:
+            if not self._is_archived_session_error(exc):
+                raise
+            native_id = self._reactivate_archived_conversation(
+                conversation_id,
+                native_id,
+                model,
+                effort,
+                workspace,
+                options,
+            )
+            params["threadId"] = native_id
+            self._callbacks[conversation_id] = callback
+            self._native_to_local[native_id] = conversation_id
+            self._rpc("turn/start", params)
 
     def interrupt(self, conversation_id: str) -> None:
         native_id = next(
@@ -715,23 +786,23 @@ class CodexProvider(AgentProvider):
             )
         selected_model = options.model
         params: dict[str, Any] = {
-                "threadId": native_id,
-                "model": selected_model or None,
-                "effort": normalize_effort(options.effort),
-                "serviceTier": options.service_tier or None,
-                "approvalPolicy": preset.approval_policy,
-                "approvalsReviewer": preset.reviewer,
-                "sandboxPolicy": sandbox_policy,
+            "threadId": native_id,
+            "model": selected_model or None,
+            "effort": normalize_effort(options.effort),
+            "serviceTier": options.service_tier or None,
+            "approvalPolicy": preset.approval_policy,
+            "approvalsReviewer": preset.reviewer,
+            "sandboxPolicy": sandbox_policy,
         }
-        if selected_model:
+        if selected_model and options.collaboration_mode == "plan":
             params["collaborationMode"] = {
-                    "mode": "plan" if options.collaboration_mode == "plan" else "default",
-                    "settings": {
-                        "model": selected_model,
-                        "reasoning_effort": normalize_effort(options.effort),
-                        "developer_instructions": None,
-                    },
-                }
+                "mode": "plan",
+                "settings": {
+                    "model": selected_model,
+                    "reasoning_effort": normalize_effort(options.effort),
+                    "developer_instructions": None,
+                },
+            }
         try:
             self._rpc("thread/settings/update", params)
         except ProviderError as exc:

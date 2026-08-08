@@ -17,6 +17,10 @@ from vrsoft_extractor.mary.portable_project import (
     MANAGED_MARKER,
     ensure_portable_project,
 )
+from vrsoft_extractor.mary.workspace import (
+    CONVERSATION_MANAGED_MARKER,
+    ensure_conversation_workspace,
+)
 
 
 def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
@@ -42,7 +46,45 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
     assert (root / ".codex" / "agents" / "fisco.toml").is_file()
     assert (root / "tools" / "mary-search.ps1").is_file()
     assert (root / "Abrir-Mary-no-Codex.cmd").is_file()
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "ativa o fluxo Mary automaticamente" in agents
+    assert "prefixo `Mary:` é aceito, mas opcional" in agents
+    assert "Modo multiagente real do Codex indisponível" not in agents
+    assert "tente delegar o papel a um subagente" in agents
     assert not second.preserved
+
+
+def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "MaryProject"
+    legacy = root / "TrabalhoMary" / "legacy"
+    legacy.mkdir(parents=True)
+    (legacy / "AGENTS.md").write_text(
+        "# Workspace de conversa Mary\n\nInstruções principais: `../../AGENTS.md`.\n",
+        encoding="utf-8",
+    )
+
+    ensure_conversation_workspace(legacy)
+
+    assert CONVERSATION_MANAGED_MARKER in (legacy / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    assert "O aplicativo fornece o contexto" in (legacy / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    assert (legacy / "tools" / "mary-search.ps1").is_file()
+
+    custom = root / "TrabalhoMary" / "custom"
+    tools = custom / "tools"
+    tools.mkdir(parents=True)
+    (custom / "AGENTS.md").write_text("# Regras próprias\n", encoding="utf-8")
+    (tools / "mary-search.ps1").write_text("# script próprio\n", encoding="utf-8")
+
+    ensure_conversation_workspace(custom)
+
+    assert (custom / "AGENTS.md").read_text(encoding="utf-8") == "# Regras próprias\n"
+    assert (tools / "mary-search.ps1").read_text(encoding="utf-8") == "# script próprio\n"
 
 
 def test_ensure_portable_project_preserves_user_owned_codex_config(tmp_path: Path) -> None:
@@ -191,3 +233,158 @@ def test_portable_search_runs_without_python(tmp_path: Path) -> None:
     assert result["total"] == 1
     assert result["results"][0]["source_id"] == "289782"
     assert result["results"][0]["local_path"] == "conhecimento/PDV/KB/pinpad.md"
+
+
+@pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
+def test_portable_search_resolves_function_102_without_fiscal_results(tmp_path: Path) -> None:
+    root = tmp_path / "MaryProject"
+    ensure_portable_project(root)
+    entries = [
+        {
+            "source": "wiki",
+            "source_id": "3742",
+            "title": "Funcao 102",
+            "module": "PDV",
+            "url": "https://wiki.example/index.php?title=Funcao_102",
+            "local_path": "conhecimento/PDV/Wiki/funcao-102--3742.md",
+            "content": (
+                "Função responsável por identificar um operador para o caixa. "
+                "Status FECHADO PARCIAL. Tecla de atalho O."
+            ),
+        },
+        {
+            "source": "wiki",
+            "source_id": "4495",
+            "title": "MAPA DE FUNCOES",
+            "module": "PDV",
+            "url": "https://wiki.example/index.php?title=MAPA_DE_FUNCOES",
+            "local_path": "conhecimento/PDV/Wiki/mapa-de-funcoes--4495.md",
+            "content": (
+                "[Funcao 102 - Entrada Operador]"
+                "(https://wiki.example/index.php?title=Funcao_102)"
+            ),
+        },
+        {
+            "source": "kb",
+            "source_id": "fiscal",
+            "title": "Manual de cadastro de entrada fiscal",
+            "module": "Fiscal",
+            "url": "https://kb.example/fiscal",
+            "local_path": "conhecimento/Fiscal/KB/manual-fiscal.md",
+            "content": "Função de entrada do operador em cadastro de nota fiscal.",
+        },
+    ]
+    entries.extend(
+        {
+            "source": "wiki",
+            "source_id": f"pdv-{index}",
+            "title": f"Procedimento PDV {index}",
+            "module": "PDV",
+            "url": f"https://wiki.example/pdv-{index}",
+            "local_path": f"conhecimento/PDV/Wiki/procedimento-{index}.md",
+            "content": "Consulte a função para entrada do operador no PDV.",
+        }
+        for index in range(7)
+    )
+    catalog_lines = []
+    for entry in entries:
+        path = root / entry["local_path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(entry.pop("content"), encoding="utf-8")
+        catalog_lines.append(
+            json.dumps(
+                {
+                    **entry,
+                    "review_status": "approved",
+                    "status": "active",
+                },
+                ensure_ascii=False,
+            )
+        )
+    catalog = root / "indice" / "catalogo.jsonl"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text("\n".join(catalog_lines) + "\n", encoding="utf-8")
+
+    def run(query: str) -> dict:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(root / "tools" / "mary-search.ps1"),
+                "-Query",
+                query,
+                "-Limit",
+                "8",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8-sig",
+        )
+        return json.loads(completed.stdout)
+
+    plain = run("Qual a função de entrada do operador?")
+    prefixed = run("Mary: Qual a função de entrada do operador?")
+
+    assert plain["results"][0]["source_id"] == "3742"
+    assert plain["results"][0]["resolved_from"] == "MAPA DE FUNCOES"
+    assert plain["results"][0]["coverage"] == 1
+    assert plain["results"][0]["url"].startswith("https://")
+    assert plain["results"][0]["local_path"].endswith("funcao-102--3742.md")
+    assert all(result["module"] != "Fiscal" for result in plain["results"])
+    assert [item["source_id"] for item in plain["results"]] == [
+        item["source_id"] for item in prefixed["results"]
+    ]
+
+
+@pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
+def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "MaryProject"
+    ensure_portable_project(root)
+    article = root / "conhecimento" / "PDV" / "KB" / "pinpad.md"
+    article.parent.mkdir(parents=True)
+    article.write_text("Falha no pinpad durante a venda TEF.", encoding="utf-8")
+    catalog = root / "indice" / "catalogo.jsonl"
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(
+        json.dumps(
+            {
+                "source": "kb",
+                "source_id": "wrapper-test",
+                "title": "Falha no pinpad",
+                "module": "PDV",
+                "review_status": "approved",
+                "status": "active",
+                "local_path": "conhecimento/PDV/KB/pinpad.md",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    workspace = ensure_conversation_workspace(root / "TrabalhoMary" / "saved-thread")
+
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(workspace / "tools" / "mary-search.ps1"),
+            "-Query",
+            "pinpad TEF",
+        ],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8-sig",
+    )
+
+    result = json.loads(completed.stdout)
+    assert result["total"] == 1
+    assert result["results"][0]["source_id"] == "wrapper-test"

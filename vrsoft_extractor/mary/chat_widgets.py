@@ -2,12 +2,31 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPoint, QSettings, Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPoint,
+    QPointF,
+    Property,
+    QPropertyAnimation,
+    QRectF,
+    QSettings,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
+    QAction,
     QColor,
+    QIcon,
     QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRegion,
     QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
@@ -31,6 +50,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QTabBar,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +58,152 @@ from PySide6.QtWidgets import (
 from .chat_tools import ToolValidationError, validate_tool_definition
 from .db import MaryDatabase
 from .spellcheck import LocalSpellChecker
+
+
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
+PROVIDER_ICON_PATHS = {
+    "codex": ASSET_DIR / "provider-gpt.png",
+    "claude": ASSET_DIR / "provider-claude.webp",
+}
+_PROVIDER_ICON_CACHE: dict[str, QIcon] = {}
+
+
+def provider_icon(provider: str) -> QIcon:
+    provider_name = str(provider).casefold()
+    cached = _PROVIDER_ICON_CACHE.get(provider_name)
+    if cached is not None:
+        return cached
+    path = PROVIDER_ICON_PATHS.get(provider_name)
+    if not path or not path.is_file():
+        return QIcon()
+    pixmap = QPixmap(str(path))
+    if pixmap.isNull():
+        return QIcon()
+    mask = pixmap.mask()
+    if not mask.isNull():
+        visible_bounds = QRegion(mask).boundingRect()
+        if visible_bounds.isValid() and not visible_bounds.isEmpty():
+            pixmap = pixmap.copy(visible_bounds)
+    if provider_name == "codex":
+        canvas = QPixmap(128, 128)
+        canvas.fill(Qt.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor("#D1D5DB"), 3))
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawEllipse(3, 3, 122, 122)
+        symbol = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(
+            (canvas.width() - symbol.width()) // 2,
+            (canvas.height() - symbol.height()) // 2,
+            symbol,
+        )
+        painter.end()
+        pixmap = canvas
+    icon = QIcon(pixmap)
+    _PROVIDER_ICON_CACHE[provider_name] = icon
+    return icon
+
+
+class AnimatedVrFlowButton(QToolButton):
+    """Compact animated switch for the optional local VR knowledge flow."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._glow = 0.0
+        self.setCheckable(True)
+        self.setChecked(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(62, 30)
+        self.setAccessibleName("Fluxo VR")
+
+        self._glow_animation = QPropertyAnimation(self, b"glow", self)
+        self._glow_animation.setDuration(1500)
+        self._glow_animation.setLoopCount(-1)
+        self._glow_animation.setEasingCurve(QEasingCurve.InOutSine)
+        self._glow_animation.setKeyValueAt(0.0, 0.0)
+        self._glow_animation.setKeyValueAt(0.5, 1.0)
+        self._glow_animation.setKeyValueAt(1.0, 0.0)
+        self.toggled.connect(self._sync_state)
+        self._sync_state(self.isChecked())
+
+    def _get_glow(self) -> float:
+        return self._glow
+
+    def _set_glow(self, value: float) -> None:
+        self._glow = float(value)
+        self.update()
+
+    glow = Property(float, _get_glow, _set_glow)
+
+    def _sync_state(self, enabled: bool) -> None:
+        if enabled:
+            if self._glow_animation.state() != QPropertyAnimation.Running:
+                self._glow_animation.start()
+            description = "Fluxo VR ativo: consulta a base local antes de responder"
+        else:
+            self._glow_animation.stop()
+            self._set_glow(0.0)
+            description = "Fluxo VR inativo: conversa diretamente com a LLM"
+        self.setToolTip(description)
+        self.setAccessibleDescription(description)
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        body = QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0)
+        radius = body.height() / 2.0
+
+        if self.isChecked():
+            pulse = max(0.0, min(1.0, self._glow))
+            painter.setPen(QPen(QColor(255, 189, 15, 95 + int(130 * pulse)), 2.2))
+            gradient = QLinearGradient(body.topLeft(), body.bottomRight())
+            gradient.setColorAt(0.0, QColor("#FF8A00"))
+            gradient.setColorAt(0.55, QColor("#E85B00"))
+            gradient.setColorAt(1.0, QColor("#B83D00"))
+            painter.setBrush(gradient)
+            text_color = QColor("#FFFFFF")
+            star_color = QColor("#FFF1B8")
+        else:
+            painter.setPen(QPen(QColor("#B9B9C5"), 1.2))
+            painter.setBrush(QColor("#F1F1F5"))
+            text_color = QColor("#5F5F70")
+            star_color = QColor("#777789")
+        painter.drawRoundedRect(body, radius, radius)
+
+        star_center = QPointF(body.left() + 13.0, body.center().y())
+        outer = 5.0 if self.isChecked() else 4.2
+        inner = 1.35
+        star = QPainterPath()
+        star.moveTo(star_center.x(), star_center.y() - outer)
+        star.lineTo(star_center.x() + inner, star_center.y() - inner)
+        star.lineTo(star_center.x() + outer, star_center.y())
+        star.lineTo(star_center.x() + inner, star_center.y() + inner)
+        star.lineTo(star_center.x(), star_center.y() + outer)
+        star.lineTo(star_center.x() - inner, star_center.y() + inner)
+        star.lineTo(star_center.x() - outer, star_center.y())
+        star.lineTo(star_center.x() - inner, star_center.y() - inner)
+        star.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(star_color)
+        painter.drawPath(star)
+
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSizeF(max(8.5, font.pointSizeF()))
+        painter.setFont(font)
+        painter.setPen(text_color)
+        painter.drawText(
+            QRectF(body.left() + 21.0, body.top(), body.width() - 25.0, body.height()),
+            Qt.AlignCenter,
+            "VR",
+        )
+        if self.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#FCBD0F"), 1.5, Qt.DotLine))
+            painter.drawRoundedRect(body.adjusted(1, 1, -1, -1), radius, radius)
+        painter.end()
 
 
 class SpellHighlighter(QSyntaxHighlighter):
@@ -99,27 +265,45 @@ class SpellcheckPlainTextEdit(QPlainTextEdit):
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt API
         menu = self.createStandardContextMenu()
         cursor = self.cursorForPosition(event.pos())
+        self._add_spelling_actions(menu, cursor)
+        menu.exec(event.globalPos())
+
+    def _add_spelling_actions(self, menu, cursor: QTextCursor) -> None:
         cursor.select(QTextCursor.WordUnderCursor)
         word = cursor.selectedText()
         issue = next(
             (item for item in self.checker.misspellings(word) if item.word == word), None
         )
-        if issue:
-            menu.insertSeparator(menu.actions()[0] if menu.actions() else None)
-            for suggestion in issue.suggestions[:5]:
-                action = menu.addAction(f"Substituir por “{suggestion}”")
-                action.triggered.connect(
-                    lambda _checked=False, value=suggestion, target=QTextCursor(cursor): (
-                        target.insertText(value)
-                    )
+        if not issue:
+            return
+
+        first_standard_action = menu.actions()[0] if menu.actions() else None
+        for suggestion in issue.suggestions[:5]:
+            replacement = _match_word_case(word, suggestion)
+            action = QAction(replacement, menu)
+            action.setToolTip(f"Substituir “{word}” por “{replacement}”")
+            action.triggered.connect(
+                lambda _checked=False, value=replacement, target=QTextCursor(cursor): (
+                    target.insertText(value)
                 )
-            add_action = menu.addAction(f"Adicionar “{word}” ao dicionário Mary")
-            add_action.triggered.connect(lambda: self._add_word(word))
-        menu.exec(event.globalPos())
+            )
+            menu.insertAction(first_standard_action, action)
+        add_action = QAction(f"Adicionar “{word}” ao dicionário", menu)
+        add_action.triggered.connect(lambda: self._add_word(word))
+        menu.insertAction(first_standard_action, add_action)
+        menu.insertSeparator(first_standard_action)
 
     def _add_word(self, word: str) -> None:
         self.checker.add_word(word)
         self.highlighter.rehighlight()
+
+
+def _match_word_case(source: str, replacement: str) -> str:
+    if source.isupper():
+        return replacement.upper()
+    if source[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
 
 
 class SlashCommandPalette(QFrame):
@@ -163,6 +347,9 @@ class SlashCommandPalette(QFrame):
                 source = str(entry.get("source") or "").strip()
                 detail = " \u00b7 ".join(value for value in (description, source) if value)
                 item = QListWidgetItem(name + (f"\n{detail}" if detail else ""))
+                icon = entry.get("icon")
+                if isinstance(icon, QIcon) and not icon.isNull():
+                    item.setIcon(icon)
                 item.setData(Qt.UserRole, entry)
                 if not entry.get("enabled", True):
                     item.setFlags(Qt.NoItemFlags)
@@ -215,40 +402,122 @@ class SlashCommandPalette(QFrame):
                 return
 
 
-class SpellReviewDialog(QDialog):
-    def __init__(self, checker: LocalSpellChecker, text: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Correção ortográfica local")
-        self.resize(760, 520)
-        corrected, replacements = checker.correct_text(text)
-        layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(
-                "Revise as sugestões. Código, URLs, caminhos e identificadores técnicos são ignorados."
-            )
-        )
-        columns = QHBoxLayout()
-        original_box = QPlainTextEdit(text)
-        original_box.setReadOnly(True)
-        self.corrected_box = QPlainTextEdit(corrected)
-        left = QVBoxLayout()
-        left.addWidget(QLabel("Original"))
-        left.addWidget(original_box)
-        right = QVBoxLayout()
-        right.addWidget(QLabel("Corrigido"))
-        right.addWidget(self.corrected_box)
-        columns.addLayout(left)
-        columns.addLayout(right)
-        layout.addLayout(columns)
-        layout.addWidget(QLabel(f"{len(replacements)} sugestão(ões) encontrada(s)."))
-        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Apply).setText("Aplicar correções")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+class DescriptiveComboBox(QComboBox):
+    """Compact combo with a readable, Codex-like popup."""
 
-    def corrected_text(self) -> str:
-        return self.corrected_box.toPlainText()
+    popup_title = "Opções"
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt API
+        dialog = QDialog(self)
+        dialog.setObjectName("optionPickerPopup")
+        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(4)
+        title = QLabel(self.popup_title)
+        title.setObjectName("optionPickerTitle")
+        layout.addWidget(title)
+        choices = QListWidget()
+        choices.setObjectName("optionPickerList")
+        choices.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        for index in range(self.count()):
+            label = self.itemText(index)
+            description = str(self.itemData(index, Qt.ToolTipRole) or "").strip()
+            prefix = "✓ " if index == self.currentIndex() else ""
+            item = QListWidgetItem(prefix + label + (f"\n{description}" if description else ""))
+            icon = self.itemIcon(index)
+            if not icon.isNull():
+                item.setIcon(icon)
+            item.setData(Qt.UserRole, index)
+            choices.addItem(item)
+        choices.itemClicked.connect(
+            lambda item: (self.setCurrentIndex(int(item.data(Qt.UserRole))), dialog.accept())
+        )
+        layout.addWidget(choices)
+        rows = max(1, self.count())
+        width = max(270, min(390, self.width() + 170))
+        dialog.resize(width, min(420, 48 + rows * 58))
+        origin = self.mapToGlobal(QPoint(0, self.height() + 5))
+        screen = self.screen()
+        if screen:
+            available = screen.availableGeometry()
+            x = max(available.left() + 6, min(origin.x(), available.right() - width - 6))
+            y = origin.y()
+            if y + dialog.height() > available.bottom() - 6:
+                y = max(available.top() + 6, self.mapToGlobal(QPoint(0, -dialog.height() - 5)).y())
+            dialog.move(x, y)
+        dialog.exec()
+
+
+class ApprovalPickerCombo(DescriptiveComboBox):
+    popup_title = "Permissões"
+
+
+class ReasoningTierCombo(QComboBox):
+    """Reasoning selector that also exposes service tier in one compact popup."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tier_combo: QComboBox | None = None
+
+    def set_tier_combo(self, combo: QComboBox) -> None:
+        self._tier_combo = combo
+
+    def showPopup(self) -> None:  # noqa: N802 - Qt API
+        dialog = QDialog(self)
+        dialog.setObjectName("optionPickerPopup")
+        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(7, 7, 7, 7)
+        layout.setSpacing(4)
+        choices = QListWidget()
+        choices.setObjectName("optionPickerList")
+        choices.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        def add_section(label: str) -> None:
+            item = QListWidgetItem(label)
+            item.setFlags(Qt.NoItemFlags)
+            item.setData(Qt.UserRole, ("section", -1))
+            choices.addItem(item)
+
+        add_section("RACIOCÍNIO")
+        for index in range(self.count()):
+            prefix = "✓ " if index == self.currentIndex() else ""
+            item = QListWidgetItem(prefix + self.itemText(index))
+            item.setData(Qt.UserRole, ("reasoning", index))
+            choices.addItem(item)
+        if self._tier_combo is not None:
+            add_section("CAMADA DE SERVIÇO")
+            for index in range(self._tier_combo.count()):
+                suffix = "  Padrão" if not self._tier_combo.itemData(index) else ""
+                prefix = "✓ " if index == self._tier_combo.currentIndex() else ""
+                item = QListWidgetItem(prefix + self._tier_combo.itemText(index) + suffix)
+                item.setData(Qt.UserRole, ("tier", index))
+                choices.addItem(item)
+
+        def choose(item: QListWidgetItem) -> None:
+            kind, index = item.data(Qt.UserRole)
+            if kind == "reasoning":
+                self.setCurrentIndex(index)
+            elif kind == "tier" and self._tier_combo is not None:
+                self._tier_combo.setCurrentIndex(index)
+            dialog.accept()
+
+        choices.itemClicked.connect(choose)
+        layout.addWidget(choices)
+        rows = choices.count()
+        width = max(190, self.width() + 100)
+        dialog.resize(width, min(470, 20 + rows * 36))
+        origin = self.mapToGlobal(QPoint(0, self.height() + 5))
+        screen = self.screen()
+        if screen:
+            available = screen.availableGeometry()
+            x = max(available.left() + 6, min(origin.x(), available.right() - width - 6))
+            y = origin.y()
+            if y + dialog.height() > available.bottom() - 6:
+                y = max(available.top() + 6, self.mapToGlobal(QPoint(0, -dialog.height() - 5)).y())
+            dialog.move(x, y)
+        dialog.exec()
 
 
 class ModelPickerCombo(QComboBox):
@@ -313,37 +582,76 @@ class ModelPickerCombo(QComboBox):
         if 0 <= position < len(ranked):
             self.providerModelSelected.emit(*ranked[position])
 
+    def _place_popup(self, dialog: QDialog) -> None:
+        screen = self.screen()
+        if not screen:
+            return
+        available = screen.availableGeometry()
+        width = min(520, max(320, available.width() - 24))
+        height = min(560, max(300, available.height() - 24))
+        dialog.resize(width, height)
+        below = self.mapToGlobal(QPoint(0, self.height() + 6))
+        x = max(available.left() + 8, min(below.x(), available.right() - width - 8))
+        if below.y() + height <= available.bottom() - 8:
+            y = below.y()
+        else:
+            above = self.mapToGlobal(QPoint(0, -height - 6)).y()
+            y = max(available.top() + 8, above)
+        dialog.move(x, y)
+
     def showPopup(self) -> None:  # noqa: N802 - Qt API
         dialog = QDialog(self)
-        dialog.setWindowTitle("Selecionar modelo")
+        dialog.setObjectName("modelPickerPopup")
+        dialog.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        dialog.setAccessibleName("Selecionar modelo")
         dialog.resize(520, 560)
         layout = QVBoxLayout(dialog)
-        filters = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
         provider = QTabBar()
+        provider.setObjectName("modelProviderTabs")
         provider.setDocumentMode(True)
-        all_index = provider.addTab("★ Todos")
+        provider.setDrawBase(False)
+        provider.setShape(QTabBar.RoundedWest)
+        provider.setExpanding(False)
+        provider.setFixedWidth(48)
+        all_index = provider.addTab(QIcon(str(ASSET_DIR / "model-all.svg")), "")
+        provider.setTabToolTip(all_index, "Todos os modelos")
         provider.setTabData(all_index, "")
         for name in ("codex", "claude"):
-            index = provider.addTab("◉ Codex" if name == "codex" else "◆ Claude")
+            index = provider.addTab(provider_icon(name), "")
+            provider.setTabToolTip(index, name.title())
             provider.setTabData(index, name)
+        body.addWidget(provider, 0, Qt.AlignTop)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(8)
         search = QLineEdit()
+        search.setObjectName("modelPickerSearch")
         search.setPlaceholderText("Pesquisar modelos…")
-        filters.addWidget(provider)
-        filters.addWidget(search, 1)
-        layout.addLayout(filters)
+        content_layout.addWidget(search)
         model_list = QListWidget()
-        layout.addWidget(model_list, 1)
+        content_layout.addWidget(model_list, 1)
         status = QLabel()
         status.setWordWrap(True)
         status.setObjectName("muted")
-        layout.addWidget(status)
+        content_layout.addWidget(status)
         retry = QPushButton("Tentar novamente")
-        layout.addWidget(retry)
+        retry.setObjectName("modelPickerAction")
         favorite = QPushButton("☆ Favoritar")
-        layout.addWidget(favorite)
-        buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
+        favorite.setObjectName("modelPickerAction")
+        actions = QHBoxLayout()
+        actions.addWidget(favorite)
+        actions.addStretch()
+        actions.addWidget(retry)
+        content_layout.addLayout(actions)
+        body.addWidget(content, 1)
+        layout.addLayout(body)
         favorites = set(self._settings.value("chat/model_favorites", [], list) or [])
 
         def refresh() -> None:
@@ -375,6 +683,16 @@ class ModelPickerCombo(QComboBox):
                 )
             )
             model_list.clear()
+            default_provider = selected_provider or self._active_provider
+            default_haystack = f"modelo padrão default {default_provider}".casefold()
+            if not term or term in default_haystack:
+                default_item = QListWidgetItem(
+                    "Modelo padrão\n"
+                    f"{default_provider.title()} · escolha recomendada pelo provedor"
+                )
+                default_item.setIcon(provider_icon(default_provider))
+                default_item.setData(Qt.UserRole, (default_provider, ""))
+                model_list.addItem(default_item)
             for index, (is_favorite, provider_name, model) in enumerate(rows, start=1):
                 model_id = str(model.get("id") or model.get("model") or "")
                 label = str(model.get("displayName") or model_id)
@@ -397,8 +715,11 @@ class ModelPickerCombo(QComboBox):
                     f"{'★' if is_favorite else '☆'} {label}{suffix}{shortcut}\n"
                     f"{provider_name.title()} · {model.get('description') or model_id}{capability_text}"
                 )
+                item.setIcon(provider_icon(provider_name))
                 item.setData(Qt.UserRole, (provider_name, model_id))
                 model_list.addItem(item)
+            if model_list.count():
+                model_list.setCurrentRow(0)
             state_providers = (
                 [selected_provider]
                 if selected_provider
@@ -421,6 +742,10 @@ class ModelPickerCombo(QComboBox):
             else:
                 status.setText("Nenhum modelo disponível neste provedor.")
             retry.setVisible(bool(errors) or (not rows and not loading))
+            favorite.setEnabled(
+                bool(model_list.currentItem())
+                and bool(model_list.currentItem().data(Qt.UserRole)[1])
+            )
 
         def choose() -> None:
             item = model_list.currentItem()
@@ -443,17 +768,35 @@ class ModelPickerCombo(QComboBox):
             self._settings.setValue("chat/model_favorites", sorted(favorites))
             refresh()
 
+        def refresh_favorite() -> None:
+            item = model_list.currentItem()
+            if not item:
+                favorite.setEnabled(False)
+                favorite.setText("☆ Favoritar")
+                return
+            provider_name, model_id = item.data(Qt.UserRole)
+            favorite.setEnabled(bool(model_id))
+            favorite.setText(
+                "★ Remover favorito"
+                if f"{provider_name}:{model_id}" in favorites
+                else "☆ Favoritar"
+            )
+
         def retry_models() -> None:
             selected_provider = str(provider.tabData(provider.currentIndex()) or "")
             self.retryRequested.emit(selected_provider or self._active_provider)
 
         search.textChanged.connect(refresh)
+        search.returnPressed.connect(choose)
         provider.currentChanged.connect(refresh)
-        model_list.itemDoubleClicked.connect(lambda _item: choose())
+        model_list.itemActivated.connect(lambda _item: choose())
+        model_list.currentItemChanged.connect(lambda _current, _previous: refresh_favorite())
         favorite.clicked.connect(toggle_favorite)
         retry.clicked.connect(retry_models)
         self.catalogChanged.connect(refresh)
         refresh()
+        self._place_popup(dialog)
+        search.setFocus()
         try:
             dialog.exec()
         finally:

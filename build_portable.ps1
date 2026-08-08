@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$AppVersion = "0.3.8"
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Ambiente virtual nao encontrado: $Python"
@@ -24,12 +25,11 @@ try {
 
     $ReleaseRoot = Join-Path $ProjectRoot "releases"
     New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
-    $Archive = Join-Path $ReleaseRoot "VRMaryStudio-0.3.7-app-only.zip"
-    if (Test-Path -LiteralPath $Archive) {
-        Remove-Item -LiteralPath $Archive -Force
+    # A distribuição oficial é única: o portátil completo já contém o app.
+    # Remova o artefato legado para não publicar duas variantes da mesma versão.
+    foreach ($LegacyAppOnlyArchive in Get-ChildItem -LiteralPath $ReleaseRoot -Filter "VRMaryStudio-*-app-only.zip" -File) {
+        Remove-Item -LiteralPath $LegacyAppOnlyArchive.FullName -Force
     }
-    Compress-Archive -LiteralPath $DistRoot -DestinationPath $Archive
-    Write-Output $Archive
 
     if (-not $SkipMaryProject) {
         $PortableRoot = Join-Path $ProjectRoot "dist\VRMaryPortable"
@@ -55,7 +55,7 @@ try {
             throw "Exportacao do projeto Mary falhou com codigo $LASTEXITCODE"
         }
 
-        $PortableArchive = Join-Path $ReleaseRoot "VRMaryPortable-0.3.7.zip"
+        $PortableArchive = Join-Path $ReleaseRoot "VRMaryPortable-$AppVersion.zip"
         if (Test-Path -LiteralPath $PortableArchive) {
             Remove-Item -LiteralPath $PortableArchive -Force
         }

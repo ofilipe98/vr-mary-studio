@@ -16,6 +16,7 @@ from vrsoft_extractor.video_classification import (
     classify_inventory,
     save_module_override,
 )
+from vrsoft_extractor.video_storage import format_byte_size, inspect_video_storage
 
 
 def video(
@@ -139,6 +140,35 @@ def test_duplicate_lesson_titles_receive_deterministic_suffix():
     targets = _download_target_bases([second, first], settings)
     assert targets[first.id].name == "Introdução"
     assert targets[second.id].name == "Introdução - 11"
+
+
+def test_video_storage_detects_downloads_and_missing_files():
+    tmp_path = _test_dir().resolve()
+    settings = Settings(project_dir=tmp_path)
+    downloaded = video(task_id="20", title="Aula baixada")
+    downloaded.business_module = "Fiscal"
+    missing = video(
+        task_id="21",
+        title="Aula ausente",
+        page="https://example.com/task/21",
+    )
+    missing.business_module = "Fiscal"
+    missing.status = "downloaded"
+    missing.local_path = str(tmp_path / "downloads" / "arquivo-inexistente.mp4")
+    try:
+        target = _download_target_bases([downloaded, missing], settings)[downloaded.id]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.with_suffix(".mp4").write_bytes(b"x" * 2048)
+
+        storage = inspect_video_storage([downloaded, missing], settings)
+
+        assert storage[downloaded.id].state == "Baixado"
+        assert storage[downloaded.id].size_bytes == 2048
+        assert format_byte_size(storage[downloaded.id].size_bytes) == "2,0 KB"
+        assert storage[missing.id].state == "Arquivo ausente"
+        assert not storage[missing.id].downloaded
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 def test_course_catalog_statuses():
