@@ -39,6 +39,7 @@ from PySide6.QtGui import (
     QTextCursor,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -496,7 +497,8 @@ class RoundedOverlayFrame(QFrame):
         if event.type() == QEvent.MouseButtonPress and isinstance(watched, QWidget):
             if not self._contains_widget(watched):
                 if self._contains_anchor(watched):
-                    setattr(self._anchor, "_suppress_popup_release", True)
+                    self.close()
+                    return True
                 self.close()
         elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             self.close()
@@ -685,7 +687,7 @@ class AccessibleIconTabBar(QTabBar):
 
     def tabSizeHint(self, index: int) -> QSize:  # noqa: N802 - Qt API
         del index
-        return QSize(48, 48)
+        return QSize(50, 48)
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
         painter = QStylePainter(self)
@@ -801,21 +803,55 @@ class DescriptiveComboBox(RoundedComboBox):
 
     popup_title = "Opções"
 
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._option_popup: RoundedOverlayFrame | None = None
+
+    def _place_option_popup(
+        self,
+        popup: QWidget,
+        width: int,
+        height: int,
+    ) -> None:
+        host = popup.parentWidget() or self.window()
+        available = host.rect().adjusted(8, 8, -8, -8)
+        width = max(1, min(width, available.width()))
+        height = max(1, min(height, available.height()))
+        popup.resize(width, height)
+        below = self.mapTo(host, QPoint(0, self.height() + 5))
+        x = max(available.left(), min(below.x(), available.right() - width + 1))
+        if below.y() + height <= available.bottom():
+            y = below.y()
+        else:
+            y = max(
+                available.top(),
+                self.mapTo(host, QPoint(0, -height - 5)).y(),
+            )
+        popup.move(x, y)
+
+    def hidePopup(self) -> None:  # noqa: N802 - Qt API
+        if self._option_popup is not None:
+            self._option_popup.close()
+
     def showPopup(self) -> None:  # noqa: N802 - Qt API
-        dialog = RoundedPopupDialog(self)
+        if self._option_popup is not None and self._option_popup.isVisible():
+            self._option_popup.raise_()
+            return
+        dialog = RoundedOverlayFrame(self.window(), self)
         dialog.setObjectName("optionPickerPopup")
-        dialog.setWindowFlags(
-            Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
-        )
+        dialog.setAccessibleName(self.popup_title)
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(7, 7, 7, 7)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         title = QLabel(self.popup_title)
         title.setObjectName("optionPickerTitle")
         layout.addWidget(title)
         choices = QListWidget()
         choices.setObjectName("optionPickerList")
         choices.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        choices.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        choices.setWordWrap(True)
+        choices.setTextElideMode(Qt.ElideNone)
         for index in range(self.count()):
             label = self.itemText(index)
             description = str(self.itemData(index, Qt.ToolTipRole) or "").strip()
@@ -825,27 +861,35 @@ class DescriptiveComboBox(RoundedComboBox):
             if not icon.isNull():
                 item.setIcon(icon)
             item.setData(Qt.UserRole, index)
+            item.setSizeHint(QSize(0, 76 if description else 44))
             choices.addItem(item)
+
         def choose(item: QListWidgetItem) -> None:
             self.setCurrentIndex(int(item.data(Qt.UserRole)))
-            dialog.accept()
+            dialog.close()
 
         choices.itemClicked.connect(choose)
         choices.itemActivated.connect(choose)
         layout.addWidget(choices)
-        rows = max(1, self.count())
-        width = max(270, min(390, self.width() + 170))
-        dialog.resize(width, min(420, 48 + rows * 58))
-        origin = self.mapToGlobal(QPoint(0, self.height() + 5))
-        screen = self.screen()
-        if screen:
-            available = screen.availableGeometry()
-            x = max(available.left() + 6, min(origin.x(), available.right() - width - 6))
-            y = origin.y()
-            if y + dialog.height() > available.bottom() - 6:
-                y = max(available.top() + 6, self.mapToGlobal(QPoint(0, -dialog.height() - 5)).y())
-            dialog.move(x, y)
-        dialog.exec()
+        content_height = 58 + sum(
+            choices.item(index).sizeHint().height()
+            for index in range(choices.count())
+        )
+        width = max(320, min(370, self.width() + 230))
+        self._place_option_popup(dialog, width, min(390, content_height))
+        self._option_popup = dialog
+
+        def cleanup_popup() -> None:
+            if self._option_popup is dialog:
+                self._option_popup = None
+            dialog.deleteLater()
+
+        dialog.closed.connect(cleanup_popup)
+        dialog.show()
+        dialog.raise_()
+        if choices.count():
+            choices.setCurrentRow(max(0, self.currentIndex()))
+        choices.setFocus()
 
 
 class ApprovalPickerCombo(DescriptiveComboBox):
@@ -858,27 +902,36 @@ class ReasoningTierCombo(RoundedComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._tier_combo: QComboBox | None = None
+        self._option_popup: RoundedOverlayFrame | None = None
 
     def set_tier_combo(self, combo: QComboBox) -> None:
         self._tier_combo = combo
 
+    def hidePopup(self) -> None:  # noqa: N802 - Qt API
+        if self._option_popup is not None:
+            self._option_popup.close()
+
     def showPopup(self) -> None:  # noqa: N802 - Qt API
-        dialog = RoundedPopupDialog(self)
+        if self._option_popup is not None and self._option_popup.isVisible():
+            self._option_popup.raise_()
+            return
+        dialog = RoundedOverlayFrame(self.window(), self)
         dialog.setObjectName("optionPickerPopup")
-        dialog.setWindowFlags(
-            Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
-        )
+        dialog.setAccessibleName("Raciocínio e camada de serviço")
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(7, 7, 7, 7)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
         choices = QListWidget()
         choices.setObjectName("optionPickerList")
         choices.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        choices.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        choices.setTextElideMode(Qt.ElideNone)
 
         def add_section(label: str) -> None:
             item = QListWidgetItem(label)
             item.setFlags(Qt.NoItemFlags)
             item.setData(Qt.UserRole, ("section", -1))
+            item.setSizeHint(QSize(0, 30))
             choices.addItem(item)
 
         add_section("RACIOCÍNIO")
@@ -886,6 +939,7 @@ class ReasoningTierCombo(RoundedComboBox):
             prefix = "✓ " if index == self.currentIndex() else ""
             item = QListWidgetItem(prefix + self.itemText(index))
             item.setData(Qt.UserRole, ("reasoning", index))
+            item.setSizeHint(QSize(0, 36))
             choices.addItem(item)
         if self._tier_combo is not None:
             add_section("CAMADA DE SERVIÇO")
@@ -894,6 +948,7 @@ class ReasoningTierCombo(RoundedComboBox):
                 prefix = "✓ " if index == self._tier_combo.currentIndex() else ""
                 item = QListWidgetItem(prefix + self._tier_combo.itemText(index) + suffix)
                 item.setData(Qt.UserRole, ("tier", index))
+                item.setSizeHint(QSize(0, 36))
                 choices.addItem(item)
 
         def choose(item: QListWidgetItem) -> None:
@@ -902,24 +957,34 @@ class ReasoningTierCombo(RoundedComboBox):
                 self.setCurrentIndex(index)
             elif kind == "tier" and self._tier_combo is not None:
                 self._tier_combo.setCurrentIndex(index)
-            dialog.accept()
+            else:
+                return
+            dialog.close()
 
         choices.itemClicked.connect(choose)
         choices.itemActivated.connect(choose)
         layout.addWidget(choices)
-        rows = choices.count()
-        width = max(190, self.width() + 100)
-        dialog.resize(width, min(470, 20 + rows * 36))
-        origin = self.mapToGlobal(QPoint(0, self.height() + 5))
-        screen = self.screen()
-        if screen:
-            available = screen.availableGeometry()
-            x = max(available.left() + 6, min(origin.x(), available.right() - width - 6))
-            y = origin.y()
-            if y + dialog.height() > available.bottom() - 6:
-                y = max(available.top() + 6, self.mapToGlobal(QPoint(0, -dialog.height() - 5)).y())
-            dialog.move(x, y)
-        dialog.exec()
+        content_height = 14 + sum(
+            choices.item(index).sizeHint().height()
+            for index in range(choices.count())
+        )
+        width = max(205, min(228, self.width() + 115))
+        helper = DescriptiveComboBox._place_option_popup
+        helper(self, dialog, width, min(312, content_height))
+        self._option_popup = dialog
+
+        def cleanup_popup() -> None:
+            if self._option_popup is dialog:
+                self._option_popup = None
+            dialog.deleteLater()
+
+        dialog.closed.connect(cleanup_popup)
+        dialog.show()
+        dialog.raise_()
+        selected_row = 1 + max(0, self.currentIndex())
+        if selected_row < choices.count():
+            choices.setCurrentRow(selected_row)
+        choices.setFocus()
 
 
 class ModelPickerCombo(RoundedComboBox):
@@ -1076,7 +1141,6 @@ class ModelPickerCombo(RoundedComboBox):
     def showPopup(self) -> None:  # noqa: N802 - Qt API
         if self._model_popup is not None and self._model_popup.isVisible():
             self._model_popup.raise_()
-            self._model_popup.activateWindow()
             return
         dialog = RoundedOverlayFrame(self.window(), self)
         dialog.setObjectName("modelPickerPopup")
@@ -1291,7 +1355,11 @@ class ModelPickerCombo(RoundedComboBox):
             if legacy_rows:
                 legacy_item = QListWidgetItem()
                 legacy_item.setData(Qt.UserRole, ("legacy", ""))
-                legacy_item.setText(f"Modelos legados, {len(legacy_rows)} modelos")
+                legacy_item.setData(Qt.AccessibleTextRole, "Modelos legados")
+                legacy_item.setData(
+                    Qt.AccessibleDescriptionRole,
+                    f"Grupo com {len(legacy_rows)} modelos",
+                )
                 legacy_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 legacy_item.setSizeHint(QSize(0, 60))
                 model_list.addItem(legacy_item)

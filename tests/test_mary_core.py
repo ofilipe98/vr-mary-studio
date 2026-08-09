@@ -1403,7 +1403,22 @@ class MaryCoreTest(unittest.TestCase):
         self.assertFalse(picker._model_popup.isWindow())
         self.assertEqual(set(application.topLevelWidgets()), top_levels_before)
 
+        QTest.mouseClick(picker, Qt.LeftButton)
+        QTest.qWait(30)
+        self.assertIsNone(picker._model_popup)
+        QTest.mouseClick(picker, Qt.LeftButton)
+        QTest.qWait(80)
+        self.assertIsNotNone(picker._model_popup)
+        self.assertTrue(picker._model_popup.isVisible())
+
         provider_tabs = picker._model_popup.findChild(QTabBar, "modelProviderTabs")
+        self.assertEqual(provider_tabs.width(), 50)
+        self.assertTrue(
+            all(
+                provider_tabs.tabRect(index).width() == provider_tabs.width()
+                for index in range(provider_tabs.count())
+            )
+        )
         self.assertEqual(
             [provider_tabs.tabText(index) for index in range(provider_tabs.count())],
             ["Recomendados", "Codex", "Claude"],
@@ -1504,6 +1519,11 @@ class MaryCoreTest(unittest.TestCase):
             model_list.item(index)
             for index in range(model_list.count())
             if model_list.item(index).data(Qt.UserRole) == ("legacy", "")
+        )
+        self.assertEqual(legacy_item.text(), "")
+        self.assertEqual(
+            legacy_item.data(Qt.AccessibleTextRole),
+            "Modelos legados",
         )
         self.assertTrue(legacy_item.flags() & Qt.ItemIsSelectable)
         model_list.setCurrentItem(legacy_item)
@@ -2259,6 +2279,66 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_main_and_chat_sidebars_expand_and_collapse(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        original_nav = window.nav_collapsed
+        original_chat_sidebar = window.chat_sidebar_visible
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window._set_nav_collapsed(False, persist=False)
+            window._set_chat_sidebar_visible(True, persist=False)
+            application.processEvents()
+
+            window.nav_toggle_button.click()
+            application.processEvents()
+            self.assertTrue(window.nav_collapsed)
+            self.assertEqual(window.nav_frame.width(), 64)
+            self.assertTrue(window.nav_brand_symbol.isHidden())
+            self.assertTrue(window.nav_brand_text.isHidden())
+            self.assertTrue(
+                all(button.text() == "" for button in window.nav_buttons)
+            )
+            self.assertTrue(
+                all(
+                    button.toolButtonStyle() == Qt.ToolButtonIconOnly
+                    and not button.icon().isNull()
+                    for button in window.nav_buttons
+                )
+            )
+
+            window.nav_toggle_button.click()
+            application.processEvents()
+            self.assertFalse(window.nav_collapsed)
+            self.assertEqual(window.nav_frame.width(), 228)
+            self.assertTrue(window.nav_brand_symbol.isVisible())
+            self.assertEqual(window.nav_buttons[0].text(), "Dashboard")
+
+            window.chat_sidebar_toggle_button.click()
+            application.processEvents()
+            self.assertFalse(window.chat_sidebar_visible)
+            self.assertTrue(window.chat_sidebar.isHidden())
+            self.assertIn("Expandir", window.chat_sidebar_toggle_button.toolTip())
+
+            window.chat_sidebar_toggle_button.click()
+            application.processEvents()
+            self.assertTrue(window.chat_sidebar_visible)
+            self.assertTrue(window.chat_sidebar.isVisible())
+            self.assertGreaterEqual(window.chat_splitter.sizes()[0], 210)
+        finally:
+            window._set_nav_collapsed(original_nav, persist=True)
+            window._set_chat_sidebar_visible(original_chat_sidebar, persist=True)
+            window.close()
+
     def test_claude_keeps_general_chat_controls_and_disables_codex_only_controls(self):
         from PySide6.QtWidgets import QApplication
 
@@ -2431,7 +2511,7 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_reasoning_and_approval_popups_activate_current_item_with_enter(self):
-        from PySide6.QtCore import QTimer, Qt
+        from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication, QListWidget, QVBoxLayout, QWidget
 
@@ -2453,14 +2533,16 @@ class MaryCoreTest(unittest.TestCase):
         layout.addWidget(approval)
         host.show()
         application.processEvents()
-        closed_after_enter = []
+        top_levels_before = set(application.topLevelWidgets())
 
-        def activate_popup_item(payload) -> None:
-            dialog = next(
-                widget
-                for widget in application.topLevelWidgets()
-                if widget.objectName() == "optionPickerPopup" and widget.isVisible()
-            )
+        def activate_popup_item(combo, payload) -> None:
+            combo.showPopup()
+            application.processEvents()
+            dialog = combo._option_popup
+            self.assertIsNotNone(dialog)
+            self.assertTrue(dialog.isVisible())
+            self.assertFalse(dialog.isWindow())
+            self.assertEqual(set(application.topLevelWidgets()), top_levels_before)
             choices = dialog.findChild(QListWidget, "optionPickerList")
             item = next(
                 choices.item(index)
@@ -2470,17 +2552,22 @@ class MaryCoreTest(unittest.TestCase):
             choices.setCurrentItem(item)
             choices.setFocus()
             QTest.keyClick(choices, Qt.Key_Return)
-            closed_after_enter.append(not dialog.isVisible())
+            application.processEvents()
+            self.assertIsNone(combo._option_popup)
 
         try:
-            QTimer.singleShot(20, lambda: activate_popup_item(("reasoning", 1)))
-            effort.showPopup()
+            activate_popup_item(effort, ("reasoning", 1))
             self.assertEqual(effort.currentData(), "medium")
 
-            QTimer.singleShot(20, lambda: activate_popup_item(1))
-            approval.showPopup()
+            activate_popup_item(approval, 1)
             self.assertEqual(approval.currentData(), "read-only")
-            self.assertEqual(closed_after_enter, [True, True])
+
+            QTest.mouseClick(approval, Qt.LeftButton)
+            application.processEvents()
+            self.assertIsNotNone(approval._option_popup)
+            QTest.mouseClick(approval, Qt.LeftButton)
+            application.processEvents()
+            self.assertIsNone(approval._option_popup)
         finally:
             host.close()
 
@@ -2541,8 +2628,8 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_settings_theme_providers_and_archived_projects_are_separated_from_chat(self):
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QPalette
+        from PySide6.QtCore import QSize, Qt
+        from PySide6.QtGui import QIcon, QPalette
         from PySide6.QtWidgets import QApplication
 
         class MemoryPreferences:
@@ -2560,6 +2647,20 @@ class MaryCoreTest(unittest.TestCase):
 
         application = QApplication.instance() or QApplication([])
         previous_theme = str(application.property("mary_theme") or "light")
+
+        def icon_colors(button, state):
+            image = button.icon().pixmap(
+                QSize(18, 18),
+                QIcon.Mode.Normal,
+                state,
+            ).toImage()
+            return {
+                image.pixelColor(x, y).name().lower()
+                for y in range(image.height())
+                for x in range(image.width())
+                if image.pixelColor(x, y).alpha() > 0
+            }
+
         window = MainWindow(
             self.settings,
             smoke_test=True,
@@ -2610,6 +2711,18 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(window.theme_combo.itemData(0), "light")
             self.assertEqual(window.theme_combo.itemData(1), "dark_orange")
 
+            light_index = window.theme_combo.findData("light")
+            window.theme_combo.setCurrentIndex(light_index)
+            application.processEvents()
+            self.assertIn(
+                "#d9d9e2",
+                icon_colors(window.nav_buttons[1], QIcon.State.Off),
+            )
+            self.assertIn(
+                "#ffffff",
+                icon_colors(window.nav_buttons[1], QIcon.State.On),
+            )
+
             dark_index = window.theme_combo.findData("dark_orange")
             window.theme_combo.setCurrentIndex(dark_index)
             application.processEvents()
@@ -2620,6 +2733,10 @@ class MaryCoreTest(unittest.TestCase):
             )
             self.assertEqual(
                 window.app_preferences.values["appearance/theme"], "dark_orange"
+            )
+            self.assertIn(
+                "#b8aea7",
+                icon_colors(window.nav_buttons[1], QIcon.State.Off),
             )
         finally:
             apply_application_theme(application, previous_theme)

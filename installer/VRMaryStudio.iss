@@ -1,5 +1,5 @@
 #define MyAppName "VR Norte Studio"
-#define MyAppVersion "0.3.8"
+#define MyAppVersion "0.3.9"
 #define MyAppPublisher "VRNorte"
 #define MyAppExeName "VRMaryStudio.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\VR Norte Studio
 DefaultGroupName=VR Norte Studio
 OutputDir=..\releases
-OutputBaseFilename=VRNorteStudio-0.3.8-setup
+OutputBaseFilename=VRNorteStudio-0.3.9-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

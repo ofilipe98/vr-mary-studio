@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QFontDatabase,
     QIcon,
     QKeySequence,
+    QPainter,
     QPalette,
     QPixmap,
     QShortcut,
@@ -126,6 +127,16 @@ SIDEBAR_ICON_PATHS = {
     "scheduled": ASSET_DIR / "sidebar-scheduled.svg",
     "plugins": ASSET_DIR / "sidebar-plugins.svg",
     "settings": ASSET_DIR / "sidebar-settings.svg",
+    "toggle": ASSET_DIR / "sidebar-toggle.svg",
+}
+NAV_ICON_PATHS = {
+    "Dashboard": ASSET_DIR / "nav-dashboard.svg",
+    "Chat VR": ASSET_DIR / "nav-chat.svg",
+    "Conhecimento": ASSET_DIR / "nav-knowledge.svg",
+    "Sincronizações": ASSET_DIR / "nav-sync.svg",
+    "Revisão": ASSET_DIR / "nav-review.svg",
+    "Vídeos": ASSET_DIR / "nav-videos.svg",
+    "Logs": ASSET_DIR / "nav-logs.svg",
 }
 COMBO_ARROW_PATH = (ASSET_DIR / "dropdown-chevron.svg").as_posix()
 COMBO_ARROW_DARK_PATH = (ASSET_DIR / "dropdown-chevron-dark.svg").as_posix()
@@ -164,6 +175,35 @@ DARK_BORDER = "#756A63"
 DARK_STATUS_GOOD = "#56D18B"
 DARK_STATUS_WARN = "#FFB55C"
 DARK_SCROLLBAR_HANDLE = "#8C8077"
+
+
+def _tinted_icon_pixmap(path: Path, color: str, size: int = 36) -> QPixmap:
+    source = QIcon(str(path)).pixmap(QSize(size, size))
+    result = QPixmap(source.size())
+    result.fill(Qt.transparent)
+    painter = QPainter(result)
+    painter.drawPixmap(0, 0, source)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(result.rect(), QColor(color))
+    painter.end()
+    return result
+
+
+def _stateful_tinted_icon(path: Path, normal: str, selected: str) -> QIcon:
+    icon = QIcon()
+    icon.addPixmap(
+        _tinted_icon_pixmap(path, normal),
+        QIcon.Mode.Normal,
+        QIcon.State.Off,
+    )
+    icon.addPixmap(
+        _tinted_icon_pixmap(path, selected),
+        QIcon.Mode.Normal,
+        QIcon.State.On,
+    )
+    return icon
+
+
 STATUS_LABELS = {
     "idle": "Pronto",
     "pending": "Pendente",
@@ -220,6 +260,13 @@ QToolButton#navButton {{
 }}
 QToolButton#navButton:hover {{ background: #191937; }}
 QToolButton#navButton:checked {{ background: {ACCESSIBLE_ORANGE}; color: white; font-weight: 600; }}
+QToolButton#sidebarToggle {{
+    min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+    background: #191937; border: 1px solid #343456; border-radius: 7px; padding: 4px;
+}}
+QToolButton#sidebarToggle:hover, QToolButton#sidebarToggle:focus {{
+    background: #29294A; border-color: {BRAND_YELLOW};
+}}
 QFrame#card, QFrame#panel {{
     background: white; border: 1px solid #DEDEE7; border-radius: 16px;
 }}
@@ -243,7 +290,7 @@ QFrame#chatComposer {{
     background: white; border: 1px solid #D5D5DF; border-radius: 24px;
 }}
 QFrame#chatComposerGlow {{ background: transparent; border: 0; }}
-QFrame#modelPickerPopup, QDialog#optionPickerPopup {{
+QFrame#modelPickerPopup, QFrame#optionPickerPopup {{
     background: white; border: 1px solid #CBCBD7; border-radius: 18px;
 }}
 QFrame#roundedComboPopup {{ background: transparent; border: 0; }}
@@ -261,6 +308,17 @@ QListWidget#optionPickerList::item:selected {{
     background: #EEEEF1; color: {BRAND_NAVY};
 }}
 QListWidget#optionPickerList::item:disabled {{ color: {TEXT_MUTED}; }}
+QListWidget#optionPickerList QScrollBar:vertical {{
+    width: 7px; background: transparent; margin: 3px 0;
+}}
+QListWidget#optionPickerList QScrollBar::handle:vertical {{
+    min-height: 26px; border-radius: 3px; background: #92929F;
+}}
+QListWidget#optionPickerList QScrollBar::handle:vertical:hover {{ background: #777789; }}
+QListWidget#optionPickerList QScrollBar::add-line:vertical,
+QListWidget#optionPickerList QScrollBar::sub-line:vertical {{ height: 0; }}
+QListWidget#optionPickerList QScrollBar::add-page:vertical,
+QListWidget#optionPickerList QScrollBar::sub-page:vertical {{ background: transparent; }}
 QLineEdit#modelPickerSearch {{
     min-height: 34px; border: 0; border-bottom: 1px solid #D8D8E0;
     border-radius: 0; padding: 3px 5px;
@@ -586,7 +644,7 @@ QMainWindow, QWidget#appRoot, QStackedWidget, QWidget#chatCenter {{
 QFrame#navRail {{ background: #090807; }}
 QFrame#card, QFrame#panel, QFrame#chatComposer,
 QFrame#chatSidebar, QFrame#chatContext, QFrame#modelPickerPopup,
-QDialog#optionPickerPopup,
+QFrame#optionPickerPopup,
 QFrame#slashPalette {{
     background: {DARK_SURFACE}; border-color: {DARK_BORDER};
 }}
@@ -631,6 +689,8 @@ QListWidget#modelPickerList QScrollBar::handle:vertical:hover {{
     background: #A36B43;
 }}
 QListWidget#optionPickerList::item:disabled {{ color: #B7AAA1; }}
+QListWidget#optionPickerList QScrollBar::handle:vertical {{ background: #766A62; }}
+QListWidget#optionPickerList QScrollBar::handle:vertical:hover {{ background: #A36B43; }}
 QFrame#chatContext {{ border-left-color: {DARK_BORDER}; }}
 QToolButton#chatSidebarAction {{ color: {DARK_TEXT}; }}
 QToolButton#chatSidebarAction:hover,
@@ -877,6 +937,8 @@ class MainWindow(QMainWindow):
         self.pages: dict[str, int] = {}
         self.turn_running = False
         self.provider_switch_in_progress = False
+        self.nav_collapsed = False
+        self.chat_sidebar_visible = True
         self.setWindowTitle(APP_TITLE)
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
@@ -916,7 +978,7 @@ class MainWindow(QMainWindow):
     def _build_nav(self) -> QWidget:
         frame = QFrame(objectName="navRail")
         self.nav_frame = frame
-        frame.setFixedWidth(188)
+        frame.setFixedWidth(228)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(12, 18, 12, 14)
         brand_row = QHBoxLayout()
@@ -934,13 +996,23 @@ class MainWindow(QMainWindow):
                 )
             )
         brand_text = QVBoxLayout()
+        brand_text.setContentsMargins(0, 0, 0, 0)
         brand_text.setSpacing(0)
         self.nav_brand = QLabel("VR NORTE", objectName="brandTitle")
         self.nav_subtitle = QLabel("STUDIO", objectName="brandSub")
         brand_text.addWidget(self.nav_brand)
         brand_text.addWidget(self.nav_subtitle)
         brand_row.addWidget(self.nav_brand_symbol)
-        brand_row.addLayout(brand_text, 1)
+        self.nav_brand_text = QWidget()
+        self.nav_brand_text.setLayout(brand_text)
+        brand_row.addWidget(self.nav_brand_text, 1)
+        self.nav_toggle_button = QToolButton(objectName="sidebarToggle")
+        self.nav_toggle_button.setIcon(QIcon(str(SIDEBAR_ICON_PATHS["toggle"])))
+        self.nav_toggle_button.setIconSize(QSize(18, 18))
+        self.nav_toggle_button.clicked.connect(
+            lambda: self._set_nav_collapsed(not self.nav_collapsed)
+        )
+        brand_row.addWidget(self.nav_toggle_button)
         layout.addLayout(brand_row)
         layout.addSpacing(22)
         for label in (
@@ -955,8 +1027,12 @@ class MainWindow(QMainWindow):
             page_index = self.pages[label]
             button = QToolButton(objectName="navButton")
             button.setText(label)
+            button.setProperty("navLabel", label)
+            button.setIcon(QIcon(str(NAV_ICON_PATHS[label])))
+            button.setIconSize(QSize(18, 18))
+            button.setAccessibleName(f"Abrir {label}")
             button.setCheckable(True)
-            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             button.clicked.connect(
                 lambda _checked=False, i=page_index: self._navigate(i)
             )
@@ -966,6 +1042,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         self.settings_nav_button = QToolButton(objectName="navButton")
         self.settings_nav_button.setText("Configurações")
+        self.settings_nav_button.setProperty("navLabel", "Configurações")
         self.settings_nav_button.setIcon(
             QIcon(str(SIDEBAR_ICON_PATHS["settings"]))
         )
@@ -986,7 +1063,57 @@ class MainWindow(QMainWindow):
             if page_index == self.pages["Dashboard"]
         )
         dashboard_button.setChecked(True)
+        saved_collapsed = self.app_preferences.value("appearance/nav_collapsed", False)
+        if not isinstance(saved_collapsed, bool):
+            saved_collapsed = str(saved_collapsed).strip().casefold() in {
+                "1", "true", "yes", "on"
+            }
+        self._set_nav_collapsed(saved_collapsed, persist=False)
+        self._refresh_navigation_icons()
         return frame
+
+    def _refresh_navigation_icons(self) -> None:
+        """Keep rail icons legible and coordinated with the active theme."""
+        dark_theme = self.theme_id == "dark_orange"
+        normal = DARK_MUTED if dark_theme else "#D9D9E2"
+        selected = "#FFFFFF"
+        for button in self.nav_buttons:
+            label = str(button.property("navLabel") or "")
+            path = NAV_ICON_PATHS.get(label, SIDEBAR_ICON_PATHS["settings"])
+            button.setIcon(_stateful_tinted_icon(path, normal, selected))
+
+        accent = "#FF9A3D" if dark_theme else BRAND_YELLOW
+        toggle_icon = _stateful_tinted_icon(
+            SIDEBAR_ICON_PATHS["toggle"],
+            accent,
+            accent,
+        )
+        self.nav_toggle_button.setIcon(toggle_icon)
+        self.chat_sidebar_toggle_button.setIcon(toggle_icon)
+
+    def _set_nav_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
+        self.nav_collapsed = bool(collapsed)
+        self.nav_frame.setFixedWidth(64 if self.nav_collapsed else 228)
+        self.nav_brand_symbol.setVisible(not self.nav_collapsed)
+        self.nav_brand_text.setVisible(not self.nav_collapsed)
+        for button in self.nav_buttons:
+            label = str(button.property("navLabel") or "")
+            button.setText("" if self.nav_collapsed else label)
+            button.setToolButtonStyle(
+                Qt.ToolButtonIconOnly
+                if self.nav_collapsed
+                else Qt.ToolButtonTextBesideIcon
+            )
+            button.setToolTip(label if self.nav_collapsed else "")
+        action = "Expandir" if self.nav_collapsed else "Recolher"
+        self.nav_toggle_button.setAccessibleName(f"{action} barra lateral")
+        self.nav_toggle_button.setToolTip(f"{action} barra lateral")
+        if persist:
+            self.app_preferences.setValue(
+                "appearance/nav_collapsed",
+                self.nav_collapsed,
+            )
+            self.app_preferences.sync()
 
     def _navigate(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
@@ -1132,9 +1259,11 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("chatSplitter")
         splitter.setHandleWidth(6)
+        splitter.setCollapsible(0, True)
         page_layout.addWidget(splitter)
 
         conversations = QFrame(objectName="chatSidebar")
+        self.chat_sidebar = conversations
         conversations.setMinimumWidth(210)
         conversations.setMaximumWidth(330)
         left = QVBoxLayout(conversations)
@@ -1206,6 +1335,17 @@ class MainWindow(QMainWindow):
         center_layout.setContentsMargins(20, 14, 20, 16)
         center_layout.setSpacing(10)
         header = QHBoxLayout()
+        self.chat_sidebar_toggle_button = QToolButton(objectName="sidebarToggle")
+        self.chat_sidebar_toggle_button.setIcon(
+            QIcon(str(SIDEBAR_ICON_PATHS["toggle"]))
+        )
+        self.chat_sidebar_toggle_button.setIconSize(QSize(18, 18))
+        self.chat_sidebar_toggle_button.clicked.connect(
+            lambda: self._set_chat_sidebar_visible(
+                not self.chat_sidebar_visible
+            )
+        )
+        header.addWidget(self.chat_sidebar_toggle_button)
         header.addStretch()
         self.conversation_menu_button = QToolButton()
         self.conversation_menu_button.setText("...")
@@ -1436,6 +1576,12 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([240, 1080, 0])
+        saved_sidebar = self.app_preferences.value("chat/sidebar_visible", True)
+        if not isinstance(saved_sidebar, bool):
+            saved_sidebar = str(saved_sidebar).strip().casefold() not in {
+                "0", "false", "no", "off"
+            }
+        self._set_chat_sidebar_visible(saved_sidebar, persist=False)
         return page
 
     def _build_knowledge(self) -> QWidget:
@@ -2232,6 +2378,7 @@ class MainWindow(QMainWindow):
         application = QApplication.instance()
         if application:
             apply_application_theme(application, theme_id)
+        self._refresh_navigation_icons()
         self.theme_status.setText(
             "Tema Dark & Orange aplicado."
             if theme_id == "dark_orange"
@@ -4050,11 +4197,50 @@ class MainWindow(QMainWindow):
         self._refresh_composer_chips()
         self._update_codex_controls()
 
+    def _set_chat_sidebar_visible(
+        self,
+        visible: bool,
+        *,
+        persist: bool = True,
+    ) -> None:
+        visible = bool(visible)
+        sizes = self.chat_splitter.sizes()
+        total = max(self.chat_splitter.width(), sum(sizes), 1)
+        context_width = (
+            sizes[2]
+            if len(sizes) > 2 and self.chat_context_panel.isVisible()
+            else 0
+        )
+        sidebar_width = min(240, max(210, total // 5)) if visible else 0
+        self.chat_sidebar_visible = visible
+        self.chat_sidebar.setVisible(visible)
+        self.chat_splitter.setSizes(
+            [
+                sidebar_width,
+                max(360, total - sidebar_width - context_width),
+                context_width,
+            ]
+        )
+        action = "Recolher" if visible else "Expandir"
+        self.chat_sidebar_toggle_button.setAccessibleName(
+            f"{action} lista lateral de chats"
+        )
+        self.chat_sidebar_toggle_button.setToolTip(
+            f"{action} lista lateral de chats"
+        )
+        if persist:
+            self.app_preferences.setValue("chat/sidebar_visible", visible)
+            self.app_preferences.sync()
+
     def _toggle_chat_context(self, visible: bool) -> None:
         self.chat_context_panel.setVisible(visible)
         sizes = self.chat_splitter.sizes()
         total = max(self.chat_splitter.width(), sum(sizes), 1)
-        sidebar = sizes[0] if sizes and sizes[0] else min(240, total // 4)
+        sidebar = (
+            sizes[0]
+            if self.chat_sidebar_visible and sizes and sizes[0]
+            else 0
+        )
         if visible:
             context_width = min(300, max(220, total // 5))
             self.chat_splitter.setSizes(
