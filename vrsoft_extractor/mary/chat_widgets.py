@@ -527,6 +527,34 @@ class RoundedOverlayFrame(QFrame):
         return False
 
 
+class EmbeddedPickerPanel(QFrame):
+    """Rounded picker content embedded in the chat layout, never a popup window."""
+
+    closed = Signal()
+
+    def __init__(self, parent: QWidget, radius: float = 18.0):
+        super().__init__(parent)
+        self._panel_radius = float(radius)
+        self._close_notified = False
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self._close_notified = False
+        _apply_rounded_mask(self, self._panel_radius)
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().hideEvent(event)
+        if not self._close_notified:
+            self._close_notified = True
+            self.closed.emit()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        _apply_rounded_mask(self, self._panel_radius)
+
+
 class RoundedComboBox(QComboBox):
     """Standard combo with a genuinely rounded, clipped popup container."""
 
@@ -991,6 +1019,7 @@ class ModelPickerCombo(RoundedComboBox):
     providerModelSelected = Signal(str, str)
     retryRequested = Signal(str)
     catalogChanged = Signal()
+    panelVisibilityChanged = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1001,7 +1030,8 @@ class ModelPickerCombo(RoundedComboBox):
         self._settings = QSettings()
         self._popup_press_armed = False
         self._suppress_popup_release = False
-        self._model_popup: RoundedOverlayFrame | None = None
+        self._model_popup: RoundedOverlayFrame | EmbeddedPickerPanel | None = None
+        self._inline_host: QWidget | None = None
         self._favorite_shortcuts: list[QShortcut] = []
         for number in range(1, 10):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
@@ -1010,6 +1040,10 @@ class ModelPickerCombo(RoundedComboBox):
                 lambda position=number - 1: self._select_ranked_model(position)
             )
             self._favorite_shortcuts.append(shortcut)
+
+    def set_inline_host(self, host: QWidget) -> None:
+        """Render the selector inside ``host`` instead of as a floating layer."""
+        self._inline_host = host
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
         if event.button() == Qt.LeftButton:
@@ -1140,10 +1174,18 @@ class ModelPickerCombo(RoundedComboBox):
 
     def showPopup(self) -> None:  # noqa: N802 - Qt API
         if self._model_popup is not None and self._model_popup.isVisible():
+            if self._inline_host is not None:
+                self._model_popup.close()
+                return
             self._model_popup.raise_()
             return
-        dialog = RoundedOverlayFrame(self.window(), self)
-        dialog.setObjectName("modelPickerPopup")
+        inline = self._inline_host is not None
+        if inline:
+            dialog = EmbeddedPickerPanel(self._inline_host, radius=0.0)
+            dialog.setObjectName("modelPickerPanel")
+        else:
+            dialog = RoundedOverlayFrame(self.window(), self)
+            dialog.setObjectName("modelPickerPopup")
         dialog.setAccessibleName("Selecionar modelo")
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1461,7 +1503,20 @@ class ModelPickerCombo(RoundedComboBox):
         retry.clicked.connect(retry_models)
         catalog_connection = self.catalogChanged.connect(refresh)
         refresh()
-        self._place_popup(dialog)
+        if inline:
+            host_layout = self._inline_host.layout()
+            if host_layout is None:
+                host_layout = QVBoxLayout(self._inline_host)
+                host_layout.setContentsMargins(0, 0, 0, 0)
+                host_layout.setSpacing(0)
+            host_layout.addWidget(dialog)
+            dialog.setMinimumHeight(320)
+            dialog.setMaximumHeight(390)
+            dialog.setFixedHeight(360)
+            self._inline_host.show()
+            self.panelVisibilityChanged.emit(True)
+        else:
+            self._place_popup(dialog)
         self._model_popup = dialog
 
         def cleanup_popup() -> None:
@@ -1471,11 +1526,15 @@ class ModelPickerCombo(RoundedComboBox):
                 pass
             if self._model_popup is dialog:
                 self._model_popup = None
+            if inline and self._inline_host is not None:
+                self._inline_host.hide()
+                self.panelVisibilityChanged.emit(False)
             dialog.deleteLater()
 
         dialog.closed.connect(cleanup_popup)
         dialog.show()
-        dialog.raise_()
+        if not inline:
+            dialog.raise_()
         search.setFocus()
 
 

@@ -1296,7 +1296,7 @@ class MaryCoreTest(unittest.TestCase):
         self.assertNotIn("marylocal", [issue.word.casefold() for issue in reloaded.misspellings("MaryLocal")])
 
     def test_model_picker_ranks_favorites_and_ctrl_shortcut_target(self):
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QListWidget
 
         class FavoriteSettings:
             def value(self, *_args):
@@ -1445,6 +1445,68 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(selected, [("claude", "claude-opus")])
         self.assertIsNone(picker._model_popup)
         host.close()
+
+    def test_main_window_model_picker_expands_inline_without_popup(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QListWidget
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.model_combo.set_provider_models(
+                "codex",
+                [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}],
+            )
+            window.model_combo.clear()
+            window.model_combo.addItem("GPT Test", "gpt-test")
+            application.processEvents()
+            top_levels_before = set(application.topLevelWidgets())
+
+            QTest.mouseClick(window.model_combo, Qt.LeftButton)
+            QTest.qWait(100)
+
+            panel = window.model_combo._model_popup
+            self.assertIsNotNone(panel)
+            self.assertEqual(panel.objectName(), "modelPickerPanel")
+            self.assertIs(panel.parentWidget(), window.model_picker_inline_host)
+            self.assertFalse(panel.isWindow())
+            self.assertTrue(window.model_picker_inline_host.isVisible())
+            self.assertEqual(set(application.topLevelWidgets()), top_levels_before)
+            self.assertIs(window.model_picker_inline_host.parentWidget(), window.composer_card)
+            self.assertGreater(window.composer_card.height(), 400)
+
+            QTest.mouseClick(window.model_combo, Qt.LeftButton)
+            QTest.qWait(100)
+            self.assertIsNone(window.model_combo._model_popup)
+            self.assertTrue(window.model_picker_inline_host.isHidden())
+
+            QTest.mouseClick(window.model_combo, Qt.LeftButton)
+            QTest.qWait(100)
+            model_list = window.model_combo._model_popup.findChild(
+                QListWidget,
+                "modelPickerList",
+            )
+            selected_item = next(
+                model_list.item(index)
+                for index in range(model_list.count())
+                if model_list.item(index).data(Qt.UserRole) == ("codex", "gpt-test")
+            )
+            window._ensure_draft_conversation = lambda: None
+            QTest.mouseClick(model_list.itemWidget(selected_item), Qt.LeftButton)
+            QTest.qWait(100)
+            self.assertIsNone(window.model_combo._model_popup)
+            self.assertTrue(window.model_picker_inline_host.isHidden())
+            self.assertLessEqual(window.composer_card.maximumHeight(), 156)
+        finally:
+            window.close()
 
     def test_model_picker_loads_idle_provider_when_its_tab_is_opened(self):
         from PySide6.QtCore import Qt

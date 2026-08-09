@@ -182,7 +182,7 @@ class CodexProvider(AgentProvider):
                         "clientInfo": {
                             "name": "vr_mary_studio",
                             "title": "VR Norte Studio",
-                            "version": "0.3.9",
+                            "version": "0.3.10",
                         },
                         "capabilities": {"experimentalApi": True},
                     },
