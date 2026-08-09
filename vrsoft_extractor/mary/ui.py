@@ -18,6 +18,7 @@ from PySide6.QtCore import (
     QProcessEnvironment,
     QRunnable,
     QSettings,
+    QSize,
     Qt,
     QThreadPool,
     QTimer,
@@ -80,9 +81,11 @@ from .chat_widgets import (
     ApprovalPickerCombo,
     ModelPickerCombo,
     ReasoningTierCombo,
+    RoundedComboBox,
     SlashCommandPalette,
     SpellcheckPlainTextEdit,
     ToolSelectionDialog,
+    VrComposerGlowFrame,
     provider_icon,
 )
 from .migration import migrate
@@ -114,10 +117,15 @@ MODE_ICON_PATHS = {
     "default": ASSET_DIR / "mode-build.svg",
     "plan": ASSET_DIR / "mode-plan.svg",
 }
+CHAT_ACTION_ICON_PATHS = {
+    "send": ASSET_DIR / "chat-send.svg",
+    "stop": ASSET_DIR / "chat-stop.svg",
+}
 SIDEBAR_ICON_PATHS = {
     "new_chat": ASSET_DIR / "sidebar-new-chat.svg",
     "scheduled": ASSET_DIR / "sidebar-scheduled.svg",
     "plugins": ASSET_DIR / "sidebar-plugins.svg",
+    "settings": ASSET_DIR / "sidebar-settings.svg",
 }
 COMBO_ARROW_PATH = (ASSET_DIR / "dropdown-chevron.svg").as_posix()
 COMBO_ARROW_DARK_PATH = (ASSET_DIR / "dropdown-chevron-dark.svg").as_posix()
@@ -218,7 +226,7 @@ QFrame#card, QFrame#panel {{
 QFrame#chatSidebar, QFrame#chatContext {{
     background: white; border: 0;
 }}
-QFrame#chatSidebar {{ border-right: 1px solid #E4E4EA; }}
+QFrame#chatSidebar {{ border-right: 0; }}
 QFrame#chatContext {{ border-left: 1px solid #E4E4EA; }}
 QToolButton#chatSidebarAction {{
     color: {BRAND_NAVY}; background: transparent; border: 0; border-radius: 11px;
@@ -234,8 +242,15 @@ QToolButton#chatSidebarAction:disabled {{
 QFrame#chatComposer {{
     background: white; border: 1px solid #D5D5DF; border-radius: 24px;
 }}
-QDialog#modelPickerPopup, QDialog#optionPickerPopup {{
+QFrame#chatComposerGlow {{ background: transparent; border: 0; }}
+QFrame#modelPickerPopup, QDialog#optionPickerPopup {{
     background: white; border: 1px solid #CBCBD7; border-radius: 18px;
+}}
+QFrame#roundedComboPopup {{ background: transparent; border: 0; }}
+QFrame#roundedComboPopup QAbstractItemView {{
+    background: white; color: {BRAND_NAVY};
+    border: 1px solid #CBCBD7; border-radius: 12px; padding: 5px;
+    outline: 0; selection-background-color: #FFF0E4;
 }}
 QLabel#optionPickerTitle {{
     color: {TEXT_MUTED}; font-size: 11px; font-weight: 700; padding: 2px 7px;
@@ -247,17 +262,72 @@ QListWidget#optionPickerList::item:selected {{
 }}
 QListWidget#optionPickerList::item:disabled {{ color: {TEXT_MUTED}; }}
 QLineEdit#modelPickerSearch {{
-    min-height: 30px; border: 0; border-bottom: 1px solid #D8D8E0;
-    border-radius: 0; padding: 4px 6px;
+    min-height: 34px; border: 0; border-bottom: 1px solid #D8D8E0;
+    border-radius: 0; padding: 3px 5px;
+}}
+QWidget#modelPickerContent {{
+    background: white; border: 0;
+    border-top-right-radius: 18px; border-bottom-right-radius: 18px;
+}}
+QTabBar#modelProviderTabs {{
+    background: #F6F6F8; border: 0; border-right: 1px solid #DEDEE7;
+    border-top-left-radius: 18px; border-bottom-left-radius: 18px;
 }}
 QTabBar#modelProviderTabs::tab {{
-    background: transparent; border: 0; border-right: 2px solid transparent;
+    background: transparent; border: 0; border-right: 3px solid transparent;
     border-radius: 0; min-width: 44px; min-height: 44px;
     margin: 0; padding: 0; color: {TEXT_MUTED};
 }}
+QTabBar#modelProviderTabs::tab:hover {{ background: #ECECF1; }}
 QTabBar#modelProviderTabs::tab:selected {{
     color: {BRAND_NAVY}; border-right-color: {ACCESSIBLE_ORANGE};
-    background: #F3F3F5;
+    background: #E7E7EC;
+}}
+QListWidget#modelPickerList {{
+    background: transparent; border: 0; border-radius: 0;
+    padding: 0; outline: 0;
+}}
+QListWidget#modelPickerList::item,
+QListWidget#modelPickerList::item:selected {{
+    background: transparent; border: 0; padding: 0; color: {BRAND_NAVY};
+}}
+QFrame#modelOptionRow {{
+    background: transparent; border: 0; border-radius: 11px;
+}}
+QFrame#modelOptionRow:hover {{ background: #F3F3F6; }}
+QFrame#modelOptionRow[selected="true"] {{
+    background: #FFF0E4; border-left: 3px solid {ACCESSIBLE_ORANGE};
+}}
+QLabel#modelOptionTitle {{ color: {BRAND_NAVY}; font-weight: 700; }}
+QLabel#modelOptionMeta {{ color: {TEXT_MUTED}; font-size: 11px; }}
+QLabel#modelShortcutBadge {{
+    color: {TEXT_MUTED}; background: #E9E9EE; border: 0;
+    border-radius: 6px; padding: 2px 5px; font-size: 10px;
+}}
+QToolButton#modelFavoriteButton {{
+    min-width: 25px; max-width: 25px; min-height: 25px; max-height: 25px;
+    color: #777789; background: transparent; border: 0; border-radius: 7px;
+    font-size: 16px; padding: 0;
+}}
+QToolButton#modelFavoriteButton:hover {{ background: #FFE1CA; color: {ACCESSIBLE_ORANGE}; }}
+QFrame#modelLegacyRow {{
+    background: transparent; border: 0; border-radius: 10px;
+}}
+QFrame#modelLegacyRow:hover {{ background: #F3F3F6; }}
+QLabel#modelLegacyTitle {{ color: {BRAND_NAVY}; font-weight: 700; }}
+QLabel#modelLegacyMeta, QLabel#modelLegacyChevron {{ color: {TEXT_MUTED}; }}
+QListWidget#modelPickerList QScrollBar:vertical {{
+    width: 8px; background: transparent; margin: 2px 0;
+}}
+QListWidget#modelPickerList QScrollBar::handle:vertical {{
+    min-height: 34px; border-radius: 4px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #B2B2BE, stop: 1 #8B8B99
+    );
+}}
+QListWidget#modelPickerList QScrollBar::handle:vertical:hover {{
+    background: #777789;
 }}
 QPushButton#modelPickerAction {{
     min-height: 30px; max-height: 30px; border: 0; border-radius: 15px;
@@ -313,7 +383,7 @@ QComboBox#composerInlineControl:hover, QPushButton#composerInlineControl:hover {
     background: #F1F1F5; border: 0; color: {BRAND_NAVY};
 }}
 QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus {{
-    border: 0; background: #F1F1F5;
+    border: 2px solid {FOCUS_DARK}; background: #F1F1F5; padding: 0 6px;
 }}
 QComboBox#composerInlineControl::drop-down {{ border: 0; width: 17px; }}
 QFrame#composerSeparator {{
@@ -327,6 +397,9 @@ QToolButton#roundPrimary, QToolButton#roundStop, QToolButton#conversationMenu {{
 QToolButton#roundPrimary {{ background: {ACCESSIBLE_ORANGE}; color: white; }}
 QToolButton#roundPrimary:hover {{ background: #A84300; }}
 QToolButton#roundStop {{ background: #FFF0ED; color: #A1261D; }}
+QToolButton#roundPrimary:focus, QToolButton#roundStop:focus {{
+    border: 2px solid {FOCUS_DARK};
+}}
 QToolButton#conversationMenu {{ background: transparent; color: {TEXT_MUTED}; }}
 QToolButton#conversationMenu:hover {{ background: #EEEEF3; color: {BRAND_NAVY}; }}
 QFrame#userMessage {{
@@ -470,7 +543,21 @@ QScrollArea#messageScroll > QWidget > QWidget,
 QWidget#messageContainer {{
     background: {BACKGROUND}; color: {BRAND_NAVY};
 }}
-QSplitter::handle {{ background: transparent; width: 8px; height: 8px; }}
+QSplitter::handle {{ background: transparent; }}
+QSplitter#chatSplitter::handle:horizontal {{
+    width: 6px; margin: 0;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #FFFFFF, stop: 0.45 #F9F9FA,
+        stop: 0.72 #F6F6F7, stop: 1 {BACKGROUND}
+    );
+}}
+QSplitter#chatSplitter::handle:horizontal:hover {{
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #FFFFFF, stop: 0.5 #F8E7DA, stop: 1 {BACKGROUND}
+    );
+}}
 QToolTip {{
     background: {BRAND_NAVY}; color: white; border: 1px solid #303052;
     border-radius: 7px; padding: 6px 8px;
@@ -498,12 +585,52 @@ QMainWindow, QWidget#appRoot, QStackedWidget, QWidget#chatCenter {{
 }}
 QFrame#navRail {{ background: #090807; }}
 QFrame#card, QFrame#panel, QFrame#chatComposer,
-QFrame#chatSidebar, QFrame#chatContext, QDialog#modelPickerPopup,
+QFrame#chatSidebar, QFrame#chatContext, QFrame#modelPickerPopup,
 QDialog#optionPickerPopup,
 QFrame#slashPalette {{
     background: {DARK_SURFACE}; border-color: {DARK_BORDER};
 }}
-QFrame#chatSidebar {{ border-right-color: {DARK_BORDER}; }}
+QFrame#roundedComboPopup {{ background: transparent; border: 0; }}
+QFrame#roundedComboPopup QAbstractItemView {{
+    background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
+    border-color: {DARK_BORDER}; selection-background-color: #4A2A17;
+}}
+QWidget#modelPickerContent {{ background: {DARK_SURFACE}; }}
+QLineEdit#modelPickerSearch {{
+    background: transparent; color: {DARK_TEXT}; border-bottom-color: #4B413B;
+}}
+QTabBar#modelProviderTabs {{
+    background: #171412; border-right-color: #4B413B;
+}}
+QTabBar#modelProviderTabs::tab:hover {{ background: #29231F; }}
+QTabBar#modelProviderTabs::tab:selected {{
+    background: #30261F; border-right-color: {BRAND_ORANGE};
+}}
+QFrame#modelOptionRow:hover {{ background: #29231F; }}
+QFrame#modelOptionRow[selected="true"] {{
+    background: #3A2A1F; border-left-color: {BRAND_ORANGE};
+}}
+QLabel#modelOptionTitle, QLabel#modelLegacyTitle {{ color: {DARK_TEXT}; }}
+QLabel#modelOptionMeta, QLabel#modelLegacyMeta,
+QLabel#modelLegacyChevron {{ color: {DARK_MUTED}; }}
+QLabel#modelShortcutBadge {{
+    color: #D8C8BD; background: #2A342E;
+}}
+QToolButton#modelFavoriteButton {{ color: #9D9189; }}
+QToolButton#modelFavoriteButton:hover {{
+    background: #4A2A17; color: #FFB277;
+}}
+QFrame#modelLegacyRow:hover {{ background: #29231F; }}
+QListWidget#modelPickerList QScrollBar::handle:vertical {{
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #5F5047, stop: 1 #8D603F
+    );
+}}
+QListWidget#modelPickerList QScrollBar::handle:vertical:hover {{
+    background: #A36B43;
+}}
+QListWidget#optionPickerList::item:disabled {{ color: #B7AAA1; }}
 QFrame#chatContext {{ border-left-color: {DARK_BORDER}; }}
 QToolButton#chatSidebarAction {{ color: {DARK_TEXT}; }}
 QToolButton#chatSidebarAction:hover,
@@ -530,6 +657,10 @@ QComboBox#composerInlineControl, QPushButton#composerInlineControl {{
 QComboBox#composerInlineControl:hover, QPushButton#composerInlineControl:hover,
 QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus {{
     background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
+}}
+QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus,
+QToolButton#roundPrimary:focus, QToolButton#roundStop:focus {{
+    border-color: {BRAND_ORANGE};
 }}
 QFrame#composerSeparator {{ background: {DARK_BORDER}; }}
 QPushButton {{
@@ -585,7 +716,21 @@ QTabBar::tab:hover, QTabWidget#settingsTabs QTabBar::tab:hover {{
 QTabBar::tab:selected, QTabWidget#settingsTabs QTabBar::tab:selected {{
     color: {DARK_TEXT}; background: #462813;
 }}
-QSplitter::handle {{ background: {DARK_BORDER}; }}
+QSplitter::handle {{ background: transparent; }}
+QSplitter#chatSplitter::handle:horizontal {{
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 {DARK_SURFACE}, stop: 0.38 #191614,
+        stop: 0.72 #151311, stop: 1 {DARK_BACKGROUND}
+    );
+}}
+QSplitter#chatSplitter::handle:horizontal:hover {{
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 {DARK_SURFACE}, stop: 0.5 #3A2417,
+        stop: 1 {DARK_BACKGROUND}
+    );
+}}
 QScrollBar:vertical, QScrollBar:horizontal {{ background: #171412; }}
 QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
     background: {DARK_SCROLLBAR_HANDLE};
@@ -620,6 +765,38 @@ class Worker(QRunnable):
             self.signals.error.emit(str(exc))
         else:
             self.signals.finished.emit(result)
+
+
+class ChatStatusLabel(QLabel):
+    """Show meaningful chat feedback while keeping the ready state uncluttered."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__("Pronto", parent)
+        self.setObjectName("muted")
+        self.setMaximumWidth(180)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.hide()
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt API
+        value = str(text or "")
+        super().setText(value)
+        self.setToolTip(value)
+        self.setVisible(bool(value.strip()) and value.strip() != "Pronto")
+
+
+class ResponsiveComposerHost(QWidget):
+    compactChanged = Signal(bool)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._compact: bool | None = None
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        compact = self.width() < 560
+        if compact != self._compact:
+            self._compact = compact
+            self.compactChanged.emit(compact)
 
 
 class MainWindow(QMainWindow):
@@ -699,6 +876,7 @@ class MainWindow(QMainWindow):
         self.nav_button_pages: dict[QToolButton, int] = {}
         self.pages: dict[str, int] = {}
         self.turn_running = False
+        self.provider_switch_in_progress = False
         self.setWindowTitle(APP_TITLE)
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
@@ -788,9 +966,13 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         self.settings_nav_button = QToolButton(objectName="navButton")
         self.settings_nav_button.setText("Configurações")
+        self.settings_nav_button.setIcon(
+            QIcon(str(SIDEBAR_ICON_PATHS["settings"]))
+        )
+        self.settings_nav_button.setIconSize(QSize(18, 18))
         self.settings_nav_button.setAccessibleName("Abrir configurações")
         self.settings_nav_button.setCheckable(True)
-        self.settings_nav_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.settings_nav_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         settings_index = self.pages["Configurações"]
         self.settings_nav_button.clicked.connect(
             lambda _checked=False, i=settings_index: self._navigate(i)
@@ -804,10 +986,6 @@ class MainWindow(QMainWindow):
             if page_index == self.pages["Dashboard"]
         )
         dashboard_button.setChecked(True)
-        layout.addSpacing(8)
-        self.nav_provider_status = QLabel("Agentes: verificando…", objectName="brandSub")
-        self.nav_provider_status.setWordWrap(True)
-        layout.addWidget(self.nav_provider_status)
         return frame
 
     def _navigate(self, index: int) -> None:
@@ -952,6 +1130,8 @@ class MainWindow(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("chatSplitter")
+        splitter.setHandleWidth(6)
         page_layout.addWidget(splitter)
 
         conversations = QFrame(objectName="chatSidebar")
@@ -1036,7 +1216,7 @@ class MainWindow(QMainWindow):
         self.conversation_menu_button.clicked.connect(self.open_current_conversation_menu)
         header.addWidget(self.conversation_menu_button)
         center_layout.addLayout(header)
-        self.provider_combo = QComboBox()
+        self.provider_combo = RoundedComboBox()
         self.provider_combo.setAccessibleName("Provedor da conversa")
         self.provider_combo.setToolTip("Provedor local usado nesta conversa.")
         self.provider_combo.addItems(["codex", "claude"])
@@ -1046,6 +1226,7 @@ class MainWindow(QMainWindow):
         self.model_combo.setAccessibleName("Modelo da conversa")
         self.model_combo.setToolTip("Modelo disponibilizado pelo provedor selecionado.")
         self.model_combo.setMinimumWidth(88)
+        self.model_combo.setMaximumWidth(180)
         self._add_model_combo_item("Modelo padrão", "")
         self.model_combo.currentIndexChanged.connect(self.load_efforts)
         self.model_combo.providerModelSelected.connect(self._model_picker_selected)
@@ -1056,12 +1237,13 @@ class MainWindow(QMainWindow):
         self.effort_combo.setObjectName("composerInlineControl")
         self.effort_combo.setAccessibleName("Nível de esforço")
         self.effort_combo.setMinimumWidth(64)
+        self.effort_combo.setMaximumWidth(110)
         self.effort_combo.setToolTip(
             "Controla quanto raciocínio o agente usa nesta conversa."
         )
         self.effort_combo.currentTextChanged.connect(self._chat_option_changed)
         self.effort_combo.activated.connect(self._ensure_draft_conversation)
-        self.tier_combo = QComboBox()
+        self.tier_combo = RoundedComboBox()
         self.tier_combo.setAccessibleName("Camada de serviço")
         self.tier_combo.setToolTip("Camada de serviço anunciada pelo modelo.")
         self.tier_combo.currentTextChanged.connect(self._chat_option_changed)
@@ -1070,6 +1252,7 @@ class MainWindow(QMainWindow):
         self.approval_combo.setObjectName("composerInlineControl")
         self.approval_combo.setAccessibleName("Perfil de aprovação")
         self.approval_combo.setMinimumWidth(88)
+        self.approval_combo.setMaximumWidth(135)
         for preset in APPROVAL_PRESETS.values():
             self.approval_combo.addItem(
                 QIcon(str(APPROVAL_ICON_PATHS[preset.id])), preset.label, preset.id
@@ -1081,7 +1264,7 @@ class MainWindow(QMainWindow):
             )
         self.approval_combo.setCurrentIndex(self.approval_combo.findData("auto"))
         self.approval_combo.currentIndexChanged.connect(self._chat_option_changed)
-        self.mode_combo = QComboBox()
+        self.mode_combo = RoundedComboBox()
         self.mode_combo.setAccessibleName("Modo de colaboração")
         self.mode_combo.addItem("Build", "default")
         self.mode_combo.addItem("Plan", "plan")
@@ -1108,12 +1291,22 @@ class MainWindow(QMainWindow):
         message_outer_layout.addStretch(1)
         self.message_scroll.setWidget(self.message_container)
         center_layout.addWidget(self.message_scroll, 1)
+        composer_glow = VrComposerGlowFrame()
+        self.composer_glow = composer_glow
+        composer_glow.setMinimumWidth(368)
+        composer_glow.setMaximumWidth(928)
+        composer_glow.setMaximumHeight(164)
+        composer_glow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        glow_layout = QVBoxLayout(composer_glow)
+        glow_layout.setContentsMargins(4, 4, 4, 4)
+        glow_layout.setSpacing(0)
         composer_card = QFrame(objectName="chatComposer")
         self.composer_card = composer_card
         composer_card.setMinimumWidth(360)
         composer_card.setMaximumWidth(920)
         composer_card.setMaximumHeight(156)
         composer_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        glow_layout.addWidget(composer_card)
         composer_layout = QVBoxLayout(composer_card)
         composer_layout.setContentsMargins(12, 10, 10, 10)
         composer_layout.setSpacing(6)
@@ -1145,13 +1338,18 @@ class MainWindow(QMainWindow):
         self.composer_chips.hide()
         composer_layout.addWidget(self.composer_chips)
         controls = QHBoxLayout()
-        controls.setSpacing(4)
+        controls.setContentsMargins(2, 0, 0, 0)
+        controls.setSpacing(5)
+        self.composer_separators: list[QFrame] = []
         controls.addWidget(self.model_combo)
-        controls.addWidget(self._composer_separator())
+        separator = self._composer_separator()
+        self.composer_separators.append(separator)
+        controls.addWidget(separator)
         controls.addWidget(self.effort_combo)
-        controls.addWidget(self._composer_separator())
+        separator = self._composer_separator()
+        self.composer_separators.append(separator)
+        controls.addWidget(separator)
         controls.addWidget(self.approval_combo)
-        controls.addWidget(self._composer_separator())
         self.vr_flow_button = AnimatedVrFlowButton(composer_card)
         saved_vr_flow = self.app_preferences.value("chat/vr_flow_enabled", True)
         if not isinstance(saved_vr_flow, bool):
@@ -1160,41 +1358,50 @@ class MainWindow(QMainWindow):
             }
         self.vr_flow_button.setChecked(saved_vr_flow)
         self.vr_flow_button.toggled.connect(self._vr_flow_toggled)
-        controls.addWidget(self.vr_flow_button)
-        controls.addWidget(self._composer_separator())
+        self.composer_glow.set_vr_active(saved_vr_flow, animate=False)
         self.options_button = QPushButton("Build")
         self.options_button.setObjectName("composerInlineControl")
         self.options_button.setMinimumWidth(58)
+        self.options_button.setMaximumWidth(90)
+        self.options_button.setIconSize(QSize(16, 16))
         self.options_button.setAccessibleName("Alternar entre os modos Build e Plan")
         self.options_button.clicked.connect(self.toggle_collaboration_mode)
+        separator = self._composer_separator()
+        self.composer_separators.append(separator)
+        controls.addWidget(separator)
         controls.addWidget(self.options_button)
-        controls.addStretch()
-        self.chat_status = QLabel("Pronto", objectName="muted")
-        self.chat_status.hide()
+        controls.addStretch(1)
+        self.chat_status = ChatStatusLabel()
         controls.addWidget(self.chat_status)
+        controls.addWidget(self.vr_flow_button)
         self.stop_button = QToolButton()
-        self.stop_button.setText("X")
         self.stop_button.setObjectName("roundStop")
+        self.stop_button.setIcon(QIcon(str(CHAT_ACTION_ICON_PATHS["stop"])))
+        self.stop_button.setIconSize(QSize(16, 16))
         self.stop_button.setAccessibleName("Parar execução")
         self.stop_button.setToolTip("Parar execução")
         self.stop_button.clicked.connect(self.stop_turn)
         self.stop_button.hide()
         controls.addWidget(self.stop_button)
         self.send_button = QToolButton()
-        self.send_button.setText("↑")
         self.send_button.setObjectName("roundPrimary")
+        self.send_button.setIcon(QIcon(str(CHAT_ACTION_ICON_PATHS["send"])))
+        self.send_button.setIconSize(QSize(18, 18))
         self.send_button.setAccessibleName("Enviar mensagem")
         self.send_button.setToolTip("Enviar mensagem (Enter)")
         self.send_button.clicked.connect(self.send_message)
         controls.addWidget(self.send_button)
         composer_layout.addLayout(controls)
-        self.composer_host = QWidget(objectName="composerHost")
+        self._composer_compact = False
+        self.composer_host = ResponsiveComposerHost()
+        self.composer_host.setObjectName("composerHost")
         self.composer_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.composer_host.compactChanged.connect(self._set_composer_compact)
         composer_host_layout = QHBoxLayout(self.composer_host)
         composer_host_layout.setContentsMargins(0, 0, 0, 0)
         composer_host_layout.setSpacing(0)
         composer_host_layout.addStretch(1)
-        composer_host_layout.addWidget(composer_card, 6)
+        composer_host_layout.addWidget(composer_glow, 6)
         composer_host_layout.addStretch(1)
         center_layout.addWidget(self.composer_host)
         self.slash_palette = SlashCommandPalette(self)
@@ -1241,11 +1448,11 @@ class MainWindow(QMainWindow):
         self.knowledge_query.setAccessibleName("Pesquisar conhecimento")
         self.knowledge_query.setPlaceholderText("Ex.: configuração PIX, erro TEF, cadastro de produto")
         self.knowledge_query.returnPressed.connect(self.search_knowledge)
-        self.knowledge_module = QComboBox()
+        self.knowledge_module = RoundedComboBox()
         self.knowledge_module.addItems(
             ["Todos", "Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"]
         )
-        self.knowledge_source = QComboBox()
+        self.knowledge_source = RoundedComboBox()
         self.knowledge_source.addItems(["Todas", "wiki", "kb"])
         search_button = QPushButton("Pesquisar", objectName="primary")
         search_button.clicked.connect(self.search_knowledge)
@@ -1333,13 +1540,13 @@ class MainWindow(QMainWindow):
         )
         self.review_query.returnPressed.connect(self.reset_review_page)
 
-        self.review_source = QComboBox()
+        self.review_source = RoundedComboBox()
         for label, value in (("Todas as fontes", ""), ("Wiki", "wiki"), ("KB", "kb")):
             self.review_source.addItem(label, value)
         self.review_current_module = self._module_filter_combo("Módulo atual")
         self.review_suggested_module = self._module_filter_combo("Módulo sugerido")
 
-        self.review_confidence = QComboBox()
+        self.review_confidence = RoundedComboBox()
         for label, value in (
             ("Toda confiança", ""),
             ("Alta · 85% ou mais", "high"),
@@ -1348,7 +1555,7 @@ class MainWindow(QMainWindow):
         ):
             self.review_confidence.addItem(label, value)
 
-        self.review_status_filter = QComboBox()
+        self.review_status_filter = RoundedComboBox()
         for label, value in (
             ("Pendentes", "pending"),
             ("Adiados", "deferred"),
@@ -1358,10 +1565,10 @@ class MainWindow(QMainWindow):
         ):
             self.review_status_filter.addItem(label, value)
 
-        self.review_product = QComboBox()
+        self.review_product = RoundedComboBox()
         self.review_product.setEditable(True)
         self.review_product.setInsertPolicy(QComboBox.NoInsert)
-        self.review_category = QComboBox()
+        self.review_category = RoundedComboBox()
         self.review_category.setEditable(True)
         self.review_category.setInsertPolicy(QComboBox.NoInsert)
         for combo in (self.review_product, self.review_category):
@@ -1369,7 +1576,7 @@ class MainWindow(QMainWindow):
                 lambda _index, current=combo: current.lineEdit().setCursorPosition(0)
             )
 
-        self.review_period = QComboBox()
+        self.review_period = RoundedComboBox()
         for label, days in (
             ("Qualquer período", 0),
             ("Últimos 7 dias", 7),
@@ -1378,7 +1585,7 @@ class MainWindow(QMainWindow):
         ):
             self.review_period.addItem(label, days)
 
-        self.review_special = QComboBox()
+        self.review_special = RoundedComboBox()
         for label, value in (
             ("Todos os riscos", ""),
             ("Mudança de módulo validado", "module_change"),
@@ -1388,7 +1595,7 @@ class MainWindow(QMainWindow):
         ):
             self.review_special.addItem(label, value)
 
-        self.review_sort = QComboBox()
+        self.review_sort = RoundedComboBox()
         for label, value in (
             ("Maior risco primeiro", "risk"),
             ("Maior confiança", "confidence_desc"),
@@ -1534,7 +1741,7 @@ class MainWindow(QMainWindow):
         detail_layout.addWidget(self.review_note)
 
         actions = QGridLayout()
-        self.review_module = QComboBox()
+        self.review_module = RoundedComboBox()
         self.review_module.addItems(
             ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"]
         )
@@ -1621,15 +1828,15 @@ class MainWindow(QMainWindow):
         layout.addLayout(actions)
 
         filters = QHBoxLayout()
-        self.video_source_filter = QComboBox()
+        self.video_source_filter = RoundedComboBox()
         self.video_source_filter.addItem("Todas as fontes", "")
         self.video_source_filter.addItem("Cursos", "curso")
         self.video_source_filter.addItem("Biblioteca/Arquivos", "biblioteca")
-        self.video_module_filter = QComboBox()
+        self.video_module_filter = RoundedComboBox()
         self.video_module_filter.addItem("Todos os módulos", "")
         for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"):
             self.video_module_filter.addItem(module, module)
-        self.video_status_filter = QComboBox()
+        self.video_status_filter = RoundedComboBox()
         self.video_status_filter.addItem("Todas as situações", "")
         for label, value in (
             ("Disponível", "available"),
@@ -1650,7 +1857,7 @@ class MainWindow(QMainWindow):
 
         classification = QHBoxLayout()
         classification.addWidget(QLabel("Classificar seleção como:"))
-        self.video_manual_module = QComboBox()
+        self.video_manual_module = RoundedComboBox()
         for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"):
             self.video_manual_module.addItem(module, module)
         classification.addWidget(self.video_manual_module)
@@ -1747,7 +1954,7 @@ class MainWindow(QMainWindow):
         for row, (label, key, value, secret) in enumerate(fields):
             grid.addWidget(QLabel(label), row, 0)
             if key == "MARY_DEFAULT_EFFORT":
-                edit = QComboBox()
+                edit = RoundedComboBox()
                 edit.setAccessibleName(label)
                 for effort_label, effort_value in (
                     ("Baixo", "low"),
@@ -1879,7 +2086,7 @@ class MainWindow(QMainWindow):
             )
         )
         card_layout.addLayout(labels, 1)
-        self.theme_combo = QComboBox()
+        self.theme_combo = RoundedComboBox()
         self.theme_combo.setAccessibleName("Tema do aplicativo")
         self.theme_combo.addItem("Claro", "light")
         self.theme_combo.addItem("Dark & Orange", "dark_orange")
@@ -2010,17 +2217,10 @@ class MainWindow(QMainWindow):
                 "Verificado agora · configurações aplicadas a novas conversas"
             )
 
-        summary = " · ".join(
-            f"{name.title()}: {'OK' if available else 'ausente'}"
-            for name, available in status.items()
-        )
-        if hasattr(self, "nav_provider_status"):
-            self.nav_provider_status.setText(summary)
         if hasattr(self, "provider_diagnostic"):
             ocr = OcrManager(self.settings.tesseract_dir)
             self.provider_diagnostic.setText(
-                summary
-                + f"\nProjeto Codex: {'OK' if (self.settings.root / '.codex' / 'config.toml').is_file() else 'não preparado'}"
+                f"Projeto Codex: {'OK' if (self.settings.root / '.codex' / 'config.toml').is_file() else 'não preparado'}"
                 + f"\nTesseract por+eng: {'OK' if ocr.is_ready() else 'não instalado'}"
             )
 
@@ -2536,9 +2736,7 @@ class MainWindow(QMainWindow):
     def _add_chat_empty_state(self) -> None:
         self._set_chat_landing(True)
         empty = QFrame(objectName="assistantMessage")
-        empty.setMinimumWidth(620)
         empty.setMinimumHeight(112)
-        empty.setMaximumWidth(860)
         empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         empty_layout = QVBoxLayout(empty)
         empty_layout.setContentsMargins(20, 22, 20, 18)
@@ -2556,7 +2754,7 @@ class MainWindow(QMainWindow):
         empty_layout.addWidget(title)
         empty_layout.addWidget(description)
         self.chat_empty_state = empty
-        self.message_layout.insertWidget(0, empty, 0, Qt.AlignHCenter)
+        self.message_layout.insertWidget(0, empty)
 
     def _add_message(
         self, role: str, content: str, message_id: int | None = None
@@ -3765,9 +3963,7 @@ class MainWindow(QMainWindow):
         self.send_button.setVisible(not running)
         self.stop_button.setVisible(running)
         self.composer.setReadOnly(running or self.conversation_state != "active")
-        self.vr_flow_button.setEnabled(
-            not running and self.conversation_state == "active"
-        )
+        self._update_codex_controls()
         if running and hasattr(self, "slash_palette"):
             self.slash_palette.dismiss()
 
@@ -3961,12 +4157,45 @@ class MainWindow(QMainWindow):
         mode_value = "plan" if self.mode_combo.currentData() == "plan" else "default"
         mode = "Plan" if mode_value == "plan" else "Build"
         target = "Build" if mode == "Plan" else "Plan"
-        self.options_button.setText(mode)
+        self.options_button.setText("" if self._composer_compact else mode)
         self.options_button.setIcon(QIcon(str(MODE_ICON_PATHS[mode_value])))
         self.options_button.setToolTip(
             f"Modo {mode}. Clique para alternar para {target}; use / para outras opções. "
             f"Tools ativas: {count}."
         )
+
+    def _set_composer_compact(self, compact: bool) -> None:
+        compact = bool(compact)
+        if compact == self._composer_compact:
+            return
+        self._composer_compact = compact
+        dimensions = (
+            (72, 72, 54, 54, 36, 36, 38, 38)
+            if compact
+            else (88, 180, 64, 110, 88, 135, 58, 90)
+        )
+        (
+            model_min,
+            model_max,
+            effort_min,
+            effort_max,
+            approval_min,
+            approval_max,
+            options_min,
+            options_max,
+        ) = dimensions
+        self.model_combo.setMinimumWidth(model_min)
+        self.model_combo.setMaximumWidth(model_max)
+        self.effort_combo.setMinimumWidth(effort_min)
+        self.effort_combo.setMaximumWidth(effort_max)
+        self.approval_combo.setMinimumWidth(approval_min)
+        self.approval_combo.setMaximumWidth(approval_max)
+        self.options_button.setMinimumWidth(options_min)
+        self.options_button.setMaximumWidth(options_max)
+        self.chat_status.setMaximumWidth(90 if compact else 180)
+        for separator in self.composer_separators:
+            separator.setVisible(not compact)
+        self._update_tools_label()
 
     def toggle_collaboration_mode(self) -> None:
         command = "build" if self.mode_combo.currentData() == "plan" else "plan"
@@ -4207,6 +4436,9 @@ class MainWindow(QMainWindow):
         self.load_models(provider_override=other)
 
     def _model_picker_selected(self, provider: str, model_id: str) -> None:
+        if self.provider_switch_in_progress:
+            self.chat_status.setText("Aguarde a troca de provedor terminar")
+            return
         if (
             provider != self.provider_combo.currentText()
             and not self._provider_enabled(provider)
@@ -4223,6 +4455,8 @@ class MainWindow(QMainWindow):
                     )
                     return
                 self.chat_status.setText(f"Alternando para {provider.title()}…")
+                self.provider_switch_in_progress = True
+                self._update_codex_controls()
                 worker = Worker(
                     self.orchestrator.switch_provider,
                     self.current_conversation,
@@ -4235,7 +4469,7 @@ class MainWindow(QMainWindow):
                         conversation_id, selected_provider, selected_model
                     )
                 )
-                worker.signals.error.connect(self._show_error)
+                worker.signals.error.connect(self._provider_switch_failed)
                 self.pool.start(worker)
                 return
             self.pending_model = model_id
@@ -4254,8 +4488,10 @@ class MainWindow(QMainWindow):
     def _provider_switch_completed(
         self, conversation_id: str, provider: str, model_id: str
     ) -> None:
+        self.provider_switch_in_progress = False
         if conversation_id != self.current_conversation:
             self.refresh_conversations()
+            self._update_codex_controls()
             return
         self.pending_model = model_id
         self.pending_tier = ""
@@ -4276,6 +4512,12 @@ class MainWindow(QMainWindow):
         self.refresh_conversations()
         self.chat_status.setText(f"{provider.title()} selecionado")
         self._update_codex_controls()
+
+    def _provider_switch_failed(self, error: str) -> None:
+        self.provider_switch_in_progress = False
+        self.chat_status.setText("Falha ao alternar provedor")
+        self._update_codex_controls()
+        self._show_error(error)
 
     def load_service_tiers(self) -> None:
         model_id = str(self.model_combo.currentData() or "")
@@ -4408,16 +4650,21 @@ class MainWindow(QMainWindow):
             self.pool.start(worker)
 
     def _update_codex_controls(self) -> None:
-        is_active = self.conversation_state == "active"
-        self.model_combo.setEnabled(is_active)
-        self.effort_combo.setEnabled(is_active)
-        self.options_button.setEnabled(is_active)
-        self.vr_flow_button.setEnabled(is_active and not self.turn_running)
-        self.send_button.setEnabled(is_active)
+        conversation_active = self.conversation_state == "active"
+        controls_active = (
+            conversation_active
+            and not self.turn_running
+            and not self.provider_switch_in_progress
+        )
+        self.model_combo.setEnabled(controls_active)
+        self.effort_combo.setEnabled(controls_active)
+        self.vr_flow_button.setEnabled(controls_active)
+        self.send_button.setEnabled(controls_active)
         is_codex = (
             self.provider_combo.currentText() == "codex"
-            and is_active
+            and controls_active
         )
+        self.options_button.setEnabled(is_codex)
         for widget in (
             self.tier_combo,
             self.approval_combo,
@@ -4429,6 +4676,7 @@ class MainWindow(QMainWindow):
     def _vr_flow_toggled(self, enabled: bool) -> None:
         self.app_preferences.setValue("chat/vr_flow_enabled", enabled)
         self.app_preferences.sync()
+        self.composer_glow.set_vr_active(enabled, animate=enabled)
 
     def search_context(self) -> None:
         query = self.context_search.text().strip()
@@ -4513,7 +4761,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _module_filter_combo(placeholder: str) -> QComboBox:
-        combo = QComboBox()
+        combo = RoundedComboBox()
         combo.addItem(placeholder, "")
         for module in (
             "Fiscal",

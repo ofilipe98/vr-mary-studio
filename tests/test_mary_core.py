@@ -21,6 +21,7 @@ from vrsoft_extractor.mary.chat_tools import (
 )
 from vrsoft_extractor.mary.chat_widgets import (
     ModelPickerCombo,
+    RoundedPopupDialog,
     SpellcheckPlainTextEdit,
     provider_icon,
 )
@@ -1319,6 +1320,228 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(selected, [("claude", "claude-favorite")])
         picker.close()
 
+    def test_model_picker_keeps_active_provider_catalog_order_for_shortcuts(self):
+        from PySide6.QtWidgets import QApplication
+
+        class EmptySettings:
+            def value(self, *_args):
+                return []
+
+        application = QApplication.instance() or QApplication([])
+        picker = ModelPickerCombo()
+        picker._settings = EmptySettings()
+        picker.set_active_provider("codex")
+        picker.set_provider_models(
+            "codex",
+            [
+                {"id": "gpt-sol", "displayName": "Sol", "isDefault": True},
+                {"id": "gpt-terra", "displayName": "Terra"},
+                {"id": "gpt-luna", "displayName": "Luna"},
+            ],
+        )
+        picker.set_provider_models(
+            "claude",
+            [{"id": "claude-default", "displayName": "Claude", "isDefault": True}],
+        )
+        application.processEvents()
+        self.assertEqual(
+            picker._ranked_models()[:3],
+            [
+                ("codex", "gpt-sol"),
+                ("codex", "gpt-terra"),
+                ("codex", "gpt-luna"),
+            ],
+        )
+        picker.close()
+
+    def test_model_picker_stays_open_after_mouse_click(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import (
+            QApplication,
+            QListWidget,
+            QTabBar,
+            QVBoxLayout,
+            QWidget,
+        )
+
+        application = QApplication.instance() or QApplication([])
+        host = QWidget()
+        host.resize(640, 480)
+        layout = QVBoxLayout(host)
+        picker = ModelPickerCombo()
+        picker.set_provider_models(
+            "codex",
+            [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}],
+        )
+        picker.set_provider_models(
+            "claude",
+            [
+                {"id": "claude-opus", "displayName": "Claude Opus"},
+                {
+                    "id": "claude-sonnet",
+                    "displayName": "Claude Sonnet",
+                    "isDefault": True,
+                },
+            ],
+        )
+        picker.addItem("GPT Test", "gpt-test")
+        layout.addWidget(picker)
+        selected: list[tuple[str, str]] = []
+        picker.providerModelSelected.connect(
+            lambda provider, model: selected.append((provider, model))
+        )
+        host.show()
+        application.processEvents()
+        top_levels_before = set(application.topLevelWidgets())
+
+        QTest.mouseClick(picker, Qt.LeftButton)
+        QTest.qWait(120)
+
+        self.assertIsNotNone(picker._model_popup)
+        self.assertTrue(picker._model_popup.isVisible())
+        self.assertFalse(picker._model_popup.isWindow())
+        self.assertEqual(set(application.topLevelWidgets()), top_levels_before)
+
+        provider_tabs = picker._model_popup.findChild(QTabBar, "modelProviderTabs")
+        self.assertEqual(
+            [provider_tabs.tabText(index) for index in range(provider_tabs.count())],
+            ["Recomendados", "Codex", "Claude"],
+        )
+        self.assertEqual(
+            provider_tabs.accessibleName(),
+            "Filtrar modelos por provedor",
+        )
+        QTest.mouseClick(
+            provider_tabs,
+            Qt.LeftButton,
+            pos=provider_tabs.tabRect(2).center(),
+        )
+        QTest.qWait(30)
+        model_list = picker._model_popup.findChild(QListWidget, "modelPickerList")
+        claude_item = next(
+            model_list.item(index)
+            for index in range(model_list.count())
+            if model_list.item(index).data(Qt.UserRole)
+            == ("claude", "claude-opus")
+        )
+        QTest.mouseClick(model_list.itemWidget(claude_item), Qt.LeftButton)
+        QTest.qWait(30)
+        self.assertEqual(selected, [("claude", "claude-opus")])
+        self.assertIsNone(picker._model_popup)
+        host.close()
+
+    def test_model_picker_loads_idle_provider_when_its_tab_is_opened(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QTabBar, QVBoxLayout, QWidget
+
+        application = QApplication.instance() or QApplication([])
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        picker = ModelPickerCombo()
+        picker.set_provider_models(
+            "codex",
+            [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}],
+        )
+        picker.addItem("GPT Test", "gpt-test")
+        requested: list[str] = []
+        picker.retryRequested.connect(requested.append)
+        layout.addWidget(picker)
+        host.show()
+        application.processEvents()
+
+        QTest.mouseClick(picker, Qt.LeftButton)
+        QTest.qWait(80)
+        provider_tabs = picker._model_popup.findChild(QTabBar, "modelProviderTabs")
+        QTest.mouseClick(
+            provider_tabs,
+            Qt.LeftButton,
+            pos=provider_tabs.tabRect(2).center(),
+        )
+        QTest.qWait(30)
+
+        self.assertEqual(requested, ["claude"])
+        self.assertTrue(picker._model_popup.isVisible())
+        picker._model_popup.close()
+        host.close()
+
+    def test_model_picker_legacy_group_is_keyboard_accessible_and_closes_on_host_resize(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QListWidget, QVBoxLayout, QWidget
+
+        application = QApplication.instance() or QApplication([])
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        picker = ModelPickerCombo()
+        picker.set_provider_models(
+            "codex",
+            [
+                {
+                    "id": "gpt-5.6-sol",
+                    "displayName": "GPT-5.6-Sol",
+                    "isDefault": True,
+                },
+                {"id": "gpt-5.5", "displayName": "GPT-5.5"},
+            ],
+        )
+        picker.addItem("GPT-5.6-Sol", "gpt-5.6-sol")
+        layout.addWidget(picker)
+        host.show()
+        application.processEvents()
+
+        QTest.mouseClick(picker, Qt.LeftButton)
+        QTest.qWait(80)
+        model_list = picker._model_popup.findChild(QListWidget, "modelPickerList")
+        self.assertFalse(
+            any(
+                model_list.item(index).data(Qt.UserRole) == ("codex", "gpt-5.5")
+                for index in range(model_list.count())
+            )
+        )
+        legacy_item = next(
+            model_list.item(index)
+            for index in range(model_list.count())
+            if model_list.item(index).data(Qt.UserRole) == ("legacy", "")
+        )
+        self.assertTrue(legacy_item.flags() & Qt.ItemIsSelectable)
+        model_list.setCurrentItem(legacy_item)
+        model_list.setFocus()
+        QTest.keyClick(model_list, Qt.Key_Return)
+        QTest.qWait(30)
+        self.assertTrue(
+            any(
+                model_list.item(index).data(Qt.UserRole) == ("codex", "gpt-5.5")
+                for index in range(model_list.count())
+            )
+        )
+
+        host.resize(700, 520)
+        QTest.qWait(20)
+        self.assertIsNone(picker._model_popup)
+        host.close()
+
+    def test_rounded_popup_mask_clips_all_native_window_corners(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        dialog = RoundedPopupDialog(radius=18)
+        dialog.resize(220, 180)
+        dialog.show()
+        application.processEvents()
+        mask = dialog.mask()
+        for point in (
+            QPoint(0, 0),
+            QPoint(dialog.width() - 1, 0),
+            QPoint(0, dialog.height() - 1),
+            QPoint(dialog.width() - 1, dialog.height() - 1),
+        ):
+            self.assertFalse(mask.contains(point))
+        self.assertTrue(mask.contains(QPoint(dialog.width() // 2, dialog.height() // 2)))
+        dialog.close()
+
     def test_composer_enter_submits_and_shift_enter_inserts_newline(self):
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QTextCursor
@@ -1865,16 +2088,16 @@ class MaryCoreTest(unittest.TestCase):
                     self.assertLess(
                         window.approval_combo.mapTo(window, QPoint(0, 0)).x()
                         + window.approval_combo.width(),
-                        window.vr_flow_button.mapTo(window, QPoint(0, 0)).x(),
-                    )
-                    self.assertLess(
-                        window.vr_flow_button.mapTo(window, QPoint(0, 0)).x()
-                        + window.vr_flow_button.width(),
                         window.options_button.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLess(
                         window.options_button.mapTo(window, QPoint(0, 0)).x()
                         + window.options_button.width(),
+                        window.vr_flow_button.mapTo(window, QPoint(0, 0)).x(),
+                    )
+                    self.assertLess(
+                        window.vr_flow_button.mapTo(window, QPoint(0, 0)).x()
+                        + window.vr_flow_button.width(),
                         window.send_button.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLessEqual(window.composer_card.width(), 920)
@@ -1893,13 +2116,18 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("Fluxo VR ativo", window.vr_flow_button.toolTip())
             self.assertEqual(window.composer.placeholderText(), "Digite uma mensagem…")
             self.assertGreater(window.vr_flow_button._glow_animation.duration(), 0)
-            self.assertEqual(window.vr_flow_button._glow_animation.loopCount(), -1)
+            self.assertEqual(window.vr_flow_button._glow_animation.loopCount(), 1)
+            self.assertTrue(window.composer_glow.vr_active())
             window.vr_flow_button.setChecked(False)
             self.assertIn("Fluxo VR inativo", window.vr_flow_button.toolTip())
+            self.assertFalse(window.composer_glow.vr_active())
             window.vr_flow_button.setChecked(True)
+            self.assertTrue(window.composer_glow.vr_active())
             self.assertTrue(window.mode_combo.isHidden())
             self.assertEqual(window.options_button.text(), "Build")
             self.assertFalse(window.options_button.icon().isNull())
+            self.assertFalse(window.send_button.icon().isNull())
+            self.assertFalse(window.stop_button.icon().isNull())
             self.assertTrue(
                 all(
                     not window.approval_combo.itemIcon(index).isNull()
@@ -1977,6 +2205,284 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(effort_field.currentData(), "medium")
         finally:
             window.close()
+
+    def test_chat_stop_interrupts_and_turn_state_locks_then_restores_controls(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.current_conversation = "stop-ui-test"
+            application.processEvents()
+
+            window._set_turn_running(True)
+            application.processEvents()
+            self.assertTrue(window.send_button.isHidden())
+            self.assertFalse(window.stop_button.isHidden())
+            self.assertTrue(window.composer.isReadOnly())
+            for control in (
+                window.model_combo,
+                window.effort_combo,
+                window.approval_combo,
+                window.options_button,
+                window.vr_flow_button,
+                window.send_button,
+            ):
+                self.assertFalse(control.isEnabled())
+
+            with patch.object(window.orchestrator, "interrupt") as interrupt:
+                window.stop_button.click()
+            interrupt.assert_called_once_with("stop-ui-test")
+            self.assertEqual(window.chat_status.text(), "Parando…")
+            self.assertTrue(window.chat_status.isVisible())
+
+            window._set_turn_running(False)
+            application.processEvents()
+            self.assertFalse(window.send_button.isHidden())
+            self.assertTrue(window.stop_button.isHidden())
+            self.assertFalse(window.composer.isReadOnly())
+            for control in (
+                window.model_combo,
+                window.effort_combo,
+                window.approval_combo,
+                window.options_button,
+                window.vr_flow_button,
+                window.send_button,
+            ):
+                self.assertTrue(control.isEnabled())
+        finally:
+            window.close()
+
+    def test_claude_keeps_general_chat_controls_and_disables_codex_only_controls(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.provider_combo.blockSignals(True)
+            window.provider_combo.setCurrentText("claude")
+            window.provider_combo.blockSignals(False)
+            window._update_codex_controls()
+            application.processEvents()
+
+            self.assertEqual(window.approval_combo.currentData(), "auto")
+            self.assertEqual(window.options_button.text(), "Build")
+            for control in (
+                window.model_combo,
+                window.effort_combo,
+                window.vr_flow_button,
+                window.send_button,
+            ):
+                self.assertTrue(control.isEnabled())
+            for control in (
+                window.approval_combo,
+                window.options_button,
+                window.tier_combo,
+                window.mode_combo,
+            ):
+                self.assertFalse(control.isEnabled())
+        finally:
+            window.close()
+
+    def test_chat_context_compact_layout_contains_controls_empty_state_and_stop(self):
+        from PySide6.QtCore import QPoint, QRect
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1120, 700)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window._toggle_chat_context(True)
+            application.processEvents()
+
+            self.assertTrue(window.chat_context_panel.isVisible())
+            self.assertTrue(window._composer_compact)
+            self.assertLess(window.composer_host.width(), 560)
+            self.assertTrue(all(separator.isHidden() for separator in window.composer_separators))
+            self.assertEqual(window.options_button.text(), "")
+
+            empty_origin = window.chat_empty_state.mapTo(
+                window.message_column,
+                QPoint(0, 0),
+            )
+            empty_rect = QRect(empty_origin, window.chat_empty_state.size())
+            self.assertGreaterEqual(empty_rect.left(), 0)
+            self.assertLessEqual(empty_rect.right(), window.message_column.rect().right())
+
+            for running in (False, True):
+                with self.subTest(running=running):
+                    window._set_turn_running(running)
+                    window.chat_status.setText("Pronto")
+                    application.processEvents()
+                    action = window.stop_button if running else window.send_button
+                    controls = (
+                        window.model_combo,
+                        window.effort_combo,
+                        window.approval_combo,
+                        window.options_button,
+                        window.vr_flow_button,
+                        action,
+                    )
+                    rects = [
+                        QRect(
+                            control.mapTo(window.composer_card, QPoint(0, 0)),
+                            control.size(),
+                        )
+                        for control in controls
+                    ]
+                    self.assertTrue(all(control.isVisible() for control in controls))
+                    self.assertTrue(
+                        all(
+                            window.composer_card.rect().contains(rect)
+                            for rect in rects
+                        )
+                    )
+                    self.assertTrue(
+                        all(
+                            left.right() < right.left()
+                            for left, right in zip(rects, rects[1:])
+                        )
+                    )
+        finally:
+            window.close()
+
+    def test_vr_aurora_runs_once_stays_active_and_persists_toggle(self):
+        from PySide6.QtCore import QAbstractAnimation
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        class MemoryPreferences:
+            def __init__(self):
+                self.values = {}
+                self.sync_count = 0
+
+            def value(self, key, default=None):
+                return self.values.get(key, default)
+
+            def setValue(self, key, value):
+                self.values[key] = value
+
+            def sync(self):
+                self.sync_count += 1
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            preferences = MemoryPreferences()
+            window.app_preferences = preferences
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.vr_flow_button.setChecked(True)
+            window.vr_flow_button.setChecked(False)
+            window.composer_glow._phase_animation.setDuration(60)
+            application.processEvents()
+
+            self.assertFalse(window.composer_glow.vr_active())
+            self.assertFalse(preferences.values["chat/vr_flow_enabled"])
+            window.vr_flow_button.click()
+            application.processEvents()
+
+            self.assertTrue(window.vr_flow_button.isChecked())
+            self.assertTrue(window.composer_glow.vr_active())
+            self.assertEqual(window.composer_glow._phase_animation.loopCount(), 1)
+            self.assertEqual(
+                window.composer_glow._phase_animation.state(),
+                QAbstractAnimation.Running,
+            )
+            self.assertTrue(preferences.values["chat/vr_flow_enabled"])
+
+            QTest.qWait(100)
+            application.processEvents()
+            self.assertEqual(
+                window.composer_glow._phase_animation.state(),
+                QAbstractAnimation.Stopped,
+            )
+            self.assertTrue(window.composer_glow.vr_active())
+
+            window.vr_flow_button.click()
+            self.assertFalse(window.vr_flow_button.isChecked())
+            self.assertFalse(window.composer_glow.vr_active())
+            self.assertFalse(preferences.values["chat/vr_flow_enabled"])
+            self.assertGreaterEqual(preferences.sync_count, 3)
+        finally:
+            window.close()
+
+    def test_reasoning_and_approval_popups_activate_current_item_with_enter(self):
+        from PySide6.QtCore import QTimer, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QListWidget, QVBoxLayout, QWidget
+
+        from vrsoft_extractor.mary.chat_widgets import (
+            ApprovalPickerCombo,
+            ReasoningTierCombo,
+        )
+
+        application = QApplication.instance() or QApplication([])
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        effort = ReasoningTierCombo()
+        effort.addItem("Baixo", "low")
+        effort.addItem("Médio", "medium")
+        approval = ApprovalPickerCombo()
+        approval.addItem("Auto", "auto")
+        approval.addItem("Leitura", "read-only")
+        layout.addWidget(effort)
+        layout.addWidget(approval)
+        host.show()
+        application.processEvents()
+        closed_after_enter = []
+
+        def activate_popup_item(payload) -> None:
+            dialog = next(
+                widget
+                for widget in application.topLevelWidgets()
+                if widget.objectName() == "optionPickerPopup" and widget.isVisible()
+            )
+            choices = dialog.findChild(QListWidget, "optionPickerList")
+            item = next(
+                choices.item(index)
+                for index in range(choices.count())
+                if choices.item(index).data(Qt.UserRole) == payload
+            )
+            choices.setCurrentItem(item)
+            choices.setFocus()
+            QTest.keyClick(choices, Qt.Key_Return)
+            closed_after_enter.append(not dialog.isVisible())
+
+        try:
+            QTimer.singleShot(20, lambda: activate_popup_item(("reasoning", 1)))
+            effort.showPopup()
+            self.assertEqual(effort.currentData(), "medium")
+
+            QTimer.singleShot(20, lambda: activate_popup_item(1))
+            approval.showPopup()
+            self.assertEqual(approval.currentData(), "read-only")
+            self.assertEqual(closed_after_enter, [True, True])
+        finally:
+            host.close()
 
     def test_chat_context_menu_targets_clicked_conversation_and_changes_by_state(self):
         from PySide6.QtCore import Qt
@@ -2183,15 +2689,35 @@ class MaryCoreTest(unittest.TestCase):
                 patch.object(QMessageBox, "question") as question,
             ):
                 window._model_picker_selected("claude", "claude-test")
+                window._model_picker_selected("claude", "claude-later")
 
             question.assert_not_called()
             start.assert_called_once()
+            self.assertTrue(window.provider_switch_in_progress)
+            self.assertEqual(
+                window.chat_status.text(),
+                "Aguarde a troca de provedor terminar",
+            )
+            self.assertFalse(window.model_combo.isEnabled())
             worker = start.call_args.args[0]
             self.assertEqual(worker.function, window.orchestrator.switch_provider)
             self.assertEqual(
                 worker.args[:3],
                 (conversation_id, "claude", "claude-test"),
             )
+            with (
+                patch.object(window, "load_models"),
+                patch.object(window, "refresh_conversations"),
+            ):
+                window._provider_switch_completed(
+                    conversation_id,
+                    "claude",
+                    "claude-test",
+                )
+            self.assertFalse(window.provider_switch_in_progress)
+            self.assertEqual(window.provider_combo.currentText(), "claude")
+            self.assertTrue(window.model_combo.isEnabled())
+            self.assertFalse(window.options_button.isEnabled())
         finally:
             window.close()
 
