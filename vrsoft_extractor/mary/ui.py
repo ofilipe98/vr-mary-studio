@@ -293,11 +293,6 @@ QFrame#chatComposerGlow {{ background: transparent; border: 0; }}
 QFrame#modelPickerPopup, QFrame#optionPickerPopup {{
     background: white; border: 1px solid #CBCBD7; border-radius: 18px;
 }}
-QWidget#modelPickerInlineHost {{ background: transparent; }}
-QFrame#modelPickerPanel {{
-    background: transparent; border: 0; border-bottom: 1px solid #CBCBD7;
-    border-radius: 0;
-}}
 QFrame#roundedComboPopup {{ background: transparent; border: 0; }}
 QFrame#roundedComboPopup QAbstractItemView {{
     background: white; color: {BRAND_NAVY};
@@ -696,7 +691,6 @@ QListWidget#modelPickerList QScrollBar::handle:vertical:hover {{
 QListWidget#optionPickerList::item:disabled {{ color: #B7AAA1; }}
 QListWidget#optionPickerList QScrollBar::handle:vertical {{ background: #766A62; }}
 QListWidget#optionPickerList QScrollBar::handle:vertical:hover {{ background: #A36B43; }}
-QFrame#modelPickerPanel {{ border-bottom-color: {DARK_BORDER}; }}
 QFrame#chatContext {{ border-left-color: {DARK_BORDER}; }}
 QToolButton#chatSidebarAction {{ color: {DARK_TEXT}; }}
 QToolButton#chatSidebarAction:hover,
@@ -1456,20 +1450,6 @@ class MainWindow(QMainWindow):
         composer_layout = QVBoxLayout(composer_card)
         composer_layout.setContentsMargins(12, 10, 10, 10)
         composer_layout.setSpacing(6)
-        self.model_picker_inline_host = QWidget(
-            composer_card,
-            objectName="modelPickerInlineHost",
-        )
-        self.model_picker_inline_host.setSizePolicy(
-            QSizePolicy.Expanding,
-            QSizePolicy.Fixed,
-        )
-        self.model_picker_inline_host.hide()
-        self.model_combo.set_inline_host(self.model_picker_inline_host)
-        self.model_combo.panelVisibilityChanged.connect(
-            self._set_model_picker_expanded
-        )
-        composer_layout.addWidget(self.model_picker_inline_host)
         for hidden_control in (
             self.provider_combo,
             self.tier_combo,
@@ -4402,12 +4382,6 @@ class MainWindow(QMainWindow):
         for separator in self.composer_separators:
             separator.setVisible(not compact)
         self._update_tools_label()
-
-    def _set_model_picker_expanded(self, expanded: bool) -> None:
-        """Grow the composer to contain the model catalogue without overlays."""
-        self.composer_glow.setMaximumHeight(530 if expanded else 164)
-        self.composer_card.setMaximumHeight(522 if expanded else 156)
-        self.composer_host.updateGeometry()
 
     def toggle_collaboration_mode(self) -> None:
         command = "build" if self.mode_combo.currentData() == "plan" else "plan"

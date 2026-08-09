@@ -1446,8 +1446,8 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIsNone(picker._model_popup)
         host.close()
 
-    def test_main_window_model_picker_expands_inline_without_popup(self):
-        from PySide6.QtCore import Qt
+    def test_main_window_model_picker_is_anchored_without_native_window(self):
+        from PySide6.QtCore import QPoint, Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication, QListWidget
 
@@ -1475,18 +1475,18 @@ class MaryCoreTest(unittest.TestCase):
 
             panel = window.model_combo._model_popup
             self.assertIsNotNone(panel)
-            self.assertEqual(panel.objectName(), "modelPickerPanel")
-            self.assertIs(panel.parentWidget(), window.model_picker_inline_host)
+            self.assertEqual(panel.objectName(), "modelPickerPopup")
+            self.assertIs(panel.parentWidget(), window)
             self.assertFalse(panel.isWindow())
-            self.assertTrue(window.model_picker_inline_host.isVisible())
             self.assertEqual(set(application.topLevelWidgets()), top_levels_before)
-            self.assertIs(window.model_picker_inline_host.parentWidget(), window.composer_card)
-            self.assertGreater(window.composer_card.height(), 400)
+            anchor_top = window.model_combo.mapTo(window, QPoint(0, 0)).y()
+            self.assertLess(panel.geometry().bottom(), anchor_top)
+            self.assertLessEqual(anchor_top - panel.geometry().bottom(), 8)
+            self.assertGreaterEqual(panel.width(), 440)
 
             QTest.mouseClick(window.model_combo, Qt.LeftButton)
             QTest.qWait(100)
             self.assertIsNone(window.model_combo._model_popup)
-            self.assertTrue(window.model_picker_inline_host.isHidden())
 
             QTest.mouseClick(window.model_combo, Qt.LeftButton)
             QTest.qWait(100)
@@ -1503,7 +1503,6 @@ class MaryCoreTest(unittest.TestCase):
             QTest.mouseClick(model_list.itemWidget(selected_item), Qt.LeftButton)
             QTest.qWait(100)
             self.assertIsNone(window.model_combo._model_popup)
-            self.assertTrue(window.model_picker_inline_host.isHidden())
             self.assertLessEqual(window.composer_card.maximumHeight(), 156)
         finally:
             window.close()
