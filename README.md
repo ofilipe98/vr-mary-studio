@@ -213,12 +213,27 @@ serviço online.
 .\build_portable.ps1
 ```
 
-É gerado em `releases` somente o `VRMaryPortable-0.3.8.zip`, que reúne `App` e
-`MaryProject`. O pacote completo já inclui o aplicativo. Nele, use
+O canal é determinado pela branch atual e o repositório deve estar limpo. Na
+branch `main`, é gerado `VRMaryPortable-main-<versão>.zip`. Na branch `dev`, é
+gerado `VRMaryPortable-dev-<versão>-<revisão>.zip`. Todo pacote inclui um
+`build-info.json` com canal, branch e commit exatos, evitando que uma build de
+teste seja confundida com a estável.
+
+O ZIP reúne `App` e `MaryProject`; o pacote completo já inclui o aplicativo. Nele, use
 `Abrir-VR-Mary-Studio.cmd` para o gerenciador ou
 `MaryProject\Abrir-Mary-no-Codex.cmd` para trabalhar diretamente no Codex. Se
 Inno Setup estiver instalado, compile `installer\VRMaryStudio.iss` para produzir
 o instalador Windows.
+
+## Fluxo de versões
+
+- `main` contém apenas a versão estável aprovada.
+- Toda melhoria, correção ou alteração nova entra primeiro em `dev`.
+- A build `dev` é entregue para homologação e permanece identificada pelo commit.
+- Depois da aprovação, atualize a versão, integre `dev` em `main`, execute a
+  suíte completa e gere a nova build `main`.
+- Não desenvolva diretamente em `main` nem promova uma árvore com alterações
+  locais pendentes.
 
 ## Testes
 
