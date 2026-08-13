@@ -24,6 +24,19 @@ PROTECTED_ERROR_TERMS = (
     "401",
 )
 
+VIDEO_DOWNLOAD_SUFFIXES = {
+    ".avi",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".ts",
+    ".webm",
+}
+MAX_DOWNLOAD_CONCURRENCY = 16
+
 
 def download_inventory(
     settings: Settings,
@@ -32,6 +45,11 @@ def download_inventory(
     redownload: bool = False,
 ) -> list[VideoItem]:
     ensure_runtime_dirs(settings)
+    workers = int(concurrency)
+    if not 1 <= workers <= MAX_DOWNLOAD_CONCURRENCY:
+        raise ConfigError(
+            f"A concorrência de downloads deve ficar entre 1 e {MAX_DOWNLOAD_CONCURRENCY}."
+        )
     inventory_exists = settings.inventory_json_path.exists()
     items = load_inventory(settings.inventory_json_path)
     if not items:
@@ -45,18 +63,13 @@ def download_inventory(
     if settings.storage_state_path.exists():
         write_netscape_cookie_file(settings.storage_state_path, settings.cookiefile_path)
 
-    candidates = [
-        item
-        for item in items
-        if item.media_url and item.status not in {"downloaded", "protected"}
-    ]
+    candidates = _download_candidates(items, settings, redownload=redownload)
     if not candidates:
         LOGGER.info("Nenhum video pendente para baixar")
         return items
 
     by_id = {item.id: item for item in items}
     target_bases = _download_target_bases(items, settings)
-    workers = max(1, int(concurrency))
     LOGGER.info("Baixando %s videos com concorrencia %s", len(candidates), workers)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
@@ -83,6 +96,30 @@ def download_inventory(
     updated = list(by_id.values())
     save_inventory(updated, settings.inventory_json_path, settings.inventory_csv_path)
     return updated
+
+
+def _download_candidates(
+    items: list[VideoItem],
+    settings: Settings,
+    *,
+    redownload: bool,
+) -> list[VideoItem]:
+    candidates: list[VideoItem] = []
+    for item in items:
+        if not item.media_url:
+            continue
+        if redownload:
+            candidates.append(item)
+            continue
+        if item.status == "protected":
+            continue
+        local = Path(item.local_path) if item.local_path else None
+        if local is not None and not local.is_absolute():
+            local = settings.project_dir / local
+        if item.status in {"downloaded", "skipped"} and _valid_download(local):
+            continue
+        candidates.append(item)
+    return candidates
 
 
 def _download_one(
@@ -145,18 +182,34 @@ def _download_one(
         LOGGER.warning("Falha ao baixar %s: %s", item.lesson_title, message)
         return item
 
+    if not _valid_download(downloaded_path):
+        downloaded_path = _find_existing_download(target_base)
+    if not _valid_download(downloaded_path):
+        item.status = "failed"
+        item.local_path = ""
+        item.error = "O provedor encerrou sem produzir um arquivo de vídeo válido."
+        LOGGER.warning("Download sem arquivo válido: %s", item.lesson_title)
+        return item
     item.status = "downloaded"
-    item.local_path = str(downloaded_path) if downloaded_path else str(target_base)
+    item.local_path = str(downloaded_path)
     item.error = ""
     return item
 
 
 def _find_existing_download(target_base: Path) -> Path | None:
-    ignored_suffixes = {".part", ".ytdl", ".json", ".description", ".srt", ".vtt"}
-    for path in target_base.parent.glob(target_base.name + ".*"):
-        if path.suffix.lower() not in ignored_suffixes and path.is_file():
+    for path in sorted(target_base.parent.glob(target_base.name + ".*")):
+        if _valid_download(path):
             return path
     return None
+
+
+def _valid_download(path: Path | None) -> bool:
+    if path is None or path.suffix.casefold() not in VIDEO_DOWNLOAD_SUFFIXES:
+        return False
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _extract_downloaded_path(info: dict | None, ydl) -> Path | None:
@@ -186,6 +239,7 @@ def organize_downloads(settings: Settings) -> dict[str, int]:
     collisions = 0
     missing = 0
     unchanged = 0
+    completed_moves: list[tuple[Path, Path, VideoItem, str]] = []
     target_bases = _download_target_bases(items, settings)
     for item in items:
         if item.status not in {"downloaded", "skipped"} or not item.local_path:
@@ -218,10 +272,29 @@ def organize_downloads(settings: Settings) -> dict[str, int]:
             collisions += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        previous_local_path = item.local_path
         source.replace(target)
         item.local_path = str(target)
+        completed_moves.append((source, target, item, previous_local_path))
         moved += 1
-    save_inventory(items, settings.inventory_json_path, settings.inventory_csv_path)
+    try:
+        save_inventory(items, settings.inventory_json_path, settings.inventory_csv_path)
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        for source, target, item, previous_local_path in reversed(completed_moves):
+            item.local_path = previous_local_path
+            try:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                if target.is_file() and not source.exists():
+                    target.replace(source)
+            except OSError as rollback_error:
+                rollback_errors.append(f"{target}: {rollback_error}")
+        if rollback_errors:
+            raise RuntimeError(
+                "Falha ao persistir o inventário e ao desfazer parte da organização: "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise
     return {
         "moved": moved,
         "collisions": collisions,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sqlite3
@@ -8,10 +9,11 @@ from pathlib import Path
 
 from .db import MaryDatabase
 from .indexer import export_catalog
+from .paths import to_portable_path
 from .portable_project import ensure_portable_project, write_portable_manifest
 
 
-EXCLUDED_TOP_LEVEL = {".state", ".trash", "downloads", "logs"}
+EXCLUDED_TOP_LEVEL = {".state", ".trash", "downloads", "logs", "trabalhomary"}
 EXCLUDED_NAMES = {".env", "thumbs.db", "desktop.ini"}
 EXCLUDED_SUFFIXES = {".sqlite-shm", ".sqlite-wal", ".tmp", ".log"}
 VIDEO_SUFFIXES = {
@@ -119,6 +121,8 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
     destination.mkdir(parents=True, exist_ok=True)
 
     database_relative = Path("indice") / "conhecimento.sqlite"
+    source_database = source / database_relative
+    allowed_knowledge, allowed_assets = _portable_content_paths(source_database)
     files = 0
     bytes_total = 0
     excluded = 0
@@ -126,7 +130,18 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
         if not path.is_file():
             continue
         relative = path.relative_to(source)
-        if relative == database_relative or _excluded(relative):
+        portable_relative = relative.as_posix()
+        top_level = relative.parts[0].casefold() if relative.parts else ""
+        excluded_content = (
+            allowed_knowledge is not None
+            and top_level == "conhecimento"
+            and portable_relative not in allowed_knowledge
+        ) or (
+            allowed_assets is not None
+            and top_level == "assets"
+            and portable_relative not in allowed_assets
+        )
+        if relative == database_relative or _excluded(relative) or excluded_content:
             excluded += 1
             continue
         target = destination / relative
@@ -143,7 +158,6 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
         files += 1
         bytes_total += target.stat().st_size
 
-    source_database = source / database_relative
     if source_database.is_file():
         target_database = destination / database_relative
         target_database.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +169,7 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
             root=destination,
             backup_portable_migration=False,
         )
+        _sanitize_portable_database(portable_database)
         export_catalog(portable_database, destination / "indice")
         files += 1
         bytes_total += target_database.stat().st_size
@@ -163,6 +178,82 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
     _audit_sensitive_files(destination)
     manifest = write_portable_manifest(destination)
     return PortableExportResult(destination, files, bytes_total, excluded, manifest)
+
+
+def _portable_content_paths(
+    database_path: Path,
+) -> tuple[set[str] | None, set[str] | None]:
+    if not database_path.is_file():
+        return None, None
+    knowledge: set[str] = set()
+    assets: set[str] = set()
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            """SELECT local_path,assets_json FROM documents
+               WHERE status='active'"""
+        ).fetchall()
+    root = database_path.resolve().parent.parent
+    for local_path, assets_json in rows:
+        relative = to_portable_path(root, local_path)
+        if relative:
+            knowledge.add(relative)
+        try:
+            parsed_assets = json.loads(assets_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_assets = []
+        assets.update(
+            portable
+            for asset in parsed_assets
+            if str(asset).strip()
+            for portable in (to_portable_path(root, asset),)
+            if portable
+        )
+    return knowledge, assets
+
+
+def _sanitize_portable_database(database: MaryDatabase) -> None:
+    """Keep distributable knowledge while removing local user/session state."""
+
+    with database.connect() as connection:
+        inactive = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT id FROM documents WHERE status<>'active'"
+            ).fetchall()
+        ]
+        if inactive:
+            placeholders = ",".join("?" for _document_id in inactive)
+            connection.execute(
+                f"DELETE FROM source_citations WHERE document_id IN ({placeholders})",
+                inactive,
+            )
+            connection.execute(
+                f"DELETE FROM classification_reviews WHERE document_id IN ({placeholders})",
+                inactive,
+            )
+            connection.execute(
+                f"DELETE FROM document_versions WHERE document_id IN ({placeholders})",
+                inactive,
+            )
+            connection.execute(
+                f"DELETE FROM documents WHERE id IN ({placeholders})",
+                inactive,
+            )
+        for table in (
+            "source_citations",
+            "artifacts",
+            "approvals",
+            "runtime_events",
+            "conversation_tools",
+            "conversation_model_pool",
+            "messages",
+            "conversations",
+            "tool_definitions",
+            "sync_runs",
+        ):
+            connection.execute(f"DELETE FROM {table}")
+    with sqlite3.connect(database.path) as connection:
+        connection.execute("VACUUM")
 
 
 def _excluded(relative: Path) -> bool:

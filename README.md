@@ -1,7 +1,7 @@
 # VR Norte Studio
 
-Aplicativo desktop Windows para manter a base de conhecimento Mary, conversar
-com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
+Aplicativo desktop Windows para manter a base de conhecimento VR, conversar
+com Codex, Claude e OpenCode instalados localmente e operar o extrator de vídeos VRSoft.
 
 ## Recursos
 
@@ -11,8 +11,10 @@ com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
 - Classificação em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo e Revisar.
 - Catálogo determinístico de 169 produtos/equipes baseado em `produtos_filas.md`.
 - SQLite FTS5, `catalogo.jsonl` e `INDEX.md`.
-- Chat em streaming com Codex App Server e Claude Code, com seletor pesquisável,
+- Chat em streaming com Codex App Server, Claude Code e OpenCode, com seletor pesquisável,
   favoritos, esforço, service tier e modos Build/Plan por conversa.
+- Orquestração VR dinâmica entre modelos Codex/Claude/OpenCode, com dificuldade de 1 a
+  5, execução paralela, crítica/validação, transparência opcional e modo Ultra.
 - Quatro perfis de aprovação, tools locais/MCP, correção ortográfica portuguesa,
   ramificações por edição e conversas com arquivo e lixeira recuperável.
 - Extrator de vídeos Endoo integrado, sem transcrição.
@@ -22,9 +24,9 @@ com Codex/Claude instalados localmente e operar o extrator de vídeos VRSoft.
 - Interface PySide6 baseada na identidade VR Soft, contraste WCAG, foco visível
   e layout validado em 1366×768, 1920×1080 e escalas de 125%/150%.
 
-## Mary como projeto Codex portátil
+## VR como projeto Codex portátil
 
-A Mary não depende do aplicativo Python para responder perguntas. A própria
+A VR não depende do aplicativo Python para responder perguntas. A própria
 pasta da base é preparada como projeto Codex com `AGENTS.md`, especialistas em
 `.codex/agents/` e pesquisa local PowerShell em `tools/mary-search.ps1`.
 
@@ -33,27 +35,64 @@ Em uma máquina nova:
 1. Copie a pasta `MaryProject`.
 2. Instale e autentique o Codex normalmente, sem cadastrar outra API key.
 3. Execute `MaryProject\Abrir-Mary-no-Codex.cmd` ou abra essa pasta no Codex.
-4. Faça a pergunta diretamente; o prefixo `Mary:` é opcional.
+4. Faça a pergunta diretamente; o prefixo `VR:` é opcional.
 
 O Codex pesquisa o catálogo e os documentos localmente, encaminha a análise aos
-especialistas Mary e cita os arquivos usados. O VR Norte Studio continua sendo o
+especialistas VR e cita os arquivos usados. O VR Norte Studio continua sendo o
 gerenciador opcional para sincronizar Wiki/KB, revisar classificações, executar
 OCR e administrar vídeos. Credenciais, cookies, logs e vídeos completos não são
 incluídos no projeto portátil.
 
-No chat do VR Norte Studio, o botão animado **VR** controla a pesquisa local no
-Codex e no Claude. Ligado, ele pesquisa a base e preserva o assunto em perguntas
-curtas de continuação; desligado, a mensagem segue diretamente para a LLM. O
-prefixo `Mary:` continua opcional quando o fluxo VR está ligado. As respostas
+No chat do VR Norte Studio, o botão animado **VR** concentra a pesquisa local e
+os modos de orquestração VR em um único menu. A opção **Consultar base local**
+pesquisa a base e preserva o assunto em perguntas curtas de continuação; quando
+desmarcada, não consulta a base local. O prefixo `VR:` continua opcional quando
+o fluxo local está ligado. As respostas
 citam a URL original da Wiki/KB como link web e mantêm o caminho local em texto
 copiável.
+
+### Orquestração VR no chat
+
+O seletor de modelo do composer define o **Orquestrador**. Em **VR**, escolha
+separadamente o pool de modelos que ele pode usar nos agentes e uma estratégia:
+automática, adaptativa, paralela, especializada, sequencial, debate ou consenso.
+Agente e modelo permanecem independentes: o papel VR é estável, mas seu
+executor e seu nível de effort são escolhidos novamente a cada solicitação.
+
+O orquestrador classifica a dificuldade de 1 a 5, valida o plano e executa apenas
+as etapas necessárias. Cada agente usa uma sessão isolada por execução; somente
+a síntese do orquestrador aparece como resposta do chat. O painel lateral segue
+o padrão de conversas do T3 Code: lista os agentes, permite selecionar cada um e
+mostra a solicitação, a tarefa roteada e a resposta completa, inclusive durante
+a execução. Os motivos operacionais são opcionais e não exibem raciocínio
+privado. A identidade dos modelos é qualificada pelo provedor, por exemplo
+`codex:sol`, `claude:opus` e `opencode:opencode/big-pickle`.
+
+Em todas as etapas, contratos específicos da personalidade **Especialista ERP
+VRMaster** exigem evidência antes de afirmações sobre o produto, separam fato de
+hipótese, orientam diagnóstico antes da solução e impedem que lacunas sejam
+preenchidas por conhecimento próprio. O sintetizador final também adapta a
+profundidade ao nível técnico demonstrado pelo usuário e sinaliza o impacto de
+ações destrutivas ou de difícil reversão.
+
+Dentro do botão **VR**, **Desligado** usa somente
+o modelo principal; **Automático** usa resposta direta no nível 1, VR padrão
+nos níveis 2–3 e Ultra nos níveis 4–5; **Ligado** mantém VR padrão sem escalar
+para Ultra; e **Ultra** força o fluxo mais intensivo, com mais paralelismo,
+comparação, validação e uma segunda rodada quando houver divergência. Ligado usa
+um contorno animado discreto. Ultra usa o mesmo componente visual com uma
+animação mais intensa. Durante o fluxo multiagente, o orquestrador decide o effort de
+cada agente e da síntese; o seletor de raciocínio continua valendo como padrão
+para respostas diretas e operações do orquestrador. Seu maior valor é
+**Máximo**. O nome
+**Ultra** fica reservado ao modo multiagente dentro do botão VR.
 
 ## Instalação para desenvolvimento
 
 ```powershell
 cd D:\Codex\Projetos\vrsoft-video-extractor
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c constraints-windows-x64.txt
 $env:PLAYWRIGHT_BROWSERS_PATH='0'
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
@@ -180,7 +219,7 @@ Comandos adicionais:
 `enroll` exige o par `CURSO:TURMA` e `--confirm`; sem confirmação nenhuma
 inscrição é enviada ao Endoo.
 
-## Codex e Claude
+## Codex, Claude e OpenCode
 
 - Codex usa `codex app-server` e JSON-RPC em stdio. A criação da thread envia
   os valores kebab-case `read-only`, `workspace-write` ou
@@ -188,6 +227,8 @@ inscrição é enviada ao Endoo.
   em camelCase (`readOnly`, `workspaceWrite` ou `dangerFullAccess`).
 - Claude usa `stream-json`, retoma por `session_id` e recebe permissões de escrita
   apenas para a pasta da conversa.
+- OpenCode usa `run --format json`, mantém a identidade completa
+  `provider/model`, retoma por `sessionID` e respeita o perfil de aprovação do chat.
 - Cada conversa grava arquivos em `VR_Mary_V2\TrabalhoMary\<id>`.
 - Modelo, esforço, tier, perfil de aprovação, modo e seleção de tools ficam
   persistidos em cada conversa. `Auto` é o perfil padrão.
@@ -195,10 +236,11 @@ inscrição é enviada ao Endoo.
   texto/JSON por `stdout`, com timeout e limite de 64 KiB. A seleção MCP é
   aplicada somente à configuração da thread, sem alterar o `config.toml`.
 - O corretor é ortográfico, local e em português; ele não promete revisão
-  gramatical avançada. Palavras pessoais ficam na pasta de estado do Mary.
+  gramatical avançada. Palavras pessoais ficam na pasta de estado da VR.
 - Alterar provedor/tools ou editar uma mensagem cria uma ramificação e mantém a
-  conversa original. Arquivar/restaurar sincroniza com o Codex; Claude usa
-  somente o estado local.
+  conversa original. Arquivar/restaurar sincroniza com o Codex; Claude e
+  OpenCode mantêm esse estado local, e a exclusão definitiva remove a sessão
+  OpenCode correspondente.
 - Use **Clonar para outro provedor** para transferir o contexto entre agentes.
 
 ## OCR
@@ -224,6 +266,12 @@ O ZIP reúne `App` e `MaryProject`; o pacote completo já inclui o aplicativo. N
 `MaryProject\Abrir-Mary-no-Codex.cmd` para trabalhar diretamente no Codex. Se
 Inno Setup estiver instalado, compile `installer\VRMaryStudio.iss` para produzir
 o instalador Windows.
+
+A distribuição portátil oficial é destinada ao Windows 10/11 x64, incorpora
+Python, Chromium e FFmpeg e deve ser totalmente extraída antes da execução. O
+arquivo `LEIA-ME-PORTATIL.txt` acompanha a raiz do ZIP. O build também atualiza
+`releases\SHA256SUMS.txt`; use esse hash para conferir o arquivo antes de
+distribuí-lo. Credenciais e CLIs de provedores de chat não são incorporados.
 
 ## Fluxo de versões
 

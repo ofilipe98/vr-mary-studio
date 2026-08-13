@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .settings import DEFAULT_BASE_URL
+from .settings import DEFAULT_BASE_URL, update_dotenv_file
 
 
 APP_TITLE = "VRSoft Extractor"
@@ -61,18 +61,15 @@ def read_env_file(path: Path) -> GuiConfig:
 
 
 def write_env_file(path: Path, config: GuiConfig) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                f"ENDOO_EMAIL={config.email}",
-                f"ENDOO_PASSWORD={config.password}",
-                f"ENDOO_BASE_URL={config.base_url}",
-                f"ENDOO_MAX_PAGES={config.max_pages}",
-                f"ENDOO_CONCURRENCY={config.concurrency}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    update_dotenv_file(
+        path,
+        {
+            "ENDOO_EMAIL": config.email,
+            "ENDOO_PASSWORD": config.password,
+            "ENDOO_BASE_URL": config.base_url,
+            "ENDOO_MAX_PAGES": str(max(1, config.max_pages)),
+            "ENDOO_CONCURRENCY": str(max(1, config.concurrency)),
+        },
     )
 
 

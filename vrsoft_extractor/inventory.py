@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import uuid
 from pathlib import Path
 from typing import Iterable
 
@@ -48,20 +49,52 @@ def save_inventory(items: Iterable[VideoItem], json_path: Path, csv_path: Path) 
     item_list = list(items)
     json_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(
-        json.dumps([item.to_dict() for item in item_list], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        for item in item_list:
-            row = item.to_dict()
-            row["folder_path"] = json.dumps(item.folder_path, ensure_ascii=False)
-            row["classification_reasons"] = json.dumps(
-                item.classification_reasons, ensure_ascii=False
-            )
-            writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+    token = uuid.uuid4().hex
+    json_temporary = json_path.with_suffix(json_path.suffix + f".{token}.tmp")
+    csv_temporary = csv_path.with_suffix(csv_path.suffix + f".{token}.tmp")
+    backups: dict[Path, Path] = {}
+    committed = False
+    try:
+        json_temporary.write_text(
+            json.dumps(
+                [item.to_dict() for item in item_list],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        with csv_temporary.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+            writer.writeheader()
+            for item in item_list:
+                row = item.to_dict()
+                row["folder_path"] = json.dumps(item.folder_path, ensure_ascii=False)
+                row["classification_reasons"] = json.dumps(
+                    item.classification_reasons, ensure_ascii=False
+                )
+                writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+        for target in (json_path, csv_path):
+            if target.exists():
+                backup = target.with_suffix(target.suffix + f".{token}.bak")
+                target.replace(backup)
+                backups[target] = backup
+        try:
+            json_temporary.replace(json_path)
+            csv_temporary.replace(csv_path)
+        except Exception:
+            for target in (json_path, csv_path):
+                target.unlink(missing_ok=True)
+            for target, backup in backups.items():
+                if backup.exists():
+                    backup.replace(target)
+            raise
+        committed = True
+    finally:
+        json_temporary.unlink(missing_ok=True)
+        csv_temporary.unlink(missing_ok=True)
+        if committed:
+            for backup in backups.values():
+                backup.unlink(missing_ok=True)
 
 
 def merge_inventory(existing: Iterable[VideoItem], discovered: Iterable[VideoItem]) -> list[VideoItem]:

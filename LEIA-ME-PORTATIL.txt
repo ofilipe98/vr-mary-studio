@@ -1,0 +1,28 @@
+VR NORTE STUDIO - VERSAO PORTATIL ESTAVEL
+==========================================
+
+Compatibilidade
+- Windows 10 ou Windows 11, 64 bits.
+- Nao exige instalacao do Python.
+- Chromium, FFmpeg e as bibliotecas do aplicativo ja estao no pacote.
+
+Como executar
+1. Extraia o ZIP inteiro para uma pasta local com espaco livre.
+2. Nao mova somente o arquivo EXE e nao execute o programa dentro do ZIP.
+3. Abra "Abrir-VR-Mary-Studio.cmd".
+4. Mantenha juntas as pastas "App" e "MaryProject".
+
+Servicos opcionais
+- Chat: instale e autentique o CLI do provedor que pretende usar (Codex,
+  Claude ou OpenCode). Nenhuma credencial pessoal acompanha o pacote.
+- Wiki, KB e Endoo: exigem internet e as credenciais do usuario.
+- OCR: pode ser instalado de forma portatil pela tela Configuracoes.
+
+Seguranca e integridade
+- Confira o SHA-256 do ZIP em "SHA256SUMS.txt" antes de distribuir.
+- O executavel nao possui assinatura digital; o Windows pode mostrar o
+  SmartScreen na primeira abertura.
+- Conversas, senhas, cookies, logs, videos completos e workspaces privados
+  nao sao incluidos no MaryProject distribuido.
+
+Em caso de erro, preserve a estrutura extraida e consulte "App\README.md".

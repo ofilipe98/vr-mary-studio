@@ -1,8 +1,10 @@
 import json
+import io
 import os
 import queue
 import sqlite3
 import sys
+import threading
 import unittest
 import urllib.parse
 import uuid
@@ -26,8 +28,16 @@ from vrsoft_extractor.mary.chat_widgets import (
     provider_icon,
 )
 from vrsoft_extractor.mary.classification_audit import audit_classification
-from vrsoft_extractor.mary.config import MarySettings
-from vrsoft_extractor.mary.content import canonical_markdown, html_to_markdown, sha256_text
+from vrsoft_extractor.mary.config import MarySettings, save_mary_env
+from vrsoft_extractor.mary.content import (
+    canonical_markdown,
+    download_asset,
+    html_to_markdown,
+    preserve_validated_classification,
+    sha256_text,
+    write_and_persist_document,
+    write_document,
+)
 from vrsoft_extractor.mary.db import MaryDatabase, _fts_query
 from vrsoft_extractor.mary.migration import build_manifest, migrate
 from vrsoft_extractor.mary.models import (
@@ -36,17 +46,24 @@ from vrsoft_extractor.mary.models import (
     KnowledgeDocument,
     ReviewFilters,
     RuntimeEvent,
+    SyncStats,
 )
 from vrsoft_extractor.mary.movidesk import (
     MovideskInteractiveLoginRequired,
     MovideskSync,
 )
-from vrsoft_extractor.mary.providers import CodexProvider, ProviderError, _resolve_codex_command
+from vrsoft_extractor.mary.providers import (
+    CodexProvider,
+    ProviderError,
+    _resolve_codex_command,
+    normalize_effort,
+)
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
-from vrsoft_extractor.mary.ocr import latest_windows_installer_url
+from vrsoft_extractor.mary.ocr import _download_file, latest_windows_installer_url
 from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
 from vrsoft_extractor.mary.search import search_terms
 from vrsoft_extractor.mary.workspace import initialize_workspace
+from vrsoft_extractor.mary.wiki import WikiSync
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from vrsoft_extractor.mary.ui import (
@@ -80,6 +97,65 @@ class MaryCoreTest(unittest.TestCase):
             root=(self.root / "mary").resolve(),
             old_root=self.old.resolve(),
         )
+
+    def test_save_mary_env_is_validated_atomic_and_preserves_unknown_values(self):
+        env_path = self.app / ".env"
+        env_path.write_text(
+            "# configuração local\nCUSTOM_FLAG=keep\nMARY_ROOT=old\n",
+            encoding="utf-8",
+        )
+        save_mary_env(
+            self.app,
+            {
+                "MARY_ROOT": str(self.settings.root),
+                "MOVIDESK_EMAIL": "user@example.com",
+                "MOVIDESK_PASSWORD": "secret",
+                "ENDOO_EMAIL": "video@example.com",
+                "ENDOO_PASSWORD": "video-secret",
+                "MARY_SYNC_INTERVAL_MINUTES": "30",
+                "MARY_DEFAULT_EFFORT": "high",
+            },
+        )
+
+        content = env_path.read_text(encoding="utf-8")
+        self.assertIn("# configuração local", content)
+        self.assertIn("CUSTOM_FLAG=keep", content)
+        self.assertEqual(content.count("MARY_ROOT="), 1)
+        self.assertIn("MARY_SYNC_INTERVAL_MINUTES=30", content)
+        self.assertEqual(list(self.app.glob(".*.tmp")), [])
+
+    def test_save_mary_env_rejects_invalid_values_without_changing_file(self):
+        env_path = self.app / ".env"
+        env_path.write_text("CUSTOM_FLAG=keep\n", encoding="utf-8")
+        invalid = {
+            "MARY_ROOT": str(self.settings.root),
+            "MARY_SYNC_INTERVAL_MINUTES": "0",
+            "MARY_DEFAULT_EFFORT": "medium",
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "pelo menos 15"):
+            save_mary_env(self.app, invalid)
+
+        self.assertEqual(env_path.read_text(encoding="utf-8"), "CUSTOM_FLAG=keep\n")
+
+    def test_download_asset_rejects_empty_and_oversized_responses(self):
+        destination = self.root / "assets"
+        with self.assertRaisesRegex(ValueError, "vazio"):
+            download_asset(
+                "https://example.com/empty.png",
+                destination,
+                opener=lambda _url: b"",
+            )
+        with self.assertRaisesRegex(ValueError, "insegura"):
+            download_asset("file:///C:/segredo.txt", destination)
+        with patch("vrsoft_extractor.mary.content.MAX_ASSET_BYTES", 3):
+            with self.assertRaisesRegex(ValueError, "excede o limite"):
+                download_asset(
+                    "https://example.com/large.png",
+                    destination,
+                    opener=lambda _url: b"1234",
+                )
+        self.assertFalse(destination.exists())
 
     def _queue_review(
         self,
@@ -225,6 +301,10 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(row["trashed_at"], "")
         database.update_conversation(conversation_id, effort="xhigh")
         self.assertEqual(database.get_conversation(conversation_id)["effort"], "xhigh")
+
+    def test_legacy_ultra_reasoning_effort_is_consolidated_as_maximum(self):
+        self.assertEqual(normalize_effort("ultra"), "max")
+        self.assertEqual(normalize_effort("ultra", provider="claude"), "max")
 
     def test_classification_rules_and_confidence(self):
         fiscal = classify(
@@ -515,6 +595,269 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(stored["module"], "Fiscal")
         self.assertEqual(stored["review_status"], "pending")
 
+    def test_unchanged_content_refreshes_metadata_without_creating_version(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="metadata-1",
+            title="Documento",
+            url="https://example.com/old",
+            markdown="Mesmo conteúdo",
+            module="Fiscal",
+            review_status="approved",
+            revision="1",
+            content_hash="same-hash",
+            category="Fiscal",
+            local_path="conhecimento/Fiscal/Wiki/documento.md",
+        )
+        database.upsert_document(document)
+        document.url = "https://example.com/new"
+        document.revision = "2"
+        document.category = "Fiscal / Guias"
+        document.synced_at = "2026-08-12T12:00:00+00:00"
+
+        _document_id, action = database.upsert_document(document)
+        stored = database.get_document("wiki", "metadata-1")
+
+        self.assertEqual(action, "unchanged")
+        self.assertEqual(stored["url"], "https://example.com/new")
+        self.assertEqual(stored["revision"], "2")
+        self.assertEqual(stored["category"], "Fiscal / Guias")
+        with database.connect() as connection:
+            versions = connection.execute(
+                "SELECT count(*) FROM document_versions"
+            ).fetchone()[0]
+        self.assertEqual(versions, 0)
+
+    def test_unchanged_content_preserves_human_classification(self):
+        database = MaryDatabase(self.settings.database_path)
+        approved = KnowledgeDocument(
+            source="wiki",
+            source_id="human-1",
+            title="Documento humano",
+            url="https://example.com/human-1",
+            markdown="Mesmo conteúdo",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="same-content",
+            local_path="conhecimento/Fiscal/Wiki/human.md",
+        )
+        database.upsert_document(approved)
+        current = database.get_document("wiki", "human-1")
+        incoming = KnowledgeDocument(
+            source="wiki",
+            source_id="human-1",
+            title="Documento humano atualizado",
+            url="https://example.com/human-1",
+            markdown="Mesmo conteúdo",
+            module="PDV",
+            review_status="pending",
+            content_hash="same-content",
+            local_path="conhecimento/PDV/Wiki/human.md",
+        )
+
+        changed = preserve_validated_classification(current, incoming)
+        database.upsert_document(incoming)
+        stored = database.get_document("wiki", "human-1")
+
+        self.assertFalse(changed)
+        self.assertEqual(incoming.module, "Fiscal")
+        self.assertEqual(incoming.review_status, "approved")
+        self.assertEqual(stored["module"], "Fiscal")
+        self.assertEqual(stored["review_status"], "approved")
+
+    def test_queueing_reclassification_hides_previously_approved_document(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="revalidate-1",
+            title="Documento validado",
+            url="https://example.com/revalidate-1",
+            markdown="pinpad TEF",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="revalidate-hash",
+            local_path="conhecimento/Fiscal/Wiki/revalidate.md",
+        )
+        document_id, _action = database.upsert_document(document)
+
+        database.queue_review(
+            document_id,
+            "PDV",
+            0.92,
+            ["pinpad"],
+            "Fiscal",
+            True,
+        )
+
+        stored = database.get_document("wiki", "revalidate-1")
+        self.assertEqual(stored["module"], "Fiscal")
+        self.assertEqual(stored["review_status"], "pending")
+        self.assertEqual(database.search("pinpad"), [])
+
+    def test_unchanged_wiki_repairs_missing_pending_review(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="42",
+            title="Configuração de pinpad",
+            url="https://example.com/wiki/42",
+            markdown="Configuração TEF no PDV",
+            module="Revisar",
+            review_status="pending",
+            revision="7",
+            content_hash="wiki-hash",
+            local_path="conhecimento/Revisar/configuracao--42.md",
+        )
+        database.upsert_document(document)
+        sync = WikiSync(self.settings, database)
+        sync.iter_pages = lambda: iter(
+            [{"pageid": 42, "title": document.title, "revisions": [{"revid": 7}]}]
+        )
+
+        stats = sync.sync(limit=1)
+
+        self.assertEqual(stats.unchanged, 1)
+        self.assertEqual(stats.review, 1)
+        self.assertEqual(database.query_reviews(ReviewFilters()).total, 1)
+
+    def test_sync_run_with_item_errors_is_partial(self):
+        database = MaryDatabase(self.settings.database_path)
+        run_id = database.start_sync("wiki")
+        database.finish_sync(run_id, SyncStats("wiki", discovered=3, errors=1))
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM sync_runs WHERE id=?", (run_id,)
+            ).fetchone()
+        self.assertEqual(row["status"], "partial")
+
+    def test_partial_wiki_sync_does_not_inactivate_unseen_documents(self):
+        database = MaryDatabase(self.settings.database_path)
+        existing = KnowledgeDocument(
+            source="wiki",
+            source_id="existing",
+            title="Documento existente",
+            url="https://example.com/wiki/existing",
+            markdown="Conteúdo preservado",
+            module="Fiscal",
+            review_status="approved",
+            status="active",
+            revision="1",
+            content_hash="existing-hash",
+            local_path="conhecimento/Fiscal/Wiki/existing.md",
+        )
+        database.upsert_document(existing)
+        sync = WikiSync(self.settings, database)
+        sync.iter_pages = lambda: iter(
+            [{"pageid": 99, "title": "Página com falha", "revisions": [{"revid": 1}]}]
+        )
+        sync.fetch_document = MagicMock(side_effect=RuntimeError("falha de rede"))
+
+        stats = sync.sync()
+
+        self.assertEqual(stats.errors, 1)
+        self.assertEqual(stats.inactive, 0)
+        self.assertEqual(database.get_document("wiki", "existing")["status"], "active")
+
+    def test_write_document_moves_canonical_file_when_module_changes(self):
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="move-1",
+            title="Documento móvel",
+            url="https://example.com/move-1",
+            markdown="Conteúdo",
+            module="Revisar",
+            review_status="pending",
+            content_hash="move-hash",
+        )
+        original = write_document(self.settings.root, document)
+        document.module = "PDV"
+        document.review_status = "approved"
+
+        moved = write_document(
+            self.settings.root,
+            document,
+            previous_path=original,
+        )
+
+        self.assertFalse(original.exists())
+        self.assertTrue(moved.is_file())
+        self.assertIn('module: "PDV"', moved.read_text(encoding="utf-8"))
+
+    def test_document_file_rolls_back_when_database_persistence_fails(self):
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="rollback-1",
+            title="Documento transacional",
+            url="https://example.com/rollback-1",
+            markdown="Versão anterior",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="old-hash",
+        )
+        original = write_document(self.settings.root, document)
+        original_bytes = original.read_bytes()
+        document.markdown = "Versão que não foi persistida"
+        document.content_hash = "new-hash"
+
+        with self.assertRaisesRegex(RuntimeError, "banco indisponível"):
+            write_and_persist_document(
+                self.settings.root,
+                document,
+                lambda: (_ for _ in ()).throw(RuntimeError("banco indisponível")),
+                previous_path=original,
+            )
+
+        self.assertEqual(original.read_bytes(), original_bytes)
+
+    def test_document_path_rejects_unknown_module_instead_of_escaping_knowledge(self):
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="unsafe-1",
+            title="Documento inseguro",
+            url="https://example.com/unsafe-1",
+            markdown="Conteúdo",
+            module="../../fora",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Módulo de conhecimento inválido"):
+            write_document(self.settings.root, document)
+
+        self.assertFalse((self.settings.root / "fora").exists())
+
+    def test_incomplete_ocr_download_does_not_replace_existing_file(self):
+        target = self.root / "por.traineddata"
+        target.write_bytes(b"previous version")
+        with (
+            patch(
+                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
+                return_value=io.BytesIO(b"curto"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "Download incompleto"),
+        ):
+            _download_file("https://example.com/por", target, minimum_bytes=100)
+
+        self.assertEqual(target.read_bytes(), b"previous version")
+
+    def test_oversized_ocr_download_does_not_replace_existing_file(self):
+        target = self.root / "eng.traineddata"
+        target.write_bytes(b"previous version")
+        with (
+            patch(
+                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
+                return_value=io.BytesIO(b"oversized"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "excede o limite"),
+        ):
+            _download_file(
+                "https://example.com/eng",
+                target,
+                minimum_bytes=1,
+                maximum_bytes=3,
+            )
+
+        self.assertEqual(target.read_bytes(), b"previous version")
+
     def test_classification_audit_refreshes_review_without_changing_module(self):
         database = MaryDatabase(self.settings.database_path)
         document = KnowledgeDocument(
@@ -701,6 +1044,55 @@ class MaryCoreTest(unittest.TestCase):
             }
         self.assertEqual(modules, {"ADM_FIN_ESTOQUE"})
 
+    def test_review_query_clamps_offset_after_results_shrink(self):
+        database = MaryDatabase(self.settings.database_path)
+        review_id = self._queue_review(database, "last-page")
+
+        page = database.query_reviews(ReviewFilters(limit=1, offset=100))
+        self.assertEqual(page.offset, 0)
+        self.assertEqual([row["id"] for row in page.items], [review_id])
+
+        database.decide_reviews([review_id], "keep")
+        empty = database.query_reviews(ReviewFilters(limit=1, offset=100))
+        self.assertEqual(empty.offset, 0)
+        self.assertEqual(empty.items, [])
+
+    def test_review_approval_moves_canonical_file_and_updates_front_matter(self):
+        database = initialize_workspace(self.settings)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="move-after-review",
+            title="Documento para revisar",
+            url="https://example.com/wiki/move-after-review",
+            markdown="Conteúdo validado.",
+            module="Revisar",
+            classification_confidence=0.55,
+            review_status="pending",
+            revision="1",
+            content_hash="hash-move-after-review",
+        )
+        original = write_document(self.settings.root, document)
+        document_id, _action = database.upsert_document(document)
+        database.queue_review(document_id, "PDV", 0.91, ["pinpad"])
+        review_id = int(
+            database.query_reviews(
+                ReviewFilters(query="move-after-review")
+            ).items[0]["id"]
+        )
+
+        database.decide_reviews([review_id], "approve", module="PDV")
+
+        stored = database.get_document("wiki", "move-after-review")
+        moved = self.settings.root / stored["local_path"]
+        self.assertEqual(stored["module"], "PDV")
+        self.assertEqual(stored["review_status"], "approved")
+        self.assertTrue(moved.is_file())
+        self.assertIn("conhecimento/PDV/Wiki", moved.as_posix())
+        self.assertFalse(original.exists())
+        markdown = moved.read_text(encoding="utf-8")
+        self.assertIn('module: "PDV"', markdown)
+        self.assertIn('review_status: "approved"', markdown)
+
     def test_review_schema_migrates_existing_rows_without_loss(self):
         database = MaryDatabase(self.settings.database_path)
         review_id = self._queue_review(database, "legacy")
@@ -815,13 +1207,13 @@ class MaryCoreTest(unittest.TestCase):
 
     def test_selects_latest_tesseract_windows_installer(self):
         listing = (
-            '<a href="tesseract-ocr-w64-setup-5.3.0.exe">old</a>'
-            '<a href="tesseract-ocr-w64-setup-5.5.0.exe">new</a>'
+            '<a href="tesseract-ocr-w64-setup-5.9.0.exe">old</a>'
+            '<a href="tesseract-ocr-w64-setup-5.10.0.exe">new</a>'
         )
         url = latest_windows_installer_url(listing, "https://example.com/tesseract/")
         self.assertEqual(
             url,
-            "https://example.com/tesseract/tesseract-ocr-w64-setup-5.5.0.exe",
+            "https://example.com/tesseract/tesseract-ocr-w64-setup-5.10.0.exe",
         )
 
     def test_codex_send_resumes_thread_after_app_restart(self):
@@ -996,11 +1388,19 @@ class MaryCoreTest(unittest.TestCase):
         event = RuntimeEvent(
             conversation_id,
             "settings_updated",
-            payload=payload,
+            payload={
+                **payload,
+                "threadSettings": {
+                    **payload["threadSettings"],
+                    "model": "gpt-5.7-provider-effective",
+                },
+            },
         )
+        database.add_message(conversation_id, "user", "Conversa já iniciada")
         orchestrator = ChatOrchestrator(self.settings, database)
         orchestrator._handle_event(event)
         row = database.get_conversation(conversation_id)
+        self.assertEqual(row["model"], "gpt-5.6")
         self.assertEqual(row["effort"], "xhigh")
         self.assertEqual(row["service_tier"], "fast")
         with database.connect() as connection:
@@ -1295,6 +1695,25 @@ class MaryCoreTest(unittest.TestCase):
         reloaded = LocalSpellChecker(dictionary)
         self.assertNotIn("marylocal", [issue.word.casefold() for issue in reloaded.misspellings("MaryLocal")])
 
+    def test_live_spellcheck_does_not_calculate_expensive_suggestions(self):
+        from PySide6.QtWidgets import QApplication
+
+        calls: list[bool] = []
+
+        class ProbeChecker:
+            def misspellings(self, _text, *, include_suggestions=True):
+                calls.append(include_suggestions)
+                return []
+
+        application = QApplication.instance() or QApplication([])
+        editor = SpellcheckPlainTextEdit(ProbeChecker())
+        editor.setPlainText("Texto digitado sem bloquear a interface")
+        application.processEvents()
+
+        self.assertTrue(calls)
+        self.assertFalse(any(calls))
+        editor.close()
+
     def test_model_picker_ranks_favorites_and_ctrl_shortcut_target(self):
         from PySide6.QtWidgets import QApplication, QListWidget
 
@@ -1421,7 +1840,7 @@ class MaryCoreTest(unittest.TestCase):
         )
         self.assertEqual(
             [provider_tabs.tabText(index) for index in range(provider_tabs.count())],
-            ["Recomendados", "Codex", "Claude"],
+            ["Recomendados", "Codex", "Claude", "OpenCode"],
         )
         self.assertEqual(
             provider_tabs.accessibleName(),
@@ -1445,6 +1864,50 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(selected, [("claude", "claude-opus")])
         self.assertIsNone(picker._model_popup)
         host.close()
+
+    def test_model_picker_does_not_show_transient_native_child_windows(self):
+        from PySide6.QtCore import QEvent, QObject, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+
+        application = QApplication.instance() or QApplication([])
+        host = QWidget()
+        host.resize(640, 480)
+        layout = QVBoxLayout(host)
+        picker = ModelPickerCombo()
+        picker.set_provider_models(
+            "codex",
+            [{"id": "gpt-test", "displayName": "GPT Test", "isDefault": True}],
+        )
+        picker.addItem("GPT Test", "gpt-test")
+        layout.addWidget(picker)
+        host.show()
+        application.processEvents()
+        transient_windows: list[tuple[str, str]] = []
+
+        class NativeChildShowRecorder(QObject):
+            def eventFilter(self, watched, event):  # noqa: N802 - Qt API
+                if (
+                    event.type() == QEvent.Show
+                    and isinstance(watched, QWidget)
+                    and watched.isWindow()
+                    and watched.objectName().startswith("model")
+                ):
+                    transient_windows.append(
+                        (watched.metaObject().className(), watched.objectName())
+                    )
+                return False
+
+        recorder = NativeChildShowRecorder()
+        application.installEventFilter(recorder)
+        try:
+            QTest.mouseClick(picker, Qt.LeftButton)
+            QTest.qWait(120)
+        finally:
+            application.removeEventFilter(recorder)
+            host.close()
+
+        self.assertEqual(transient_windows, [])
 
     def test_main_window_model_picker_is_anchored_without_native_window(self):
         from PySide6.QtCore import QPoint, Qt
@@ -1748,6 +2211,45 @@ class MaryCoreTest(unittest.TestCase):
         orchestrator.purge(conversation_id)
         self.assertIsNone(database.get_conversation(conversation_id))
 
+    def test_purge_restores_trashed_workspace_when_database_delete_fails(self):
+        class OfflineClaude:
+            def available(self):
+                return False
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": OfflineClaude()}
+        conversation_id = database.create_conversation(
+            "Falha ao excluir",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "pending",
+        )
+        workspace = self.settings.work_dir / conversation_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "preservar.txt").write_text("conteúdo", encoding="utf-8")
+        database.update_conversation(conversation_id, workspace=str(workspace))
+        orchestrator.trash(conversation_id)
+        trashed_path = self.settings.resolve_path(
+            database.get_conversation(conversation_id)["workspace"]
+        )
+
+        with (
+            patch.object(
+                database,
+                "purge_conversation",
+                side_effect=sqlite3.OperationalError("banco bloqueado"),
+            ),
+            self.assertRaisesRegex(sqlite3.OperationalError, "banco bloqueado"),
+        ):
+            orchestrator.purge(conversation_id)
+
+        self.assertIsNotNone(database.get_conversation(conversation_id))
+        self.assertTrue((trashed_path / "preservar.txt").is_file())
+
     def test_missing_codex_rollout_does_not_block_local_trash_or_purge(self):
         class MissingRolloutCodex:
             def available(self):
@@ -1785,6 +2287,215 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(trashed["native_id"], "")
         orchestrator.purge(conversation_id)
         self.assertIsNone(database.get_conversation(conversation_id))
+
+    def test_provider_archive_failure_does_not_claim_local_success(self):
+        class FailingCodex:
+            def available(self):
+                return True
+
+            def archive_thread(self, _native_id):
+                raise ProviderError("network unavailable")
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"codex": FailingCodex()}
+        conversation_id = database.create_conversation(
+            "Falha remota",
+            "codex",
+            "gpt-test",
+            self.settings.work_dir / "remote-failure",
+        )
+        database.update_conversation(conversation_id, native_id="native-1")
+
+        with self.assertRaisesRegex(ProviderError, "network unavailable"):
+            orchestrator.archive(conversation_id)
+
+        self.assertEqual(database.get_conversation(conversation_id)["archived"], 0)
+
+    def test_archive_compensates_provider_when_local_persistence_fails(self):
+        class TrackingCodex:
+            def __init__(self):
+                self.operations = []
+
+            def available(self):
+                return True
+
+            def archive_thread(self, native_id):
+                self.operations.append(("archive", native_id))
+
+            def unarchive_thread(self, native_id):
+                self.operations.append(("unarchive", native_id))
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        provider = TrackingCodex()
+        orchestrator.providers = {"codex": provider}
+        conversation_id = database.create_conversation(
+            "Compensação",
+            "codex",
+            "gpt-test",
+            self.settings.work_dir / "compensation",
+        )
+        database.update_conversation(conversation_id, native_id="native-1")
+
+        with (
+            patch.object(
+                database,
+                "update_conversation",
+                side_effect=sqlite3.OperationalError("banco bloqueado"),
+            ),
+            self.assertRaisesRegex(sqlite3.OperationalError, "banco bloqueado"),
+        ):
+            orchestrator.archive(conversation_id)
+
+        self.assertEqual(
+            provider.operations,
+            [("archive", "native-1"), ("unarchive", "native-1")],
+        )
+        self.assertEqual(database.get_conversation(conversation_id)["archived"], 0)
+
+    def test_trash_rolls_workspace_back_when_database_update_fails(self):
+        class OfflineClaude:
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": OfflineClaude()}
+        conversation_id = database.create_conversation(
+            "Rollback da lixeira",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "pending",
+        )
+        workspace = self.settings.work_dir / conversation_id
+        workspace.mkdir(parents=True)
+        (workspace / "preservar.txt").write_text("conteúdo", encoding="utf-8")
+        database.update_conversation(conversation_id, workspace=str(workspace))
+
+        with (
+            patch.object(
+                database,
+                "update_conversation",
+                side_effect=sqlite3.OperationalError("banco bloqueado"),
+            ),
+            self.assertRaisesRegex(sqlite3.OperationalError, "banco bloqueado"),
+        ):
+            orchestrator.trash(conversation_id)
+
+        self.assertTrue((workspace / "preservar.txt").is_file())
+        self.assertFalse(
+            (self.settings.root / ".trash" / "conversations" / conversation_id).exists()
+        )
+
+    def test_running_conversation_cannot_be_archived_or_sent_twice(self):
+        class IdleProvider:
+            def available(self):
+                return True
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": IdleProvider()}
+        conversation_id = database.create_conversation(
+            "Em execução",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "running",
+        )
+        database.update_conversation(conversation_id, status="running")
+
+        with self.assertRaisesRegex(RuntimeError, "resposta em andamento"):
+            orchestrator.send(conversation_id, "duplicada", lambda _event: None)
+        with self.assertRaisesRegex(RuntimeError, "Interrompa"):
+            orchestrator.archive(conversation_id)
+        self.assertEqual(database.messages(conversation_id), [])
+
+    def test_concurrent_turn_claim_persists_exactly_one_user_message(self):
+        database = initialize_workspace(self.settings)
+        conversation_id = database.create_conversation(
+            "Concorrente",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "concurrent",
+        )
+        barrier = threading.Barrier(3)
+        outcomes: list[str] = []
+
+        def claim(text: str) -> None:
+            barrier.wait()
+            try:
+                database.begin_user_turn(conversation_id, text)
+            except RuntimeError:
+                outcomes.append("rejected")
+            else:
+                outcomes.append("claimed")
+
+        threads = [
+            threading.Thread(target=claim, args=(f"mensagem {index}",))
+            for index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        self.assertEqual(sorted(outcomes), ["claimed", "rejected"])
+        self.assertEqual(len(database.messages(conversation_id)), 1)
+
+    def test_provider_start_failure_rolls_back_pending_user_turn(self):
+        class FailingProvider:
+            def available(self):
+                return True
+
+            def start_conversation(self, *_args):
+                raise ProviderError("provider offline")
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": FailingProvider()}
+        conversation_id = database.create_conversation(
+            "Nova conversa",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "provider-failure",
+        )
+
+        with self.assertRaisesRegex(ProviderError, "provider offline"):
+            orchestrator.send(conversation_id, "não persistir", lambda _event: None)
+
+        self.assertEqual(database.messages(conversation_id), [])
+        self.assertEqual(database.get_conversation(conversation_id)["status"], "idle")
+
+    def test_orchestrator_startup_recovers_conversation_left_running(self):
+        database = initialize_workspace(self.settings)
+        conversation_id = database.create_conversation(
+            "Interrompida",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "interrupted",
+        )
+        database.update_conversation(conversation_id, status="running")
+
+        ChatOrchestrator(self.settings, database)
+
+        self.assertEqual(
+            database.get_conversation(conversation_id)["status"], "interrupted"
+        )
+        recovered = database.latest_event(conversation_id, "turn_recovered")
+        self.assertIsNotNone(recovered)
 
     def test_legacy_workspace_outside_trabalho_mary_is_preserved_when_chat_is_deleted(self):
         database = initialize_workspace(self.settings)
@@ -2183,6 +2894,10 @@ class MaryCoreTest(unittest.TestCase):
                     )
                     self.assertLessEqual(window.composer_card.width(), 920)
                     self.assertLessEqual(window.composer_card.height(), 156)
+                    if width == 1120:
+                        self.assertFalse(window._composer_compact)
+                        self.assertGreaterEqual(window.composer_card.width(), 610)
+                        self.assertEqual(window.options_button.text(), "Build")
             self.assertTrue(window.chat_empty_state.isVisible())
             self.assertEqual(
                 window.chat_empty_state.findChild(QLabel, "chatEmptyTitle").text(),
@@ -2193,17 +2908,24 @@ class MaryCoreTest(unittest.TestCase):
             self.assertTrue(window.tier_combo.isHidden())
             self.assertFalse(window.approval_combo.isHidden())
             self.assertFalse(window.vr_flow_button.isHidden())
+            window.vr_flow_button.setChecked(True)
             self.assertTrue(window.vr_flow_button.isChecked())
-            self.assertIn("Fluxo VR ativo", window.vr_flow_button.toolTip())
+            self.assertIn("base local ativa", window.vr_flow_button.toolTip())
+            self.assertIn("Modo", window.vr_flow_button.toolTip())
             self.assertEqual(window.composer.placeholderText(), "Digite uma mensagem…")
             self.assertGreater(window.vr_flow_button._glow_animation.duration(), 0)
             self.assertEqual(window.vr_flow_button._glow_animation.loopCount(), 1)
-            self.assertTrue(window.composer_glow.vr_active())
+            window.draft_orchestration = window.draft_orchestration.__class__(mode="off")
+            window._sync_orchestration_mode_ui(
+                window.draft_orchestration, animate=False
+            )
+            self.assertEqual(window.composer_glow.mode(), "off")
             window.vr_flow_button.setChecked(False)
-            self.assertIn("Fluxo VR inativo", window.vr_flow_button.toolTip())
-            self.assertFalse(window.composer_glow.vr_active())
+            self.assertIn("base local inativa", window.vr_flow_button.toolTip())
+            self.assertIn("Modo", window.vr_flow_button.toolTip())
+            self.assertEqual(window.composer_glow.mode(), "off")
             window.vr_flow_button.setChecked(True)
-            self.assertTrue(window.composer_glow.vr_active())
+            self.assertEqual(window.composer_glow.mode(), "off")
             self.assertTrue(window.mode_combo.isHidden())
             self.assertEqual(window.options_button.text(), "Build")
             self.assertFalse(window.options_button.icon().isNull())
@@ -2224,6 +2946,7 @@ class MaryCoreTest(unittest.TestCase):
                 self.assertEqual(window.options_button.text(), "Build")
             self.assertFalse(provider_icon("codex").isNull())
             self.assertFalse(provider_icon("claude").isNull())
+            self.assertFalse(provider_icon("opencode").isNull())
             self.assertFalse(window.model_combo.itemIcon(0).isNull())
             self.assertEqual(window.new_chat_button.text(), "Novo chat")
             self.assertFalse(window.new_chat_button.icon().isNull())
@@ -2234,13 +2957,19 @@ class MaryCoreTest(unittest.TestCase):
             self.assertFalse(window.plugins_placeholder_button.isEnabled())
             self.assertFalse(hasattr(window, "conversation_state_tabs"))
             self.assertEqual(window.archived_state_tabs.count(), 2)
-            self.assertEqual(window.settings_tabs.count(), 4)
+            self.assertEqual(window.settings_tabs.count(), 5)
             self.assertEqual(
                 [
                     window.settings_tabs.tabText(index)
                     for index in range(window.settings_tabs.count())
                 ],
-                ["Geral", "Provedores", "Temas", "Projetos arquivados"],
+                [
+                    "Geral",
+                    "Provedores",
+                    "Orquestração",
+                    "Temas",
+                    "Projetos arquivados",
+                ],
             )
             self.assertEqual(
                 window.nav_button_pages[window.settings_nav_button],
@@ -2284,6 +3013,8 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIsInstance(effort_field, QComboBox)
             self.assertEqual(effort_field.currentText(), "Médio")
             self.assertEqual(effort_field.currentData(), "medium")
+            self.assertEqual(effort_field.findData("ultra"), -1)
+            self.assertEqual(window.effort_combo.findData("ultra"), -1)
         finally:
             window.close()
 
@@ -2319,6 +3050,13 @@ class MaryCoreTest(unittest.TestCase):
 
             with patch.object(window.orchestrator, "interrupt") as interrupt:
                 window.stop_button.click()
+                for _attempt in range(50):
+                    application.processEvents()
+                    if interrupt.called:
+                        break
+                    from PySide6.QtTest import QTest
+
+                    QTest.qWait(10)
             interrupt.assert_called_once_with("stop-ui-test")
             self.assertEqual(window.chat_status.text(), "Parando…")
             self.assertTrue(window.chat_status.isVisible())
@@ -2438,6 +3176,40 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_dense_review_and_video_controls_reflow_at_minimum_width(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1120, 700)
+            window.show()
+
+            window._navigate(window.pages["Revisão"])
+            application.processEvents()
+            review_rows = {
+                window.review_query.y(),
+                window.review_source.y(),
+                window.review_product.y(),
+                window.review_special.y(),
+            }
+            self.assertEqual(len(review_rows), 4)
+            self.assertGreaterEqual(window.review_source.width(), 180)
+            self.assertGreaterEqual(window.review_sort.width(), 360)
+            self.assertTrue(window.review_previous_page.isVisible())
+            self.assertTrue(window.review_next_page.isVisible())
+
+            window._navigate(window.pages["Vídeos"])
+            application.processEvents()
+            action_rows = {button.y() for button in window.video_action_buttons}
+            self.assertEqual(len(action_rows), 2)
+        finally:
+            window.close()
+
     def test_chat_context_compact_layout_contains_controls_empty_state_and_stop(self):
         from PySide6.QtCore import QPoint, QRect
         from PySide6.QtWidgets import QApplication
@@ -2452,12 +3224,13 @@ class MaryCoreTest(unittest.TestCase):
             window.resize(1120, 700)
             window.show()
             window._navigate(window.pages["Chat VR"])
+            window._set_chat_sidebar_visible(True, persist=False)
             window._toggle_chat_context(True)
             application.processEvents()
 
             self.assertTrue(window.chat_context_panel.isVisible())
             self.assertTrue(window._composer_compact)
-            self.assertLess(window.composer_host.width(), 560)
+            self.assertLess(window.composer_host.width(), 600)
             self.assertTrue(all(separator.isHidden() for separator in window.composer_separators))
             self.assertEqual(window.options_button.text(), "")
 
@@ -2506,9 +3279,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_vr_aurora_runs_once_stays_active_and_persists_toggle(self):
-        from PySide6.QtCore import QAbstractAnimation
-        from PySide6.QtTest import QTest
+    def test_vr_toggle_persists_without_changing_the_execution_mode_glow(self):
         from PySide6.QtWidgets import QApplication
 
         class MemoryPreferences:
@@ -2536,36 +3307,26 @@ class MaryCoreTest(unittest.TestCase):
             window.app_preferences = preferences
             window.show()
             window._navigate(window.pages["Chat VR"])
+            window.draft_orchestration = window.draft_orchestration.__class__(mode="off")
+            window._sync_orchestration_mode_ui(
+                window.draft_orchestration, animate=False
+            )
             window.vr_flow_button.setChecked(True)
             window.vr_flow_button.setChecked(False)
-            window.composer_glow._phase_animation.setDuration(60)
             application.processEvents()
 
-            self.assertFalse(window.composer_glow.vr_active())
+            self.assertEqual(window.composer_glow.mode(), "off")
             self.assertFalse(preferences.values["chat/vr_flow_enabled"])
             window.vr_flow_button.click()
             application.processEvents()
 
             self.assertTrue(window.vr_flow_button.isChecked())
-            self.assertTrue(window.composer_glow.vr_active())
-            self.assertEqual(window.composer_glow._phase_animation.loopCount(), 1)
-            self.assertEqual(
-                window.composer_glow._phase_animation.state(),
-                QAbstractAnimation.Running,
-            )
+            self.assertEqual(window.composer_glow.mode(), "off")
             self.assertTrue(preferences.values["chat/vr_flow_enabled"])
-
-            QTest.qWait(100)
-            application.processEvents()
-            self.assertEqual(
-                window.composer_glow._phase_animation.state(),
-                QAbstractAnimation.Stopped,
-            )
-            self.assertTrue(window.composer_glow.vr_active())
 
             window.vr_flow_button.click()
             self.assertFalse(window.vr_flow_button.isChecked())
-            self.assertFalse(window.composer_glow.vr_active())
+            self.assertEqual(window.composer_glow.mode(), "off")
             self.assertFalse(preferences.values["chat/vr_flow_enabled"])
             self.assertGreaterEqual(preferences.sync_count, 3)
         finally:
@@ -2670,20 +3431,20 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIs(window.conversation_list.currentItem(), second_item)
             self.assertEqual(
                 [action.text() for action in menu.actions() if not action.isSeparator()],
-                ["Arquivar", "Mover para a lixeira"],
+                ["Arquivar"],
             )
 
             window.conversation_state = "archived"
             archived = window._build_conversation_menu(second)
             self.assertEqual(
                 [action.text() for action in archived.actions() if not action.isSeparator()],
-                ["Restaurar", "Mover para a lixeira"],
+                ["Restaurar"],
             )
             window.conversation_state = "trash"
             trash = window._build_conversation_menu(second)
             self.assertEqual(
                 [action.text() for action in trash.actions() if not action.isSeparator()],
-                ["Restaurar", "Excluir definitivamente…"],
+                ["Restaurar"],
             )
         finally:
             window.close()
@@ -2707,7 +3468,7 @@ class MaryCoreTest(unittest.TestCase):
                 pass
 
         application = QApplication.instance() or QApplication([])
-        previous_theme = str(application.property("mary_theme") or "light")
+        previous_theme = str(application.property("vr_theme") or "light")
 
         def icon_colors(button, state):
             image = button.icon().pixmap(
@@ -2768,7 +3529,10 @@ class MaryCoreTest(unittest.TestCase):
                 for index in range(window.archived_projects_list.count())
             }
             self.assertIn(trashed, trash_ids)
-            self.assertEqual(set(window.provider_status_labels), {"codex", "claude"})
+            self.assertEqual(
+                set(window.provider_status_labels),
+                {"codex", "claude", "opencode"},
+            )
             self.assertEqual(window.theme_combo.itemData(0), "light")
             self.assertEqual(window.theme_combo.itemData(1), "dark_orange")
 
@@ -2787,7 +3551,7 @@ class MaryCoreTest(unittest.TestCase):
             dark_index = window.theme_combo.findData("dark_orange")
             window.theme_combo.setCurrentIndex(dark_index)
             application.processEvents()
-            self.assertEqual(application.property("mary_theme"), "dark_orange")
+            self.assertEqual(application.property("vr_theme"), "dark_orange")
             self.assertEqual(
                 application.palette().color(QPalette.Window).name().lower(),
                 "#12100f",
@@ -2842,7 +3606,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_model_picker_switches_provider_dynamically_without_clone_prompt(self):
+    def test_main_model_is_locked_after_chat_starts_but_not_for_empty_draft(self):
         from PySide6.QtWidgets import QApplication, QMessageBox
 
         application = QApplication.instance() or QApplication([])
@@ -2861,41 +3625,30 @@ class MaryCoreTest(unittest.TestCase):
             window.current_conversation = conversation_id
             window.draft_conversation = False
             window.provider_combo.setCurrentText("codex")
+            window.database.add_message(conversation_id, "user", "Primeira mensagem")
             with (
                 patch.object(window, "_provider_enabled", return_value=True),
                 patch.object(window.pool, "start") as start,
                 patch.object(QMessageBox, "question") as question,
             ):
                 window._model_picker_selected("claude", "claude-test")
-                window._model_picker_selected("claude", "claude-later")
 
             question.assert_not_called()
-            start.assert_called_once()
-            self.assertTrue(window.provider_switch_in_progress)
-            self.assertEqual(
-                window.chat_status.text(),
-                "Aguarde a troca de provedor terminar",
-            )
-            self.assertFalse(window.model_combo.isEnabled())
-            worker = start.call_args.args[0]
-            self.assertEqual(worker.function, window.orchestrator.switch_provider)
-            self.assertEqual(
-                worker.args[:3],
-                (conversation_id, "claude", "claude-test"),
-            )
-            with (
-                patch.object(window, "load_models"),
-                patch.object(window, "refresh_conversations"),
-            ):
-                window._provider_switch_completed(
-                    conversation_id,
-                    "claude",
-                    "claude-test",
-                )
+            start.assert_not_called()
             self.assertFalse(window.provider_switch_in_progress)
-            self.assertEqual(window.provider_combo.currentText(), "claude")
+            self.assertIn("Modelo principal bloqueado", window.chat_status.text())
+            window._update_codex_controls()
+            self.assertFalse(window.model_combo.isEnabled())
+
+            empty_id = window.database.create_conversation(
+                "Rascunho vazio",
+                "codex",
+                "gpt-test",
+                self.settings.work_dir / "empty-provider",
+            )
+            window.current_conversation = empty_id
+            window._update_codex_controls()
             self.assertTrue(window.model_combo.isEnabled())
-            self.assertFalse(window.options_button.isEnabled())
         finally:
             window.close()
 
@@ -3114,7 +3867,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_first_composer_interaction_creates_one_draft_with_default_model_id(self):
+    def test_first_typed_character_creates_one_draft_with_default_model_id(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication
@@ -3132,6 +3885,9 @@ class MaryCoreTest(unittest.TestCase):
             with patch.object(window.pool, "start") as start:
                 QTest.mouseClick(window.composer.viewport(), Qt.LeftButton)
                 application.processEvents()
+                start.assert_not_called()
+                QTest.keyClicks(window.composer, "a")
+                application.processEvents()
                 start.assert_called_once()
                 worker = start.call_args.args[0]
                 self.assertEqual(worker.args[1], "codex")
@@ -3140,6 +3896,100 @@ class MaryCoreTest(unittest.TestCase):
                 self.assertTrue(window._conversation_creation_in_progress)
                 window._ensure_draft_conversation()
                 start.assert_called_once()
+        finally:
+            window.close()
+
+    def test_typing_without_an_available_conversation_creates_a_draft(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.current_conversation = ""
+            window.draft_conversation = False
+            application.processEvents()
+
+            with patch.object(window.pool, "start") as start:
+                window.composer.setPlainText("teste")
+                application.processEvents()
+
+            start.assert_called_once()
+            self.assertTrue(window.draft_conversation)
+            self.assertTrue(window._conversation_creation_in_progress)
+            self.assertEqual(window.composer.toPlainText(), "teste")
+        finally:
+            window.close()
+
+    def test_chat_header_controls_align_with_sidebar_top(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            application.processEvents()
+
+            tops = [
+                widget.mapTo(window, QPoint(0, 0)).y()
+                for widget in (
+                    window.new_chat_button,
+                    window.chat_sidebar_toggle_button,
+                    window.conversation_menu_button,
+                )
+            ]
+            self.assertLessEqual(max(tops) - min(tops), 4)
+        finally:
+            window.close()
+
+    def test_chat_landing_is_centered_and_markdown_has_visual_hierarchy(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1200, 800)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.new_conversation()
+            application.processEvents()
+
+            empty_center = window.chat_empty_state.mapTo(
+                window,
+                window.chat_empty_state.rect().center(),
+            ).y()
+            scroll_top = window.message_scroll.mapTo(window, QPoint(0, 0)).y()
+            scroll_bottom = scroll_top + window.message_scroll.height()
+            self.assertLess(abs(empty_center - ((scroll_top + scroll_bottom) // 2)), 45)
+
+            browser = window._add_message(
+                "assistant",
+                "## Resultado\n\n- **Ponto importante:** use `codigo`.\n\n"
+                "> Observação validada.\n\n[Documentação](https://example.com)",
+            )
+            css = browser.document().defaultStyleSheet()
+            self.assertIn("strong", css)
+            self.assertIn("code", css)
+            self.assertIn("blockquote", css)
+            self.assertIn("Resultado", browser.toPlainText())
+            self.assertIn("Ponto importante", browser.toPlainText())
         finally:
             window.close()
 
@@ -3163,7 +4013,7 @@ class MaryCoreTest(unittest.TestCase):
                 patch.object(window, "_ensure_draft_conversation"),
             ):
                 window.composer.setPlainText("/")
-                application.processEvents()
+                QTest.qWait(50)
                 self.assertTrue(window.slash_palette.isVisible())
                 commands = [
                     window.slash_palette.list.item(index).text().splitlines()[0]
@@ -3347,6 +4197,79 @@ class MaryCoreTest(unittest.TestCase):
                 window.conversation_state = "trash"
                 window.delete_current_conversation()
                 self.assertEqual(operation.call_args.args[0], window.orchestrator.purge)
+        finally:
+            window.close()
+
+    def test_archive_conversation_completes_without_navigating_away(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            conversation_id = window.database.create_conversation(
+                "Arquivar agora",
+                "claude",
+                "claude-test",
+                self.settings.work_dir / "pending",
+            )
+            workspace = self.settings.work_dir / conversation_id
+            workspace.mkdir(parents=True, exist_ok=True)
+            window.database.update_conversation(
+                conversation_id,
+                workspace=str(workspace),
+            )
+            window.refresh_conversations()
+            item = next(
+                window.conversation_list.item(index)
+                for index in range(window.conversation_list.count())
+                if window.conversation_list.item(index).data(Qt.UserRole)
+                == conversation_id
+            )
+            window.conversation_list.setCurrentItem(item)
+            application.processEvents()
+
+            window.archive_current_conversation()
+            for _attempt in range(100):
+                application.processEvents()
+                if (
+                    window.database.get_conversation(conversation_id)["archived"]
+                    and not window.current_conversation
+                ):
+                    break
+                QTest.qWait(10)
+
+            self.assertEqual(
+                window.database.get_conversation(conversation_id)["archived"], 1
+            )
+            self.assertEqual(window.current_conversation, "")
+            self.assertEqual(window.conversation_list.count(), 0)
+            self.assertNotIn(conversation_id, window._conversation_operations)
+        finally:
+            window.close()
+
+    def test_stale_conversation_operation_does_not_clear_new_selection(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.current_conversation = "conversation-new"
+            window._conversation_operations.add("conversation-old")
+            window._conversation_operation_done("conversation-old")
+            application.processEvents()
+
+            self.assertEqual(window.current_conversation, "conversation-new")
+            self.assertNotIn("conversation-old", window._conversation_operations)
         finally:
             window.close()
 
@@ -3560,7 +4483,7 @@ class MaryCoreTest(unittest.TestCase):
                 conversation_id,
                 "Responda apenas com a LLM.",
                 lambda _event: None,
-                use_mary=False,
+                use_vr=False,
             )
             for _ in range(100):
                 if provider.prompts:
@@ -3619,6 +4542,16 @@ class MaryCoreTest(unittest.TestCase):
             ambiguous = orchestrator._enrich_prompt("Teste", "teste")
         self.assertIn("diferem menos de 10%", ambiguous)
         self.assertIn("não apresente a conclusão com confiança alta", ambiguous)
+
+    def test_local_search_error_is_not_reported_as_no_results(self):
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        with patch.object(database, "search", side_effect=RuntimeError("offline")):
+            enriched = orchestrator._enrich_prompt("Como configurar o PIX?")
+
+        self.assertIn("ERRO AO CONSULTAR A BASE", enriched)
+        self.assertIn("não significa ausência de resultados", enriched)
+        self.assertNotIn("nenhuma fonte validada foi encontrada", enriched)
 
     def test_cloned_context_is_sent_on_first_turn(self):
         class FakeProvider:

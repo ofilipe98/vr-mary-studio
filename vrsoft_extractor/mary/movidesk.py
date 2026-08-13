@@ -22,10 +22,11 @@ from .config import MarySettings
 from .content import (
     download_asset,
     html_to_markdown,
+    preserve_validated_classification,
     replace_asset_urls,
     safe_slug,
     sha256_text,
-    write_document,
+    write_and_persist_document,
 )
 from .db import MaryDatabase
 from .indexer import export_catalog
@@ -123,11 +124,14 @@ class MovideskSync:
                         active_ids.add(document.source_id)
                         stats.discovered += 1
                         current = self.database.get_document("kb", document.source_id)
-                        document_id, action = self.database.upsert_document(document)
-                        validated_module_changed = bool(
-                            current
-                            and current["review_status"] == "approved"
-                            and current["module"] != document.module
+                        validated_module_changed = preserve_validated_classification(
+                            current, document
+                        )
+                        document_id, action = write_and_persist_document(
+                            self.settings.root,
+                            document,
+                            lambda: self.database.upsert_document(document),
+                            previous_path=current["local_path"] if current else None,
                         )
                         if document.review_status != "approved" or validated_module_changed:
                             result = classify(
@@ -136,7 +140,7 @@ class MovideskSync:
                                 document.category,
                                 document.product,
                             )
-                            self.database.queue_review(
+                            queued = self.database.queue_review(
                                 document_id,
                                 result.module,
                                 result.confidence,
@@ -144,15 +148,19 @@ class MovideskSync:
                                 current["module"] if current else "",
                                 validated_module_changed,
                             )
-                            stats.review += 1
+                            stats.review += int(queued)
                         setattr(stats, action, getattr(stats, action) + 1)
                         self.progress(f"KB {index}/{len(article_urls)}: {action} — {document.title}")
                     except Exception as exc:
                         stats.errors += 1
                         LOGGER.exception("Falha no artigo Movidesk %s", url)
                         self.progress(f"KB {index}: erro — {url}: {exc}")
-                if not limit:
+                if not limit and stats.errors == 0:
                     stats.inactive = self.database.mark_missing_inactive("kb", active_ids)
+                elif not limit and stats.errors:
+                    LOGGER.warning(
+                        "KB incompleta: documentos ausentes não serão inativados nesta execução."
+                    )
                 context.storage_state(path=str(self.settings.movidesk_state_path))
                 browser.close()
             export_catalog(self.database, self.settings.index_dir)
@@ -770,7 +778,6 @@ class MovideskSync:
         document.content_hash = sha256_text(
             "\n".join([document.title, markdown, document.ocr_text])
         )
-        write_document(self.settings.root, document)
         return document
 
     @staticmethod

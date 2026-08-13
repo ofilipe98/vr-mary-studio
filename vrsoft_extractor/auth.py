@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .runtime import configure_playwright_runtime
 from .settings import ConfigError, Settings, ensure_runtime_dirs, get_credentials
@@ -52,7 +53,7 @@ def login(settings: Settings, *, headless: bool = False, force: bool = False) ->
     LOGGER.info("Iniciando autenticacao em %s", settings.base_url)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=headless)
-        context_args = {}
+        context_args: dict[str, Any] = {}
         if settings.storage_state_path.exists() and not force:
             context_args["storage_state"] = str(settings.storage_state_path)
         context = browser.new_context(**context_args)

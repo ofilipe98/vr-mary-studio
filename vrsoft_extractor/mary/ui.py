@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import html
 import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,23 +75,32 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .config import MarySettings, load_mary_settings
+from ..settings import ConfigError
+from .config import MarySettings, load_mary_settings, save_mary_env
 from .chat_widgets import (
     AnimatedVrFlowButton,
     ApprovalDialog,
     ApprovalPickerCombo,
     ModelPickerCombo,
+    OrchestrationSettingsDialog,
     ReasoningTierCombo,
     RoundedComboBox,
     SlashCommandPalette,
     SpellcheckPlainTextEdit,
     ToolSelectionDialog,
     VrComposerGlowFrame,
+    provider_display_name,
     provider_icon,
 )
-from .migration import migrate
 from .indexer import export_catalog
-from .models import APPROVAL_PRESETS, ConversationOptions, ReviewFilters, RuntimeEvent
+from .models import (
+    APPROVAL_PRESETS,
+    ConversationOptions,
+    ModelRef,
+    OrchestrationOptions,
+    ReviewFilters,
+    RuntimeEvent,
+)
 from .movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from .ocr import OcrManager
 from .orchestrator import ChatOrchestrator
@@ -105,6 +114,7 @@ APP_TITLE = "VR Norte Studio"
 # Preserve preferences created before the product rename.
 SETTINGS_APP_NAME = "VR Mary Studio"
 ORGANIZATION_NAME = "VRNorte"
+CHAT_PROVIDERS = ("codex", "claude", "opencode")
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 APP_ICON_PATH = ASSET_DIR / "vrnorte-app.ico"
 BRAND_SYMBOL_PATH = ASSET_DIR / "vrnorte-symbol.png"
@@ -242,6 +252,25 @@ def new_video_output_decoder():
     return codecs.getincrementaldecoder("utf-8")("replace")
 
 
+def video_process_command(
+    project_root: Path,
+    action: str,
+    extra_args: list[str] | None = None,
+    *,
+    frozen: bool | None = None,
+) -> tuple[str, list[str]]:
+    common = [
+        "--project-dir",
+        str(project_root),
+        action,
+        *(extra_args or []),
+    ]
+    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
+    if is_frozen:
+        return sys.executable, ["--video-cli", *common]
+    return sys.executable, ["-m", "vrsoft_extractor", *common]
+
+
 STYLESHEET = f"""
 * {{
     font-family: "__APP_FONT__";
@@ -267,6 +296,14 @@ QToolButton#sidebarToggle {{
 QToolButton#sidebarToggle:hover, QToolButton#sidebarToggle:focus {{
     background: #29294A; border-color: {BRAND_YELLOW};
 }}
+QToolButton#agentSidebarToggle {{
+    min-width: 74px; min-height: 30px; max-height: 30px; padding: 0 10px;
+    background: #F4F4F7; color: {BRAND_NAVY}; border: 1px solid #D7D7E0;
+    border-radius: 9px; font-weight: 600;
+}}
+QToolButton#agentSidebarToggle:hover, QToolButton#agentSidebarToggle:checked {{
+    background: #FFF0E4; border-color: {ACCESSIBLE_ORANGE};
+}}
 QFrame#card, QFrame#panel {{
     background: white; border: 1px solid #DEDEE7; border-radius: 16px;
 }}
@@ -290,6 +327,34 @@ QFrame#chatComposer {{
     background: white; border: 1px solid #D5D5DF; border-radius: 24px;
 }}
 QFrame#chatComposerGlow {{ background: transparent; border: 0; }}
+QFrame#orchestrationTrace {{
+    background: #FFFFFF; border: 1px solid #DDDDE7; border-radius: 13px;
+}}
+QLabel#orchestrationTraceTitle {{ font-weight: 700; color: {BRAND_NAVY}; }}
+QLabel#orchestrationTraceStatus {{ color: {ACCESSIBLE_ORANGE}; font-weight: 600; }}
+QListWidget#orchestrationAgentList {{
+    background: transparent; border: 0; outline: 0; padding: 2px 0;
+}}
+QListWidget#orchestrationAgentList::item {{
+    color: {TEXT_MUTED}; border-radius: 9px; padding: 7px 9px; margin: 1px 0;
+}}
+QListWidget#orchestrationAgentList::item:selected {{
+    background: #FFF0E4; color: {BRAND_NAVY};
+}}
+QLabel#orchestrationAgentChatTitle {{
+    color: {BRAND_NAVY}; font-size: 14px; font-weight: 700;
+}}
+QTextBrowser#orchestrationAgentRequest {{
+    color: #FFFFFF; background: #7A3210; border-radius: 12px;
+    padding: 9px 11px;
+}}
+QLabel#orchestrationAgentTask {{
+    color: {TEXT_MUTED}; background: #F4F4F7; border-radius: 8px;
+    padding: 7px 9px;
+}}
+QTextBrowser#orchestrationTraceDetails {{
+    color: {BRAND_NAVY}; font-size: 13px; background: transparent; border: 0;
+}}
 QFrame#modelPickerPopup, QFrame#optionPickerPopup {{
     background: white; border: 1px solid #CBCBD7; border-radius: 18px;
 }}
@@ -433,14 +498,17 @@ QPlainTextEdit#chatComposerInput {{
     background: transparent; border: 0; border-radius: 0; padding: 4px 6px;
 }}
 QPlainTextEdit#chatComposerInput:focus {{ border: 0; }}
-QComboBox#composerInlineControl, QPushButton#composerInlineControl {{
+QComboBox#composerInlineControl, QPushButton#composerInlineControl,
+QToolButton#composerInlineControl {{
     min-height: 30px; max-height: 30px; border: 0; border-radius: 10px;
     background: transparent; padding: 0 8px; color: {TEXT_MUTED}; font-weight: 500;
 }}
-QComboBox#composerInlineControl:hover, QPushButton#composerInlineControl:hover {{
+QComboBox#composerInlineControl:hover, QPushButton#composerInlineControl:hover,
+QToolButton#composerInlineControl:hover {{
     background: #F1F1F5; border: 0; color: {BRAND_NAVY};
 }}
-QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus {{
+QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus,
+QToolButton#composerInlineControl:focus {{
     border: 2px solid {FOCUS_DARK}; background: #F1F1F5; padding: 0 6px;
 }}
 QComboBox#composerInlineControl::drop-down {{ border: 0; width: 17px; }}
@@ -471,6 +539,7 @@ QLabel#chatActivityDot {{
 QLabel#chatActivityText {{
     color: {TEXT_MUTED}; font-size: 12px; padding: 3px 0;
 }}
+QLabel#messageRole {{ color: {BRAND_NAVY}; font-weight: 700; }}
 QTextBrowser#messageBody {{
     background: transparent; border: 0; padding: 2px; font-size: 14px;
 }}
@@ -642,11 +711,42 @@ QMainWindow, QWidget#appRoot, QStackedWidget, QWidget#chatCenter {{
     background: {DARK_BACKGROUND};
 }}
 QFrame#navRail {{ background: #090807; }}
-QFrame#card, QFrame#panel, QFrame#chatComposer,
+QToolButton#sidebarToggle {{
+    background: transparent; border-color: #4B413B;
+}}
+QToolButton#sidebarToggle:hover, QToolButton#sidebarToggle:focus {{
+    background: {DARK_SURFACE_RAISED}; border-color: #FF9A3D;
+}}
+QToolButton#agentSidebarToggle {{
+    min-width: 74px; min-height: 30px; max-height: 30px; padding: 0 10px;
+    background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
+    border: 1px solid {DARK_BORDER}; border-radius: 9px; font-weight: 600;
+}}
+QToolButton#agentSidebarToggle:hover, QToolButton#agentSidebarToggle:checked {{
+    background: #4A2A17; border-color: #FF9A3D;
+}}
+QFrame#card, QFrame#panel, QFrame#chatComposer, QFrame#orchestrationTrace,
 QFrame#chatSidebar, QFrame#chatContext, QFrame#modelPickerPopup,
 QFrame#optionPickerPopup,
 QFrame#slashPalette {{
     background: {DARK_SURFACE}; border-color: {DARK_BORDER};
+}}
+QLabel#orchestrationTraceTitle {{ color: {DARK_TEXT}; }}
+QLabel#orchestrationTraceStatus {{ color: #FFB55C; }}
+QListWidget#orchestrationAgentList::item {{ color: {DARK_MUTED}; }}
+QListWidget#orchestrationAgentList::item:selected {{
+    background: #35251E; color: {DARK_TEXT};
+}}
+QLabel#orchestrationAgentChatTitle {{ color: {DARK_TEXT}; }}
+QTextBrowser#orchestrationAgentRequest {{
+    color: {DARK_TEXT}; background: #582A12;
+}}
+QLabel#orchestrationAgentTask {{
+    color: {DARK_MUTED}; background: {DARK_SURFACE_RAISED};
+}}
+QLabel#messageRole {{ color: #FFB55C; font-weight: 700; }}
+QTextBrowser#orchestrationTraceDetails {{
+    color: {DARK_TEXT}; background: transparent; border: 0;
 }}
 QFrame#roundedComboPopup {{ background: transparent; border: 0; }}
 QFrame#roundedComboPopup QAbstractItemView {{
@@ -711,14 +811,17 @@ QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox {{
 }}
 QComboBox::down-arrow {{ image: url("{COMBO_ARROW_DARK_PATH}"); }}
 QPlainTextEdit#chatComposerInput {{ background: transparent; color: {DARK_TEXT}; }}
-QComboBox#composerInlineControl, QPushButton#composerInlineControl {{
+QComboBox#composerInlineControl, QPushButton#composerInlineControl,
+QToolButton#composerInlineControl {{
     background: transparent; color: {DARK_MUTED};
 }}
 QComboBox#composerInlineControl:hover, QPushButton#composerInlineControl:hover,
-QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus {{
+QToolButton#composerInlineControl:hover, QComboBox#composerInlineControl:focus,
+QPushButton#composerInlineControl:focus, QToolButton#composerInlineControl:focus {{
     background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
 }}
 QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus,
+QToolButton#composerInlineControl:focus,
 QToolButton#roundPrimary:focus, QToolButton#roundStop:focus {{
     border-color: {BRAND_ORANGE};
 }}
@@ -806,6 +909,7 @@ class WorkerSignals(QObject):
     finished = Signal(object)
     error = Signal(str)
     progress = Signal(str)
+    done = Signal()
 
 
 class Worker(QRunnable):
@@ -825,6 +929,8 @@ class Worker(QRunnable):
             self.signals.error.emit(str(exc))
         else:
             self.signals.finished.emit(result)
+        finally:
+            self.signals.done.emit()
 
 
 class ChatStatusLabel(QLabel):
@@ -853,10 +959,54 @@ class ResponsiveComposerHost(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
-        compact = self.width() < 560
+        # Preserve the descriptive labels at the application's normal minimum
+        # width. The icon-only variant is reserved for genuinely narrow states,
+        # such as when the orchestration trace is open beside the conversation.
+        compact = self.width() < 620
         if compact != self._compact:
             self._compact = compact
             self.compactChanged.emit(compact)
+
+
+class ResponsiveGrid(QWidget):
+    """Reflow a compact toolbar/filter grid without clipping its labels."""
+
+    def __init__(
+        self,
+        wide_positions: list[tuple[QWidget, int, int, int, int]],
+        compact_positions: list[tuple[QWidget, int, int, int, int]],
+        breakpoint: int,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._wide_positions = wide_positions
+        self._compact_positions = compact_positions
+        self._breakpoint = breakpoint
+        self._compact: bool | None = None
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(8)
+        self._grid.setVerticalSpacing(8)
+        self._apply_layout(self.width() < self._breakpoint)
+
+    def _apply_layout(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        positions = self._compact_positions if compact else self._wide_positions
+        widgets = {entry[0] for entry in self._wide_positions + self._compact_positions}
+        for widget in widgets:
+            self._grid.removeWidget(widget)
+        max_columns = 0
+        for widget, row, column, row_span, column_span in positions:
+            self._grid.addWidget(widget, row, column, row_span, column_span)
+            max_columns = max(max_columns, column + column_span)
+        for column in range(12):
+            self._grid.setColumnStretch(column, 1 if column < max_columns else 0)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._apply_layout(self.width() < self._breakpoint)
 
 
 class MainWindow(QMainWindow):
@@ -875,7 +1025,7 @@ class MainWindow(QMainWindow):
         self.app_preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
         application = QApplication.instance()
         self.theme_id = str(
-            (application.property("mary_theme") if application else "")
+            (application.property("vr_theme") if application else "")
             or self.app_preferences.value("appearance/theme", "light")
             or "light"
         )
@@ -884,11 +1034,16 @@ class MainWindow(QMainWindow):
         self.spell_checker = LocalSpellChecker(
             settings.state_dir / "spellcheck_pt_br.json",
             [
-                "VRNorte", "VRSoft", "Mary", "Movidesk", "VRWiki", "VRMaster",
+                "VRNorte", "VRSoft", "OpenCode", "Movidesk", "VRWiki", "VRMaster",
                 "VRCaixa", "VRPdv", "Sitef", "Pix", "NFCe", "PostgreSQL",
             ],
         )
         self.pool = QThreadPool.globalInstance()
+        # QThreadPool owns the native QRunnable while it executes, but PySide
+        # still needs a live Python wrapper for queued signal delivery.  Keep
+        # workers until their terminal signal is handled by the UI thread.
+        self._active_workers: dict[int, Worker] = {}
+        self._conversation_operations: set[str] = set()
         self.current_conversation = ""
         self.conversation_state = "active"
         self.draft_conversation = True
@@ -932,6 +1087,8 @@ class MainWindow(QMainWindow):
         self.pending_model = ""
         self.pending_effort = ""
         self.pending_tier = ""
+        self.draft_orchestration = self._load_default_orchestration()
+        self._trace_agents: dict[str, str] = {}
         self.nav_buttons: list[QToolButton] = []
         self.nav_button_pages: dict[QToolButton, int] = {}
         self.pages: dict[str, int] = {}
@@ -974,6 +1131,14 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(builder())
         layout.addWidget(self._build_nav())
         layout.addWidget(self.stack, 1)
+
+    def _start_worker(self, worker: Worker) -> None:
+        worker_id = id(worker)
+        self._active_workers[worker_id] = worker
+        worker.signals.done.connect(
+            lambda worker_id=worker_id: self._active_workers.pop(worker_id, None)
+        )
+        self.pool.start(worker)
 
     def _build_nav(self) -> QWidget:
         frame = QFrame(objectName="navRail")
@@ -1241,7 +1406,7 @@ class MainWindow(QMainWindow):
         codex_button.setToolTip(
             "Abre a base como projeto Codex portátil; o aplicativo pode ser fechado depois."
         )
-        codex_button.clicked.connect(self.open_mary_in_codex)
+        codex_button.clicked.connect(self.open_vr_in_codex)
         quick_layout.addWidget(sync_button)
         quick_layout.addWidget(chat_button)
         quick_layout.addWidget(review_button)
@@ -1334,7 +1499,11 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(20, 14, 20, 16)
         center_layout.setSpacing(10)
-        header = QHBoxLayout()
+        header_host = QWidget(objectName="chatHeader")
+        header_host.setFixedHeight(38)
+        header = QHBoxLayout(header_host)
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         self.chat_sidebar_toggle_button = QToolButton(objectName="sidebarToggle")
         self.chat_sidebar_toggle_button.setIcon(
             QIcon(str(SIDEBAR_ICON_PATHS["toggle"]))
@@ -1345,8 +1514,24 @@ class MainWindow(QMainWindow):
                 not self.chat_sidebar_visible
             )
         )
-        header.addWidget(self.chat_sidebar_toggle_button)
+        header.addWidget(self.chat_sidebar_toggle_button, 0, Qt.AlignTop)
         header.addStretch()
+        self.vr_agents_toggle_button = QToolButton(objectName="agentSidebarToggle")
+        self.vr_agents_toggle_button.setText("Agentes")
+        self.vr_agents_toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.vr_agents_toggle_button.setAccessibleName(
+            "Expandir acompanhamento dos agentes VR"
+        )
+        self.vr_agents_toggle_button.setToolTip(
+            "Expandir acompanhamento dos agentes VR"
+        )
+        self.vr_agents_toggle_button.clicked.connect(
+            lambda: self._set_vr_agent_sidebar_visible(
+                not self.orchestration_trace.isVisible()
+            )
+        )
+        self.vr_agents_toggle_button.hide()
+        header.addWidget(self.vr_agents_toggle_button, 0, Qt.AlignTop)
         self.conversation_menu_button = QToolButton()
         self.conversation_menu_button.setText("...")
         self.conversation_menu_button.setObjectName("conversationMenu")
@@ -1354,21 +1539,26 @@ class MainWindow(QMainWindow):
         self.conversation_menu_button.setToolTip("Ações da conversa")
         self.conversation_menu_button.setEnabled(False)
         self.conversation_menu_button.clicked.connect(self.open_current_conversation_menu)
-        header.addWidget(self.conversation_menu_button)
-        center_layout.addLayout(header)
+        header.addWidget(self.conversation_menu_button, 0, Qt.AlignTop)
+        center_layout.addWidget(header_host, 0, Qt.AlignTop)
         self.provider_combo = RoundedComboBox()
         self.provider_combo.setAccessibleName("Provedor da conversa")
         self.provider_combo.setToolTip("Provedor local usado nesta conversa.")
-        self.provider_combo.addItems(["codex", "claude"])
+        self.provider_combo.addItems(CHAT_PROVIDERS)
         self.provider_combo.currentTextChanged.connect(self.load_models)
         self.model_combo = ModelPickerCombo()
         self.model_combo.setObjectName("composerInlineControl")
-        self.model_combo.setAccessibleName("Modelo da conversa")
-        self.model_combo.setToolTip("Modelo disponibilizado pelo provedor selecionado.")
+        self.model_combo.setAccessibleName("Modelo orquestrador")
+        self.model_combo.setToolTip(
+            "Orquestrador: modelo principal que planeja e sintetiza o fluxo VR."
+        )
         self.model_combo.setMinimumWidth(88)
         self.model_combo.setMaximumWidth(180)
         self._add_model_combo_item("Modelo padrão", "")
         self.model_combo.currentIndexChanged.connect(self.load_efforts)
+        self.model_combo.currentIndexChanged.connect(
+            lambda _index: self._update_orchestration_summary()
+        )
         self.model_combo.providerModelSelected.connect(self._model_picker_selected)
         self.model_combo.retryRequested.connect(
             lambda provider: self.load_models(force=True, provider_override=provider)
@@ -1419,18 +1609,114 @@ class MainWindow(QMainWindow):
         message_outer_layout.setSpacing(0)
         self.message_column = QWidget(objectName="messageColumn")
         self.message_column.setMaximumWidth(920)
-        self.message_column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.message_column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.message_layout = QVBoxLayout(self.message_column)
         self.message_layout.setContentsMargins(0, 0, 0, 0)
         self.message_layout.setSpacing(18)
         self.message_layout.setAlignment(Qt.AlignTop)
         self._add_chat_empty_state()
-        self.message_layout.addStretch()
         message_outer_layout.addStretch(1)
         message_outer_layout.addWidget(self.message_column, 6)
         message_outer_layout.addStretch(1)
         self.message_scroll.setWidget(self.message_container)
         center_layout.addWidget(self.message_scroll, 1)
+        self.orchestration_trace = QFrame(objectName="orchestrationTrace")
+        self.orchestration_trace.setMinimumWidth(360)
+        self.orchestration_trace.setMaximumWidth(540)
+        self.orchestration_trace.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Expanding
+        )
+        trace_layout = QVBoxLayout(self.orchestration_trace)
+        trace_layout.setContentsMargins(14, 10, 14, 10)
+        trace_layout.setSpacing(4)
+        trace_header = QHBoxLayout()
+        self.orchestration_trace_title = QLabel(
+            "Orquestração VR", objectName="orchestrationTraceTitle"
+        )
+        self.orchestration_trace_status = QLabel(
+            "", objectName="orchestrationTraceStatus"
+        )
+        self.orchestration_trace_status.setWordWrap(True)
+        trace_header.addWidget(self.orchestration_trace_title)
+        trace_header.addStretch()
+        close_trace = QToolButton(objectName="sidebarToggle")
+        close_trace.setText("×")
+        close_trace.setAccessibleName("Recolher acompanhamento dos agentes VR")
+        close_trace.setToolTip("Recolher acompanhamento dos agentes VR")
+        close_trace.clicked.connect(
+            lambda: self._set_vr_agent_sidebar_visible(False)
+        )
+        trace_header.addWidget(close_trace)
+        trace_layout.addLayout(trace_header)
+        trace_layout.addWidget(self.orchestration_trace_status)
+        self.orchestration_agent_list = QListWidget(
+            objectName="orchestrationAgentList"
+        )
+        self.orchestration_agent_list.setAccessibleName(
+            "Conversas dos agentes VR"
+        )
+        self.orchestration_agent_list.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.orchestration_agent_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+        self.orchestration_agent_list.setMinimumHeight(86)
+        self.orchestration_agent_list.setMaximumHeight(190)
+        self.orchestration_agent_list.currentItemChanged.connect(
+            self._select_orchestration_agent
+        )
+        trace_layout.addWidget(self.orchestration_agent_list)
+        self.orchestration_agent_chat_title = QLabel(
+            "Selecione um agente", objectName="orchestrationAgentChatTitle"
+        )
+        self.orchestration_agent_chat_title.setWordWrap(True)
+        trace_layout.addWidget(self.orchestration_agent_chat_title)
+        self.orchestration_agent_request = QTextBrowser(
+            objectName="orchestrationAgentRequest"
+        )
+        self.orchestration_agent_request.setFrameShape(QFrame.NoFrame)
+        self.orchestration_agent_request.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+        self.orchestration_agent_request.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+        self.orchestration_agent_request.setTextInteractionFlags(
+            Qt.TextSelectableByMouse
+        )
+        self.orchestration_agent_request.setMaximumWidth(430)
+        self.orchestration_agent_request.hide()
+        trace_layout.addWidget(
+            self.orchestration_agent_request, 0, Qt.AlignRight
+        )
+        self.orchestration_agent_task = QLabel(
+            "", objectName="orchestrationAgentTask"
+        )
+        self.orchestration_agent_task.setWordWrap(True)
+        self.orchestration_agent_task.setTextInteractionFlags(
+            Qt.TextSelectableByMouse
+        )
+        self.orchestration_agent_task.hide()
+        trace_layout.addWidget(self.orchestration_agent_task)
+        self.orchestration_trace_details = QTextBrowser(
+            objectName="orchestrationTraceDetails"
+        )
+        self.orchestration_trace_details.setFrameShape(QFrame.NoFrame)
+        self.orchestration_trace_details.setMinimumHeight(120)
+        self.orchestration_trace_details.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
+        self.orchestration_trace_details.setOpenExternalLinks(False)
+        self.orchestration_trace_details.anchorClicked.connect(
+            open_safe_external_url
+        )
+        self.orchestration_trace_details.document().setDocumentMargin(0)
+        self.orchestration_trace_details.setTextInteractionFlags(
+            Qt.TextSelectableByMouse
+        )
+        trace_layout.addWidget(self.orchestration_trace_details)
+        self.orchestration_trace.hide()
         composer_glow = VrComposerGlowFrame()
         self.composer_glow = composer_glow
         composer_glow.setMinimumWidth(368)
@@ -1467,9 +1753,16 @@ class MainWindow(QMainWindow):
         self.composer.setFixedHeight(58)
         self.composer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.composer.submitRequested.connect(self.send_message)
-        self.composer.interactionStarted.connect(self._ensure_draft_conversation)
-        self.composer.textChanged.connect(self._slash_text_changed)
-        self.composer.textChanged.connect(self._resize_composer_input)
+        self._composer_analysis_timer = QTimer(self)
+        self._composer_analysis_timer.setSingleShot(True)
+        self._composer_analysis_timer.setInterval(35)
+        self._composer_analysis_timer.timeout.connect(self._slash_text_changed)
+        self._composer_resize_timer = QTimer(self)
+        self._composer_resize_timer.setSingleShot(True)
+        self._composer_resize_timer.setInterval(0)
+        self._composer_resize_timer.timeout.connect(self._resize_composer_input)
+        self.composer.textChanged.connect(self._schedule_composer_text_work)
+        self.composer.textChanged.connect(self._ensure_conversation_for_typing)
         composer_layout.addWidget(self.composer)
         self.composer_chips = QFrame(composer_card)
         self.composer_chips_layout = QHBoxLayout(self.composer_chips)
@@ -1498,7 +1791,34 @@ class MainWindow(QMainWindow):
             }
         self.vr_flow_button.setChecked(saved_vr_flow)
         self.vr_flow_button.toggled.connect(self._vr_flow_toggled)
-        self.composer_glow.set_vr_active(saved_vr_flow, animate=False)
+        self.vr_flow_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.vr_menu = QMenu(self.vr_flow_button)
+        self.vr_local_base_action = self.vr_menu.addAction("Consultar base local")
+        self.vr_local_base_action.setCheckable(True)
+        self.vr_local_base_action.setChecked(saved_vr_flow)
+        self.vr_local_base_action.toggled.connect(self.vr_flow_button.setChecked)
+        self.vr_menu.addSeparator()
+        self.vr_menu.addSection("Modo de orquestração")
+        self.orchestration_mode_actions = {}
+        for value, label in (
+            ("off", "Desligado"),
+            ("automatic", "Automático"),
+            ("standard", "Ligado"),
+            ("ultra", "Ultra"),
+        ):
+            action = self.vr_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _checked=False, selected=value: self._set_orchestration_mode(
+                    selected
+                )
+            )
+            self.orchestration_mode_actions[value] = action
+        self.vr_menu.addSeparator()
+        self.vr_menu.addAction(
+            "Configurar orquestração…", self.open_orchestration_settings
+        )
+        self.vr_flow_button.setMenu(self.vr_menu)
         self.options_button = QPushButton("Build")
         self.options_button.setObjectName("composerInlineControl")
         self.options_button.setMinimumWidth(58)
@@ -1533,6 +1853,9 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.send_button)
         composer_layout.addLayout(controls)
         self._composer_compact = False
+        self._sync_orchestration_mode_ui(
+            self.draft_orchestration, animate=False
+        )
         self.composer_host = ResponsiveComposerHost()
         self.composer_host.setObjectName("composerHost")
         self.composer_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1541,13 +1864,14 @@ class MainWindow(QMainWindow):
         composer_host_layout.setContentsMargins(0, 0, 0, 0)
         composer_host_layout.setSpacing(0)
         composer_host_layout.addStretch(1)
-        composer_host_layout.addWidget(composer_glow, 6)
+        composer_host_layout.addWidget(composer_glow, 100)
         composer_host_layout.addStretch(1)
         center_layout.addWidget(self.composer_host)
         self.slash_palette = SlashCommandPalette(self)
         self.slash_palette.itemChosen.connect(self._slash_item_chosen)
         self.composer.set_slash_palette(self.slash_palette)
         splitter.addWidget(center)
+        splitter.addWidget(self.orchestration_trace)
 
         context = QFrame(objectName="chatContext")
         self.chat_context_panel = context
@@ -1575,13 +1899,22 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([240, 1080, 0])
+        splitter.setStretchFactor(3, 0)
+        splitter.setSizes([240, 1080, 0, 0])
         saved_sidebar = self.app_preferences.value("chat/sidebar_visible", True)
         if not isinstance(saved_sidebar, bool):
             saved_sidebar = str(saved_sidebar).strip().casefold() not in {
                 "0", "false", "no", "off"
             }
         self._set_chat_sidebar_visible(saved_sidebar, persist=False)
+        saved_agents_sidebar = self.app_preferences.value(
+            "chat/vr_agents_sidebar_visible", True
+        )
+        if not isinstance(saved_agents_sidebar, bool):
+            saved_agents_sidebar = str(saved_agents_sidebar).strip().casefold() not in {
+                "0", "false", "no", "off"
+            }
+        self.vr_agents_sidebar_preferred = bool(saved_agents_sidebar)
         return page
 
     def _build_knowledge(self) -> QWidget:
@@ -1644,7 +1977,7 @@ class MainWindow(QMainWindow):
         kb_button.clicked.connect(self.sync_kb)
         kb_visible = QPushButton("Login/KB visível")
         kb_visible.clicked.connect(lambda: self.sync_kb(True))
-        all_button = QPushButton("Sincronizar tudo")
+        all_button = QPushButton("Sincronizar Wiki + KB")
         all_button.clicked.connect(self.sync_all)
         actions.addWidget(wiki_button)
         actions.addWidget(kb_button)
@@ -1673,9 +2006,6 @@ class MainWindow(QMainWindow):
         self.review_query_timer.setInterval(300)
         self.review_query_timer.timeout.connect(self.reset_review_page)
 
-        filters = QGridLayout()
-        filters.setHorizontalSpacing(8)
-        filters.setVerticalSpacing(8)
         self.review_query = QLineEdit()
         self.review_query.setAccessibleName("Pesquisar revisões")
         self.review_query.setPlaceholderText(
@@ -1766,22 +2096,38 @@ class MainWindow(QMainWindow):
         for combo in filter_combos:
             combo.currentIndexChanged.connect(self.reset_review_page)
 
-        filters.addWidget(self.review_query, 0, 0, 1, 4)
-        filters.addWidget(self.review_source, 0, 4)
-        filters.addWidget(self.review_status_filter, 0, 5)
-        filters.addWidget(self.review_confidence, 0, 6)
-        filters.addWidget(self.review_current_module, 1, 0)
-        filters.addWidget(self.review_suggested_module, 1, 1)
-        filters.addWidget(self.review_product, 1, 2)
-        filters.addWidget(self.review_category, 1, 3)
-        filters.addWidget(self.review_period, 1, 4)
-        filters.addWidget(self.review_special, 1, 5)
-        filters.addWidget(self.review_sort, 1, 6)
-        filters.setColumnStretch(0, 1)
-        filters.setColumnStretch(1, 1)
-        filters.setColumnStretch(2, 1)
-        filters.setColumnStretch(3, 1)
-        layout.addLayout(filters)
+        wide_filter_positions = [
+            (self.review_query, 0, 0, 1, 4),
+            (self.review_source, 0, 4, 1, 1),
+            (self.review_status_filter, 0, 5, 1, 1),
+            (self.review_confidence, 0, 6, 1, 1),
+            (self.review_current_module, 1, 0, 1, 1),
+            (self.review_suggested_module, 1, 1, 1, 1),
+            (self.review_product, 1, 2, 1, 1),
+            (self.review_category, 1, 3, 1, 1),
+            (self.review_period, 1, 4, 1, 1),
+            (self.review_special, 1, 5, 1, 1),
+            (self.review_sort, 1, 6, 1, 1),
+        ]
+        compact_filter_positions = [
+            (self.review_query, 0, 0, 1, 4),
+            (self.review_source, 1, 0, 1, 1),
+            (self.review_status_filter, 1, 1, 1, 1),
+            (self.review_confidence, 1, 2, 1, 1),
+            (self.review_current_module, 1, 3, 1, 1),
+            (self.review_suggested_module, 2, 0, 1, 1),
+            (self.review_product, 2, 1, 1, 1),
+            (self.review_category, 2, 2, 1, 1),
+            (self.review_period, 2, 3, 1, 1),
+            (self.review_special, 3, 0, 1, 2),
+            (self.review_sort, 3, 2, 1, 2),
+        ]
+        self.review_filters_host = ResponsiveGrid(
+            wide_filter_positions,
+            compact_filter_positions,
+            breakpoint=1000,
+        )
+        layout.addWidget(self.review_filters_host)
 
         presets = QHBoxLayout()
         for label, preset in (
@@ -1910,7 +2256,13 @@ class MainWindow(QMainWindow):
         self.review_action_hint = QLabel("", objectName="muted")
         self.review_action_hint.setWordWrap(True)
         detail_layout.addWidget(self.review_action_hint)
-        splitter.addWidget(detail)
+        self.review_detail_scroll = QScrollArea()
+        self.review_detail_scroll.setFrameShape(QFrame.NoFrame)
+        self.review_detail_scroll.setMinimumWidth(420)
+        self.review_detail_scroll.setWidgetResizable(True)
+        self.review_detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.review_detail_scroll.setWidget(detail)
+        splitter.addWidget(self.review_detail_scroll)
         splitter.setSizes([930, 410])
         layout.addWidget(splitter, 1)
 
@@ -1949,29 +2301,43 @@ class MainWindow(QMainWindow):
             "Vídeos",
             "Cursos e Biblioteca classificados por módulo; não há transcrição nesta versão.",
         )
-        actions = QHBoxLayout()
+        self.video_action_buttons: list[QPushButton] = []
         for label, action in [
             ("Login", "login"),
             ("Atualizar cursos", "courses"),
             ("Inventariar", "scan"),
             ("Classificar", "classify-videos"),
             ("Baixar", "download"),
-            ("Executar tudo", "run"),
+            ("Inventariar e baixar", "run"),
         ]:
             button = QPushButton(label, objectName="primary" if action == "run" else "")
             button.clicked.connect(lambda _checked=False, value=action: self.run_video_action(value))
-            actions.addWidget(button)
+            self.video_action_buttons.append(button)
         enroll = QPushButton("Inscrever selecionados")
         enroll.clicked.connect(self.enroll_selected_courses)
-        actions.addWidget(enroll)
+        self.video_action_buttons.append(enroll)
         organize = QPushButton("Organizar downloads")
         organize.clicked.connect(self.organize_video_downloads)
-        actions.addWidget(organize)
+        self.video_action_buttons.append(organize)
         stop = QPushButton("Parar", objectName="danger")
         stop.clicked.connect(self.stop_video_action)
-        actions.addWidget(stop)
-        actions.addStretch()
-        layout.addLayout(actions)
+        stop.setEnabled(False)
+        self.video_stop_button = stop
+        self.video_action_buttons.append(stop)
+        wide_action_positions = [
+            (button, 0, index, 1, 1)
+            for index, button in enumerate(self.video_action_buttons)
+        ]
+        compact_action_positions = [
+            (button, index // 5, index % 5, 1, 1)
+            for index, button in enumerate(self.video_action_buttons)
+        ]
+        self.video_actions_host = ResponsiveGrid(
+            wide_action_positions,
+            compact_action_positions,
+            breakpoint=1050,
+        )
+        layout.addWidget(self.video_actions_host)
 
         filters = QHBoxLayout()
         self.video_source_filter = RoundedComboBox()
@@ -2064,6 +2430,9 @@ class MainWindow(QMainWindow):
         self.settings_tabs.tabBar().setDrawBase(False)
         self.settings_tabs.addTab(self._build_general_settings_tab(), "Geral")
         self.settings_tabs.addTab(self._build_provider_settings_tab(), "Provedores")
+        self.settings_tabs.addTab(
+            self._build_orchestration_settings_tab(), "Orquestração"
+        )
         self.settings_tabs.addTab(self._build_theme_settings_tab(), "Temas")
         self.settings_tabs.addTab(
             self._build_archived_projects_tab(), "Projetos arquivados"
@@ -2108,9 +2477,10 @@ class MainWindow(QMainWindow):
                     ("Alto", "high"),
                     ("Muito alto", "xhigh"),
                     ("Máximo", "max"),
-                    ("Ultra", "ultra"),
                 ):
                     edit.addItem(effort_label, effort_value)
+                if str(value).strip().casefold() == "ultra":
+                    value = "max"
                 selected = edit.findData(value)
                 edit.setCurrentIndex(selected if selected >= 0 else 1)
             else:
@@ -2129,7 +2499,7 @@ class MainWindow(QMainWindow):
         ocr_install = QPushButton("Instalar OCR portátil por+eng")
         ocr_install.clicked.connect(self.install_ocr)
         codex_prepare = QPushButton("Preparar/abrir projeto Codex")
-        codex_prepare.clicked.connect(self.open_mary_in_codex)
+        codex_prepare.clicked.connect(self.open_vr_in_codex)
         buttons = QHBoxLayout()
         buttons.addWidget(ocr_install)
         buttons.addWidget(codex_prepare)
@@ -2138,6 +2508,43 @@ class MainWindow(QMainWindow):
         grid.addLayout(buttons, len(fields) + 1, 1)
         layout.addWidget(form)
         layout.addStretch()
+        return tab
+
+    def _build_orchestration_settings_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 16, 4, 4)
+        layout.addWidget(QLabel("Orquestração VR", objectName="sectionTitle"))
+        description = QLabel(
+            "Escolha o modelo orquestrador no chat. Aqui você configura o pool "
+            "que ele poderá distribuir dinamicamente entre os papéis VR.",
+            objectName="muted",
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+        card = QFrame(objectName="card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        self.orchestration_settings_summary = QLabel()
+        self.orchestration_settings_summary.setWordWrap(True)
+        card_layout.addWidget(self.orchestration_settings_summary)
+        principles = QLabel(
+            "• Agent ≠ Model\n"
+            "• quantidade de agentes e modelos são escolhidos por dificuldade\n"
+            "• somente a síntese final aparece como resposta do chat",
+            objectName="muted",
+        )
+        principles.setWordWrap(True)
+        card_layout.addWidget(principles)
+        configure = QPushButton("Configurar orquestrador e pool", objectName="primary")
+        configure.clicked.connect(self.open_orchestration_settings)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        actions.addWidget(configure)
+        card_layout.addLayout(actions)
+        layout.addWidget(card)
+        layout.addStretch()
+        self._update_orchestration_summary()
         return tab
 
     def _build_provider_settings_tab(self) -> QWidget:
@@ -2167,21 +2574,20 @@ class MainWindow(QMainWindow):
         provider_descriptions = {
             "codex": "Codex App Server local · modelos, tools, Plan e Build",
             "claude": "Claude Code local · conversas e modelos Claude",
+            "opencode": "OpenCode local · modelos e sessões via CLI",
         }
-        for provider in ("codex", "claude"):
+        for provider in CHAT_PROVIDERS:
             row = QFrame(objectName="panel")
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(16, 13, 16, 13)
             text = QVBoxLayout()
-            name = QLabel(provider.title(), objectName="sectionTitle")
+            name = QLabel(provider_display_name(provider), objectName="sectionTitle")
             name_row = QHBoxLayout()
             name_row.setSpacing(8)
             icon = QLabel()
             icon.setFixedSize(22, 22)
             icon.setPixmap(provider_icon(provider).pixmap(20, 20))
-            icon.setAccessibleName(
-                "Ícone GPT" if provider == "codex" else "Ícone Claude"
-            )
+            icon.setAccessibleName(f"Ícone {provider_display_name(provider)}")
             name_row.addWidget(icon)
             name_row.addWidget(name)
             name_row.addStretch()
@@ -2193,7 +2599,9 @@ class MainWindow(QMainWindow):
             text.addWidget(status)
             row_layout.addLayout(text, 1)
             enabled = QCheckBox("Ativo")
-            enabled.setAccessibleName(f"Ativar provedor {provider.title()}")
+            enabled.setAccessibleName(
+                f"Ativar provedor {provider_display_name(provider)}"
+            )
             enabled.setChecked(self._provider_enabled(provider))
             enabled.stateChanged.connect(
                 lambda state, name=provider: self._provider_enabled_changed(
@@ -2299,6 +2707,117 @@ class MainWindow(QMainWindow):
             return value
         return str(value).strip().casefold() not in {"0", "false", "no", "off"}
 
+    def _preference_bool(self, key: str, default: bool) -> bool:
+        value = self.app_preferences.value(key, default)
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().casefold() not in {
+            "", "0", "false", "no", "off"
+        }
+
+    def _load_default_orchestration(self) -> OrchestrationOptions:
+        raw_models = self.app_preferences.value(
+            "orchestration/available_models", "[]"
+        )
+        try:
+            parsed_models = json.loads(str(raw_models or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_models = []
+        model_pool = tuple(
+            model
+            for model in (
+                ModelRef.from_mapping(item)
+                for item in parsed_models
+                if isinstance(item, dict)
+            )
+            if model.provider
+        )
+        strategy = str(
+            self.app_preferences.value(
+                "orchestration/strategy", "automatic"
+            )
+            or "automatic"
+        )
+        if self.app_preferences.contains("orchestration/mode"):
+            mode = str(
+                self.app_preferences.value("orchestration/mode", "automatic")
+                or "automatic"
+            )
+        elif self._preference_bool("orchestration/ultra_enabled", False):
+            mode = "ultra"
+        elif self._preference_bool("orchestration/enabled", True):
+            mode = "automatic"
+        else:
+            mode = "off"
+        return OrchestrationOptions(
+            mode=mode,
+            strategy=strategy,
+            model_pool=model_pool,
+            show_execution=self._preference_bool(
+                "orchestration/show_execution", True
+            ),
+            explain_routing=self._preference_bool(
+                "orchestration/explain_routing", False
+            ),
+            dynamic_model_routing=self._preference_bool(
+                "orchestration/dynamic_model_routing", True
+            ),
+            dynamic_agent_count=self._preference_bool(
+                "orchestration/dynamic_agent_count", True
+            ),
+            difficulty_routing=self._preference_bool(
+                "orchestration/difficulty_routing", True
+            ),
+        )
+
+    def _save_default_orchestration(
+        self, options: OrchestrationOptions
+    ) -> None:
+        self.app_preferences.setValue(
+            "orchestration/available_models",
+            json.dumps(
+                [model.to_dict() for model in options.model_pool],
+                ensure_ascii=False,
+            ),
+        )
+        self.app_preferences.setValue("orchestration/enabled", options.enabled)
+        self.app_preferences.setValue("orchestration/mode", options.mode)
+        self.app_preferences.setValue("orchestration/strategy", options.strategy)
+        self.app_preferences.setValue(
+            "orchestration/ultra_enabled", options.ultra
+        )
+        self.app_preferences.setValue(
+            "orchestration/show_execution", options.show_execution
+        )
+        self.app_preferences.setValue(
+            "orchestration/explain_routing", options.explain_routing
+        )
+        self.app_preferences.setValue(
+            "orchestration/dynamic_model_routing", options.dynamic_model_routing
+        )
+        self.app_preferences.setValue(
+            "orchestration/dynamic_agent_count", options.dynamic_agent_count
+        )
+        self.app_preferences.setValue(
+            "orchestration/difficulty_routing", options.difficulty_routing
+        )
+        self.app_preferences.sync()
+
+    def _conversation_orchestration(self) -> OrchestrationOptions:
+        if not self.current_conversation:
+            return self.draft_orchestration
+        row = self.database.get_conversation(self.current_conversation)
+        if not row:
+            return self.draft_orchestration
+        return OrchestrationOptions.from_mapping(
+            row,
+            tuple(
+                self.database.conversation_model_pool(
+                    self.current_conversation
+                )
+            ),
+        )
+
     def _provider_enabled_changed(self, provider: str, _state: int) -> None:
         checkbox = self.provider_enabled_checks[provider]
         enabled = checkbox.isChecked()
@@ -2331,7 +2850,7 @@ class MainWindow(QMainWindow):
     def _enabled_provider_names(self) -> list[str]:
         return [
             provider
-            for provider in ("codex", "claude")
+            for provider in CHAT_PROVIDERS
             if self._provider_enabled(provider)
         ]
 
@@ -2339,7 +2858,7 @@ class MainWindow(QMainWindow):
         status = self.orchestrator.provider_status()
         enabled_names = self._enabled_provider_names()
         if hasattr(self, "provider_status_labels"):
-            for provider in ("codex", "claude"):
+            for provider in CHAT_PROVIDERS:
                 available = bool(status.get(provider))
                 enabled = provider in enabled_names
                 label = self.provider_status_labels[provider]
@@ -2378,6 +2897,8 @@ class MainWindow(QMainWindow):
         application = QApplication.instance()
         if application:
             apply_application_theme(application, theme_id)
+        for browser in self.findChildren(QTextBrowser, "messageBody"):
+            self._configure_message_document(browser)
         self._refresh_navigation_icons()
         self.theme_status.setText(
             "Tema Dark & Orange aplicado."
@@ -2402,7 +2923,7 @@ class MainWindow(QMainWindow):
             if term and term not in haystack:
                 continue
             item = QListWidgetItem(
-                f"{row['title']}\n{row['provider'].title()} · "
+                f"{row['title']}\n{provider_display_name(str(row['provider']))} · "
                 f"{row['model'] or 'Modelo padrão'} · {self._status_label(row['status'])}"
             )
             item.setIcon(provider_icon(str(row["provider"])))
@@ -2461,14 +2982,20 @@ class MainWindow(QMainWindow):
     def _run_archived_project_operation(
         self, conversation_id: str, operation: Callable[[str], None]
     ) -> None:
+        if conversation_id in self._conversation_operations:
+            return
+        self._conversation_operations.add(conversation_id)
         worker = Worker(operation, conversation_id)
         worker.signals.finished.connect(
             lambda _result: self._archived_project_operation_done(conversation_id)
         )
-        worker.signals.error.connect(self._show_error)
-        self.pool.start(worker)
+        worker.signals.error.connect(
+            lambda error: self._conversation_operation_failed(conversation_id, error)
+        )
+        self._start_worker(worker)
 
     def _archived_project_operation_done(self, conversation_id: str) -> None:
+        self._conversation_operations.discard(conversation_id)
         if conversation_id == self.current_conversation:
             self.current_conversation = ""
             self._clear_messages()
@@ -2501,9 +3028,13 @@ class MainWindow(QMainWindow):
 
     def refresh_dashboard(self) -> None:
         with self.database.connect() as connection:
-            total = connection.execute("SELECT count(*) FROM documents").fetchone()[0]
+            total = connection.execute(
+                "SELECT count(*) FROM documents WHERE status='active'"
+            ).fetchone()[0]
             reviews = connection.execute(
-                "SELECT count(*) FROM classification_reviews WHERE status='pending'"
+                """SELECT count(*) FROM classification_reviews r
+                   JOIN documents d ON d.id=r.document_id
+                   WHERE r.status='pending' AND d.status='active'"""
             ).fetchone()[0]
             source_counts = {
                 source: connection.execute(
@@ -2513,10 +3044,12 @@ class MainWindow(QMainWindow):
                 for source in ("wiki", "kb")
             }
             conversations = connection.execute(
-                "SELECT count(*) FROM conversations"
+                """SELECT count(*) FROM conversations
+                   WHERE archived=0 AND trashed_at=''"""
             ).fetchone()[0]
             ocr_count = connection.execute(
-                "SELECT count(*) FROM documents WHERE length(ocr_text)>0"
+                """SELECT count(*) FROM documents
+                   WHERE status='active' AND length(ocr_text)>0"""
             ).fetchone()[0]
             latest_runs = {}
             for source in ("wiki", "kb"):
@@ -2551,10 +3084,16 @@ class MainWindow(QMainWindow):
             created = int(stats.get("created", 0) or 0)
             updated = int(stats.get("updated", 0) or 0)
             errors = int(stats.get("errors", 0) or 0)
-            success = run["status"] == "completed" and not run["error"]
+            success = (
+                run["status"] == "completed"
+                and not run["error"]
+                and errors == 0
+            )
             if source == "kb" and discovered == 0:
                 success = False
                 status_text = "Nenhum artigo descoberto"
+            elif run["status"] == "partial" or errors:
+                status_text = "Concluída com falhas"
             elif success:
                 status_text = "Sincronização concluída"
             else:
@@ -2578,27 +3117,47 @@ class MainWindow(QMainWindow):
             self._set_source_status(source, status_text, detail, success)
 
         inventory_path = self.settings.root / "metadata" / "videos.json"
-        items: list[dict[str, Any]] = []
-        if inventory_path.exists():
-            try:
-                parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
-                if isinstance(parsed, list):
-                    items = [item for item in parsed if isinstance(item, dict)]
-            except (OSError, json.JSONDecodeError):
-                items = []
-        downloaded = sum(item.get("status") == "downloaded" for item in items)
-        failures = sum(item.get("status") in {"error", "failed"} for item in items)
+        from ..inventory import load_inventory
+        from ..settings import load_settings
+        from ..video_storage import inspect_video_storage
+
+        inventory_error = ""
+        try:
+            items = load_inventory(inventory_path)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            items = []
+            inventory_error = str(exc)
+        storage = inspect_video_storage(
+            items, load_settings(project_dir=self.settings.root)
+        )
+        downloaded = sum(info.downloaded for info in storage.values())
+        failures = sum(item.status in {"error", "failed"} for item in items)
         self.source_count_labels["video"].setText(f"{len(items)} vídeos")
+        if inventory_error:
+            video_status = "Inventário inválido"
+            video_detail = inventory_error
+            video_success = False
+        elif not inventory_path.exists():
+            video_status = "Inventário não encontrado"
+            video_detail = "Execute Inventariar na tela de Vídeos."
+            video_success = False
+        elif not items:
+            video_status = "Inventário vazio"
+            video_detail = "A última varredura não encontrou vídeos."
+            video_success = False
+        else:
+            video_status = "Inventário disponível"
+            video_detail = (
+                f"Baixados {downloaded} · "
+                f"Pendentes {max(0, len(items) - downloaded - failures)} "
+                f"· Falhas {failures}"
+            )
+            video_success = True
         self._set_source_status(
             "video",
-            "Inventário disponível" if items else "Inventário não encontrado",
-            (
-                f"Baixados {downloaded} · Pendentes {max(0, len(items) - downloaded - failures)} "
-                f"· Falhas {failures}"
-                if items
-                else "Execute Inventariar na tela de Vídeos."
-            ),
-            bool(items),
+            video_status,
+            video_detail,
+            video_success,
         )
 
     def _set_source_status(
@@ -2636,13 +3195,13 @@ class MainWindow(QMainWindow):
             if len(model_label) > 20:
                 model_label = model_label[:19] + "…"
             item = QListWidgetItem(
-                f"{row['title']}\n{row['provider'].title()} · "
+                f"{row['title']}\n{provider_display_name(str(row['provider']))} · "
                 f"{model_label} · "
                 f"{self._status_label(row['status'])}"
             )
             item.setIcon(provider_icon(str(row["provider"])))
             item.setToolTip(
-                f"{row['provider'].title()} · {row['model'] or 'Modelo padrão'} · "
+                f"{provider_display_name(str(row['provider']))} · {row['model'] or 'Modelo padrão'} · "
                 f"{self._effort_label(row['effort'])} · {self._status_label(row['status'])}"
             )
             item.setData(Qt.UserRole, row["id"])
@@ -2671,6 +3230,12 @@ class MainWindow(QMainWindow):
         self._pending_first_message = ""
         self.draft_dynamic_tools = []
         self.draft_mcp_tools = []
+        self.draft_orchestration = self._load_default_orchestration()
+        if hasattr(self, "vr_flow_button"):
+            self._sync_orchestration_mode_ui(
+                self.draft_orchestration, animate=False
+            )
+        self._reset_orchestration_trace()
         self.pending_skills = []
         self.pending_file_mentions = []
         if hasattr(self, "slash_palette"):
@@ -2685,10 +3250,20 @@ class MainWindow(QMainWindow):
         self._update_tools_label()
         self._refresh_composer_chips()
         self._update_codex_controls()
+        self._update_orchestration_summary()
 
     def _ensure_draft_conversation(self, *_args: Any) -> None:
         if self.draft_conversation and not self.current_conversation:
             self._create_draft_conversation()
+
+    def _ensure_conversation_for_typing(self) -> None:
+        if self.current_conversation or self._conversation_creation_in_progress:
+            return
+        if not self.composer.toPlainText().strip():
+            return
+        if not self.draft_conversation:
+            self.new_conversation()
+        self._ensure_draft_conversation()
 
     def _create_draft_conversation(self) -> None:
         if self._conversation_creation_in_progress or not self.draft_conversation:
@@ -2713,10 +3288,11 @@ class MainWindow(QMainWindow):
             self.mode_combo.currentData() or "default",
             self.draft_dynamic_tools,
             self.draft_mcp_tools,
+            self.draft_orchestration,
         )
         worker.signals.finished.connect(self._draft_conversation_result)
         worker.signals.error.connect(self._conversation_creation_failed)
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _create_conversation_request(
         self,
@@ -2729,6 +3305,7 @@ class MainWindow(QMainWindow):
         collaboration_mode: str,
         dynamic_tools: list[str],
         mcp_tools: list[dict[str, str]],
+        orchestration: OrchestrationOptions,
     ) -> dict[str, Any]:
         try:
             conversation_id = self.orchestrator.new_conversation(
@@ -2741,6 +3318,7 @@ class MainWindow(QMainWindow):
                 dynamic_tools,
                 mcp_tools,
                 True,
+                orchestration,
             )
         except Exception as exc:
             return {"request_id": request_id, "conversation_id": "", "error": str(exc)}
@@ -2827,6 +3405,12 @@ class MainWindow(QMainWindow):
         self.pending_model = str(row["model"])
         self.pending_effort = str(row["effort"] or self.settings.default_effort)
         self.pending_tier = str(row["service_tier"] or "")
+        orchestration = OrchestrationOptions.from_mapping(
+            row,
+            tuple(self.database.conversation_model_pool(conversation_id)),
+        )
+        self.draft_orchestration = orchestration
+        self._sync_orchestration_mode_ui(orchestration, animate=False)
         self.provider_combo.blockSignals(True)
         self.provider_combo.setCurrentText(row["provider"])
         self.provider_combo.setEnabled(False)
@@ -2858,6 +3442,7 @@ class MainWindow(QMainWindow):
                 self._add_message(
                     message["role"], message["content"], int(message["id"])
                 )
+        self._restore_orchestration_trace(conversation_id, orchestration)
         self.chat_status.setText(self._status_label(row["status"]))
         self._update_tools_label()
         self._refresh_composer_chips()
@@ -2866,9 +3451,10 @@ class MainWindow(QMainWindow):
         self.conversation_menu_button.setEnabled(True)
         self._set_turn_running(row["status"] == "running")
         self._update_codex_controls()
+        self._update_orchestration_summary()
 
     def _clear_messages(self) -> None:
-        while self.message_layout.count() > 1:
+        while self.message_layout.count():
             item = self.message_layout.takeAt(0)
             widget = item.widget()
             if widget:
@@ -2879,12 +3465,15 @@ class MainWindow(QMainWindow):
         self.assistant_markdown = ""
         self.chat_activity_widget = None
         self.chat_activity_label = None
+        if hasattr(self, "orchestration_trace"):
+            self._reset_orchestration_trace()
 
     def _add_chat_empty_state(self) -> None:
         self._set_chat_landing(True)
         empty = QFrame(objectName="assistantMessage")
         empty.setMinimumHeight(112)
-        empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        empty.setMaximumHeight(180)
+        empty.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         empty_layout = QVBoxLayout(empty)
         empty_layout.setContentsMargins(20, 22, 20, 18)
         empty_layout.setSpacing(9)
@@ -2928,6 +3517,7 @@ class MainWindow(QMainWindow):
         browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         browser.setFixedHeight(42 if role == "user" else 54)
+        self._configure_message_document(browser)
         browser.setMarkdown(content)
 
         def resize_message_body(_size=None, widget=browser, message_role=role) -> None:
@@ -2945,8 +3535,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, resize_message_body)
         message_header = QHBoxLayout()
         if role != "user":
-            role_label = QLabel("VR")
-            role_label.setStyleSheet(f"font-weight: 700; color: {BRAND_NAVY};")
+            role_label = QLabel("VR", objectName="messageRole")
             message_header.addWidget(role_label)
         message_header.addStretch()
         if role == "user" and message_id is not None:
@@ -2966,12 +3555,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(browser)
         if role == "user":
             self.message_layout.insertWidget(
-                self.message_layout.count() - 1, card, 0, Qt.AlignRight
+                self.message_layout.count(), card, 0, Qt.AlignRight
             )
         else:
             # Alignment forces Qt to use the narrow QTextBrowser sizeHint and
             # prevents the assistant card from expanding to the readable width.
-            self.message_layout.insertWidget(self.message_layout.count() - 1, card)
+            self.message_layout.insertWidget(self.message_layout.count(), card)
         QTimer.singleShot(
             0,
             lambda: self.message_scroll.verticalScrollBar().setValue(
@@ -2979,6 +3568,51 @@ class MainWindow(QMainWindow):
             ),
         )
         return browser
+
+    def _configure_message_document(self, browser: QTextBrowser) -> None:
+        """Apply readable Markdown hierarchy and theme-aware highlights."""
+        dark = self.theme_id == "dark_orange"
+        text = "#F4F1EE" if dark else "#171729"
+        muted = "#C7BFB8" if dark else "#58586C"
+        accent = "#FFB55C" if dark else "#A84300"
+        link = "#67B7FF" if dark else "#075EAD"
+        code_bg = "#282421" if dark else "#F0F0F4"
+        code_border = "#4A433D" if dark else "#D8D8E0"
+        quote_bg = "#211E1C" if dark else "#F8F8FA"
+        browser.document().setDocumentMargin(0)
+        browser.document().setDefaultStyleSheet(
+            f"""
+            body {{ color: {text}; font-size: 14px; line-height: 1.45; }}
+            p {{ margin-top: 0; margin-bottom: 12px; }}
+            h1 {{ color: {text}; font-size: 22px; margin: 18px 0 10px 0; }}
+            h2 {{ color: {text}; font-size: 18px; margin: 16px 0 8px 0; }}
+            h3 {{ color: {text}; font-size: 16px; margin: 14px 0 7px 0; }}
+            ul, ol {{ margin: 6px 0 12px 24px; }}
+            li {{ margin-bottom: 6px; }}
+            strong {{ color: {accent}; font-weight: 700; }}
+            a {{ color: {link}; text-decoration: none; }}
+            code {{
+                color: {text}; background-color: {code_bg};
+                border: 1px solid {code_border}; border-radius: 4px;
+                padding: 2px 5px; font-family: 'Cascadia Mono', monospace;
+                font-size: 12px;
+            }}
+            pre {{
+                color: {text}; background-color: {code_bg};
+                border: 1px solid {code_border}; border-radius: 8px;
+                margin: 10px 0 14px 0; padding: 10px;
+                font-family: 'Cascadia Mono', monospace; font-size: 12px;
+            }}
+            blockquote {{
+                color: {muted}; background-color: {quote_bg};
+                border-left: 3px solid {accent}; margin: 10px 0;
+                padding: 8px 12px;
+            }}
+            table {{ border-collapse: collapse; margin: 10px 0 14px 0; }}
+            th {{ color: {text}; background-color: {code_bg}; font-weight: 700; }}
+            th, td {{ border: 1px solid {code_border}; padding: 6px 9px; }}
+            """
+        )
 
     def _show_chat_activity(self, text: str) -> None:
         label = str(text or "Trabalhando…").strip()
@@ -2998,7 +3632,7 @@ class MainWindow(QMainWindow):
             layout.addWidget(self.chat_activity_label, 1)
             self.chat_activity_widget = activity
             self.message_layout.insertWidget(
-                self.message_layout.count() - 1,
+                self.message_layout.count(),
                 activity,
                 0,
                 Qt.AlignLeft,
@@ -3051,18 +3685,20 @@ class MainWindow(QMainWindow):
     def _set_chat_landing(self, landing: bool) -> None:
         if not hasattr(self, "message_scroll"):
             return
-        if landing:
-            self.message_scroll.setMinimumHeight(140)
-            self.message_scroll.setMaximumHeight(165)
-            self.message_scroll.setSizePolicy(
-                QSizePolicy.Expanding, QSizePolicy.Fixed
-            )
+        self.message_scroll.setMinimumHeight(0)
+        self.message_scroll.setMaximumHeight(16777215)
+        self.message_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.message_layout.setAlignment(Qt.AlignCenter if landing else Qt.AlignTop)
+
+    def _schedule_composer_text_work(self) -> None:
+        """Coalesce layout and command-palette work outside the key event."""
+        self._composer_resize_timer.start()
+        text = self.composer.toPlainText()
+        if re.fullmatch(r"\s*/[^\s/]*", text) or self._file_mention_at_cursor(text):
+            self._composer_analysis_timer.stop()
+            self._slash_text_changed()
         else:
-            self.message_scroll.setMinimumHeight(0)
-            self.message_scroll.setMaximumHeight(16777215)
-            self.message_scroll.setSizePolicy(
-                QSizePolicy.Expanding, QSizePolicy.Expanding
-            )
+            self._composer_analysis_timer.start()
 
     def _resize_composer_input(self) -> None:
         document_height = int(self.composer.document().size().height()) + 16
@@ -3203,7 +3839,7 @@ class MainWindow(QMainWindow):
                 {"request_id": token, "files": [], "error": error}
             )
         )
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     @staticmethod
     def _file_catalog_request(request_id: int, root: Path) -> dict[str, Any]:
@@ -3444,8 +4080,8 @@ class MainWindow(QMainWindow):
         ]
         if scope == "providers":
             current_provider = self.provider_combo.currentText() or "codex"
-            for provider in ("codex", "claude"):
-                label = provider.title()
+            for provider in CHAT_PROVIDERS:
+                label = provider_display_name(provider)
                 if query and query not in label.casefold():
                     continue
                 enabled = provider == current_provider or self._provider_enabled(provider)
@@ -3513,7 +4149,7 @@ class MainWindow(QMainWindow):
             worker = Worker(self._skill_catalog_request, request_id, workspace, force)
             worker.signals.finished.connect(self._skill_catalog_result)
             worker.signals.error.connect(self._show_error)
-            self.pool.start(worker)
+            self._start_worker(worker)
         if force or self._mcp_catalog_state == "idle":
             self._mcp_request_serial += 1
             request_id = self._mcp_request_serial
@@ -3523,7 +4159,7 @@ class MainWindow(QMainWindow):
             worker = Worker(self._mcp_catalog_request, request_id)
             worker.signals.finished.connect(self._mcp_catalog_result)
             worker.signals.error.connect(self._show_error)
-            self.pool.start(worker)
+            self._start_worker(worker)
 
     def _skill_catalog_request(
         self, request_id: int, workspace: Path, force: bool
@@ -3779,7 +4415,7 @@ class MainWindow(QMainWindow):
         )
         worker.signals.finished.connect(self._slash_tools_configured)
         worker.signals.error.connect(self._show_error)
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _slash_tools_configured(self, conversation_id: str) -> None:
         branched = conversation_id != self.current_conversation
@@ -3936,15 +4572,16 @@ class MainWindow(QMainWindow):
             self._ensure_draft_conversation()
             return
         if not self.current_conversation:
-            if self.draft_conversation:
-                self._pending_first_message = text
-                self._ensure_draft_conversation()
-            else:
-                QMessageBox.information(self, APP_TITLE, "Crie uma conversa antes de enviar.")
+            if not self.draft_conversation:
+                self.new_conversation()
+            self._pending_first_message = text
+            self._ensure_draft_conversation()
             return
         self._send_current_message(text)
 
     def _send_current_message(self, text: str) -> None:
+        if self.turn_running or self.conversation_state != "active":
+            return
         use_vr_flow = self.vr_flow_button.isChecked()
         skills = list(self.pending_skills)
         files = [dict(item) for item in self.pending_file_mentions]
@@ -3987,7 +4624,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.pending_skills = skills
             self.pending_file_mentions = files
+            self.composer.setPlainText(text)
             self._refresh_composer_chips()
+            self._clear_messages()
+            if self.current_conversation:
+                for message in self.database.messages(self.current_conversation):
+                    if message["role"] != "system":
+                        self._add_message(
+                            message["role"], message["content"], int(message["id"])
+                        )
             self._set_turn_running(False)
             self._show_error(str(exc))
 
@@ -4002,16 +4647,68 @@ class MainWindow(QMainWindow):
             self.assistant_markdown += event.text
             if self.assistant_widget:
                 self.assistant_widget.setMarkdown(self.assistant_markdown)
+            final_agent = next(
+                (
+                    item
+                    for item in getattr(self, "_trace_plan_agents", [])
+                    if bool(item.get("final"))
+                ),
+                None,
+            )
+            if final_agent:
+                final_id = str(final_agent.get("id") or "")
+                if self._trace_agents.get(final_id) == "executando":
+                    self._trace_agent_outputs[final_id] = (
+                        self._trace_agent_outputs.get(final_id, "") + event.text
+                    )
+                    if self._trace_selected_agent == final_id:
+                        self._render_selected_agent_chat()
         elif event.kind == "turn_started":
             self.chat_status.setText("Executando…")
             self._set_turn_running(True)
             if not self.assistant_markdown:
                 self._show_chat_activity("Trabalhando…")
+        elif event.kind in {
+            "orchestration_started",
+            "plan_created",
+            "parallel_group_started",
+            "parallel_group_completed",
+            "agent_started",
+            "agent_delta",
+            "agent_completed",
+            "agent_failed",
+            "validation_started",
+            "validation_completed",
+            "revision_started",
+            "synthesis_started",
+            "orchestration_completed",
+            "orchestration_cancelled",
+        }:
+            configured = self._conversation_orchestration()
+            if event.kind == "plan_created" and configured.mode == "automatic":
+                effective = str(event.payload.get("effective_mode") or "off")
+                self.composer_glow.set_mode(
+                    effective if effective in {"standard", "ultra"} else "off",
+                    animate=True,
+                )
+            self._handle_orchestration_event(event)
+            if event.kind == "agent_delta":
+                activity_text = "Agentes VR trabalhando…"
+            elif self._conversation_orchestration().show_execution:
+                activity_text = event.text
+            elif event.kind == "orchestration_cancelled":
+                activity_text = "Execução interrompida."
+            elif event.kind == "orchestration_completed":
+                activity_text = "Resposta concluída."
+            else:
+                activity_text = "Trabalhando…"
+            self._show_chat_activity(activity_text)
+            self.chat_status.setText(activity_text)
         elif event.kind == "settings_updated":
             settings = event.payload.get("threadSettings") or event.payload.get("settings") or {}
             effective_model = str(settings.get("model") or "")
             effective_effort = str(settings.get("effort") or "")
-            if effective_model:
+            if effective_model and not self._main_model_locked():
                 model_index = self.model_combo.findData(effective_model)
                 if model_index >= 0:
                     self.model_combo.blockSignals(True)
@@ -4040,6 +4737,9 @@ class MainWindow(QMainWindow):
             self._file_catalog_state = "idle"
             self.chat_status.setText("Pronto")
             self._set_turn_running(False)
+            self._sync_orchestration_mode_ui(
+                self._conversation_orchestration(), animate=False
+            )
             self.refresh_conversations()
         elif event.kind == "tool_event":
             self._show_chat_activity(self._runtime_activity_text(event))
@@ -4057,6 +4757,9 @@ class MainWindow(QMainWindow):
             self._hide_chat_activity()
             self.chat_status.setText("Erro")
             self._set_turn_running(False)
+            self._sync_orchestration_mode_ui(
+                self._conversation_orchestration(), animate=False
+            )
             error_message = (
                 "Não foi possível concluir esta execução. "
                 "Consulte a tela Logs para ver os detalhes técnicos."
@@ -4069,7 +4772,8 @@ class MainWindow(QMainWindow):
                     self.assistant_markdown.rstrip() + f"\n\n> {error_message}"
                 )
                 self.assistant_widget.setMarkdown(self.assistant_markdown)
-        self._append_log(f"{event.kind}: {event.text}")
+        if event.kind != "agent_delta":
+            self._append_log(f"{event.kind}: {event.text}")
 
     def _request_approval(self, event: RuntimeEvent) -> None:
         dialog = ApprovalDialog(event.payload, self)
@@ -4103,12 +4807,22 @@ class MainWindow(QMainWindow):
     def stop_turn(self) -> None:
         if self.current_conversation:
             self.chat_status.setText("Parando…")
-            self.orchestrator.interrupt(self.current_conversation)
+            self.stop_button.setEnabled(False)
+            worker = Worker(self.orchestrator.interrupt, self.current_conversation)
+            worker.signals.error.connect(self._stop_turn_failed)
+            self._start_worker(worker)
+
+    def _stop_turn_failed(self, error: str) -> None:
+        if self.turn_running:
+            self.chat_status.setText("Falha ao interromper")
+            self.stop_button.setEnabled(True)
+        self._show_error(error)
 
     def _set_turn_running(self, running: bool) -> None:
         self.turn_running = running
         self.send_button.setVisible(not running)
         self.stop_button.setVisible(running)
+        self.stop_button.setEnabled(running)
         self.composer.setReadOnly(running or self.conversation_state != "active")
         self._update_codex_controls()
         if running and hasattr(self, "slash_palette"):
@@ -4142,14 +4856,10 @@ class MainWindow(QMainWindow):
                     break
         if self.conversation_state == "active":
             menu.addAction("Arquivar", self.archive_current_conversation)
-            menu.addAction("Mover para a lixeira", self.delete_current_conversation)
         elif self.conversation_state == "archived":
             menu.addAction("Restaurar", self.archive_current_conversation)
-            menu.addAction("Mover para a lixeira", self.delete_current_conversation)
         else:
             menu.addAction("Restaurar", self.archive_current_conversation)
-            menu.addSeparator()
-            menu.addAction("Excluir definitivamente…", self.delete_current_conversation)
         return menu
 
     def archive_current_conversation(self) -> None:
@@ -4174,28 +4884,47 @@ class MainWindow(QMainWindow):
 
     def _run_conversation_operation(self, operation: Callable[[str], None]) -> None:
         conversation_id = self.current_conversation
+        if not conversation_id or conversation_id in self._conversation_operations:
+            return
+        self._conversation_operations.add(conversation_id)
         self.chat_status.setText("Processando conversa…")
+        self.conversation_menu_button.setEnabled(False)
         worker = Worker(operation, conversation_id)
-        worker.signals.finished.connect(lambda _result: self._conversation_operation_done())
-        worker.signals.error.connect(self._show_error)
-        self.pool.start(worker)
+        worker.signals.finished.connect(
+            lambda _result: self._conversation_operation_done(conversation_id)
+        )
+        worker.signals.error.connect(
+            lambda error: self._conversation_operation_failed(conversation_id, error)
+        )
+        self._start_worker(worker)
 
-    def _conversation_operation_done(self) -> None:
-        self.current_conversation = ""
-        self.pending_skills = []
-        self.pending_file_mentions = []
-        self._file_mention_span = None
-        self._conversation_creation_in_progress = False
-        self._active_creation_request = 0
-        self._clear_messages()
+    def _conversation_operation_done(self, conversation_id: str) -> None:
+        self._conversation_operations.discard(conversation_id)
+        if self.current_conversation == conversation_id:
+            self.current_conversation = ""
+            self.pending_skills = []
+            self.pending_file_mentions = []
+            self._file_mention_span = None
+            self._conversation_creation_in_progress = False
+            self._active_creation_request = 0
+            self._clear_messages()
+            self.composer.setReadOnly(True)
+            self.conversation_menu_button.setEnabled(False)
+            self._set_turn_running(False)
+            self._refresh_composer_chips()
+            self._update_codex_controls()
         self.refresh_conversations()
         self.refresh_archived_projects()
         self.chat_status.setText("Pronto")
-        self.composer.setReadOnly(True)
-        self.conversation_menu_button.setEnabled(False)
-        self._set_turn_running(False)
-        self._refresh_composer_chips()
-        self._update_codex_controls()
+
+    def _conversation_operation_failed(
+        self, conversation_id: str, error: str
+    ) -> None:
+        self._conversation_operations.discard(conversation_id)
+        if self.current_conversation == conversation_id:
+            self.chat_status.setText("Falha ao processar conversa")
+            self.conversation_menu_button.setEnabled(True)
+        self._show_error(error)
 
     def _set_chat_sidebar_visible(
         self,
@@ -4206,9 +4935,14 @@ class MainWindow(QMainWindow):
         visible = bool(visible)
         sizes = self.chat_splitter.sizes()
         total = max(self.chat_splitter.width(), sum(sizes), 1)
-        context_width = (
+        agents_width = (
             sizes[2]
-            if len(sizes) > 2 and self.chat_context_panel.isVisible()
+            if len(sizes) > 2 and self.orchestration_trace.isVisible()
+            else 0
+        )
+        context_width = (
+            sizes[3]
+            if len(sizes) > 3 and self.chat_context_panel.isVisible()
             else 0
         )
         sidebar_width = min(240, max(210, total // 5)) if visible else 0
@@ -4217,7 +4951,8 @@ class MainWindow(QMainWindow):
         self.chat_splitter.setSizes(
             [
                 sidebar_width,
-                max(360, total - sidebar_width - context_width),
+                max(360, total - sidebar_width - agents_width - context_width),
+                agents_width,
                 context_width,
             ]
         )
@@ -4232,6 +4967,44 @@ class MainWindow(QMainWindow):
             self.app_preferences.setValue("chat/sidebar_visible", visible)
             self.app_preferences.sync()
 
+    def _set_vr_agent_sidebar_visible(
+        self,
+        visible: bool,
+        *,
+        persist: bool = True,
+    ) -> None:
+        requested = bool(visible)
+        has_agents = bool(getattr(self, "_trace_plan_agents", []))
+        show_execution = self._conversation_orchestration().show_execution
+        visible = requested and has_agents and show_execution
+        self.vr_agents_sidebar_preferred = requested
+        self.orchestration_trace.setVisible(visible)
+        self.vr_agents_toggle_button.setChecked(visible)
+        action = "Recolher" if visible else "Expandir"
+        self.vr_agents_toggle_button.setAccessibleName(
+            f"{action} acompanhamento dos agentes VR"
+        )
+        self.vr_agents_toggle_button.setToolTip(
+            f"{action} acompanhamento dos agentes VR"
+        )
+        sizes = self.chat_splitter.sizes()
+        total = max(self.chat_splitter.width(), sum(sizes), 1)
+        left = sizes[0] if self.chat_sidebar_visible and sizes else 0
+        context = (
+            sizes[3]
+            if len(sizes) > 3 and self.chat_context_panel.isVisible()
+            else 0
+        )
+        agents = min(520, max(380, total // 3)) if visible else 0
+        self.chat_splitter.setSizes(
+            [left, max(360, total - left - agents - context), agents, context]
+        )
+        if persist:
+            self.app_preferences.setValue(
+                "chat/vr_agents_sidebar_visible", requested
+            )
+            self.app_preferences.sync()
+
     def _toggle_chat_context(self, visible: bool) -> None:
         self.chat_context_panel.setVisible(visible)
         sizes = self.chat_splitter.sizes()
@@ -4241,14 +5014,26 @@ class MainWindow(QMainWindow):
             if self.chat_sidebar_visible and sizes and sizes[0]
             else 0
         )
+        agents = (
+            sizes[2]
+            if len(sizes) > 2 and self.orchestration_trace.isVisible()
+            else 0
+        )
         if visible:
             context_width = min(300, max(220, total // 5))
             self.chat_splitter.setSizes(
-                [sidebar, max(360, total - sidebar - context_width), context_width]
+                [
+                    sidebar,
+                    max(360, total - sidebar - agents - context_width),
+                    agents,
+                    context_width,
+                ]
             )
             QTimer.singleShot(0, self.context_search.setFocus)
         else:
-            self.chat_splitter.setSizes([sidebar, max(360, total - sidebar), 0])
+            self.chat_splitter.setSizes(
+                [sidebar, max(360, total - sidebar - agents), agents, 0]
+            )
 
     def _select_provider_option(self, provider: str) -> None:
         if not self._provider_enabled(provider):
@@ -4287,7 +5072,7 @@ class MainWindow(QMainWindow):
         worker = Worker(self.orchestrator.mcp_tools, "codex")
         worker.signals.finished.connect(self._mcp_tools_loaded)
         worker.signals.error.connect(lambda error: self._mcp_tools_loaded([], error))
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _mcp_tools_loaded(self, tools: list[dict[str, Any]], error: str = "") -> None:
         self.mcp_tool_catalog = tools
@@ -4331,7 +5116,7 @@ class MainWindow(QMainWindow):
             )
             worker.signals.finished.connect(self._conversation_created)
             worker.signals.error.connect(self._show_error)
-            self.pool.start(worker)
+            self._start_worker(worker)
         else:
             self.draft_dynamic_tools = dynamic_ids
             self.draft_mcp_tools = mcp_tools
@@ -4356,7 +5141,7 @@ class MainWindow(QMainWindow):
             return
         self._composer_compact = compact
         dimensions = (
-            (72, 72, 54, 54, 36, 36, 38, 38)
+            (54, 54, 42, 42, 30, 30, 30, 30)
             if compact
             else (88, 180, 64, 110, 88, 135, 58, 90)
         )
@@ -4378,10 +5163,12 @@ class MainWindow(QMainWindow):
         self.approval_combo.setMaximumWidth(approval_max)
         self.options_button.setMinimumWidth(options_min)
         self.options_button.setMaximumWidth(options_max)
+        self.vr_flow_button.set_compact(compact)
         self.chat_status.setMaximumWidth(90 if compact else 180)
         for separator in self.composer_separators:
             separator.setVisible(not compact)
         self._update_tools_label()
+        self._update_orchestration_summary()
 
     def toggle_collaboration_mode(self) -> None:
         command = "build" if self.mode_combo.currentData() == "plan" else "plan"
@@ -4419,7 +5206,7 @@ class MainWindow(QMainWindow):
             lambda new_id, text=replacement: self._branch_created_and_send(new_id, text)
         )
         worker.signals.error.connect(self._show_error)
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _branch_created_and_send(self, conversation_id: str, text: str) -> None:
         self._conversation_created(conversation_id)
@@ -4462,7 +5249,7 @@ class MainWindow(QMainWindow):
         )
         worker.signals.finished.connect(self._model_catalog_result)
         worker.signals.error.connect(self._append_log)
-        self.pool.start(worker)
+        self._start_worker(worker)
         QTimer.singleShot(
             20500,
             lambda name=provider, token=request_id: self._model_catalog_failed(
@@ -4613,17 +5400,28 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(
             lambda error: (self._append_log(error), loaded([]))
         )
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _preload_other_models(self, current_provider: str) -> None:
-        other = "claude" if current_provider == "codex" else "codex"
-        if other in self.model_cache or self.model_combo.catalog_state(other) == "loading":
-            return
-        self.load_models(provider_override=other)
+        for provider in CHAT_PROVIDERS:
+            if provider == current_provider:
+                continue
+            if (
+                provider in self.model_cache
+                or self.model_combo.catalog_state(provider) == "loading"
+            ):
+                continue
+            self.load_models(provider_override=provider)
 
     def _model_picker_selected(self, provider: str, model_id: str) -> None:
         if self.provider_switch_in_progress:
             self.chat_status.setText("Aguarde a troca de provedor terminar")
+            return
+        if self._main_model_locked():
+            self.chat_status.setText(
+                "Modelo principal bloqueado após o início do chat; "
+                "ajuste apenas o pool em Orquestração"
+            )
             return
         if (
             provider != self.provider_combo.currentText()
@@ -4640,7 +5438,9 @@ class MainWindow(QMainWindow):
                         "Aguarde a resposta terminar para trocar o modelo"
                     )
                     return
-                self.chat_status.setText(f"Alternando para {provider.title()}…")
+                self.chat_status.setText(
+                    f"Alternando para {provider_display_name(provider)}…"
+                )
                 self.provider_switch_in_progress = True
                 self._update_codex_controls()
                 worker = Worker(
@@ -4656,7 +5456,7 @@ class MainWindow(QMainWindow):
                     )
                 )
                 worker.signals.error.connect(self._provider_switch_failed)
-                self.pool.start(worker)
+                self._start_worker(worker)
                 return
             self.pending_model = model_id
             self.model_combo.blockSignals(True)
@@ -4696,7 +5496,7 @@ class MainWindow(QMainWindow):
             combo.blockSignals(False)
         self.load_models(provider_override=provider)
         self.refresh_conversations()
-        self.chat_status.setText(f"{provider.title()} selecionado")
+        self.chat_status.setText(f"{provider_display_name(provider)} selecionado")
         self._update_codex_controls()
 
     def _provider_switch_failed(self, error: str) -> None:
@@ -4757,6 +5557,8 @@ class MainWindow(QMainWindow):
             else:
                 value = ""
             value = str(value).strip().lower()
+            if value == "ultra":
+                value = "max"
             if value and value not in efforts:
                 efforts.append(value)
         if not efforts:
@@ -4771,6 +5573,8 @@ class MainWindow(QMainWindow):
             or self.effort_combo.currentData()
             or self.settings.default_effort
         )
+        if str(selected_effort).strip().casefold() == "ultra":
+            selected_effort = "max"
         self.effort_combo.blockSignals(True)
         self.effort_combo.clear()
         effort_labels = {
@@ -4781,7 +5585,6 @@ class MainWindow(QMainWindow):
             "high": "Alto",
             "xhigh": "Muito alto",
             "max": "Máximo",
-            "ultra": "Ultra",
         }
         for effort in efforts:
             self.effort_combo.addItem(effort_labels.get(effort, effort.title()), effort)
@@ -4806,14 +5609,27 @@ class MainWindow(QMainWindow):
         model = self.model_combo.currentData() or ""
         effort = self.effort_combo.currentData() or self.effort_combo.currentText()
         if effort:
+            current = self.database.get_conversation(self.current_conversation)
+            orchestration = (
+                OrchestrationOptions.from_mapping(
+                    current,
+                    tuple(
+                        self.database.conversation_model_pool(
+                            self.current_conversation
+                        )
+                    ),
+                )
+                if current
+                else self.draft_orchestration
+            )
             options = ConversationOptions(
                 model=str(model or ""),
                 effort=str(effort),
                 service_tier=str(self.tier_combo.currentData() or ""),
                 approval_profile=str(self.approval_combo.currentData() or "auto"),
                 collaboration_mode=str(self.mode_combo.currentData() or "default"),
+                orchestration=orchestration,
             )
-            current = self.database.get_conversation(self.current_conversation)
             if current and all(
                 (
                     str(current["model"] or "") == options.model,
@@ -4833,7 +5649,7 @@ class MainWindow(QMainWindow):
             )
             worker.signals.finished.connect(lambda _result: self.refresh_conversations())
             worker.signals.error.connect(self._show_error)
-            self.pool.start(worker)
+            self._start_worker(worker)
 
     def _update_codex_controls(self) -> None:
         conversation_active = self.conversation_state == "active"
@@ -4842,27 +5658,578 @@ class MainWindow(QMainWindow):
             and not self.turn_running
             and not self.provider_switch_in_progress
         )
-        self.model_combo.setEnabled(controls_active)
+        model_locked = self._main_model_locked()
+        self.model_combo.setEnabled(controls_active and not model_locked)
+        if model_locked:
+            self.model_combo.setToolTip(
+                "Modelo principal fixado após a primeira mensagem. Os modelos dos "
+                "agentes continuam configuráveis em Orquestração."
+            )
+        elif self.model_combo.toolTip().startswith("Modelo principal fixado"):
+            self.model_combo.setToolTip(
+                "Escolher modelo. Ctrl+1…9 seleciona favoritos."
+            )
         self.effort_combo.setEnabled(controls_active)
         self.vr_flow_button.setEnabled(controls_active)
         self.send_button.setEnabled(controls_active)
-        is_codex = (
-            self.provider_combo.currentText() == "codex"
-            and controls_active
-        )
+        provider = self.provider_combo.currentText() or "codex"
+        is_codex = provider == "codex" and controls_active
         self.options_button.setEnabled(is_codex)
-        for widget in (
-            self.tier_combo,
-            self.approval_combo,
-            self.mode_combo,
-        ):
-            widget.setEnabled(is_codex)
+        self.tier_combo.setEnabled(is_codex)
+        self.mode_combo.setEnabled(is_codex)
+        self.approval_combo.setEnabled(
+            controls_active and provider in {"codex", "opencode"}
+        )
         self._update_tools_label()
 
+    def _main_model_locked(self) -> bool:
+        if not self.current_conversation or self.draft_conversation:
+            return False
+        try:
+            return any(
+                str(row["role"] or "") in {"user", "assistant"}
+                for row in self.database.messages(self.current_conversation)
+            )
+        except Exception:
+            return False
+
     def _vr_flow_toggled(self, enabled: bool) -> None:
+        if hasattr(self, "vr_local_base_action"):
+            self.vr_local_base_action.blockSignals(True)
+            self.vr_local_base_action.setChecked(enabled)
+            self.vr_local_base_action.blockSignals(False)
         self.app_preferences.setValue("chat/vr_flow_enabled", enabled)
         self.app_preferences.sync()
-        self.composer_glow.set_vr_active(enabled, animate=enabled)
+        self._update_orchestration_summary()
+
+    def _available_model_refs(self) -> list[ModelRef]:
+        unique: dict[str, ModelRef] = {}
+        for provider, models in self.model_cache.items():
+            for metadata in models:
+                model_id = str(
+                    metadata.get("id") or metadata.get("model") or ""
+                )
+                if not model_id:
+                    continue
+                raw_capabilities = (
+                    metadata.get("capabilities")
+                    or metadata.get("supportedReasoningEfforts")
+                    or []
+                )
+                capabilities = tuple(
+                    str(
+                        item.get("reasoningEffort")
+                        or item.get("value")
+                        or item.get("id")
+                        or ""
+                    )
+                    if isinstance(item, dict)
+                    else str(item)
+                    for item in raw_capabilities
+                )
+                candidate = ModelRef(
+                    provider=provider,
+                    model=model_id,
+                    display_name=str(
+                        metadata.get("displayName") or model_id
+                    ),
+                    description=str(metadata.get("description") or ""),
+                    capabilities=tuple(
+                        item for item in capabilities if item
+                    ),
+                )
+                unique[candidate.key] = candidate
+        current = self._current_orchestrator_ref()
+        unique[current.key] = current
+        for candidate in self._conversation_orchestration().model_pool:
+            unique.setdefault(candidate.key, candidate)
+        return list(unique.values())
+
+    def _current_orchestrator_ref(self) -> ModelRef:
+        provider = self.provider_combo.currentText() or "codex"
+        model_id = str(self.model_combo.currentData() or "")
+        metadata = self.model_metadata.get(model_id, {})
+        return ModelRef(
+            provider=provider,
+            model=model_id,
+            display_name=str(
+                metadata.get("displayName")
+                or self.model_combo.currentText()
+                or model_id
+                or f"{provider_display_name(provider)} padrão"
+            ),
+            description=str(metadata.get("description") or ""),
+        )
+
+    def open_orchestration_settings(self) -> None:
+        if self.turn_running:
+            self.chat_status.setText(
+                "Aguarde a resposta terminar para alterar a orquestração"
+            )
+            return
+        current = self._conversation_orchestration()
+        dialog = OrchestrationSettingsDialog(
+            self._available_model_refs(),
+            current,
+            self._current_orchestrator_ref(),
+            self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self._apply_orchestration_options(dialog.options())
+
+    def _apply_orchestration_options(
+        self, options: OrchestrationOptions
+    ) -> None:
+        orchestrator = self._current_orchestrator_ref()
+        pool = tuple(options.model_pool) or (orchestrator,)
+        normalized = OrchestrationOptions(
+            mode=options.mode,
+            strategy=options.strategy,
+            model_pool=pool,
+            show_execution=options.show_execution,
+            explain_routing=options.explain_routing,
+            dynamic_model_routing=options.dynamic_model_routing,
+            dynamic_agent_count=options.dynamic_agent_count,
+            difficulty_routing=options.difficulty_routing,
+        )
+        if self.current_conversation and self.conversation_state == "active":
+            try:
+                self.orchestrator.update_orchestration(
+                    self.current_conversation, normalized
+                )
+            except Exception as exc:
+                self._show_error(str(exc))
+                return
+        self.draft_orchestration = normalized
+        self._save_default_orchestration(normalized)
+        self._sync_orchestration_mode_ui(normalized, animate=True)
+        if not normalized.show_execution:
+            self._reset_orchestration_trace()
+        if self.current_conversation:
+            self.refresh_conversations()
+        self._update_orchestration_summary()
+        self.chat_status.setText("Orquestração VR atualizada")
+
+    def _set_orchestration_mode(self, mode: str) -> None:
+        if self.turn_running:
+            self.chat_status.setText(
+                "Aguarde a resposta terminar para alterar o modo"
+            )
+            return
+        current = self._conversation_orchestration()
+        updated = OrchestrationOptions(
+            mode=mode,
+            strategy=current.strategy,
+            model_pool=current.model_pool,
+            show_execution=current.show_execution,
+            explain_routing=current.explain_routing,
+            dynamic_model_routing=current.dynamic_model_routing,
+            dynamic_agent_count=current.dynamic_agent_count,
+            difficulty_routing=current.difficulty_routing,
+        )
+        self._apply_orchestration_options(updated)
+
+    def _sync_orchestration_mode_ui(
+        self, options: OrchestrationOptions, *, animate: bool
+    ) -> None:
+        for value, action in self.orchestration_mode_actions.items():
+            action.setChecked(value == options.mode)
+        visual_mode = options.mode if options.mode in {"standard", "ultra"} else "off"
+        self.composer_glow.set_mode(visual_mode, animate=animate)
+
+    def _update_orchestration_summary(self) -> None:
+        if not hasattr(self, "vr_flow_button"):
+            return
+        options = self._conversation_orchestration()
+        strategy_labels = {
+            "automatic": "Auto",
+            "parallel": "Paralela",
+            "specialized": "Especializada",
+            "sequential": "Sequencial",
+            "debate": "Debate",
+            "consensus": "Consenso",
+            "adaptive": "Adaptive",
+        }
+        strategy = strategy_labels.get(options.strategy, "Auto")
+        count = len(options.model_pool) or 1
+        self._sync_orchestration_mode_ui(options, animate=False)
+        mode_labels = {
+            "off": "Desligado",
+            "automatic": "Automático",
+            "standard": "Ligado",
+            "ultra": "Ultra",
+        }
+        mode_label = mode_labels.get(options.mode, "Automático")
+        base_label = "ativa" if self.vr_flow_button.isChecked() else "inativa"
+        description = (
+            f"VR · base local {base_label}\n"
+            f"Modo {mode_label} · estratégia {strategy} · "
+            f"{count} modelo(s) no pool. Use a seta para escolher."
+        )
+        self.vr_flow_button.setToolTip(description)
+        self.vr_flow_button.setAccessibleDescription(description)
+        has_agent_trace = bool(getattr(self, "_trace_plan_agents", []))
+        can_show_agents = bool(
+            options.enabled and options.show_execution and has_agent_trace
+        )
+        self.vr_agents_toggle_button.setVisible(can_show_agents)
+        if not can_show_agents:
+            self.orchestration_trace.hide()
+        if hasattr(self, "orchestration_settings_summary"):
+            orchestrator = self._current_orchestrator_ref()
+            self.orchestration_settings_summary.setText(
+                f"Orquestrador: {orchestrator.display_name or orchestrator.model}\n"
+                f"Modelos disponíveis para orquestração: {count}\n"
+                f"Modo: {mode_label} · Estratégia: {strategy}"
+            )
+
+    def _reset_orchestration_trace(self) -> None:
+        self._trace_agents = {}
+        self._trace_agent_outputs: dict[str, str] = {}
+        self._trace_plan_agents: list[dict[str, Any]] = []
+        self._trace_selected_agent = ""
+        self._trace_user_request = ""
+        if hasattr(self, "orchestration_trace"):
+            self.orchestration_trace.hide()
+            self.orchestration_agent_list.clear()
+            self.orchestration_agent_chat_title.setText("Selecione um agente")
+            self.orchestration_agent_request.clear()
+            self.orchestration_agent_request.hide()
+            self.orchestration_agent_task.clear()
+            self.orchestration_agent_task.hide()
+            self.orchestration_trace_details.clear()
+            self.orchestration_trace_status.clear()
+        if hasattr(self, "vr_agents_toggle_button"):
+            self.vr_agents_toggle_button.hide()
+
+    def _restore_orchestration_trace(
+        self, conversation_id: str, options: OrchestrationOptions
+    ) -> None:
+        self._reset_orchestration_trace()
+        if not options.show_execution:
+            return
+        row = self.database.latest_event(conversation_id, "plan_created")
+        if not row:
+            return
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return
+        self._apply_trace_plan(payload)
+        run_id = str(payload.get("run_id") or "")
+        last_text = ""
+        for event_row in self.database.orchestration_events_after(
+            conversation_id, int(row["id"])
+        ):
+            try:
+                event_payload = json.loads(event_row["payload_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                event_payload = {}
+            if run_id and str(event_payload.get("run_id") or "") != run_id:
+                continue
+            replay = RuntimeEvent(
+                conversation_id,
+                str(event_row["kind"]),
+                str(event_row["text"] or ""),
+                event_payload,
+            )
+            self._handle_orchestration_event(replay)
+            last_text = replay.text
+        self.orchestration_trace_status.setText(
+            f"Última execução · {last_text}" if last_text else "Última execução"
+        )
+        final_agent = next(
+            (item for item in self._trace_plan_agents if bool(item.get("final"))),
+            None,
+        )
+        if final_agent:
+            final_id = str(final_agent.get("id") or "")
+            if final_id and not self._trace_agent_outputs.get(final_id):
+                assistant_messages = [
+                    str(message["content"] or "")
+                    for message in self.database.messages(conversation_id)
+                    if str(message["role"] or "") == "assistant"
+                ]
+                if assistant_messages:
+                    self._trace_agent_outputs[final_id] = assistant_messages[-1]
+                    self._render_orchestration_trace()
+        self.vr_agents_toggle_button.show()
+        self._set_vr_agent_sidebar_visible(
+            self.vr_agents_sidebar_preferred,
+            persist=False,
+        )
+
+    def _apply_trace_plan(self, payload: dict[str, Any]) -> None:
+        plan = payload.get("plan") or {}
+        difficulty = plan.get("difficulty") or {}
+        agents = plan.get("agents") or []
+        if not isinstance(agents, list):
+            agents = []
+        self._trace_plan_agents = [
+            item for item in agents if isinstance(item, dict)
+        ]
+        self._trace_agents = {
+            str(item.get("id") or ""): "aguardando"
+            for item in self._trace_plan_agents
+        }
+        self._trace_agent_outputs = {}
+        self._trace_selected_agent = ""
+        self._trace_user_request = ""
+        if self.current_conversation:
+            try:
+                self._trace_user_request = next(
+                    (
+                        str(message["content"] or "")
+                        for message in reversed(
+                            self.database.messages(self.current_conversation)
+                        )
+                        if str(message["role"] or "") == "user"
+                    ),
+                    "",
+                ).strip()
+            except Exception:
+                self._trace_user_request = ""
+        mode_labels = {
+            "off": "Desligado",
+            "automatic": "Automático",
+            "standard": "Ligado",
+            "ultra": "Ultra",
+        }
+        requested_mode = str(payload.get("mode") or "automatic")
+        effective_mode = str(
+            payload.get("effective_mode")
+            or ("ultra" if payload.get("ultra") else "standard")
+        )
+        requested_label = mode_labels.get(requested_mode, "Automático")
+        effective_label = mode_labels.get(effective_mode, "Ligado")
+        self.orchestration_trace_title.setText(
+            f"🌈 {effective_label}"
+            if effective_mode == "ultra"
+            else "Orquestração VR"
+        )
+        self.orchestration_trace_status.setText(
+            f"Modo {requested_label} → {effective_label} · "
+            f"{difficulty.get('label') or 'Classificada'} · "
+            f"nível {difficulty.get('level') or '?'}"
+        )
+        self._render_orchestration_trace()
+        self.vr_agents_toggle_button.show()
+        self._set_vr_agent_sidebar_visible(
+            self.vr_agents_sidebar_preferred,
+            persist=False,
+        )
+
+    def _render_orchestration_trace(self) -> None:
+        selected = self._trace_selected_agent
+        self.orchestration_agent_list.blockSignals(True)
+        self.orchestration_agent_list.clear()
+        for item in self._trace_plan_agents:
+            identifier = str(item.get("id") or "")
+            model = item.get("model") or {}
+            model_name = str(
+                model.get("display_name")
+                or model.get("model")
+                or model.get("provider")
+                or "modelo padrão"
+            )
+            state = self._trace_agents.get(identifier, "aguardando")
+            effort = self._effort_label(str(item.get("effort") or "medium"))
+            name = str(item.get("label") or item.get("agent") or "Agente VR")
+            if name.startswith("Mary "):
+                name = "VR " + name.removeprefix("Mary ")
+            marker = {
+                "aguardando": "○",
+                "executando": "●",
+                "concluído": "✓",
+                "falhou": "!",
+                "interrompido": "■",
+            }.get(state, "○")
+            row = QListWidgetItem(
+                f"{marker}  {name}\n{model_name} · {effort} · {state}"
+            )
+            row.setData(Qt.UserRole, identifier)
+            row.setData(Qt.UserRole + 1, name)
+            row.setSizeHint(QSize(0, 52))
+            if state == "executando":
+                row.setForeground(QColor("#2196D3"))
+            elif state == "falhou":
+                row.setForeground(QColor("#C62828"))
+            elif state == "concluído":
+                row.setForeground(QColor("#2E7D32"))
+            self.orchestration_agent_list.addItem(row)
+        ordered_identifiers = [
+            str(item.get("id") or "") for item in self._trace_plan_agents
+        ]
+        identifiers = set(ordered_identifiers)
+        if selected not in identifiers:
+            selected = next(
+                (
+                    identifier
+                    for identifier, state in self._trace_agents.items()
+                    if state == "executando"
+                ),
+                ordered_identifiers[0] if ordered_identifiers else "",
+            )
+        self._trace_selected_agent = selected
+        selected_row = -1
+        for index in range(self.orchestration_agent_list.count()):
+            if str(
+                self.orchestration_agent_list.item(index).data(Qt.UserRole) or ""
+            ) == selected:
+                selected_row = index
+                break
+        self.orchestration_agent_list.setCurrentRow(selected_row)
+        self.orchestration_agent_list.blockSignals(False)
+        self._render_selected_agent_chat()
+
+    def _select_orchestration_agent(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None = None,
+    ) -> None:
+        if current is None:
+            return
+        self._trace_selected_agent = str(current.data(Qt.UserRole) or "")
+        self._render_selected_agent_chat()
+
+    def _render_selected_agent_chat(self) -> None:
+        identifier = str(getattr(self, "_trace_selected_agent", "") or "")
+        item = next(
+            (
+                candidate
+                for candidate in self._trace_plan_agents
+                if str(candidate.get("id") or "") == identifier
+            ),
+            None,
+        )
+        if not item:
+            self.orchestration_agent_chat_title.setText("Selecione um agente")
+            self.orchestration_agent_request.hide()
+            self.orchestration_agent_task.hide()
+            self.orchestration_trace_details.clear()
+            return
+        model = item.get("model") or {}
+        model_name = str(
+            model.get("display_name")
+            or model.get("model")
+            or model.get("provider")
+            or "modelo padrão"
+        )
+        name = str(item.get("label") or item.get("agent") or "Agente VR")
+        if name.startswith("Mary "):
+            name = "VR " + name.removeprefix("Mary ")
+        state = self._trace_agents.get(identifier, "aguardando")
+        effort = self._effort_label(str(item.get("effort") or "medium"))
+        self.orchestration_agent_chat_title.setText(
+            f"{name}\n{model_name} · effort {effort} · {state}"
+        )
+        task = str(item.get("task") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        output = self._trace_agent_outputs.get(identifier, "").strip()
+        user_request = str(getattr(self, "_trace_user_request", "") or "")
+        if user_request:
+            self.orchestration_agent_request.setPlainText(user_request)
+            request_width = max(260, self.orchestration_trace.width() - 54)
+            self.orchestration_agent_request.document().setTextWidth(request_width)
+            request_height = int(
+                self.orchestration_agent_request.document().size().height()
+            ) + 48
+            self.orchestration_agent_request.setFixedHeight(
+                min(150, max(72, request_height))
+            )
+            self.orchestration_agent_request.show()
+        else:
+            self.orchestration_agent_request.hide()
+        context_lines = []
+        if task:
+            context_lines.append(f"Tarefa: {task}")
+        if reason:
+            context_lines.append(f"Roteamento: {reason}")
+        self.orchestration_agent_task.setText("\n".join(context_lines))
+        self.orchestration_agent_task.setVisible(bool(context_lines))
+        sections: list[str] = []
+        if output:
+            sections.append(html.escape(output))
+        elif state == "executando":
+            sections.append("_O agente está produzindo a resposta…_")
+        elif state == "aguardando":
+            sections.append("_Preparando execução em paralelo…_")
+        elif state == "falhou":
+            sections.append("_O agente não concluiu esta execução._")
+        self._configure_message_document(self.orchestration_trace_details)
+        self.orchestration_trace_details.setMarkdown("\n\n".join(sections))
+
+    def _handle_orchestration_event(self, event: RuntimeEvent) -> None:
+        options = self._conversation_orchestration()
+        if not options.show_execution:
+            return
+        if event.kind == "plan_created":
+            self._apply_trace_plan(event.payload)
+        elif event.kind == "orchestration_started":
+            self.orchestration_trace_status.setText(event.text)
+        elif event.kind == "synthesis_started":
+            for item in self._trace_plan_agents:
+                if bool(item.get("final")):
+                    identifier = str(item.get("id") or "")
+                    self._trace_agents[identifier] = "executando"
+                    self._trace_selected_agent = identifier
+            self.orchestration_trace_status.setText(event.text)
+            self._render_orchestration_trace()
+        elif event.kind == "agent_delta":
+            identifier = str(event.payload.get("agent_id") or "")
+            if identifier:
+                self._trace_agents[identifier] = "executando"
+                self._trace_agent_outputs[identifier] = (
+                    self._trace_agent_outputs.get(identifier, "") + event.text
+                )
+                if not self._trace_selected_agent:
+                    self._trace_selected_agent = identifier
+                if self._trace_selected_agent == identifier:
+                    self._render_selected_agent_chat()
+        elif event.kind in {"agent_started", "agent_completed", "agent_failed"}:
+            identifier = str(event.payload.get("agent_id") or "")
+            state = {
+                "agent_started": "executando",
+                "agent_completed": "concluído",
+                "agent_failed": "falhou",
+            }[event.kind]
+            if identifier:
+                self._trace_agents[identifier] = state
+                output = str(
+                    event.payload.get("output")
+                    or event.payload.get("output_preview")
+                    or event.payload.get("error")
+                    or ""
+                ).strip()
+                if output:
+                    self._trace_agent_outputs[identifier] = output
+            self.orchestration_trace_status.setText(event.text)
+            self._render_orchestration_trace()
+        elif event.kind in {
+            "parallel_group_started",
+            "parallel_group_completed",
+            "validation_started",
+            "validation_completed",
+            "revision_started",
+        }:
+            self.orchestration_trace_status.setText(event.text)
+        elif event.kind == "orchestration_completed":
+            for item in self._trace_plan_agents:
+                if bool(item.get("final")):
+                    self._trace_agents[str(item.get("id") or "")] = "concluído"
+            self.orchestration_trace_status.setText(event.text)
+            self._render_orchestration_trace()
+        elif event.kind == "orchestration_cancelled":
+            for identifier, state in tuple(self._trace_agents.items()):
+                if state == "executando":
+                    self._trace_agents[identifier] = "interrompido"
+            self.orchestration_trace_status.setText(event.text)
+            self._render_orchestration_trace()
+        self._set_vr_agent_sidebar_visible(
+            self.vr_agents_sidebar_preferred,
+            persist=False,
+        )
 
     def search_context(self) -> None:
         query = self.context_search.text().strip()
@@ -5338,7 +6705,7 @@ class MainWindow(QMainWindow):
         if path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
-    def open_mary_in_codex(self) -> None:
+    def open_vr_in_codex(self) -> None:
         try:
             result = ensure_portable_project(self.settings.root)
             export_catalog(self.database, self.settings.index_dir)
@@ -5473,9 +6840,34 @@ class MainWindow(QMainWindow):
 
     def sync_all(self) -> None:
         def operation():
-            wiki = WikiSync(self.settings, self.database, self._sync_progress).sync()
-            kb = self._sync_kb_with_auth_fallback()
-            return {"wiki": wiki.to_dict(), "kb": kb.to_dict()}
+            results: dict[str, Any] = {}
+            operations = (
+                (
+                    "wiki",
+                    lambda: WikiSync(
+                        self.settings, self.database, self._sync_progress
+                    ).sync(),
+                ),
+                ("kb", self._sync_kb_with_auth_fallback),
+            )
+            for source, sync_operation in operations:
+                try:
+                    result = sync_operation()
+                except Exception as exc:
+                    results[source] = {
+                        "source": source,
+                        "status": "error",
+                        "errors": 1,
+                        "error": str(exc),
+                    }
+                    self._sync_progress(
+                        f"{source.upper()}: falha; continuando as demais fontes."
+                    )
+                else:
+                    results[source] = (
+                        result.to_dict() if hasattr(result, "to_dict") else result
+                    )
+            return results
 
         self._run_sync("Wiki + KB", operation)
 
@@ -5497,7 +6889,7 @@ class MainWindow(QMainWindow):
             lambda result: self._sync_finished(label, result)
         )
         worker.signals.error.connect(self._sync_error)
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _sync_progress(self, message: str) -> None:
         self.sync_progress_signal.emit(message)
@@ -5507,11 +6899,27 @@ class MainWindow(QMainWindow):
 
     def _sync_finished(self, label: str, result: Any) -> None:
         self.sync_running = False
-        self.sync_status.setText(f"{label}: concluído")
         value = result.to_dict() if hasattr(result, "to_dict") else result
+        errors = self._sync_result_errors(value)
+        self.sync_status.setText(
+            f"{label}: concluído com {errors} falha(s)"
+            if errors
+            else f"{label}: concluído"
+        )
         self.sync_log.appendPlainText(json.dumps(value, ensure_ascii=False, indent=2))
         self.refresh_dashboard()
         self.refresh_reviews()
+
+    @staticmethod
+    def _sync_result_errors(value: Any) -> int:
+        if not isinstance(value, dict):
+            return 0
+        own = int(value.get("errors", 0) or 0)
+        return own + sum(
+            MainWindow._sync_result_errors(child)
+            for child in value.values()
+            if isinstance(child, dict)
+        )
 
     def _sync_error(self, error: str) -> None:
         self.sync_running = False
@@ -5523,7 +6931,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "video_tree"):
             return
         from ..courses import load_course_catalog
-        from ..models import VideoItem
+        from ..inventory import load_inventory
         from ..settings import load_settings
         from ..video_classification import load_module_overrides
         from ..video_storage import format_byte_size, inspect_video_storage
@@ -5531,15 +6939,22 @@ class MainWindow(QMainWindow):
         inventory_path = self.settings.root / "metadata" / "videos.json"
         course_path = self.settings.root / "metadata" / "courses.json"
         override_path = self.settings.root / "metadata" / "video_module_overrides.json"
-        rows: list[VideoItem] = []
-        if inventory_path.exists():
-            try:
-                raw = json.loads(inventory_path.read_text(encoding="utf-8"))
-                rows = [VideoItem.from_dict(value) for value in raw if isinstance(value, dict)]
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                rows = []
-        courses = load_course_catalog(course_path)
-        overrides = load_module_overrides(override_path)
+        data_errors: list[str] = []
+        try:
+            rows = load_inventory(inventory_path)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            rows = []
+            data_errors.append(f"inventário inválido ({exc})")
+        try:
+            courses = load_course_catalog(course_path)
+        except (OSError, TypeError, ValueError) as exc:
+            courses = []
+            data_errors.append(f"catálogo de cursos inválido ({exc})")
+        try:
+            overrides = load_module_overrides(override_path)
+        except (OSError, TypeError, ValueError) as exc:
+            overrides = {"groups": {}, "items": {}}
+            data_errors.append(f"classificações manuais inválidas ({exc})")
         storage = inspect_video_storage(
             rows, load_settings(project_dir=self.settings.root)
         )
@@ -5794,10 +7209,15 @@ class MainWindow(QMainWindow):
             for info in storage.values()
             if info.path is not None
         }
-        self.video_status.setText(
+        summary = (
             f"{len(rows)} vídeos · {len(courses)} cursos no catálogo · "
             f"{downloaded_count}/{len(rows)} baixados · "
             f"{format_byte_size(sum(disk_files.values()))}"
+        )
+        self.video_status.setText(
+            f"Falha de dados: {'; '.join(data_errors)} · {summary}"
+            if data_errors
+            else summary
         )
 
     def _video_selection_changed(self) -> None:
@@ -5837,23 +7257,40 @@ class MainWindow(QMainWindow):
             return
         from ..inventory import load_inventory, save_inventory
         from ..settings import load_settings
-        from ..video_classification import classify_inventory, save_module_override
+        from ..video_classification import classify_inventory, save_module_overrides
 
         extractor_settings = load_settings(project_dir=self.settings.root)
-        for scope, key in targets:
-            save_module_override(
-                extractor_settings.video_overrides_path,
-                key=key,
-                module=module,
-                scope=scope,
-            )
-        items = load_inventory(extractor_settings.inventory_json_path)
-        classify_inventory(items, extractor_settings.video_overrides_path)
-        save_inventory(
-            items,
-            extractor_settings.inventory_json_path,
-            extractor_settings.inventory_csv_path,
+        override_path = extractor_settings.video_overrides_path
+        previous_override = (
+            override_path.read_bytes() if override_path.is_file() else None
         )
+        try:
+            save_module_overrides(
+                extractor_settings.video_overrides_path,
+                [(scope, key, module) for scope, key in sorted(targets)],
+            )
+            items = load_inventory(extractor_settings.inventory_json_path)
+            classify_inventory(items, extractor_settings.video_overrides_path)
+            save_inventory(
+                items,
+                extractor_settings.inventory_json_path,
+                extractor_settings.inventory_csv_path,
+            )
+        except Exception as exc:
+            try:
+                if previous_override is None:
+                    override_path.unlink(missing_ok=True)
+                else:
+                    override_path.parent.mkdir(parents=True, exist_ok=True)
+                    override_path.write_bytes(previous_override)
+            except OSError as rollback_error:
+                self._show_error(
+                    f"{exc}\n\nTambém não foi possível restaurar as "
+                    f"classificações anteriores: {rollback_error}"
+                )
+                return
+            self._show_error(str(exc))
+            return
         self.refresh_video_tree()
         self.refresh_dashboard()
 
@@ -5932,18 +7369,20 @@ class MainWindow(QMainWindow):
         self.video_process.setProcessChannelMode(QProcess.MergedChannels)
         self.video_process.readyReadStandardOutput.connect(self._read_video_output)
         self.video_process.finished.connect(self._video_process_finished)
+        self.video_process.errorOccurred.connect(self._video_process_error)
         self._video_decoder = new_video_output_decoder()
-        args = [
-            "-m",
-            "vrsoft_extractor",
-            "--project-dir",
-            str(self.settings.root),
+        executable, args = video_process_command(
+            self.settings.root,
             action,
-            *(extra_args or []),
-        ]
+            extra_args,
+        )
         self.video_status.setText(f"Executando {action}…")
-        self.video_log.appendPlainText("$ python " + " ".join(args))
-        self.video_process.start(sys.executable, args)
+        for button in self.video_action_buttons:
+            button.setEnabled(button is self.video_stop_button)
+        self.video_log.appendPlainText(
+            "$ " + Path(executable).name + " " + " ".join(args)
+        )
+        self.video_process.start(executable, args)
 
     def _read_video_output(self) -> None:
         if self.video_process:
@@ -5957,31 +7396,39 @@ class MainWindow(QMainWindow):
         tail = self._video_decoder.decode(b"", final=True)
         if tail:
             self.video_log.appendPlainText(tail.rstrip())
-        self.video_status.setText(f"Concluído · código {code}")
+        self.video_status.setText(
+            "Concluído" if code == 0 else f"Falha · código {code}"
+        )
+        for button in self.video_action_buttons:
+            button.setEnabled(button is not self.video_stop_button)
         self.refresh_video_tree()
         self.refresh_dashboard()
 
+    def _video_process_error(self, error) -> None:
+        if self.video_process and self.video_process.state() != QProcess.NotRunning:
+            return
+        self.video_status.setText(f"Falha ao iniciar processo · {error}")
+        for button in self.video_action_buttons:
+            button.setEnabled(button is not self.video_stop_button)
+
     def stop_video_action(self) -> None:
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
+            self.video_status.setText("Cancelando…")
+            self.video_stop_button.setEnabled(False)
             self.video_process.terminate()
 
     def save_settings(self) -> None:
-        env_path = self.settings.app_dir / ".env"
         values: dict[str, str] = {}
-        if env_path.exists():
-            for line in env_path.read_text(encoding="utf-8").splitlines():
-                if "=" in line and not line.lstrip().startswith("#"):
-                    key, value = line.split("=", 1)
-                    values[key.strip()] = value
         for key, field in self.settings_fields.items():
             if isinstance(field, QComboBox):
                 values[key] = str(field.currentData() or field.currentText())
             else:
                 values[key] = field.text()
-        env_path.write_text(
-            "\n".join(f"{key}={value}" for key, value in values.items()) + "\n",
-            encoding="utf-8",
-        )
+        try:
+            save_mary_env(self.settings.app_dir, values)
+        except (ConfigError, OSError) as exc:
+            self._show_error(f"Não foi possível salvar as configurações: {exc}")
+            return
         QMessageBox.information(
             self,
             APP_TITLE,
@@ -5992,7 +7439,7 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "Instalar OCR local",
-            "Baixar e instalar o Tesseract por+eng dentro da base VR_Mary_V2?",
+            "Baixar e instalar o Tesseract por+eng dentro da base VR?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -6010,7 +7457,7 @@ class MainWindow(QMainWindow):
             )
         )
         worker.signals.error.connect(self._sync_error)
-        self.pool.start(worker)
+        self._start_worker(worker)
 
     def _setup_auto_sync(self) -> None:
         if self.smoke_test:
@@ -6038,7 +7485,12 @@ class MainWindow(QMainWindow):
 
     def _append_log(self, message: str) -> None:
         redacted = message
-        for key in ("MOVIDESK_PASSWORD", "ENDOO_PASSWORD"):
+        for key in (
+            "MOVIDESK_EMAIL",
+            "MOVIDESK_PASSWORD",
+            "ENDOO_EMAIL",
+            "ENDOO_PASSWORD",
+        ):
             secret = os.environ.get(key, "")
             if secret:
                 redacted = redacted.replace(secret, "***")
@@ -6053,13 +7505,16 @@ class MainWindow(QMainWindow):
         self.orchestrator.close()
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
             self.video_process.terminate()
+            if not self.video_process.waitForFinished(3000):
+                self.video_process.kill()
+                self.video_process.waitForFinished(2000)
         event.accept()
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--project-dir", default=None)
-    parser.add_argument("--mary-root", default=None)
+    parser.add_argument("--vr-root", "--mary-root", dest="vr_root", default=None)
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--screenshot", default="")
     parser.add_argument("--screenshot-page", default="Dashboard")
@@ -6089,7 +7544,11 @@ def main(argv: list[str] | None = None) -> int:
     app_dir = args.project_dir or (
         str(Path(sys.executable).resolve().parent) if getattr(sys, "frozen", False) else "."
     )
-    settings = load_mary_settings(app_dir, args.mary_root)
+    try:
+        settings = load_mary_settings(app_dir, args.vr_root)
+    except ConfigError as exc:
+        QMessageBox.critical(None, APP_TITLE, f"Configuração inválida: {exc}")
+        return 1
     window = MainWindow(
         settings,
         smoke_test=args.smoke_test or bool(args.screenshot),
@@ -6121,9 +7580,11 @@ def main(argv: list[str] | None = None) -> int:
             window.nav_frame.show()
             window.repaint()
             app.processEvents()
-            QTimer.singleShot(150, save_capture)
+            QTimer.singleShot(250, save_capture)
 
-        QTimer.singleShot(600, capture)
+        # A frozen build needs longer to load Qt plugins and paint its first
+        # frame than a source run. Capturing earlier can yield an all-black PNG.
+        QTimer.singleShot(1500, capture)
     return app.exec()
 
 
@@ -6171,7 +7632,7 @@ def apply_application_theme(app: QApplication, theme_id: str = "light") -> None:
         QColor(disabled_text),
     )
     app.setPalette(palette)
-    app.setProperty("mary_theme", selected_theme)
+    app.setProperty("vr_theme", selected_theme)
     font_family = _load_application_font()
     stylesheet = STYLESHEET.replace("__APP_FONT__", font_family)
     if dark:

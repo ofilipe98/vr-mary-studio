@@ -47,8 +47,8 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
     assert (root / "tools" / "mary-search.ps1").is_file()
     assert (root / "Abrir-Mary-no-Codex.cmd").is_file()
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "ativa o fluxo Mary automaticamente" in agents
-    assert "prefixo `Mary:` é aceito, mas opcional" in agents
+    assert "ativa o fluxo VR automaticamente" in agents
+    assert "prefixo `VR:` é aceito, mas opcional" in agents
     assert "Modo multiagente real do Codex indisponível" not in agents
     assert "tente delegar o papel a um subagente" in agents
     assert not second.preserved
@@ -163,6 +163,26 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     video.parent.mkdir()
     video.write_bytes(b"video")
     (source / "videos" / "inventory.json").write_text("{}", encoding="utf-8")
+    private_workspace = source / "TrabalhoMary" / "private-chat"
+    private_workspace.mkdir(parents=True)
+    (private_workspace / "segredo.txt").write_text(
+        "histórico privado", encoding="utf-8"
+    )
+    conversation_id = database.create_conversation(
+        "Conversa privada", "codex", "gpt-test", private_workspace
+    )
+    database.add_message(conversation_id, "user", "conteúdo privado")
+    inactive = source / "conhecimento" / "PDV" / "KB" / "obsoleto.md"
+    inactive.write_text("conteúdo removido", encoding="utf-8")
+    with database.connect() as connection:
+        connection.execute(
+            """INSERT INTO documents
+               (source,source_id,title,url,module,review_status,status,synced_at,
+                content_hash,local_path)
+               VALUES('kb','old','Obsoleto','https://example.test/old','PDV',
+                      'approved','inactive','now','old-hash',?)""",
+            (str(inactive),),
+        )
 
     result = export_portable_project(source, destination)
 
@@ -171,6 +191,9 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     assert not (destination / ".env").exists()
     assert not (destination / "videos" / "course.mp4").exists()
     assert (destination / "videos" / "inventory.json").is_file()
+    assert (destination / "TrabalhoMary").is_dir()
+    assert not (destination / "TrabalhoMary" / "private-chat").exists()
+    assert not (destination / "conhecimento" / "PDV" / "KB" / "obsoleto.md").exists()
     assert "assets/kb/pinpad.png" in (
         destination / "conhecimento" / "PDV" / "KB" / "pinpad.md"
     ).read_text(encoding="utf-8")
@@ -179,6 +202,15 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     ).get_document("kb", "289782")
     assert migrated is not None
     assert migrated["local_path"] == "conhecimento/PDV/KB/pinpad.md"
+    portable_database = MaryDatabase(
+        destination / "indice" / "conhecimento.sqlite", root=destination
+    )
+    with portable_database.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM messages").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
+    assert (private_workspace / "segredo.txt").is_file()
+    assert database.get_conversation(conversation_id) is not None
     audit = audit_portable_project(destination)
     assert audit["ready"] is True
     assert audit["absolute_database_paths"] == 0

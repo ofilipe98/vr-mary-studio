@@ -5,8 +5,12 @@ import subprocess
 import urllib.parse
 import urllib.request
 import re
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
+
+MAX_OCR_DOWNLOAD_BYTES = 100 * 1024 * 1024
 
 
 @dataclass
@@ -39,9 +43,16 @@ class OcrManager:
         tessdata = executable.parent / "tessdata"
         if not tessdata.exists():
             tessdata = self.portable_dir / "tessdata"
-        return (tessdata / "por.traineddata").exists() and (
-            tessdata / "eng.traineddata"
-        ).exists()
+        try:
+            return all(
+                path.is_file() and path.stat().st_size >= 100_000
+                for path in (
+                    tessdata / "por.traineddata",
+                    tessdata / "eng.traineddata",
+                )
+            )
+        except OSError:
+            return False
 
     def extract(self, image_path: Path) -> OcrResult:
         executable = self.executable
@@ -89,25 +100,28 @@ class OcrManager:
         installer_url = latest_windows_installer_url(listing, listing_url)
         installer = self.portable_dir.parent / "tesseract-setup.exe"
         report(f"Baixando {Path(urllib.parse.urlsplit(installer_url).path).name}…")
-        urllib.request.urlretrieve(installer_url, installer)
-        report("Instalando o mecanismo OCR na pasta local…")
-        completed = subprocess.run(
-            [
-                str(installer),
-                "/VERYSILENT",
-                "/SUPPRESSMSGBOXES",
-                "/NORESTART",
-                f"/DIR={self.portable_dir}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if completed.returncode:
-            raise RuntimeError(
-                "Instalador Tesseract falhou: "
-                + (completed.stderr.strip() or completed.stdout.strip())
+        _download_file(installer_url, installer, minimum_bytes=1_000_000)
+        try:
+            report("Instalando o mecanismo OCR na pasta local…")
+            completed = subprocess.run(
+                [
+                    str(installer),
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    f"/DIR={self.portable_dir}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
+            if completed.returncode:
+                raise RuntimeError(
+                    "Instalador Tesseract falhou: "
+                    + (completed.stderr.strip() or completed.stdout.strip())
+                )
+        finally:
+            installer.unlink(missing_ok=True)
         tessdata = self.portable_dir / "tessdata"
         tessdata.mkdir(parents=True, exist_ok=True)
         for language in ("por", "eng"):
@@ -119,15 +133,49 @@ class OcrManager:
                 "https://raw.githubusercontent.com/tesseract-ocr/"
                 f"tessdata_fast/main/{language}.traineddata"
             )
-            urllib.request.urlretrieve(url, target)
-        try:
-            installer.unlink()
-        except OSError:
-            pass
+            _download_file(url, target, minimum_bytes=100_000)
         if not self.is_ready():
             raise RuntimeError("Tesseract foi instalado, mas por+eng não foi validado.")
         report("OCR portátil por+eng pronto.")
         return self.executable or self.portable_dir / "tesseract.exe"
+
+
+def _download_file(
+    url: str,
+    target: Path,
+    *,
+    minimum_bytes: int,
+    maximum_bytes: int = MAX_OCR_DOWNLOAD_BYTES,
+) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise RuntimeError(f"URL de download OCR insegura ou inválida: {url}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            with temporary.open("wb") as handle:
+                total = 0
+                while chunk := response.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > maximum_bytes:
+                        raise RuntimeError(
+                            f"Download excede o limite de {maximum_bytes} bytes: {target.name}."
+                        )
+                    handle.write(chunk)
+        if temporary.stat().st_size < minimum_bytes:
+            raise RuntimeError(
+                f"Download incompleto para {target.name}: "
+                f"{temporary.stat().st_size} bytes."
+            )
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def latest_windows_installer_url(listing: str, base_url: str) -> str:
@@ -138,4 +186,16 @@ def latest_windows_installer_url(listing: str, base_url: str) -> str:
     )
     if not links:
         raise RuntimeError("Não foi encontrado instalador Windows x64 do Tesseract.")
-    return urllib.parse.urljoin(base_url, sorted(set(links))[-1])
+
+    def version_key(link: str) -> tuple[int, ...]:
+        filename = Path(urllib.parse.urlsplit(link).path).name
+        version = re.search(r"setup-([0-9][0-9.]*)", filename, re.IGNORECASE)
+        value = (version.group(1) if version else "0").rstrip(".")
+        return tuple(int(part) for part in value.split("."))
+
+    result = urllib.parse.urljoin(base_url, max(set(links), key=version_key))
+    base = urllib.parse.urlsplit(base_url)
+    parsed = urllib.parse.urlsplit(result)
+    if parsed.scheme != "https" or parsed.hostname != base.hostname:
+        raise RuntimeError("O catálogo OCR apontou para um instalador fora da origem confiável.")
+    return result

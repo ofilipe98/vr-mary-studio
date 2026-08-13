@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (
 
 from .chat_tools import ToolValidationError, validate_tool_definition
 from .db import MaryDatabase
+from .models import ModelRef, OrchestrationOptions
 from .spellcheck import LocalSpellChecker
 
 
@@ -76,8 +77,17 @@ ASSET_DIR = Path(__file__).resolve().parent / "assets"
 PROVIDER_ICON_PATHS = {
     "codex": ASSET_DIR / "provider-gpt.png",
     "claude": ASSET_DIR / "provider-claude.webp",
+    "opencode": ASSET_DIR / "provider-opencode.svg",
 }
 _PROVIDER_ICON_CACHE: dict[str, QIcon] = {}
+
+
+def provider_display_name(provider: str) -> str:
+    return {
+        "codex": "Codex",
+        "claude": "Claude",
+        "opencode": "OpenCode",
+    }.get(str(provider).casefold(), str(provider).title())
 
 
 def provider_icon(provider: str) -> QIcon:
@@ -117,17 +127,38 @@ def provider_icon(provider: str) -> QIcon:
     return icon
 
 
+_RAINBOW_STOPS = (
+    (0.00, "#FF4D4D"),
+    (0.14, "#FF9F1C"),
+    (0.28, "#FFE66D"),
+    (0.42, "#35D07F"),
+    (0.57, "#26C6DA"),
+    (0.71, "#4F7CFF"),
+    (0.85, "#A855F7"),
+    (0.93, "#FF4D9D"),
+    (1.00, "#FF4D4D"),
+)
+
+
+def _rainbow_gradient(bounds: QRectF, phase: float) -> QConicalGradient:
+    gradient = QConicalGradient(bounds.center(), -90.0 + (360.0 * phase))
+    for position, color in _RAINBOW_STOPS:
+        gradient.setColorAt(position, QColor(color))
+    return gradient
+
+
 class AnimatedVrFlowButton(QToolButton):
-    """Compact animated switch for the optional local VR knowledge flow."""
+    """Compact split button for the local base and VR execution modes."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._glow = 0.0
+        self._compact = False
         self.setCheckable(True)
         self.setChecked(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(62, 30)
-        self.setAccessibleName("Fluxo VR")
+        self.setAccessibleName("VR: base local e modos de orquestração")
 
         self._glow_animation = QPropertyAnimation(self, b"glow", self)
         self._glow_animation.setDuration(950)
@@ -138,6 +169,11 @@ class AnimatedVrFlowButton(QToolButton):
         self._glow_animation.setKeyValueAt(1.0, 0.0)
         self.toggled.connect(self._sync_state)
         self._sync_state(self.isChecked(), animate=False)
+
+    def set_compact(self, compact: bool) -> None:
+        self._compact = bool(compact)
+        self.setFixedSize(34 if self._compact else 62, 30)
+        self.update()
 
     def _get_glow(self) -> float:
         return self._glow
@@ -158,7 +194,10 @@ class AnimatedVrFlowButton(QToolButton):
         else:
             self._glow_animation.stop()
             self._set_glow(0.0)
-            description = "Fluxo VR inativo: conversa diretamente com a LLM"
+            description = (
+                "Fluxo VR inativo: não consulta a base local; o modo de "
+                "orquestração não é alterado"
+            )
         self.setToolTip(description)
         self.setAccessibleDescription(description)
         self.update()
@@ -185,7 +224,7 @@ class AnimatedVrFlowButton(QToolButton):
             application = QApplication.instance()
             dark = bool(
                 application
-                and application.property("mary_theme") == "dark_orange"
+                and application.property("vr_theme") == "dark_orange"
             )
             painter.setPen(QPen(QColor("#756A63" if dark else "#B9B9C5"), 1.2))
             painter.setBrush(QColor("#24201D" if dark else "#F1F1F5"))
@@ -193,7 +232,10 @@ class AnimatedVrFlowButton(QToolButton):
             star_color = QColor("#9D9189" if dark else "#777789")
         painter.drawRoundedRect(body, radius, radius)
 
-        star_center = QPointF(body.left() + 13.0, body.center().y())
+        star_center = QPointF(
+            body.left() + 12.0 if self._compact else body.left() + 13.0,
+            body.center().y(),
+        )
         outer = 5.0 if self.isChecked() else 4.2
         inner = 1.35
         star = QPainterPath()
@@ -215,10 +257,27 @@ class AnimatedVrFlowButton(QToolButton):
         font.setPointSizeF(max(8.5, font.pointSizeF()))
         painter.setFont(font)
         painter.setPen(text_color)
-        painter.drawText(
-            QRectF(body.left() + 21.0, body.top(), body.width() - 25.0, body.height()),
-            Qt.AlignCenter,
-            "VR",
+        if not self._compact:
+            painter.drawText(
+                QRectF(
+                    body.left() + 21.0,
+                    body.top(),
+                    body.width() - 34.0,
+                    body.height(),
+                ),
+                Qt.AlignCenter,
+                "VR",
+            )
+        arrow_center = QPointF(body.right() - 8.0, body.center().y())
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(text_color, 1.4, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(
+            QPointF(arrow_center.x() - 2.5, arrow_center.y() - 1.0),
+            QPointF(arrow_center.x(), arrow_center.y() + 1.5),
+        )
+        painter.drawLine(
+            QPointF(arrow_center.x(), arrow_center.y() + 1.5),
+            QPointF(arrow_center.x() + 2.5, arrow_center.y() - 1.0),
         )
         if self.hasFocus():
             painter.setBrush(Qt.NoBrush)
@@ -228,12 +287,12 @@ class AnimatedVrFlowButton(QToolButton):
 
 
 class VrComposerGlowFrame(QFrame):
-    """Orange-spectrum aurora around the composer while the VR flow is active."""
+    """Single composer outline for the selected VR execution mode."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("chatComposerGlow")
-        self._vr_active = False
+        self._mode = "off"
         self._phase = 0.0
         self._phase_animation = QPropertyAnimation(self, b"phase", self)
         self._phase_animation.setDuration(1100)
@@ -251,42 +310,76 @@ class VrComposerGlowFrame(QFrame):
 
     phase = Property(float, _get_phase, _set_phase)
 
-    def set_vr_active(self, enabled: bool, *, animate: bool = True) -> None:
-        enabled = bool(enabled)
-        changed = enabled != self._vr_active
-        self._vr_active = enabled
-        if not enabled:
+    def set_mode(self, mode: str, *, animate: bool = True) -> None:
+        mode = str(mode or "off").strip().casefold()
+        if mode not in {"standard", "ultra"}:
+            mode = "off"
+        changed = mode != self._mode
+        self._mode = mode
+        if mode == "off":
             self._phase_animation.stop()
             self._set_phase(0.0)
             return
-        if animate and changed:
+        self._phase_animation.stop()
+        if mode == "ultra":
+            self._phase_animation.setDuration(5200)
+            self._phase_animation.setLoopCount(-1)
+            self._phase_animation.setEasingCurve(QEasingCurve.Linear)
+        else:
+            self._phase_animation.setDuration(1100)
+            self._phase_animation.setLoopCount(1)
+            self._phase_animation.setEasingCurve(QEasingCurve.OutCubic)
+        if mode == "ultra":
+            if animate and changed:
+                self._set_phase(0.0)
+            self._phase_animation.start()
+        elif animate and changed:
             self._phase_animation.stop()
             self._set_phase(0.0)
             self._phase_animation.start()
         else:
             self.update()
 
+    def mode(self) -> str:
+        return self._mode
+
+    # Compatibility for older callers; the outline now belongs to Modos.
+    def set_vr_active(self, enabled: bool, *, animate: bool = True) -> None:
+        self.set_mode("standard" if enabled else "off", animate=animate)
+
     def vr_active(self) -> bool:
-        return self._vr_active
+        return self._mode != "off"
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if self._mode == "ultra" and self._phase_animation.state() != QPropertyAnimation.Running:
+            self._phase_animation.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self._phase_animation.stop()
+        super().hideEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().paintEvent(event)
-        if not self._vr_active:
+        if self._mode == "off":
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         bounds = QRectF(self.rect()).adjusted(3.0, 3.0, -3.0, -3.0)
-        gradient = QConicalGradient(
-            bounds.center(),
-            -90.0 + (360.0 * self._phase),
-        )
-        gradient.setColorAt(0.00, QColor("#7A3500"))
-        gradient.setColorAt(0.18, QColor("#FF7200"))
-        gradient.setColorAt(0.36, QColor("#FCBD0F"))
-        gradient.setColorAt(0.55, QColor("#E85B00"))
-        gradient.setColorAt(0.74, QColor("#C45100"))
-        gradient.setColorAt(0.90, QColor("#FF9A3D"))
-        gradient.setColorAt(1.00, QColor("#7A3500"))
+        if self._mode == "ultra":
+            gradient = _rainbow_gradient(bounds, self._phase)
+        else:
+            gradient = QConicalGradient(
+                bounds.center(),
+                -90.0 + (360.0 * self._phase),
+            )
+            gradient.setColorAt(0.00, QColor("#7A3500"))
+            gradient.setColorAt(0.18, QColor("#FF7200"))
+            gradient.setColorAt(0.36, QColor("#FCBD0F"))
+            gradient.setColorAt(0.55, QColor("#E85B00"))
+            gradient.setColorAt(0.74, QColor("#C45100"))
+            gradient.setColorAt(0.90, QColor("#FF9A3D"))
+            gradient.setColorAt(1.00, QColor("#7A3500"))
         if self._phase_animation.state() == QPropertyAnimation.Running:
             pulse = 1.0 - abs((2.0 * self._phase) - 1.0)
             painter.setOpacity(0.16 + (0.18 * pulse))
@@ -308,7 +401,10 @@ class SpellHighlighter(QSyntaxHighlighter):
         self.format.setUnderlineStyle(QTextCharFormat.SpellCheckUnderline)
 
     def highlightBlock(self, text: str) -> None:  # noqa: N802 - Qt API
-        for issue in self.checker.misspellings(text):
+        # Suggestions can require an expensive edit-distance search. Live
+        # highlighting only needs membership; suggestions are computed lazily
+        # when the user opens the context menu for a specific word.
+        for issue in self.checker.misspellings(text, include_suggestions=False):
             self.setFormat(issue.start, issue.length, self.format)
 
 
@@ -440,7 +536,7 @@ class RoundedPopupDialog(QDialog):
         super().paintEvent(event)
         application = QApplication.instance()
         dark = bool(
-            application and application.property("mary_theme") == "dark_orange"
+            application and application.property("vr_theme") == "dark_orange"
         )
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -597,7 +693,7 @@ class ModelOptionRow(QFrame):
         layout.setContentsMargins(10, 6, 8, 6)
         layout.setSpacing(9)
 
-        icon_label = QLabel(objectName="modelOptionIcon")
+        icon_label = QLabel(self, objectName="modelOptionIcon")
         icon_label.setFixedSize(22, 22)
         icon_label.setAlignment(Qt.AlignCenter)
         icon_label.setPixmap(icon.pixmap(QSize(19, 19)))
@@ -607,9 +703,13 @@ class ModelOptionRow(QFrame):
         labels = QVBoxLayout()
         labels.setContentsMargins(0, 0, 0, 0)
         labels.setSpacing(1)
-        title_label = QLabel(title, objectName="modelOptionTitle")
+        title_label = QLabel(title, self, objectName="modelOptionTitle")
         title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        meta_label = QLabel(provider.title(), objectName="modelOptionMeta")
+        meta_label = QLabel(
+            provider_display_name(provider),
+            self,
+            objectName="modelOptionMeta",
+        )
         meta_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         meta_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -617,12 +717,12 @@ class ModelOptionRow(QFrame):
         labels.addWidget(meta_label)
         layout.addLayout(labels, 1)
 
-        shortcut_label = QLabel(shortcut, objectName="modelShortcutBadge")
+        shortcut_label = QLabel(shortcut, self, objectName="modelShortcutBadge")
         shortcut_label.setVisible(bool(shortcut))
         shortcut_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(shortcut_label)
 
-        self.favorite_button = QToolButton(objectName="modelFavoriteButton")
+        self.favorite_button = QToolButton(self, objectName="modelFavoriteButton")
         favorite_asset = "model-favorite-active.svg" if favorite else "model-favorite.svg"
         self.favorite_button.setIcon(QIcon(str(ASSET_DIR / favorite_asset)))
         self.favorite_button.setIconSize(QSize(15, 15))
@@ -663,14 +763,22 @@ class ModelLegacyRow(QFrame):
         layout.setContentsMargins(10, 6, 10, 6)
         labels = QVBoxLayout()
         labels.setSpacing(1)
-        title = QLabel("Modelos legados", objectName="modelLegacyTitle")
-        count_label = QLabel(f"{count} modelos", objectName="modelLegacyMeta")
+        title = QLabel("Modelos legados", self, objectName="modelLegacyTitle")
+        count_label = QLabel(
+            f"{count} modelos",
+            self,
+            objectName="modelLegacyMeta",
+        )
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         count_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         labels.addWidget(title)
         labels.addWidget(count_label)
         layout.addLayout(labels, 1)
-        chevron = QLabel("⌄" if expanded else "›", objectName="modelLegacyChevron")
+        chevron = QLabel(
+            "⌄" if expanded else "›",
+            self,
+            objectName="modelLegacyChevron",
+        )
         chevron.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(chevron)
 
@@ -703,7 +811,7 @@ class AccessibleIconTabBar(QTabBar):
 
 
 class SlashCommandPalette(QFrame):
-    """Keyboard-first overlay used by the Mary composer slash menu."""
+    """Keyboard-first overlay used by the VR composer slash menu."""
 
     itemChosen = Signal(object)
 
@@ -1036,7 +1144,7 @@ class ModelPickerCombo(RoundedComboBox):
                 # QComboBox normally opens on mouse press. This heavier custom
                 # popup must wait for release or Qt treats that same click as
                 # an outside click and immediately rejects the dialog.
-                QTimer.singleShot(50, self.showPopup)
+                QTimer.singleShot(0, self.showPopup)
             return
         super().mouseReleaseEvent(event)
 
@@ -1139,6 +1247,9 @@ class ModelPickerCombo(RoundedComboBox):
         dialog.move(x, y)
 
     def showPopup(self) -> None:  # noqa: N802 - Qt API
+        # The model picker owns an in-window overlay. Ensure a native QComboBox
+        # container can never remain visible if Qt tried to prepare one.
+        QComboBox.hidePopup(self)
         if self._model_popup is not None and self._model_popup.isVisible():
             self._model_popup.raise_()
             return
@@ -1165,9 +1276,9 @@ class ModelPickerCombo(RoundedComboBox):
         )
         provider.setTabToolTip(recommended_index, "Modelos recomendados")
         provider.setTabData(recommended_index, "recommended")
-        for name in ("codex", "claude"):
-            index = provider.addTab(provider_icon(name), name.title())
-            provider.setTabToolTip(index, name.title())
+        for name in ("codex", "claude", "opencode"):
+            index = provider.addTab(provider_icon(name), provider_display_name(name))
+            provider.setTabToolTip(index, provider_display_name(name))
             provider.setTabData(index, name)
         body.addWidget(provider)
 
@@ -1318,7 +1429,7 @@ class ModelPickerCombo(RoundedComboBox):
                     default_provider,
                     "",
                     "Modelo padrão",
-                    f"{default_provider.title()} · escolha recomendada pelo provedor",
+                    f"{provider_display_name(default_provider)} · escolha recomendada pelo provedor",
                     False,
                 )
                 if target_provider == default_provider and not target_model:
@@ -1390,7 +1501,7 @@ class ModelPickerCombo(RoundedComboBox):
             state_providers = (
                 [selected_provider]
                 if selected_provider
-                else [name for name in ("codex", "claude") if name in self._catalog_states]
+                else [name for name in ("codex", "claude", "opencode") if name in self._catalog_states]
             )
             loading = [
                 name for name in state_providers if self._catalog_states.get(name) == "loading"
@@ -1477,6 +1588,367 @@ class ModelPickerCombo(RoundedComboBox):
         dialog.show()
         dialog.raise_()
         search.setFocus()
+
+
+class OrchestrationSettingsDialog(QDialog):
+    """Edit VR orchestration without coupling an agent role to a model."""
+
+    STRATEGIES = (
+        (
+            "automatic",
+            "Automática",
+            "O orquestrador escolhe o fluxo, os agentes e a estratégia efetiva.",
+        ),
+        (
+            "adaptive",
+            "Adaptativa",
+            "Combina estratégias conforme a dificuldade e os resultados parciais.",
+        ),
+        (
+            "parallel",
+            "Paralela",
+            "Executa análises independentes em paralelo e compara os resultados.",
+        ),
+        (
+            "specialized",
+            "Especializada",
+            "Distribui subtarefas diferentes aos agentes mais adequados.",
+        ),
+        (
+            "sequential",
+            "Sequencial",
+            "Usa a saída de uma etapa como entrada da etapa seguinte.",
+        ),
+        (
+            "debate",
+            "Debate",
+            "Solicita propostas e críticas entre agentes antes da síntese.",
+        ),
+        (
+            "consensus",
+            "Consenso",
+            "Compara concordâncias e divergências antes de decidir.",
+        ),
+    )
+
+    def __init__(
+        self,
+        available_models: list[ModelRef] | tuple[ModelRef, ...],
+        current: OrchestrationOptions,
+        orchestrator: ModelRef,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._current = current
+        self._orchestrator = (
+            orchestrator
+            if isinstance(orchestrator, ModelRef)
+            else ModelRef.from_mapping(orchestrator)
+        )
+        self._available_keys: set[str] = set()
+        self._models_by_key: dict[str, ModelRef] = {}
+        for raw_model in available_models:
+            model = (
+                raw_model
+                if isinstance(raw_model, ModelRef)
+                else ModelRef.from_mapping(raw_model)
+            )
+            if not model.provider or model.key in self._models_by_key:
+                continue
+            self._available_keys.add(model.key)
+            self._models_by_key[model.key] = model
+        # Keep stale saved choices visible so opening and accepting the dialog
+        # never drops configuration silently. They can be explicitly unchecked.
+        for raw_model in current.model_pool:
+            model = (
+                raw_model
+                if isinstance(raw_model, ModelRef)
+                else ModelRef.from_mapping(raw_model)
+            )
+            if model.provider and model.key not in self._models_by_key:
+                self._models_by_key[model.key] = model
+
+        self.setWindowTitle("Orquestração VR")
+        self.setAccessibleName("Configurações de orquestração VR")
+        self.resize(640, 620)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Orquestração VR", objectName="sectionTitle")
+        layout.addWidget(title)
+        description = QLabel(
+            "O fluxo define quais agentes trabalham; o orquestrador escolhe um "
+            "modelo deste pool para cada agente.",
+            objectName="muted",
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        mode_labels = {
+            "off": "Desligado",
+            "automatic": "Automático",
+            "standard": "Ligado",
+            "ultra": "Ultra",
+        }
+        self.mode_status = QLabel(
+            f"Modo atual: {mode_labels.get(current.mode, 'Automático')}. "
+            "Use o menu VR no chat para alterá-lo.",
+            objectName="muted",
+        )
+        self.mode_status.setWordWrap(True)
+        layout.addWidget(self.mode_status)
+
+        orchestrator_card = QFrame(objectName="panel")
+        orchestrator_layout = QHBoxLayout(orchestrator_card)
+        orchestrator_layout.setContentsMargins(14, 11, 14, 11)
+        orchestrator_layout.setSpacing(10)
+        orchestrator_icon = QLabel()
+        orchestrator_icon.setFixedSize(24, 24)
+        orchestrator_icon.setPixmap(
+            provider_icon(self._orchestrator.provider).pixmap(QSize(22, 22))
+        )
+        orchestrator_icon.setAccessibleName(
+            f"Provedor {provider_display_name(self._orchestrator.provider)}"
+        )
+        orchestrator_layout.addWidget(orchestrator_icon)
+        orchestrator_text = QVBoxLayout()
+        orchestrator_text.setContentsMargins(0, 0, 0, 0)
+        orchestrator_text.setSpacing(1)
+        orchestrator_text.addWidget(QLabel("Orquestrador", objectName="muted"))
+        orchestrator_name = self._model_label(self._orchestrator)
+        self.orchestrator_label = QLabel(orchestrator_name, objectName="sectionTitle")
+        self.orchestrator_label.setAccessibleName(
+            f"Orquestrador atual: {orchestrator_name}"
+        )
+        orchestrator_text.addWidget(self.orchestrator_label)
+        orchestrator_layout.addLayout(orchestrator_text, 1)
+        layout.addWidget(orchestrator_card)
+
+        strategy_row = QHBoxLayout()
+        strategy_label = QLabel("Estratégia")
+        strategy_row.addWidget(strategy_label)
+        self.strategy_combo = DescriptiveComboBox()
+        self.strategy_combo.popup_title = "Estratégia de orquestração"
+        self.strategy_combo.setAccessibleName("Estratégia de orquestração")
+        self.strategy_combo.setMinimumWidth(220)
+        for value, label, detail in self.STRATEGIES:
+            self.strategy_combo.addItem(label, value)
+            self.strategy_combo.setItemData(
+                self.strategy_combo.count() - 1,
+                detail,
+                Qt.ToolTipRole,
+            )
+        strategy_index = self.strategy_combo.findData(current.strategy)
+        self.strategy_combo.setCurrentIndex(strategy_index if strategy_index >= 0 else 0)
+        strategy_label.setBuddy(self.strategy_combo)
+        strategy_row.addWidget(self.strategy_combo, 1)
+        layout.addLayout(strategy_row)
+
+        pool_heading = QHBoxLayout()
+        pool_heading.addWidget(QLabel("Modelos disponíveis para os agentes"))
+        pool_heading.addStretch()
+        self.select_all_button = QPushButton("Todos")
+        self.select_all_button.setAccessibleName("Selecionar todos os modelos")
+        self.clear_pool_button = QPushButton("Limpar")
+        self.clear_pool_button.setAccessibleName("Limpar seleção de modelos")
+        pool_heading.addWidget(self.select_all_button)
+        pool_heading.addWidget(self.clear_pool_button)
+        layout.addLayout(pool_heading)
+
+        self.pool_list = QListWidget()
+        self.pool_list.setAccessibleName(
+            "Pool de modelos disponíveis para orquestração"
+        )
+        self.pool_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.pool_list.setAlternatingRowColors(True)
+        self.pool_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        selected_keys = {model.key for model in current.model_pool}
+        for key, model in self._models_by_key.items():
+            available = key in self._available_keys
+            availability = "" if available else " · indisponível agora"
+            model_id = model.model or "modelo padrão"
+            item = QListWidgetItem(
+                f"{self._model_label(model)}\n"
+                f"{provider_display_name(model.provider)} · {model_id}{availability}"
+            )
+            item.setIcon(provider_icon(model.provider))
+            item.setData(Qt.UserRole, key)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if key in selected_keys else Qt.Unchecked)
+            item.setToolTip(
+                model.description
+                or f"{provider_display_name(model.provider)} · {model_id}{availability}"
+            )
+            item.setSizeHint(QSize(0, 54))
+            self.pool_list.addItem(item)
+        if not self._models_by_key:
+            empty = QListWidgetItem("Nenhum modelo disponível no momento.")
+            empty.setFlags(Qt.NoItemFlags)
+            self.pool_list.addItem(empty)
+        layout.addWidget(self.pool_list, 1)
+
+        self.pool_status = QLabel("", objectName="muted")
+        self.pool_status.setWordWrap(True)
+        layout.addWidget(self.pool_status)
+
+        self.show_execution_check = QCheckBox(
+            "Mostrar o andamento da execução VR"
+        )
+        self.show_execution_check.setAccessibleName(
+            "Mostrar andamento da execução VR"
+        )
+        self.show_execution_check.setChecked(bool(current.show_execution))
+        layout.addWidget(self.show_execution_check)
+
+        self.explain_routing_check = QCheckBox(
+            "Mostrar resumos dos motivos de escolha dos modelos"
+        )
+        self.explain_routing_check.setAccessibleName(
+            "Mostrar motivos operacionais da escolha dos modelos"
+        )
+        self.explain_routing_check.setToolTip(
+            "Exibe somente um resumo operacional; raciocínio interno privado não é mostrado."
+        )
+        self.explain_routing_check.setChecked(bool(current.explain_routing))
+        layout.addWidget(self.explain_routing_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        apply_button = buttons.button(QDialogButtonBox.Ok)
+        if apply_button is not None:
+            apply_button.setText("Aplicar")
+        cancel_button = buttons.button(QDialogButtonBox.Cancel)
+        if cancel_button is not None:
+            cancel_button.setText("Cancelar")
+        buttons.accepted.connect(self._validate)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.pool_list.itemChanged.connect(lambda _item: self._update_pool_status())
+        self.select_all_button.clicked.connect(lambda: self._set_all_models(True))
+        self.clear_pool_button.clicked.connect(lambda: self._set_all_models(False))
+        self._sync_enabled_state(True)
+        self._update_pool_status()
+
+    @staticmethod
+    def _model_label(model: ModelRef) -> str:
+        return model.display_name or model.model or "Modelo padrão"
+
+    def _selected_models(self) -> tuple[ModelRef, ...]:
+        selected: list[ModelRef] = []
+        for index in range(self.pool_list.count()):
+            item = self.pool_list.item(index)
+            if item.checkState() != Qt.Checked:
+                continue
+            model = self._models_by_key.get(str(item.data(Qt.UserRole) or ""))
+            if model is not None:
+                selected.append(model)
+        return tuple(selected)
+
+    def _set_all_models(self, checked: bool) -> None:
+        self.pool_list.blockSignals(True)
+        try:
+            for index in range(self.pool_list.count()):
+                item = self.pool_list.item(index)
+                key = str(item.data(Qt.UserRole) or "")
+                if key:
+                    item.setCheckState(
+                        Qt.Checked
+                        if checked and key in self._available_keys
+                        else Qt.Unchecked
+                    )
+        finally:
+            self.pool_list.blockSignals(False)
+        self._update_pool_status()
+
+    def _sync_enabled_state(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        has_models = bool(self._models_by_key)
+        for widget in (
+            self.strategy_combo,
+            self.show_execution_check,
+            self.explain_routing_check,
+        ):
+            widget.setEnabled(enabled)
+        for widget in (
+            self.pool_list,
+            self.select_all_button,
+            self.clear_pool_button,
+        ):
+            widget.setEnabled(enabled and has_models)
+        self._update_pool_status()
+
+    def _update_pool_status(self) -> None:
+        count = len(self._selected_models())
+        unavailable = sum(
+            model.key not in self._available_keys
+            for model in self._selected_models()
+        )
+        suffix = "modelo selecionado" if count == 1 else "modelos selecionados"
+        if self._current.mode != "off" and count == 0:
+            self.pool_status.setText(
+                "Selecione pelo menos um modelo antes de ativar a orquestração."
+            )
+        elif self._current.mode != "off" and unavailable:
+            self.pool_status.setText(
+                f"{count} {suffix}; {unavailable} indisponível no momento."
+            )
+        else:
+            self.pool_status.setText(f"{count} {suffix} para os agentes VR.")
+
+    def value(self) -> OrchestrationOptions:
+        """Return the edited options while preserving non-visual routing flags."""
+        return OrchestrationOptions(
+            mode=self._current.mode,
+            strategy=str(self.strategy_combo.currentData() or "automatic"),
+            model_pool=self._selected_models(),
+            show_execution=self.show_execution_check.isChecked(),
+            explain_routing=self.explain_routing_check.isChecked(),
+            dynamic_model_routing=self._current.dynamic_model_routing,
+            dynamic_agent_count=self._current.dynamic_agent_count,
+            difficulty_routing=self._current.difficulty_routing,
+        )
+
+    def options(self) -> OrchestrationOptions:
+        return self.value()
+
+    def orchestrator_model(self) -> ModelRef:
+        return self._orchestrator
+
+    def _validate(self) -> None:
+        selected = self._selected_models()
+        if self._current.mode != "off" and not selected:
+            QMessageBox.warning(
+                self,
+                "Orquestração VR",
+                "Selecione pelo menos um modelo disponível para os agentes.",
+            )
+            self.pool_list.setFocus()
+            return
+        unavailable = [
+            model for model in selected if model.key not in self._available_keys
+        ]
+        if self._current.mode != "off" and unavailable:
+            QMessageBox.warning(
+                self,
+                "Orquestração VR",
+                "Remova do pool os modelos marcados como indisponíveis.",
+            )
+            self.pool_list.setFocus()
+            return
+        self.accept()
+
+    @classmethod
+    def get_options(
+        cls,
+        available_models: list[ModelRef] | tuple[ModelRef, ...],
+        current: OrchestrationOptions,
+        orchestrator: ModelRef,
+        parent: QWidget | None = None,
+    ) -> tuple[OrchestrationOptions, bool]:
+        dialog = cls(available_models, current, orchestrator, parent)
+        accepted = dialog.exec() == QDialog.Accepted
+        return (dialog.value() if accepted else current), accepted
 
 
 class ApprovalDialog(QDialog):

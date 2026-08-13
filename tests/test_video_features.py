@@ -1,20 +1,33 @@
 import shutil
 import uuid
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from vrsoft_extractor.courses import (
     _enroll_one,
+    _iter_course_summaries,
+    _request_json,
     course_from_payload,
     parse_course_selections,
 )
-from vrsoft_extractor.downloader import _download_target_bases, organize_downloads
-from vrsoft_extractor.inventory import merge_inventory, save_inventory
+from vrsoft_extractor.downloader import (
+    _download_candidates,
+    _download_target_bases,
+    _find_existing_download,
+    organize_downloads,
+)
+from vrsoft_extractor.inventory import load_inventory, merge_inventory, save_inventory
 from vrsoft_extractor.models import VideoItem
+from vrsoft_extractor.scanner import SectionSpec, scan
 from vrsoft_extractor.settings import ConfigError, Settings
 from vrsoft_extractor.utils import output_base_path
 from vrsoft_extractor.video_classification import (
     classify_inventory,
+    load_module_overrides,
     save_module_override,
+    save_module_overrides,
 )
 from vrsoft_extractor.video_storage import format_byte_size, inspect_video_storage
 
@@ -119,6 +132,72 @@ def test_manual_group_override_has_precedence():
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_manual_overrides_are_atomic_and_corruption_is_not_silently_ignored():
+    tmp_path = _test_dir()
+    try:
+        override_path = tmp_path / "overrides.json"
+        save_module_overrides(
+            override_path,
+            [
+                ("groups", "course:1", "Fiscal"),
+                ("items", "task:2", "PDV"),
+            ],
+        )
+        loaded = load_module_overrides(override_path)
+        assert loaded["groups"]["course:1"] == "Fiscal"
+        assert loaded["items"]["task:2"] == "PDV"
+
+        override_path.write_text("{inválido", encoding="utf-8")
+        try:
+            load_module_overrides(override_path)
+        except ValueError as exc:
+            assert "inválido" in str(exc)
+        else:
+            raise AssertionError("Configuração corrompida foi tratada como vazia")
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_scan_failure_preserves_previous_inventory():
+    tmp_path = _test_dir().resolve()
+    settings = Settings(project_dir=tmp_path)
+    existing = video(title="Inventário anterior")
+    save_inventory(
+        [existing], settings.inventory_json_path, settings.inventory_csv_path
+    )
+    before = settings.inventory_json_path.read_bytes()
+    playwright_context = MagicMock()
+    runtime = MagicMock()
+    browser = MagicMock()
+    runtime.chromium.launch.return_value = browser
+    browser.new_context.return_value.new_page.return_value = MagicMock()
+    playwright_context.__enter__.return_value = runtime
+    try:
+        with (
+            patch("playwright.sync_api.sync_playwright", return_value=playwright_context),
+            patch("vrsoft_extractor.scanner.ensure_session"),
+            patch("vrsoft_extractor.scanner.configure_playwright_runtime"),
+            patch(
+                "vrsoft_extractor.scanner.SECTION_SPECS",
+                (SectionSpec("curso", "Cursos", "/cursos"),),
+            ),
+            patch(
+                "vrsoft_extractor.scanner._crawl_api_section",
+                side_effect=RuntimeError("API indisponível"),
+            ),
+        ):
+            try:
+                scan(settings)
+            except RuntimeError as exc:
+                assert "inventário anterior foi preservado" in str(exc)
+            else:
+                raise AssertionError("Falha parcial da varredura foi tratada como sucesso")
+
+        assert settings.inventory_json_path.read_bytes() == before
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_classified_output_path_preserves_hierarchy_and_extension():
     path = output_base_path(
         Path("downloads"),
@@ -140,6 +219,48 @@ def test_duplicate_lesson_titles_receive_deterministic_suffix():
     targets = _download_target_bases([second, first], settings)
     assert targets[first.id].name == "Introdução"
     assert targets[second.id].name == "Introdução - 11"
+
+
+def test_existing_download_ignores_thumbnail_and_empty_video():
+    tmp_path = _test_dir()
+    try:
+        base = tmp_path / "aula"
+        base.with_suffix(".jpg").write_bytes(b"thumbnail")
+        base.with_suffix(".mp4").touch()
+        assert _find_existing_download(base) is None
+
+        base.with_suffix(".mp4").write_bytes(b"video")
+        assert _find_existing_download(base) == base.with_suffix(".mp4")
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_download_candidates_recover_missing_file_and_honor_redownload():
+    tmp_path = _test_dir().resolve()
+    settings = Settings(project_dir=tmp_path)
+    missing = video(task_id="missing")
+    missing.status = "downloaded"
+    missing.local_path = str(tmp_path / "downloads" / "missing.mp4")
+    valid = video(task_id="valid", page="https://example.com/task/valid")
+    valid.status = "downloaded"
+    valid_path = tmp_path / "downloads" / "valid.mp4"
+    valid_path.parent.mkdir(parents=True)
+    valid_path.write_bytes(b"video")
+    valid.local_path = str(valid_path)
+    protected = video(task_id="protected", page="https://example.com/task/protected")
+    protected.status = "protected"
+    try:
+        regular = _download_candidates(
+            [missing, valid, protected], settings, redownload=False
+        )
+        forced = _download_candidates(
+            [missing, valid, protected], settings, redownload=True
+        )
+
+        assert regular == [missing]
+        assert forced == [missing, valid, protected]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 def test_video_storage_detects_downloads_and_missing_files():
@@ -221,6 +342,24 @@ def test_parse_course_selection_requires_course_and_class():
         raise AssertionError("Invalid selection was accepted")
 
 
+def test_course_inventory_does_not_treat_malformed_response_as_empty():
+    with pytest.raises(ConfigError, match="inventário inválido"):
+        list(_iter_course_summaries(lambda _url: {}, 2))
+
+
+def test_course_request_distinguishes_http_and_json_errors():
+    page = MagicMock()
+    page.request.get.return_value = _Response([], status=503)
+    with pytest.raises(ConfigError, match="HTTP 503"):
+        _request_json(page, {}, "https://example.com/courses")
+
+    response = MagicMock(status=200)
+    response.json.side_effect = ValueError("broken")
+    page.request.get.return_value = response
+    with pytest.raises(ConfigError, match="JSON inválido"):
+        _request_json(page, {}, "https://example.com/courses")
+
+
 class _Response:
     def __init__(self, payload, status=200):
         self.payload = payload
@@ -286,6 +425,7 @@ def test_enroll_one_does_not_post_waitlist_course():
 def test_video_output_decoder_preserves_split_utf8_character():
     from vrsoft_extractor.mary.ui import (
         new_video_output_decoder,
+        video_process_command,
         video_process_environment,
     )
 
@@ -298,6 +438,15 @@ def test_video_output_decoder_preserves_split_utf8_character():
     environment = video_process_environment()
     assert environment.value("PYTHONUTF8") == "1"
     assert environment.value("PYTHONIOENCODING") == "utf-8"
+    executable, development = video_process_command(
+        Path("MaryProject"), "scan", frozen=False
+    )
+    assert executable
+    assert development[:2] == ["-m", "vrsoft_extractor"]
+    _executable, packaged = video_process_command(
+        Path("MaryProject"), "scan", frozen=True
+    )
+    assert packaged[:2] == ["--video-cli", "--project-dir"]
 
 
 def test_organize_downloads_moves_without_overwriting():
@@ -320,5 +469,38 @@ def test_organize_downloads_moves_without_overwriting():
         assert result["moved"] == 1
         assert expected.exists()
         assert not source.exists()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_organize_downloads_rolls_back_move_when_inventory_save_fails():
+    tmp_path = _test_dir()
+    settings = Settings(project_dir=tmp_path.resolve())
+    try:
+        source = settings.downloads_dir / "old" / "aula.mp4"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"video")
+        item = video(title="Aula")
+        item.business_module = "Fiscal"
+        item.status = "downloaded"
+        item.local_path = str(source)
+        save_inventory(
+            [item], settings.inventory_json_path, settings.inventory_csv_path
+        )
+
+        with patch(
+            "vrsoft_extractor.downloader.save_inventory",
+            side_effect=OSError("disco indisponível"),
+        ):
+            try:
+                organize_downloads(settings)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("A falha de persistência foi ocultada")
+
+        assert source.is_file()
+        persisted = load_inventory(settings.inventory_json_path)
+        assert persisted[0].local_path == str(source)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)

@@ -168,6 +168,7 @@ def scan(
     if diagnostic:
         LOGGER.info("Diagnostico ativado: paginas sem video serao salvas em metadata/debug")
     discovered: list[VideoItem] = []
+    section_failures: list[str] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=headless)
         context = browser.new_context(storage_state=str(settings.storage_state_path))
@@ -203,8 +204,15 @@ def scan(
                     )
             except Exception as exc:
                 LOGGER.exception("Falha ao varrer %s: %s", spec.label, exc)
+                section_failures.append(f"{spec.label}: {exc}")
 
         browser.close()
+
+    if section_failures:
+        raise RuntimeError(
+            "Varredura incompleta; o inventário anterior foi preservado. "
+            + " | ".join(section_failures)
+        )
 
     existing = load_inventory(settings.inventory_json_path)
     merged = merge_inventory(existing, discovered)
@@ -482,7 +490,8 @@ def _api_get_json(page, recorder: MediaRecorder, url: str):
 
 
 def _media_urls_from_file_item(item: dict) -> list[str]:
-    file_data = item.get("file") if isinstance(item.get("file"), dict) else {}
+    file_value = item.get("file")
+    file_data: dict = file_value if isinstance(file_value, dict) else {}
     content_type = str(file_data.get("content_type") or item.get("mime_type") or "").lower()
     raw_urls = [
         str(value)

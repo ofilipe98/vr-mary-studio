@@ -12,6 +12,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
+from .. import __version__ as APP_VERSION
 from .chat_tools import mcp_thread_config
 from .models import ConversationOptions, RuntimeEvent, approval_preset
 
@@ -117,6 +118,13 @@ class AgentProvider(abc.ABC):
     ) -> str:
         return ""
 
+    def release_conversation(
+        self, conversation_id: str, native_id: str, *, delete_native: bool = False
+    ) -> None:
+        """Release provider-local state for an internal/ephemeral run."""
+        if delete_native and native_id:
+            self.delete_thread(native_id)
+
     @abc.abstractmethod
     def close(self) -> None: ...
 
@@ -136,7 +144,7 @@ class CodexProvider(AgentProvider):
         self._active_turns: dict[str, str] = {}
         self._write_lock = threading.Lock()
         self._state_lock = threading.RLock()
-        self._start_lock = threading.Lock()
+        self._start_lock = threading.RLock()
         self._stderr_lines: deque[str] = deque(maxlen=30)
         self._known_mcp_servers: list[str] = []
         self._mcp_server_configs: dict[str, dict[str, Any]] = {}
@@ -146,8 +154,17 @@ class CodexProvider(AgentProvider):
 
     def _ensure_started(self) -> None:
         with self._start_lock:
-            if self.process and self.process.poll() is None:
+            with self._state_lock:
+                previous = self.process
+            if previous and previous.poll() is None:
                 return
+            if previous is not None:
+                with self._state_lock:
+                    if self.process is previous:
+                        self.process = None
+                message = self._process_error(previous)
+                self._fail_pending(message)
+                self._fail_active_turns(message)
             if not self.command:
                 raise ProviderError("Codex não foi encontrado no PATH.")
             self._stderr_lines.clear()
@@ -182,7 +199,7 @@ class CodexProvider(AgentProvider):
                         "clientInfo": {
                             "name": "vr_mary_studio",
                             "title": "VR Norte Studio",
-                            "version": "0.3.11",
+                            "version": APP_VERSION,
                         },
                         "capabilities": {"experimentalApi": True},
                     },
@@ -244,9 +261,11 @@ class CodexProvider(AgentProvider):
         self._send({"method": method, "params": params})
 
     def _read_loop(self, process: subprocess.Popen[str]) -> None:
-        assert process.stdout
+        stdout = process.stdout
         try:
-            for line in process.stdout:
+            if stdout is None:
+                raise ProviderError("Codex App Server iniciou sem canal de saída.")
+            for line in stdout:
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError:
@@ -265,16 +284,24 @@ class CodexProvider(AgentProvider):
                 process.wait(timeout=0.5)
             except subprocess.TimeoutExpired:
                 pass
-            with self._state_lock:
-                is_current = self.process is process
+            # Keep teardown ordered with process replacement.  Without this,
+            # an old reader could identify itself as current, be pre-empted by
+            # a restart, and then drain requests belonging to the new process.
+            with self._start_lock:
+                with self._state_lock:
+                    is_current = self.process is process
+                    if is_current:
+                        self.process = None
                 if is_current:
-                    self.process = None
-            if is_current:
-                self._fail_pending(self._process_error(process))
+                    message = self._process_error(process)
+                    self._fail_pending(message)
+                    self._fail_active_turns(message)
 
     def _read_stderr(self, process: subprocess.Popen[str]) -> None:
-        assert process.stderr
-        for line in process.stderr:
+        stderr = process.stderr
+        if stderr is None:
+            return
+        for line in stderr:
             self._stderr_lines.append(line.rstrip())
 
     def _process_error(self, process: subprocess.Popen[str] | None) -> str:
@@ -298,19 +325,53 @@ class CodexProvider(AgentProvider):
             except queue.Full:
                 pass
 
-    def _stop_process(self, process: subprocess.Popen[str] | None = None) -> None:
+    def _fail_active_turns(self, message: str) -> None:
         with self._state_lock:
-            target = process or self.process
-            if target is self.process:
-                self.process = None
-        if target and target.poll() is None:
-            target.terminate()
-            try:
-                target.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                target.kill()
-                target.wait(timeout=5)
-        self._fail_pending("Codex App Server foi reiniciado.")
+            active = [
+                (conversation_id, self._callbacks.get(conversation_id))
+                for conversation_id in tuple(self._active_turns)
+            ]
+            for conversation_id, _callback in active:
+                self._active_turns.pop(conversation_id, None)
+        for conversation_id, callback in active:
+            if callback is None:
+                continue
+            for event in (
+                RuntimeEvent(
+                    conversation_id,
+                    "error",
+                    message,
+                    {"provider": "codex", "fatal": True},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "turn_completed",
+                    payload={"provider": "codex", "fatal": True},
+                ),
+            ):
+                try:
+                    callback(event)
+                except Exception:
+                    continue
+
+    def _stop_process(self, process: subprocess.Popen[str] | None = None) -> None:
+        with self._start_lock:
+            with self._state_lock:
+                target = process or self.process
+                owns_current_state = target is self.process
+                if owns_current_state:
+                    self.process = None
+            if target and target.poll() is None:
+                target.terminate()
+                try:
+                    target.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    target.kill()
+                    target.wait(timeout=5)
+            if owns_current_state:
+                message = "Codex App Server foi reiniciado."
+                self._fail_pending(message)
+                self._fail_active_turns(message)
 
     def _handle_server_message(self, message: dict[str, Any]) -> None:
         method = str(message.get("method", "event"))
@@ -318,8 +379,9 @@ class CodexProvider(AgentProvider):
         native_id = str(params.get("threadId") or "")
         if not native_id and isinstance(params.get("thread"), dict):
             native_id = str(params["thread"].get("id") or "")
-        conversation_id = self._native_to_local.get(native_id, "")
-        callback = self._callbacks.get(conversation_id)
+        with self._state_lock:
+            conversation_id = self._native_to_local.get(native_id, "")
+            callback = self._callbacks.get(conversation_id)
         if not callback:
             return
         if method == "thread/settings/updated":
@@ -337,10 +399,13 @@ class CodexProvider(AgentProvider):
             callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
         elif method == "turn/started":
             turn = params.get("turn") or {}
-            self._active_turns[conversation_id] = str(turn.get("id", ""))
+            with self._state_lock:
+                self._active_turns[conversation_id] = str(turn.get("id", ""))
             callback(RuntimeEvent(conversation_id, "turn_started", payload=params))
         elif method == "turn/completed":
-            self._active_turns.pop(conversation_id, None)
+            with self._state_lock:
+                self._active_turns.pop(conversation_id, None)
+                self._callbacks.pop(conversation_id, None)
             callback(RuntimeEvent(conversation_id, "turn_completed", payload=params))
         elif method in {
             "item/commandExecution/requestApproval",
@@ -544,7 +609,8 @@ class CodexProvider(AgentProvider):
         native_id = str((result.get("thread") or {}).get("id", ""))
         if not native_id:
             raise ProviderError("Codex não retornou um ID de thread.")
-        self._native_to_local[native_id] = conversation_id
+        with self._state_lock:
+            self._native_to_local[native_id] = conversation_id
         return native_id
 
     def resume_conversation(
@@ -580,7 +646,8 @@ class CodexProvider(AgentProvider):
             params,
         )
         resumed_id = str((result.get("thread") or {}).get("id", native_id))
-        self._native_to_local[resumed_id] = conversation_id
+        with self._state_lock:
+            self._native_to_local[resumed_id] = conversation_id
         return resumed_id
 
     @staticmethod
@@ -631,7 +698,9 @@ class CodexProvider(AgentProvider):
     ) -> None:
         self._ensure_started()
         options = options or ConversationOptions(model=model, effort=effort)
-        if native_id not in self._native_to_local:
+        with self._state_lock:
+            native_known = native_id in self._native_to_local
+        if not native_known:
             try:
                 native_id = self.resume_conversation(
                     conversation_id, native_id, model, effort, workspace, options
@@ -647,8 +716,12 @@ class CodexProvider(AgentProvider):
                     workspace,
                     options,
                 )
-        self._callbacks[conversation_id] = callback
-        self._native_to_local[native_id] = conversation_id
+        with self._state_lock:
+            self._callbacks[conversation_id] = callback
+            self._native_to_local[native_id] = conversation_id
+            # Keep a pending marker so a server crash between the RPC response
+            # and turn/started still terminates this caller instead of timing out.
+            self._active_turns[conversation_id] = ""
         preset = approval_preset(options.approval_profile)
         sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
         if preset.sandbox_policy_type == "workspaceWrite":
@@ -699,29 +772,40 @@ class CodexProvider(AgentProvider):
         if options.service_tier:
             params["serviceTier"] = options.service_tier
         try:
-            self._rpc("turn/start", params)
-        except ProviderError as exc:
-            if not self._is_archived_session_error(exc):
-                raise
-            native_id = self._reactivate_archived_conversation(
-                conversation_id,
-                native_id,
-                model,
-                effort,
-                workspace,
-                options,
-            )
-            params["threadId"] = native_id
-            self._callbacks[conversation_id] = callback
-            self._native_to_local[native_id] = conversation_id
-            self._rpc("turn/start", params)
+            try:
+                self._rpc("turn/start", params)
+            except ProviderError as exc:
+                if not self._is_archived_session_error(exc):
+                    raise
+                native_id = self._reactivate_archived_conversation(
+                    conversation_id,
+                    native_id,
+                    model,
+                    effort,
+                    workspace,
+                    options,
+                )
+                params["threadId"] = native_id
+                with self._state_lock:
+                    self._callbacks[conversation_id] = callback
+                    self._native_to_local[native_id] = conversation_id
+                self._rpc("turn/start", params)
+        except Exception:
+            with self._state_lock:
+                self._active_turns.pop(conversation_id, None)
+            raise
 
     def interrupt(self, conversation_id: str) -> None:
-        native_id = next(
-            (native for native, local in self._native_to_local.items() if local == conversation_id),
-            "",
-        )
-        turn_id = self._active_turns.get(conversation_id, "")
+        with self._state_lock:
+            native_id = next(
+                (
+                    native
+                    for native, local in self._native_to_local.items()
+                    if local == conversation_id
+                ),
+                "",
+            )
+            turn_id = self._active_turns.get(conversation_id, "")
         if native_id and turn_id:
             self._rpc("turn/interrupt", {"threadId": native_id, "turnId": turn_id})
 
@@ -736,7 +820,7 @@ class CodexProvider(AgentProvider):
         method = str(request.get("method") or "")
         if method == "item/permissions/requestApproval":
             requested = request.get("permissions") or request.get("requestedPermissions") or []
-            result = {
+            result: dict[str, Any] = {
                 "permissions": requested if approved else {},
                 "scope": "session" if approved and session else "turn",
             }
@@ -850,11 +934,25 @@ class CodexProvider(AgentProvider):
         result = self._rpc("thread/fork", params)
         forked_id = str((result.get("thread") or {}).get("id") or "")
         if forked_id:
-            self._native_to_local[forked_id] = conversation_id
+            with self._state_lock:
+                self._native_to_local[forked_id] = conversation_id
         return forked_id
 
     def close(self) -> None:
         self._stop_process()
+
+    def release_conversation(
+        self, conversation_id: str, native_id: str, *, delete_native: bool = False
+    ) -> None:
+        try:
+            if delete_native and native_id:
+                self.delete_thread(native_id)
+        finally:
+            with self._state_lock:
+                self._callbacks.pop(conversation_id, None)
+                self._active_turns.pop(conversation_id, None)
+                if native_id:
+                    self._native_to_local.pop(native_id, None)
 
 
 class ClaudeProvider(AgentProvider):
@@ -868,6 +966,11 @@ class ClaudeProvider(AgentProvider):
         )
         self._active: dict[str, subprocess.Popen[str]] = {}
         self._new_sessions: set[str] = set()
+        # Each in-flight Popen owns a unique reservation.  A close, release or
+        # interrupt can revoke that reservation while Popen is still blocked;
+        # the process is only published when the same token remains current.
+        self._starting: dict[str, tuple[object, str, bool]] = {}
+        self._state_lock = threading.RLock()
 
     def available(self) -> bool:
         return bool(self.command)
@@ -875,6 +978,7 @@ class ClaudeProvider(AgentProvider):
     def list_models(self) -> list[dict[str, Any]]:
         return [
             {"id": "default", "model": "default", "displayName": "Claude padrão", "isDefault": True},
+            {"id": "fable", "model": "fable", "displayName": "Claude Fable 5"},
             {"id": "sonnet", "model": "sonnet", "displayName": "Claude Sonnet"},
             {"id": "opus", "model": "opus", "displayName": "Claude Opus"},
             {"id": "haiku", "model": "haiku", "displayName": "Claude Haiku"},
@@ -889,7 +993,8 @@ class ClaudeProvider(AgentProvider):
         options: ConversationOptions | None = None,
     ) -> str:
         session_id = str(uuid.uuid4())
-        self._new_sessions.add(session_id)
+        with self._state_lock:
+            self._new_sessions.add(session_id)
         return session_id
 
     def resume_conversation(
@@ -917,8 +1022,17 @@ class ClaudeProvider(AgentProvider):
     ) -> None:
         if not self.command:
             raise ProviderError("Claude não foi encontrado no PATH.")
-        if conversation_id in self._active:
-            raise ProviderError("Já existe um turno Claude em execução.")
+        options = options or ConversationOptions(model=model, effort=effort)
+        preset = approval_preset(options.approval_profile)
+        allowed_tools = [
+            f"Read({workspace.parent.parent}/**)",
+            f"Glob({workspace.parent.parent}/**)",
+            f"Grep({workspace.parent.parent}/**)",
+        ]
+        if preset.sandbox != "read-only":
+            allowed_tools.extend(
+                [f"Edit({workspace}/**)", f"Write({workspace}/**)"]
+            )
         command = [
             self.command,
             "-p",
@@ -932,41 +1046,65 @@ class ClaudeProvider(AgentProvider):
             "--add-dir",
             str(workspace.parent.parent),
             "--allowedTools",
-            ",".join(
-                [
-                    f"Read({workspace.parent.parent}/**)",
-                    f"Glob({workspace.parent.parent}/**)",
-                    f"Grep({workspace.parent.parent}/**)",
-                    f"Edit({workspace}/**)",
-                    f"Write({workspace}/**)",
-                ]
-            ),
+            ",".join(allowed_tools),
             "--disallowedTools",
             "Bash,WebFetch,WebSearch",
         ]
         if model and model != "default":
             command.extend(["--model", model])
         command.extend(["--effort", normalize_effort(effort, provider="claude")])
-        if native_id in self._new_sessions:
+        startup_token = object()
+        with self._state_lock:
+            if conversation_id in self._active or conversation_id in self._starting:
+                raise ProviderError("Já existe um turno Claude em execução.")
+            is_new_session = native_id in self._new_sessions
+            if is_new_session:
+                self._new_sessions.discard(native_id)
+            self._starting[conversation_id] = (
+                startup_token,
+                native_id,
+                is_new_session,
+            )
+        if is_new_session:
             command.extend(["--session-id", native_id])
-            self._new_sessions.discard(native_id)
         elif native_id:
             command.extend(["--resume", native_id])
         startup_info: dict[str, Any] = {}
         if os.name == "nt":
             startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
-        process = subprocess.Popen(
-            command,
-            cwd=workspace,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            **startup_info,
-        )
-        self._active[conversation_id] = process
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **startup_info,
+            )
+        except Exception:
+            with self._state_lock:
+                reservation = self._starting.get(conversation_id)
+                owns_reservation = bool(
+                    reservation and reservation[0] is startup_token
+                )
+                if owns_reservation:
+                    self._starting.pop(conversation_id, None)
+                if owns_reservation and is_new_session:
+                    self._new_sessions.add(native_id)
+            raise
+        with self._state_lock:
+            reservation = self._starting.get(conversation_id)
+            accepted = bool(reservation and reservation[0] is startup_token)
+            if accepted:
+                self._starting.pop(conversation_id, None)
+                self._active[conversation_id] = process
+        if not accepted:
+            if process.poll() is None:
+                process.terminate()
+            raise ProviderError("A inicialização do turno Claude foi cancelada.")
         threading.Thread(
             target=self._consume,
             args=(conversation_id, process, callback),
@@ -978,8 +1116,26 @@ class ClaudeProvider(AgentProvider):
     ) -> None:
         callback(RuntimeEvent(conversation_id, "turn_started"))
         final_text = ""
-        assert process.stdout
-        for line in process.stdout:
+        stderr_lines: deque[str] = deque(maxlen=100)
+
+        def read_stderr() -> None:
+            if not process.stderr:
+                return
+            for line in process.stderr:
+                cleaned = line.strip()
+                if cleaned:
+                    stderr_lines.append(cleaned)
+
+        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+        stderr_reader.start()
+        stdout = process.stdout
+        if stdout is None:
+            with self._state_lock:
+                self._active.pop(conversation_id, None)
+            callback(RuntimeEvent(conversation_id, "error", "Claude iniciou sem canal de saída."))
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+            return
+        for line in stdout:
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
@@ -1008,19 +1164,37 @@ class ClaudeProvider(AgentProvider):
             elif kind == "result":
                 result_text = str(payload.get("result") or "")
                 if result_text and not final_text:
+                    final_text = result_text
                     callback(RuntimeEvent(conversation_id, "assistant_delta", result_text, payload))
                 if payload.get("is_error"):
                     callback(RuntimeEvent(conversation_id, "error", result_text, payload))
         exit_code = process.wait()
-        if exit_code and process.stderr:
-            error = process.stderr.read().strip()
-            if error:
-                callback(RuntimeEvent(conversation_id, "error", error))
-        self._active.pop(conversation_id, None)
+        stderr_reader.join(timeout=1)
+        error = "\n".join(stderr_lines).strip()
+        if exit_code or not final_text.strip():
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "error",
+                    error
+                    or (
+                        f"Claude encerrou com código {exit_code}."
+                        if exit_code
+                        else "Claude encerrou sem produzir uma resposta."
+                    ),
+                )
+            )
+        with self._state_lock:
+            if self._active.get(conversation_id) is process:
+                self._active.pop(conversation_id, None)
         callback(RuntimeEvent(conversation_id, "turn_completed", payload={"exit_code": exit_code}))
 
     def interrupt(self, conversation_id: str) -> None:
-        process = self._active.get(conversation_id)
+        with self._state_lock:
+            process = self._active.get(conversation_id)
+            reservation = self._starting.pop(conversation_id, None)
+            if reservation and reservation[2] and reservation[1]:
+                self._new_sessions.add(reservation[1])
         if process and process.poll() is None:
             process.terminate()
 
@@ -1034,24 +1208,469 @@ class ClaudeProvider(AgentProvider):
         raise ProviderError("Aprovação interativa não é exposta pelo modo headless do Claude.")
 
     def close(self) -> None:
-        for process in self._active.values():
+        with self._state_lock:
+            processes = list(self._active.values())
+            self._active.clear()
+            self._starting.clear()
+            self._new_sessions.clear()
+        for process in processes:
             if process.poll() is None:
                 process.terminate()
-        self._active.clear()
+
+    def release_conversation(
+        self, conversation_id: str, native_id: str, *, delete_native: bool = False
+    ) -> None:
+        with self._state_lock:
+            process = self._active.pop(conversation_id, None)
+            self._starting.pop(conversation_id, None)
+            self._new_sessions.discard(native_id)
+        if process and process.poll() is None:
+            process.terminate()
+
+
+class OpenCodeProvider(AgentProvider):
+    """Headless OpenCode CLI adapter with provider-qualified model IDs."""
+
+    name = "opencode"
+
+    def __init__(self):
+        self.command = _resolve_opencode_command()
+        self._active: dict[str, subprocess.Popen[str]] = {}
+        self._starting: dict[str, object] = {}
+        self._sessions: dict[str, str] = {}
+        self._model_variants: dict[str, set[str]] = {}
+        self._state_lock = threading.RLock()
+
+    def available(self) -> bool:
+        return bool(self.command)
+
+    def list_models(self) -> list[dict[str, Any]]:
+        if not self.command:
+            raise ProviderError("OpenCode não foi encontrado no PATH.")
+        startup_info: dict[str, Any] = {}
+        if os.name == "nt":
+            startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            result = subprocess.run(
+                [self.command, "models", "--verbose"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                **startup_info,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ProviderError(f"Falha ao listar modelos OpenCode: {exc}") from exc
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()
+            raise ProviderError(detail or "Falha ao listar modelos OpenCode.")
+        models = _parse_opencode_models(result.stdout)
+        if not models:
+            raise ProviderError("O OpenCode não retornou nenhum modelo disponível.")
+        self._model_variants = {
+            str(item["id"]): set(item.get("_opencodeVariants") or [])
+            for item in models
+        }
+        return models
+
+    def start_conversation(
+        self,
+        conversation_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions | None = None,
+    ) -> str:
+        token = f"new:{uuid.uuid4()}"
+        with self._state_lock:
+            self._sessions[token] = ""
+        return token
+
+    def resume_conversation(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions | None = None,
+    ) -> str:
+        return native_id
+
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: EventCallback,
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if not self.command:
+            raise ProviderError("OpenCode não foi encontrado no PATH.")
+        options = options or ConversationOptions(model=model, effort=effort)
+        with self._state_lock:
+            resume_id = self._sessions.get(native_id, native_id)
+        command = [
+            self.command,
+            "run",
+            "--format",
+            "json",
+            "--dir",
+            str(workspace),
+        ]
+        if resume_id and not resume_id.startswith("new:"):
+            command.extend(["--session", resume_id])
+        if model and model != "default":
+            command.extend(["--model", model])
+        normalized_effort = normalize_effort(effort, provider="opencode")
+        if normalized_effort in self._model_variants.get(model, set()):
+            command.extend(["--variant", normalized_effort])
+
+        startup_token = object()
+        with self._state_lock:
+            if conversation_id in self._active or conversation_id in self._starting:
+                raise ProviderError("Já existe um turno OpenCode em execução.")
+            self._starting[conversation_id] = startup_token
+
+        startup_info: dict[str, Any] = {}
+        if os.name == "nt":
+            startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=workspace,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=_opencode_environment(options.approval_profile),
+                **startup_info,
+            )
+        except Exception:
+            with self._state_lock:
+                if self._starting.get(conversation_id) is startup_token:
+                    self._starting.pop(conversation_id, None)
+            raise
+
+        with self._state_lock:
+            accepted = self._starting.get(conversation_id) is startup_token
+            if accepted:
+                self._starting.pop(conversation_id, None)
+                self._active[conversation_id] = process
+        if not accepted:
+            if process.poll() is None:
+                process.terminate()
+            raise ProviderError("A inicialização do turno OpenCode foi cancelada.")
+
+        try:
+            stdin = process.stdin
+            if stdin is None:
+                raise ProviderError("OpenCode iniciou sem canal de entrada.")
+            stdin.write(message)
+            stdin.close()
+        except Exception:
+            with self._state_lock:
+                if self._active.get(conversation_id) is process:
+                    self._active.pop(conversation_id, None)
+            if process.poll() is None:
+                process.terminate()
+            raise
+
+        threading.Thread(
+            target=self._consume,
+            args=(conversation_id, native_id, process, callback),
+            daemon=True,
+        ).start()
+
+    def _consume(
+        self,
+        conversation_id: str,
+        native_id: str,
+        process: subprocess.Popen[str],
+        callback: EventCallback,
+    ) -> None:
+        callback(RuntimeEvent(conversation_id, "turn_started"))
+        stderr_lines: deque[str] = deque(maxlen=30)
+
+        def read_stderr() -> None:
+            if not process.stderr:
+                return
+            for line in process.stderr:
+                cleaned = line.strip()
+                if cleaned:
+                    stderr_lines.append(cleaned)
+
+        stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+        stderr_reader.start()
+        session_announced = False
+        reported_error = False
+        emitted_text = False
+        stdout = process.stdout
+        if stdout is None:
+            with self._state_lock:
+                self._active.pop(conversation_id, None)
+            callback(RuntimeEvent(conversation_id, "error", "OpenCode iniciou sem canal de saída."))
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+            return
+        for line in stdout:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            session_id = str(payload.get("sessionID") or "")
+            if session_id and not session_announced:
+                session_announced = True
+                with self._state_lock:
+                    if native_id:
+                        self._sessions[native_id] = session_id
+                callback(
+                    RuntimeEvent(
+                        conversation_id,
+                        "native_session_started",
+                        payload={"native_id": session_id},
+                    )
+                )
+            kind = str(payload.get("type") or "")
+            part = payload.get("part") or {}
+            if kind == "text":
+                text = str(part.get("text") or "")
+                if text:
+                    emitted_text = True
+                    callback(
+                        RuntimeEvent(
+                            conversation_id, "assistant_delta", text, payload
+                        )
+                    )
+            elif kind == "tool_use":
+                tool = str(part.get("tool") or part.get("name") or "ferramenta")
+                callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
+            elif kind == "error":
+                reported_error = True
+                callback(
+                    RuntimeEvent(
+                        conversation_id,
+                        "error",
+                        _opencode_error_message(payload),
+                        payload,
+                    )
+                )
+        exit_code = process.wait()
+        stderr_reader.join(timeout=1)
+        if (exit_code or not emitted_text) and not reported_error:
+            detail = "\n".join(stderr_lines).strip()
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "error",
+                    detail
+                    or (
+                        f"OpenCode encerrou com código {exit_code}."
+                        if exit_code
+                        else "OpenCode encerrou sem produzir uma resposta."
+                    ),
+                )
+            )
+        with self._state_lock:
+            if self._active.get(conversation_id) is process:
+                self._active.pop(conversation_id, None)
+        callback(
+            RuntimeEvent(
+                conversation_id, "turn_completed", payload={"exit_code": exit_code}
+            )
+        )
+
+    def interrupt(self, conversation_id: str) -> None:
+        with self._state_lock:
+            process = self._active.get(conversation_id)
+            self._starting.pop(conversation_id, None)
+        if process and process.poll() is None:
+            process.terminate()
+
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
+        raise ProviderError(
+            "Aprovação interativa não é exposta pelo modo headless do OpenCode."
+        )
+
+    def delete_thread(self, native_id: str) -> None:
+        if not native_id or not self.command:
+            return
+        with self._state_lock:
+            resolved = self._sessions.get(native_id, native_id)
+        if not resolved or resolved.startswith("new:"):
+            return
+        startup_info: dict[str, Any] = {}
+        if os.name == "nt":
+            startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.run(
+            [self.command, "session", "delete", resolved],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            **startup_info,
+        )
+
+    def close(self) -> None:
+        with self._state_lock:
+            processes = list(self._active.values())
+            self._active.clear()
+            self._starting.clear()
+            self._sessions.clear()
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+
+    def release_conversation(
+        self, conversation_id: str, native_id: str, *, delete_native: bool = False
+    ) -> None:
+        with self._state_lock:
+            process = self._active.pop(conversation_id, None)
+            self._starting.pop(conversation_id, None)
+            resolved = self._sessions.pop(native_id, native_id)
+        if process and process.poll() is None:
+            process.terminate()
+        if delete_native and resolved:
+            self.delete_thread(resolved)
 
 
 def provider_registry() -> dict[str, AgentProvider]:
-    return {"codex": CodexProvider(), "claude": ClaudeProvider()}
+    return {
+        "codex": CodexProvider(),
+        "claude": ClaudeProvider(),
+        "opencode": OpenCodeProvider(),
+    }
 
 
 def normalize_effort(effort: str, provider: str = "codex") -> str:
+    value = str(effort or "medium").strip().lower()
+    # Older conversations may have persisted the former UI label. Keep them
+    # valid while consolidating the highest reasoning choice under ``max``.
+    if value == "ultra":
+        value = "max"
     allowed = (
         {"low", "medium", "high", "xhigh", "max"}
         if provider == "claude"
-        else {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+        else {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
     )
-    value = str(effort or "medium").strip().lower()
     return value if value in allowed else "medium"
+
+
+def _resolve_opencode_command() -> str | None:
+    direct = shutil.which("opencode.exe")
+    if direct:
+        return direct
+    shim = shutil.which("opencode.cmd") or shutil.which("opencode")
+    if shim:
+        shim_path = Path(shim)
+        bundled = shim_path.parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+        if bundled.is_file():
+            return str(bundled)
+    return shim
+
+
+def _parse_opencode_models(output: str) -> list[dict[str, Any]]:
+    lines = str(output or "").splitlines()
+    models: list[dict[str, Any]] = []
+    index = 0
+    while index < len(lines):
+        qualified_id = lines[index].strip()
+        index += 1
+        if not qualified_id or "/" not in qualified_id or qualified_id.startswith(("{", "[")):
+            continue
+        metadata: dict[str, Any] = {}
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        if index < len(lines) and lines[index].lstrip().startswith("{"):
+            block: list[str] = []
+            while index < len(lines):
+                block.append(lines[index])
+                index += 1
+                try:
+                    parsed = json.loads("\n".join(block))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    metadata = parsed
+                break
+        if str(metadata.get("status") or "active") != "active":
+            continue
+        capabilities = metadata.get("capabilities") or {}
+        capability_names = ["coding"]
+        if isinstance(capabilities, dict) and capabilities.get("reasoning"):
+            capability_names.append("reasoning")
+        variants = metadata.get("variants") or {}
+        efforts = [
+            value
+            for value in ("low", "medium", "high", "xhigh", "max")
+            if isinstance(variants, dict) and value in variants
+        ]
+        limit = metadata.get("limit") or {}
+        item: dict[str, Any] = {
+            "id": qualified_id,
+            "model": qualified_id,
+            "displayName": str(metadata.get("name") or qualified_id),
+            "description": f"Modelo {qualified_id} disponível no OpenCode.",
+            "capabilities": capability_names,
+            "supportedReasoningEfforts": efforts or ["medium"],
+            "_opencodeVariants": efforts,
+        }
+        if isinstance(limit, dict) and limit.get("context"):
+            item["contextWindow"] = int(limit["context"])
+        models.append(item)
+    return models
+
+
+def _opencode_environment(approval_profile: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    config: dict[str, Any] = {}
+    existing = environment.get("OPENCODE_CONFIG_CONTENT", "").strip()
+    if existing:
+        try:
+            parsed = json.loads(existing)
+            if isinstance(parsed, dict):
+                config.update(parsed)
+        except json.JSONDecodeError:
+            pass
+    preset = approval_preset(approval_profile)
+    if preset.sandbox == "danger-full-access":
+        permission: dict[str, str] | str = "allow"
+    else:
+        permission = {
+            "*": "deny",
+            "read": "allow",
+            "glob": "allow",
+            "grep": "allow",
+            "list": "allow",
+        }
+        if preset.sandbox != "read-only":
+            permission["edit"] = "allow"
+    config["permission"] = permission
+    environment["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
+    return environment
+
+
+def _opencode_error_message(payload: dict[str, Any]) -> str:
+    error = payload.get("error") or {}
+    if isinstance(error, dict):
+        data = error.get("data") or {}
+        if isinstance(data, dict) and data.get("message"):
+            return str(data["message"])
+        if error.get("message"):
+            return str(error["message"])
+    return str(error or payload.get("message") or "Falha no OpenCode.")
 
 
 def _resolve_codex_command() -> str | None:

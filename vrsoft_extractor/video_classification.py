@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -15,25 +16,28 @@ LESSON_OVERRIDE_CONFIDENCE = 0.90
 
 
 def load_module_overrides(path: Path | None) -> dict[str, dict[str, str]]:
-    empty = {"groups": {}, "items": {}}
+    empty: dict[str, dict[str, str]] = {"groups": {}, "items": {}}
     if path is None or not path.exists():
         return empty
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return empty
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Arquivo de classificações manuais inválido: {path}") from exc
     if not isinstance(raw, dict):
-        return empty
+        raise ValueError(f"Arquivo de classificações manuais inválido: {path}")
     result: dict[str, dict[str, str]] = {"groups": {}, "items": {}}
     for section in result:
         values = raw.get(section, {})
         if not isinstance(values, dict):
-            continue
-        result[section] = {
-            str(key): str(value)
-            for key, value in values.items()
-            if str(value) in BUSINESS_MODULES
-        }
+            raise ValueError(
+                f"Seção '{section}' inválida nas classificações manuais: {path}"
+            )
+        invalid = [value for value in values.values() if str(value) not in BUSINESS_MODULES]
+        if invalid:
+            raise ValueError(
+                f"Módulo inválido nas classificações manuais: {invalid[0]}"
+            )
+        result[section] = {str(key): str(value) for key, value in values.items()}
     return result
 
 
@@ -44,19 +48,36 @@ def save_module_override(
     module: str,
     scope: str,
 ) -> None:
-    if module not in BUSINESS_MODULES:
-        raise ValueError(f"Modulo de negocio invalido: {module}")
-    if scope not in {"groups", "items"}:
-        raise ValueError(f"Escopo de classificacao invalido: {scope}")
+    save_module_overrides(path, [(scope, key, module)])
+
+
+def save_module_overrides(
+    path: Path,
+    updates: Iterable[tuple[str, str, str]],
+) -> None:
+    normalized = [(str(scope), str(key), str(module)) for scope, key, module in updates]
+    if not normalized:
+        return
+    for scope, key, module in normalized:
+        if module not in BUSINESS_MODULES:
+            raise ValueError(f"Modulo de negocio invalido: {module}")
+        if scope not in {"groups", "items"}:
+            raise ValueError(f"Escopo de classificacao invalido: {scope}")
+        if not key.strip():
+            raise ValueError("Chave de classificacao manual vazia.")
     values = load_module_overrides(path)
-    values[scope][key] = module
+    for scope, key, module in normalized:
+        values[scope][key] = module
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(values, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    temporary = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(values, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def classify_inventory(

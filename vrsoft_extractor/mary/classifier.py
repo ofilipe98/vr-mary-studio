@@ -7,13 +7,20 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 from .models import Classification
 
 
 ADM_MODULE = "ADM_FIN_ESTOQUE"
 MODULES = ("Fiscal", ADM_MODULE, "PDV")
+
+
+class _GroupedProduct(TypedDict):
+    product: str
+    team: str
+    modules: set[str]
+    aliases: set[str]
 
 CATEGORY_MODULE_SEGMENTS = {
     "fiscal": "Fiscal",
@@ -128,7 +135,7 @@ def product_key(value: str) -> str:
 
 def parse_product_catalog(markdown: str) -> tuple[ProductRule, ...]:
     heading = ""
-    grouped: dict[str, dict[str, object]] = {}
+    grouped: dict[str, _GroupedProduct] = {}
     for raw_line in (markdown or "").splitlines():
         line = raw_line.strip()
         if line.startswith("## "):
@@ -154,8 +161,8 @@ def parse_product_catalog(markdown: str) -> tuple[ProductRule, ...]:
             key,
             {"product": product, "team": team, "modules": set(), "aliases": set()},
         )
-        entry["modules"].update(modules)  # type: ignore[union-attr]
-        entry["aliases"].update(_aliases_for_product(product))  # type: ignore[union-attr]
+        entry["modules"].update(modules)
+        entry["aliases"].update(_aliases_for_product(product))
 
     rules = [
         ProductRule(
@@ -164,7 +171,7 @@ def parse_product_catalog(markdown: str) -> tuple[ProductRule, ...]:
             modules=tuple(module for module in MODULES if module in entry["modules"]),
             aliases=tuple(
                 sorted(
-                    entry["aliases"],  # type: ignore[arg-type]
+                    entry["aliases"],
                     key=lambda alias: (-len(product_key(alias)), alias),
                 )
             ),

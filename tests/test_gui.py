@@ -13,7 +13,7 @@ from vrsoft_extractor.gui import (
     smoke_test_requested,
     write_env_file,
 )
-from vrsoft_extractor.settings import DEFAULT_BASE_URL
+from vrsoft_extractor.settings import ConfigError, DEFAULT_BASE_URL, load_settings
 
 
 def _unlink_ignore_errors(path: Path) -> None:
@@ -47,11 +47,31 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(loaded.max_pages, 123)
         self.assertEqual(loaded.concurrency, 3)
 
+    def test_write_env_file_preserves_unrelated_configuration(self):
+        path = Path(".test-tmp") / "gui-env-preserve-test.env"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# manter\nCUSTOM_FLAG=enabled\nENDOO_EMAIL=old\n", encoding="utf-8")
+        self.addCleanup(_unlink_ignore_errors, path)
+
+        write_env_file(path, GuiConfig(email="new@example.com", password="secret"))
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("# manter", content)
+        self.assertIn("CUSTOM_FLAG=enabled", content)
+        self.assertEqual(content.count("ENDOO_EMAIL="), 1)
+        self.assertIn("ENDOO_EMAIL=new@example.com", content)
+
     def test_read_env_file_uses_defaults(self):
         loaded = read_env_file(Path(".test-tmp") / "missing.env")
         self.assertEqual(loaded.base_url, DEFAULT_BASE_URL)
         self.assertEqual(loaded.max_pages, DEFAULT_MAX_PAGES)
         self.assertEqual(loaded.concurrency, DEFAULT_CONCURRENCY)
+
+    def test_settings_reject_non_http_url_and_non_positive_page_limit(self):
+        with self.assertRaises(ConfigError):
+            load_settings(base_url="file:///C:/segredo.txt")
+        with self.assertRaises(ConfigError):
+            load_settings(max_pages_per_section=0)
 
     def test_build_cli_command_prefers_venv_exe(self):
         project_dir = Path("D:/project")

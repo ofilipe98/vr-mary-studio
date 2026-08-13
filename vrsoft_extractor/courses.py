@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,10 +56,10 @@ def load_course_catalog(path: Path) -> list[CourseCatalogItem]:
         return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Catalogo de cursos invalido: {path}") from exc
     if not isinstance(raw, list):
-        return []
+        raise ValueError(f"Catalogo de cursos invalido: {path}")
     result: list[CourseCatalogItem] = []
     for row in raw:
         if not isinstance(row, dict):
@@ -93,12 +94,15 @@ def load_course_catalog(path: Path) -> list[CourseCatalogItem]:
 
 def save_course_catalog(items: Iterable[CourseCatalogItem], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps([item.to_dict() for item in items], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps([item.to_dict() for item in items], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def course_from_payload(summary: dict[str, Any], detail: dict[str, Any]) -> CourseCatalogItem:
@@ -325,7 +329,9 @@ def _iter_course_summaries(
             f"&order=created_at&position=0&limit=8&page={page_index}&required=0"
         )
         data = get_json(url)
-        if not isinstance(data, list) or not data:
+        if not isinstance(data, list):
+            raise ConfigError("A API de cursos retornou um inventário inválido.")
+        if not data:
             break
         yield from (row for row in data if isinstance(row, dict))
         page_index += 1
@@ -358,8 +364,8 @@ def _available_classes(detail: dict[str, Any]) -> list[CourseClass]:
 def _request_json(page, headers: dict[str, str], url: str) -> Any:
     response = page.request.get(url, headers=headers)
     if response.status < 200 or response.status >= 300:
-        return {}
+        raise ConfigError(f"API de cursos retornou HTTP {response.status}: {url}")
     try:
         return response.json()
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ConfigError(f"API de cursos retornou JSON inválido: {url}") from exc

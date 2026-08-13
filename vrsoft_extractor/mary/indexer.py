@@ -14,7 +14,8 @@ def export_catalog(database: MaryDatabase, index_dir: Path) -> tuple[Path, Path]
         rows = connection.execute(
             """SELECT source,source_id,title,url,module,classification_confidence,
                       review_status,status,updated_at,local_path,assets_json
-               FROM documents ORDER BY module,source,title"""
+               FROM documents WHERE status='active'
+               ORDER BY module,source,title"""
         ).fetchall()
     jsonl_path = index_dir / "catalogo.jsonl"
     with jsonl_path.open("w", encoding="utf-8", newline="\n") as handle:
@@ -33,7 +34,7 @@ def export_catalog(database: MaryDatabase, index_dir: Path) -> tuple[Path, Path]
         key = f"{row['module']} / {row['source'].upper()}"
         counts[key] = counts.get(key, 0) + 1
     lines = [
-        "# Índice da base Mary",
+        "# Índice da base VR",
         "",
         "Gerado automaticamente. Use `conhecimento.sqlite` para pesquisa FTS5.",
         "",

@@ -7,13 +7,13 @@ from .db import MaryDatabase
 from .portable_project import ensure_portable_project
 
 
-CONVERSATION_MANAGED_MARKER = "Gerado pelo VR Mary Studio - workspace de conversa"
+CONVERSATION_MANAGED_MARKER = "Gerado pelo VR Norte Studio - workspace de conversa"
 
 
 DEFAULT_AGENTS = """# AGENTS.md — VR Norte Studio
 
-Toda mensagem ativa o fluxo Mary e deve consultar a base local antes da resposta.
-O prefixo `Mary:` é aceito apenas como forma opcional de escrita.
+Toda mensagem ativa o fluxo VR e deve consultar a base local antes da resposta.
+O prefixo `VR:` é aceito apenas como forma opcional de escrita.
 
 Use primeiro a base local em `conhecimento/` e o índice
 `indice/conhecimento.sqlite`. Toda afirmação funcional ou técnica deve citar
@@ -39,10 +39,10 @@ e materiais de treinamento, sem alterar diretamente a base de conhecimento.
 
 O aplicativo fornece o contexto da base local somente quando o botão VR está
 ativo. Sem esse contexto, responda normalmente com o provedor selecionado e não
-inicie uma pesquisa Mary por conta própria.
+inicie uma pesquisa VR por conta própria.
 
 Quando o contexto VR solicitar aprofundamento, use `tools/mary-search.ps1`.
-Ele encaminha a consulta para o projeto Mary sem depender do diretório atual.
+Ele encaminha a consulta para o projeto VR sem depender do diretório atual.
 """
 
 
@@ -50,7 +50,7 @@ CONVERSATION_CLAUDE = f"""<!-- {CONVERSATION_MANAGED_MARKER} -->
 
 Trabalhe somente nesta pasta de conversa. O aplicativo fornece o contexto da
 base local apenas quando o botão VR está ativo. Sem esse contexto, responda
-normalmente e não inicie uma pesquisa Mary por conta própria. Quando o contexto
+normalmente e não inicie uma pesquisa VR por conta própria. Quando o contexto
 VR solicitar aprofundamento, use `tools/mary-search.ps1` e cite as fontes.
 """
 
@@ -89,7 +89,7 @@ while ($null -ne $Current) {{
     $Current = $Current.Parent
 }}
 if (-not $RootSearch) {{
-    throw 'Pesquisa local Mary indisponível: tools/mary-search.ps1 não foi encontrado no projeto.'
+    throw 'Pesquisa local VR indisponível: tools/mary-search.ps1 não foi encontrado no projeto.'
 }}
 & $RootSearch @PSBoundParameters
 """
@@ -125,7 +125,7 @@ def initialize_workspace(settings: MarySettings) -> MaryDatabase:
     readme = settings.root / "README.md"
     if not readme.exists():
         readme.write_text(
-            "# VR Mary V2\n\n"
+            "# Base VR\n\n"
             "Base local gerenciada pelo VR Norte Studio. Não edite arquivos em "
             "`conhecimento/` manualmente; use a tela de revisão.\n",
             encoding="utf-8",

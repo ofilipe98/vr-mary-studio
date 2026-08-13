@@ -92,11 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    settings = load_settings(
-        project_dir=args.project_dir,
-        base_url=args.base_url,
-        max_pages_per_section=args.max_pages,
-    )
+    try:
+        settings = load_settings(
+            project_dir=args.project_dir,
+            base_url=args.base_url,
+            max_pages_per_section=args.max_pages,
+        )
+    except ConfigError as exc:
+        print(f"Erro de configuração: {exc}", file=sys.stderr)
+        return 1
     log_path = setup_logging(settings.logs_dir, args.command, sensitive_values())
     LOGGER.info("Log: %s", log_path)
 
@@ -140,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             parser.error(f"Comando desconhecido: {args.command}")
-    except (ConfigError, RuntimeError) as exc:
+    except (ConfigError, RuntimeError, ValueError, OSError) as exc:
         LOGGER.error("%s", exc)
         return 1
     return 0

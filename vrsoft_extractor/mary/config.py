@@ -4,7 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..settings import load_dotenv_file
+from ..settings import (
+    ConfigError,
+    load_dotenv_file,
+    update_dotenv_file,
+    validated_http_url,
+)
 from .paths import resolve_portable_path, to_portable_path
 
 
@@ -14,6 +19,7 @@ LEGACY_OLD_ROOT = Path(r"D:\Codex\VR")
 DEFAULT_WIKI_API = "https://wiki.vrsoft.com.br/wiki/api.php"
 DEFAULT_WIKI_BASE = "https://wiki.vrsoft.com.br/wiki/"
 DEFAULT_KB_URL = "https://vrsoftware.movidesk.com/kb"
+VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 
 @dataclass(frozen=True)
@@ -114,17 +120,50 @@ def load_mary_settings(
         interval = int(os.environ.get("MARY_SYNC_INTERVAL_MINUTES", "120"))
     except ValueError:
         interval = 120
+    effort = os.environ.get("MARY_DEFAULT_EFFORT", "medium").strip().lower()
+    if effort == "ultra":
+        effort = "max"
+    if effort not in VALID_EFFORTS:
+        effort = "medium"
     return MarySettings(
         app_dir=app,
         root=configured_root,
         old_root=old_path,
-        wiki_api=os.environ.get("MARY_WIKI_API", DEFAULT_WIKI_API).rstrip("/"),
-        wiki_base=os.environ.get("MARY_WIKI_BASE", DEFAULT_WIKI_BASE),
-        kb_url=os.environ.get("MARY_KB_URL", DEFAULT_KB_URL).rstrip("/"),
+        wiki_api=validated_http_url(
+            os.environ.get("MARY_WIKI_API", DEFAULT_WIKI_API), "URL da API Wiki"
+        ).rstrip("/"),
+        wiki_base=validated_http_url(
+            os.environ.get("MARY_WIKI_BASE", DEFAULT_WIKI_BASE), "URL base da Wiki"
+        ),
+        kb_url=validated_http_url(
+            os.environ.get("MARY_KB_URL", DEFAULT_KB_URL), "URL do KB"
+        ).rstrip("/"),
         sync_interval_minutes=max(15, interval),
-        default_effort=os.environ.get("MARY_DEFAULT_EFFORT", "medium").strip().lower()
-        or "medium",
+        default_effort=effort,
     )
+
+
+def save_mary_env(app_dir: Path, values: dict[str, str]) -> None:
+    interval_text = values.get("MARY_SYNC_INTERVAL_MINUTES", "").strip()
+    try:
+        interval = int(interval_text)
+    except ValueError as exc:
+        raise ConfigError("O intervalo de sincronização deve ser um número inteiro.") from exc
+    if interval < 15:
+        raise ConfigError("O intervalo de sincronização deve ser de pelo menos 15 minutos.")
+
+    root = values.get("MARY_ROOT", "").strip()
+    if not root:
+        raise ConfigError("A raiz da base VR não pode ficar vazia.")
+    effort = values.get("MARY_DEFAULT_EFFORT", "").strip().lower()
+    if effort not in VALID_EFFORTS:
+        raise ConfigError("O nível de esforço padrão é inválido.")
+
+    sanitized = {key: str(value) for key, value in values.items()}
+    sanitized["MARY_ROOT"] = root
+    sanitized["MARY_SYNC_INTERVAL_MINUTES"] = str(interval)
+    sanitized["MARY_DEFAULT_EFFORT"] = effort
+    update_dotenv_file(app_dir / ".env", sanitized)
 
 
 def _discover_root(app: Path, configured: str | Path | None) -> Path:

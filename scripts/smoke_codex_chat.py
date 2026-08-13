@@ -1,4 +1,4 @@
-"""Real Codex App Server smoke test for VR Mary chat integration.
+"""Real Codex App Server smoke test for VR chat integration.
 
 This intentionally creates and deletes native test threads. Run it only in an
 authenticated development environment; it is not part of the offline suite.

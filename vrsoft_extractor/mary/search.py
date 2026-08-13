@@ -84,11 +84,12 @@ MODULE_HINTS: dict[str, frozenset[str]] = {
     ),
 }
 
-_MARY_PREFIX = re.compile(r"^\s*mary\s*:\s*", flags=re.IGNORECASE)
+_VR_PREFIX = re.compile(r"^\s*(?:vr|mary)\s*:\s*", flags=re.IGNORECASE)
 
 
-def strip_optional_mary_prefix(value: str) -> str:
-    return _MARY_PREFIX.sub("", str(value or ""), count=1).strip()
+def strip_optional_vr_prefix(value: str) -> str:
+    """Strip the current VR prefix and the legacy Mary prefix."""
+    return _VR_PREFIX.sub("", str(value or ""), count=1).strip()
 
 
 def normalize_search_text(value: str) -> str:
@@ -102,7 +103,7 @@ def normalize_search_text(value: str) -> str:
 
 
 def search_terms(value: str, *, limit: int = 12) -> list[str]:
-    normalized = normalize_search_text(strip_optional_mary_prefix(value))
+    normalized = normalize_search_text(strip_optional_vr_prefix(value))
     terms = [
         word
         for word in normalized.split()

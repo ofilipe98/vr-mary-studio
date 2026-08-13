@@ -1,0 +1,1714 @@
+from __future__ import annotations
+
+import json
+import io
+import os
+import sqlite3
+import threading
+from pathlib import Path
+from typing import Any, Callable
+from unittest.mock import patch
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from vrsoft_extractor.mary.config import MarySettings
+from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.models import (
+    ConversationOptions,
+    ModelRef,
+    OrchestrationOptions,
+    RuntimeEvent,
+)
+from vrsoft_extractor.mary.multiagent import (
+    AGENT_CATALOG,
+    VrAgentAssignment,
+    VrPlan,
+    build_agent_prompt,
+    build_consistency_prompt,
+    build_planner_prompt,
+    build_synthesis_prompt,
+    effective_orchestration_mode,
+    execution_batches,
+    parse_plan,
+)
+from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.providers import (
+    AgentProvider,
+    ClaudeProvider,
+    CodexProvider,
+    OpenCodeProvider,
+    ProviderError,
+    _opencode_environment,
+    _parse_opencode_models,
+)
+
+
+def _settings(tmp_path: Path) -> MarySettings:
+    settings = MarySettings(
+        app_dir=(tmp_path / "app").resolve(),
+        root=(tmp_path / "mary").resolve(),
+        old_root=(tmp_path / "old").resolve(),
+    )
+    settings.app_dir.mkdir(parents=True)
+    settings.old_root.mkdir(parents=True)
+    settings.ensure_dirs()
+    return settings
+
+
+class FakeProvider(AgentProvider):
+    def __init__(
+        self,
+        name: str,
+        *,
+        final_text: str = "RESPOSTA FINAL",
+        divergent: bool = False,
+        difficulty_level: int = 3,
+    ):
+        self.name = name
+        self.final_text = final_text
+        self.divergent = divergent
+        self.difficulty_level = difficulty_level
+        self.starts: list[str] = []
+        self.sent: list[dict[str, Any]] = []
+        self.interrupted: list[str] = []
+        self.released: list[tuple[str, str, bool]] = []
+        self._lock = threading.Lock()
+
+    def available(self) -> bool:
+        return True
+
+    def list_models(self) -> list[dict[str, Any]]:
+        return []
+
+    def start_conversation(
+        self,
+        conversation_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions | None = None,
+    ) -> str:
+        with self._lock:
+            self.starts.append(conversation_id)
+        return f"native:{conversation_id}"
+
+    def resume_conversation(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        options: ConversationOptions | None = None,
+    ) -> str:
+        return native_id
+
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: Callable[[RuntimeEvent], None],
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._lock:
+            self.sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "native_id": native_id,
+                    "model": model,
+                    "effort": effort,
+                    "message": message,
+                }
+            )
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_started",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+        if ":vr_orchestrator_plan:" in conversation_id:
+            output = json.dumps(
+                {
+                    "difficulty": {
+                        "level": self.difficulty_level,
+                        "summary": "Análise em etapas.",
+                    },
+                    "strategy": "adaptive",
+                    "agents": [
+                        {
+                            "id": "planner",
+                            "agent": "vr_planner",
+                            "model": "codex:sol",
+                            "effort": "medium",
+                            "task": "Planejar.",
+                        },
+                        {
+                            "id": "reasoner_a",
+                            "agent": "vr_reasoner_a",
+                            "model": "codex:sol",
+                            "effort": "high",
+                            "task": "Analisar A.",
+                            "depends_on": ["planner"],
+                        },
+                        {
+                            "id": "reasoner_b",
+                            "agent": "vr_reasoner_b",
+                            "model": "claude:opus",
+                            "effort": "xhigh",
+                            "task": "Analisar B.",
+                            "depends_on": ["planner"],
+                        },
+                        {
+                            "id": "critic",
+                            "agent": "vr_critic",
+                            "model": "codex:sol",
+                            "effort": "high",
+                            "task": "Criticar.",
+                            "depends_on": ["reasoner_a", "reasoner_b"],
+                        },
+                        {
+                            "id": "final",
+                            "agent": "vr_synthesizer",
+                            "model": "codex:sol",
+                            "effort": "max",
+                            "task": "Sintetizar.",
+                            "depends_on": ["critic"],
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        elif ":vr_orchestrator_validation:" in conversation_id and self.divergent:
+            output = json.dumps(
+                {
+                    "divergence": True,
+                    "confidence": 0.75,
+                    "summary": "As respostas divergem.",
+                    "revision_task": "Resolver a divergência principal.",
+                },
+                ensure_ascii=False,
+            )
+        elif ":vr:" in conversation_id:
+            output = f"resultado intermediário de {conversation_id}"
+        else:
+            output = self.final_text
+        callback(RuntimeEvent(conversation_id, "assistant_delta", output))
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_completed",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+
+    def interrupt(self, conversation_id: str) -> None:
+        with self._lock:
+            self.interrupted.append(conversation_id)
+
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
+        return None
+
+    def release_conversation(
+        self, conversation_id: str, native_id: str, *, delete_native: bool = False
+    ) -> None:
+        with self._lock:
+            self.released.append((conversation_id, native_id, delete_native))
+
+    def close(self) -> None:
+        return None
+
+
+class BlockingPlannerProvider(FakeProvider):
+    def __init__(self):
+        super().__init__("codex")
+        self.planner_started = threading.Event()
+        self._pending_callbacks: dict[str, Callable[[RuntimeEvent], None]] = {}
+
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: Callable[[RuntimeEvent], None],
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._lock:
+            self.sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "native_id": native_id,
+                    "model": model,
+                    "message": message,
+                }
+            )
+            self._pending_callbacks[conversation_id] = callback
+        if ":vr_orchestrator_plan:" in conversation_id:
+            self.planner_started.set()
+            return
+        super().send_message(
+            conversation_id,
+            native_id,
+            model,
+            effort,
+            workspace,
+            message,
+            callback,
+            options,
+            skills,
+        )
+
+    def interrupt(self, conversation_id: str) -> None:
+        super().interrupt(conversation_id)
+        with self._lock:
+            callback = self._pending_callbacks.pop(conversation_id, None)
+        if callback:
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+
+class FinalErrorProvider(FakeProvider):
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: Callable[[RuntimeEvent], None],
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if ":vr:" not in conversation_id:
+            callback(RuntimeEvent(conversation_id, "error", "falha final"))
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+            return
+        super().send_message(
+            conversation_id,
+            native_id,
+            model,
+            effort,
+            workspace,
+            message,
+            callback,
+            options,
+            skills,
+        )
+
+
+def test_model_ref_uses_provider_qualified_key_and_round_trips() -> None:
+    model = ModelRef.from_mapping(
+        {
+            "provider": " Claude ",
+            "model_id": " opus ",
+            "displayName": "Opus",
+            "capabilities": "reasoning",
+        }
+    )
+
+    assert model == ModelRef("claude", "opus", "Opus", "", ("reasoning",))
+    assert model.key == "claude:opus"
+    assert ModelRef("codex", "").key == "codex:__default__"
+    assert ModelRef.from_mapping(model.to_dict()) == model
+
+
+def test_orchestration_modes_normalize_legacy_flags_and_route_automatic_levels() -> None:
+    assert OrchestrationOptions(enabled=False).mode == "off"
+    assert OrchestrationOptions(enabled=True).mode == "automatic"
+    assert OrchestrationOptions(ultra=True).mode == "ultra"
+    standard = OrchestrationOptions(mode="standard")
+    assert standard.enabled is True
+    assert standard.ultra is False
+
+    automatic = OrchestrationOptions(mode="automatic")
+    assert [
+        effective_orchestration_mode(automatic, level) for level in range(1, 6)
+    ] == ["off", "standard", "standard", "ultra", "ultra"]
+    assert effective_orchestration_mode(standard, 5) == "standard"
+    assert effective_orchestration_mode(OrchestrationOptions(mode="ultra"), 1) == "ultra"
+
+
+def test_orchestration_dialog_keeps_agent_pool_separate_from_orchestrator() -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QDialogButtonBox
+
+    from vrsoft_extractor.mary.chat_widgets import OrchestrationSettingsDialog
+
+    application = QApplication.instance() or QApplication([])
+    sol = ModelRef("codex", "sol", "Sol")
+    opus = ModelRef("claude", "opus", "Opus")
+    current = OrchestrationOptions(
+        mode="ultra",
+        strategy="adaptive",
+        model_pool=(opus,),
+        explain_routing=True,
+        dynamic_model_routing=False,
+        dynamic_agent_count=False,
+        difficulty_routing=False,
+    )
+    dialog = OrchestrationSettingsDialog((sol, opus), current, sol)
+    try:
+        application.processEvents()
+        checked_keys = {
+            str(dialog.pool_list.item(index).data(Qt.UserRole))
+            for index in range(dialog.pool_list.count())
+            if dialog.pool_list.item(index).checkState() == Qt.Checked
+        }
+        assert checked_keys == {"claude:opus"}
+        assert dialog.orchestrator_model() == sol
+        edited = dialog.options()
+        assert edited.model_pool == (opus,)
+        assert edited.mode == "ultra"
+        assert edited.ultra is True
+        assert edited.dynamic_model_routing is False
+        assert edited.dynamic_agent_count is False
+        assert edited.difficulty_routing is False
+        buttons = dialog.findChild(QDialogButtonBox)
+        assert buttons is not None
+        assert buttons.button(QDialogButtonBox.Ok).text() == "Aplicar"
+        assert buttons.button(QDialogButtonBox.Cancel).text() == "Cancelar"
+    finally:
+        dialog.close()
+
+
+def test_standard_and_ultra_share_the_compact_composer_outline() -> None:
+    from PySide6.QtCore import QAbstractAnimation
+    from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+
+    from vrsoft_extractor.mary.chat_widgets import VrComposerGlowFrame
+
+    application = QApplication.instance() or QApplication([])
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    frame = VrComposerGlowFrame(host)
+    frame_layout = QVBoxLayout(frame)
+    frame_layout.addWidget(QLabel("Chat"))
+    layout.addWidget(frame)
+    host.show()
+    try:
+        frame.set_mode("standard")
+        application.processEvents()
+        assert frame.mode() == "standard"
+        assert frame._phase_animation.loopCount() == 1
+        assert frame._phase_animation.state() == QAbstractAnimation.Running
+
+        frame.set_mode("ultra")
+        application.processEvents()
+        assert frame.mode() == "ultra"
+        assert frame._phase_animation.loopCount() == -1
+        assert frame._phase_animation.state() == QAbstractAnimation.Running
+
+        frame.set_mode("off")
+        application.processEvents()
+        assert frame._phase_animation.state() == QAbstractAnimation.Stopped
+        assert frame.mode() == "off"
+    finally:
+        host.close()
+
+
+def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
+    tmp_path: Path,
+) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from vrsoft_extractor.mary.ui import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    window = MainWindow(_settings(tmp_path), smoke_test=True, auto_close_smoke=False)
+    try:
+        window.show()
+        application.processEvents()
+        assert set(window.orchestration_mode_actions) == {
+            "off",
+            "automatic",
+            "standard",
+            "ultra",
+        }
+        assert window.vr_flow_button.menu() is window.vr_menu
+        assert (
+            window.vr_local_base_action.isChecked()
+            == window.vr_flow_button.isChecked()
+        )
+        assert not hasattr(window, "orchestration_button")
+        menu_labels = [action.text() for action in window.vr_menu.actions()]
+        assert "Consultar base local" in menu_labels
+        assert "Desligado" in menu_labels
+        assert "Automático" in menu_labels
+        assert "Ligado" in menu_labels
+        assert "Ultra" in menu_labels
+        assert all("Orange" not in label for label in menu_labels)
+        assert all("Rainbow" not in label for label in menu_labels)
+
+        for mode, visual in (
+            ("off", "off"),
+            ("automatic", "off"),
+            ("standard", "standard"),
+            ("ultra", "ultra"),
+        ):
+            options = OrchestrationOptions(mode=mode)
+            window._sync_orchestration_mode_ui(options, animate=False)
+            assert window.orchestration_mode_actions[mode].isChecked()
+            assert window.composer_glow.mode() == visual
+
+        window.draft_orchestration = OrchestrationOptions(mode="standard")
+        window._sync_orchestration_mode_ui(
+            window.draft_orchestration, animate=False
+        )
+        window.vr_local_base_action.setChecked(False)
+        assert not window.vr_flow_button.isChecked()
+        assert window.composer_glow.mode() == "standard"
+
+        window.current_conversation = "draft"
+        window.draft_orchestration = OrchestrationOptions(
+            mode="automatic", show_execution=False
+        )
+        window._sync_orchestration_mode_ui(
+            window.draft_orchestration, animate=False
+        )
+        window._on_runtime_event(
+            RuntimeEvent(
+                "draft",
+                "plan_created",
+                "Plano automático",
+                {
+                    "mode": "automatic",
+                    "effective_mode": "ultra",
+                    "plan": {"difficulty": {"level": 4}, "agents": []},
+                },
+            )
+        )
+        assert window.composer_glow.mode() == "ultra"
+        window._on_runtime_event(RuntimeEvent("draft", "turn_completed"))
+        assert window.composer_glow.mode() == "off"
+    finally:
+        window.close()
+
+
+def test_execution_transparency_can_be_hidden_and_replayed_safely(
+    tmp_path: Path,
+) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from vrsoft_extractor.mary.ui import MainWindow
+
+    application = QApplication.instance() or QApplication([])
+    settings = _settings(tmp_path)
+    window = MainWindow(settings, smoke_test=True, auto_close_smoke=False)
+    hidden = OrchestrationOptions(
+        enabled=True,
+        model_pool=(ModelRef("codex", "sol", "Sol"),),
+        show_execution=False,
+    )
+    hidden_id = window.database.create_conversation(
+        "Oculta", "codex", "sol", settings.work_dir / "hidden", orchestration=hidden
+    )
+    try:
+        window.current_conversation = hidden_id
+        window._on_runtime_event(
+            RuntimeEvent(
+                hidden_id,
+                "agent_started",
+                "VR Critic executando no modelo privado.",
+                {"agent_id": "critic"},
+            )
+        )
+        assert window.orchestration_trace.isHidden()
+        assert window.chat_status.text() == "Trabalhando…"
+
+        visible = OrchestrationOptions(
+            enabled=True,
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+            show_execution=True,
+        )
+        visible_id = window.database.create_conversation(
+            "Visível",
+            "codex",
+            "sol",
+            settings.work_dir / "visible",
+            orchestration=visible,
+        )
+        run_id = "run-visible"
+        full_agent_output = "Ponto crítico validado.\n\n" + ("detalhe " * 900)
+        plan_payload = {
+            "run_id": run_id,
+            "plan": {
+                "difficulty": {"level": 3, "label": "Complexa"},
+                "agents": [
+                    {
+                        "id": "critic",
+                        "agent": "vr_critic",
+                        "label": "VR Critic",
+                        "model": {"display_name": "Sol"},
+                        "task": "Criticar a solução.",
+                        "reason": "<b>texto literal</b>",
+                        "final": False,
+                    },
+                    {
+                        "id": "final",
+                        "agent": "vr_synthesizer",
+                        "label": "VR Synthesizer",
+                        "model": {"display_name": "Sol"},
+                        "final": True,
+                    },
+                ],
+            },
+        }
+        window.database.add_event(
+            RuntimeEvent(visible_id, "plan_created", "Plano", plan_payload)
+        )
+        for kind, text, payload in (
+            ("agent_started", "Critic iniciou", {"run_id": run_id, "agent_id": "critic"}),
+            (
+                "agent_completed",
+                "Critic concluiu",
+                {
+                    "run_id": run_id,
+                    "agent_id": "critic",
+                    "output": full_agent_output,
+                },
+            ),
+            ("synthesis_started", "Síntese", {"run_id": run_id}),
+            ("orchestration_completed", "Concluído", {"run_id": run_id}),
+        ):
+            window.database.add_event(RuntimeEvent(visible_id, kind, text, payload))
+
+        window.current_conversation = visible_id
+        window.vr_agents_sidebar_preferred = True
+        window._restore_orchestration_trace(visible_id, visible)
+        application.processEvents()
+        assert window.orchestration_agent_list.count() == 2
+        window.orchestration_agent_list.setCurrentRow(0)
+        application.processEvents()
+        rendered = window.orchestration_trace_details.toPlainText()
+        assert "<b>texto literal</b>" in window.orchestration_agent_task.text()
+        assert "Criticar a solução." in window.orchestration_agent_task.text()
+        assert "Ponto crítico validado." in rendered
+        assert rendered.count("detalhe") == 900
+        assert "VR Critic" in window.orchestration_agent_chat_title.text()
+        assert "concluído" in window.orchestration_agent_chat_title.text()
+        assert "Última execução · Concluído" == window.orchestration_trace_status.text()
+        assert window.chat_splitter.indexOf(window.orchestration_trace) == 2
+        assert not window.orchestration_trace.isHidden()
+        window._set_vr_agent_sidebar_visible(False)
+        assert window.orchestration_trace.isHidden()
+        assert not window.vr_agents_toggle_button.isHidden()
+    finally:
+        window.close()
+
+
+def test_multiagent_migration_creates_one_backup_and_idempotent_pool(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    path = settings.database_path
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                native_id TEXT NOT NULL DEFAULT '',
+                workspace TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                archived INTEGER NOT NULL DEFAULT 0,
+                cloned_from TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO conversations
+               (id,title,provider,model,workspace,created_at,updated_at)
+               VALUES('legacy','Legada','codex','sol','TrabalhoMary/legacy','now','now')"""
+        )
+
+    database = MaryDatabase(path, root=settings.root)
+    backup = (
+        settings.root
+        / ".state"
+        / "backups"
+        / "conhecimento-pre-multiagent.sqlite"
+    )
+    assert backup.is_file()
+    with sqlite3.connect(backup) as connection:
+        legacy_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        assert "orchestration_enabled" not in legacy_columns
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='conversation_model_pool'"
+        ).fetchone() is None
+
+    assert [(item.provider, item.model) for item in database.conversation_model_pool("legacy")] == [
+        ("codex", "sol")
+    ]
+    assert database.get_conversation("legacy")["orchestration_mode"] == "off"
+    models = [
+        ModelRef("codex", "sol", "Sol antigo"),
+        ModelRef("claude", "opus", "Opus", capabilities=("reasoning",)),
+        ModelRef("codex", "sol", "Sol"),
+    ]
+    database.set_conversation_model_pool("legacy", models)
+    database.set_conversation_model_pool("legacy", models)
+    pool = database.conversation_model_pool("legacy")
+    assert [(item.key, item.display_name) for item in pool] == [
+        ("claude:opus", "Opus"),
+        ("codex:sol", "Sol"),
+    ]
+
+    database.set_conversation_model_pool(
+        "legacy", [ModelRef("claude", "opus", "Opus")]
+    )
+    backup_bytes = backup.read_bytes()
+    reopened = MaryDatabase(path, root=settings.root)
+    assert backup.read_bytes() == backup_bytes
+    assert [item.key for item in reopened.conversation_model_pool("legacy")] == [
+        "claude:opus",
+    ]
+
+
+def test_partial_pool_migration_recovers_only_conversations_without_rows(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            """CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                native_id TEXT NOT NULL DEFAULT '',
+                workspace TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                archived INTEGER NOT NULL DEFAULT 0,
+                cloned_from TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE conversation_model_pool (
+                conversation_id TEXT NOT NULL REFERENCES conversations(id),
+                provider TEXT NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                capabilities_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY(conversation_id,provider,model_id)
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO conversations
+               (id,title,provider,model,workspace,created_at,updated_at)
+               VALUES('partial','Parcial','codex','sol','work','now','now')"""
+        )
+
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT provider,model_id FROM conversation_model_pool "
+            "WHERE conversation_id='partial'"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [("codex", "sol")]
+
+
+def test_mode_migration_preserves_off_automatic_and_ultra_legacy_states(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-modes.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                native_id TEXT NOT NULL DEFAULT '',
+                workspace TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                archived INTEGER NOT NULL DEFAULT 0,
+                orchestration_enabled INTEGER NOT NULL DEFAULT 0,
+                ultra_enabled INTEGER NOT NULL DEFAULT 0,
+                cloned_from TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.executemany(
+            """INSERT INTO conversations
+               (id,title,provider,model,workspace,orchestration_enabled,
+                ultra_enabled,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                ("off", "Off", "codex", "sol", "off", 0, 0, "now", "now"),
+                ("auto", "Auto", "codex", "sol", "auto", 1, 0, "now", "now"),
+                ("ultra", "Ultra", "codex", "sol", "ultra", 0, 1, "now", "now"),
+            ),
+        )
+
+    database = MaryDatabase(path)
+    assert {
+        identifier: database.get_conversation(identifier)["orchestration_mode"]
+        for identifier in ("off", "auto", "ultra")
+    } == {"off": "off", "auto": "automatic", "ultra": "ultra"}
+
+
+def test_dynamic_flags_round_trip_and_control_the_validated_plan(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    sol = ModelRef("codex", "sol", "Sol")
+    opus = ModelRef("claude", "opus", "Opus")
+    options = OrchestrationOptions(
+        mode="standard",
+        model_pool=(sol, opus),
+        dynamic_model_routing=False,
+        dynamic_agent_count=False,
+        difficulty_routing=False,
+    )
+    conversation_id = database.create_conversation(
+        "Flags", "codex", "sol", settings.work_dir / "flags", orchestration=options
+    )
+    restored = ConversationOptions.from_mapping(
+        database.get_conversation(conversation_id),
+        tuple(database.conversation_model_pool(conversation_id)),
+    ).orchestration
+    assert restored.mode == "standard"
+    assert restored.dynamic_model_routing is False
+    assert restored.dynamic_agent_count is False
+    assert restored.difficulty_routing is False
+
+    raw = json.dumps(
+        {
+            "difficulty": {"level": 1},
+            "agents": [
+                {"agent": "vr_critic", "model": "claude:opus"},
+                {"agent": "vr_validator", "model": "claude:opus"},
+            ],
+        }
+    )
+    plan = parse_plan(raw, "Pedido", restored, sol, (sol, opus))
+    assert plan.difficulty_level == 3
+    assert len(plan.agents) == 3
+    assert {item.model.key for item in plan.agents[:-1]} == {"codex:sol"}
+
+
+def test_parse_plan_accepts_valid_models_and_falls_back_inside_pool() -> None:
+    sol = ModelRef("codex", "sol", "Sol")
+    opus = ModelRef("claude", "opus", "Opus")
+    pool = (sol, opus)
+    options = OrchestrationOptions(
+        mode="standard", strategy="adaptive", model_pool=pool
+    )
+    valid = json.dumps(
+        {
+            "difficulty": {"level": 3, "summary": "Exige comparação."},
+            "strategy": "parallel",
+            "agents": [
+                {
+                    "id": "critic",
+                    "agent": "vr_critic",
+                    "model": "claude:opus",
+                    "effort": "low",
+                    "task": "Comparar alternativas.",
+                },
+                {
+                    "id": "final",
+                    "agent": "vr_synthesizer",
+                    "model": "codex:sol",
+                    "effort": "max",
+                    "depends_on": ["critic"],
+                },
+            ],
+        }
+    )
+    plan = parse_plan(valid, "Compare alternativas", options, sol, pool)
+
+    assert not plan.fallback
+    assert plan.difficulty_level == 3
+    assert plan.agents[0].model is opus
+    assert plan.agents[0].effort == "low"
+    assert plan.agents[-1].model is sol
+    assert plan.agents[-1].effort == "max"
+    assert not plan.warnings
+
+    outside_pool = json.dumps(
+        {
+            "difficulty": {"level": 4},
+            "agents": [
+                {
+                    "id": "critic",
+                    "agent": "vr_critic",
+                    "model": "other:fable-5",
+                    "effort": "impossível",
+                }
+            ],
+        }
+    )
+    repaired = parse_plan(outside_pool, "Investigue profundamente", options, sol, pool)
+    assert repaired.agents[0].model.key in {item.key for item in pool}
+    assert all(item.model.key in {candidate.key for candidate in pool} for item in repaired.agents)
+    assert any("fallback de modelo" in warning for warning in repaired.warnings)
+    assert any("fallback de effort" in warning for warning in repaired.warnings)
+    assert repaired.agents[0].effort == "xhigh"
+    assert parse_plan("not json", "Traduza: hello", options, sol, pool).fallback
+
+
+def test_agent_definition_is_independent_from_selected_model() -> None:
+    definition = AGENT_CATALOG["vr_critic"]
+    first = VrAgentAssignment("critic", definition, ModelRef("codex", "sol"), "Criticar", "")
+    second = VrAgentAssignment(
+        "critic", definition, ModelRef("claude", "opus"), "Criticar", ""
+    )
+
+    assert not hasattr(definition, "model")
+    assert first.agent is second.agent
+    assert first.agent.role == second.agent.role == "criticism"
+    assert first.model.key != second.model.key
+
+
+def test_vrmaster_personality_is_applied_to_each_orchestration_stage() -> None:
+    model = ModelRef("codex", "sol", "Sol")
+    options = OrchestrationOptions(mode="standard", model_pool=(model,))
+    assignment = VrAgentAssignment(
+        "research",
+        AGENT_CATALOG["vr_researcher"],
+        model,
+        "Verificar a evidência disponível.",
+        "",
+    )
+    plan = VrPlan(
+        2,
+        "Moderada",
+        "Exige validação documental.",
+        "specialized",
+        (
+            assignment,
+            VrAgentAssignment(
+                "final",
+                AGENT_CATALOG["vr_synthesizer"],
+                model,
+                "Consolidar.",
+                "",
+                ("research",),
+            ),
+        ),
+    )
+
+    planner = build_planner_prompt("Analise o erro", options, model, (model,))
+    worker = build_agent_prompt(assignment, "Analise o erro", [])
+    validation = build_consistency_prompt("Analise o erro", [])
+    synthesis = build_synthesis_prompt("Analise o erro", plan, [], None)
+
+    assert "Sintoma -> Contexto -> Evidência" in planner
+    assert "Não complete lacunas com conhecimento próprio" in worker
+    assert "ações destrutivas ou de alto impacto" in validation
+    assert "Especialista Técnico em ERP VRMaster" in synthesis
+    assert "Precisão > Evidência" in synthesis
+    assert "Nunca esconda incerteza" in synthesis
+    assert "Não recomende alteração direta de banco" in synthesis
+
+
+def test_execution_batches_run_every_non_final_agent_in_parallel() -> None:
+    model = ModelRef("codex", "sol")
+    planner = VrAgentAssignment(
+        "planner", AGENT_CATALOG["vr_planner"], model, "Planejar", ""
+    )
+    reasoner_a = VrAgentAssignment(
+        "reasoner_a",
+        AGENT_CATALOG["vr_reasoner"],
+        model,
+        "Analisar A",
+        "",
+        ("planner",),
+    )
+    reasoner_b = VrAgentAssignment(
+        "reasoner_b",
+        AGENT_CATALOG["vr_reasoner"],
+        model,
+        "Analisar B",
+        "",
+        ("planner",),
+    )
+    critic = VrAgentAssignment(
+        "critic",
+        AGENT_CATALOG["vr_critic"],
+        model,
+        "Criticar",
+        "",
+        ("reasoner_a", "reasoner_b"),
+    )
+    final = VrAgentAssignment(
+        "final",
+        AGENT_CATALOG["vr_synthesizer"],
+        model,
+        "Sintetizar",
+        "",
+        ("critic",),
+    )
+    plan = VrPlan(3, "Complexa", "", "adaptive", (planner, reasoner_a, reasoner_b, critic, final))
+
+    assert [[item.id for item in batch] for batch in execution_batches(plan)] == [[
+        "planner",
+        "reasoner_a",
+        "reasoner_b",
+        "critic",
+    ]]
+
+    cyclic = VrPlan(
+        3,
+        "Complexa",
+        "",
+        "adaptive",
+        (
+            VrAgentAssignment(
+                "a", AGENT_CATALOG["vr_reasoner"], model, "A", "", ("b",)
+            ),
+            VrAgentAssignment(
+                "b", AGENT_CATALOG["vr_critic"], model, "B", "", ("a",)
+            ),
+            final,
+        ),
+    )
+    assert [[item.id for item in batch] for batch in execution_batches(cyclic)] == [
+        ["a", "b"]
+    ]
+
+
+def test_runtime_starts_every_non_final_agent_concurrently(tmp_path: Path) -> None:
+    class ParallelProbeProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__("codex", difficulty_level=3)
+            self.worker_barrier = threading.Barrier(4)
+            self.active_workers = 0
+            self.maximum_active_workers = 0
+
+        def send_message(self, *args, **kwargs) -> None:
+            conversation_id = str(args[0])
+            is_worker = (
+                ":vr:" in conversation_id
+                and "vr_orchestrator_" not in conversation_id
+            )
+            if not is_worker:
+                return super().send_message(*args, **kwargs)
+            with self._lock:
+                self.active_workers += 1
+                self.maximum_active_workers = max(
+                    self.maximum_active_workers,
+                    self.active_workers,
+                )
+            try:
+                self.worker_barrier.wait(timeout=3)
+                super().send_message(*args, **kwargs)
+            finally:
+                with self._lock:
+                    self.active_workers -= 1
+
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = ParallelProbeProvider()
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            mode="standard",
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+        ),
+    )
+    completed = threading.Event()
+    orchestrator.send(
+        conversation_id,
+        "Analise em paralelo",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+
+    assert completed.wait(5)
+    assert provider.maximum_active_workers == 4
+
+
+def test_orchestrated_turn_exposes_and_persists_only_final_synthesis(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    codex = FakeProvider("codex")
+    claude = FakeProvider("claude")
+    orchestrator.providers = {"codex": codex, "claude": claude}
+    pool = (ModelRef("codex", "sol", "Sol"), ModelRef("claude", "opus", "Opus"))
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            enabled=True,
+            strategy="adaptive",
+            model_pool=pool,
+            show_execution=True,
+        ),
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Resolva o problema", callback, use_vr=False)
+    assert completed.wait(5), "o fluxo orquestrado não concluiu"
+
+    assert [event.text for event in events if event.kind == "assistant_delta"] == [
+        "RESPOSTA FINAL"
+    ]
+    assert [tuple(row)[:3] for row in database.messages(conversation_id)]
+    messages = database.messages(conversation_id)
+    assert [(row["role"], row["content"]) for row in messages] == [
+        ("user", "Resolva o problema"),
+        ("assistant", "RESPOSTA FINAL"),
+    ]
+    with database.connect() as connection:
+        persisted_deltas = connection.execute(
+            "SELECT text FROM runtime_events WHERE conversation_id=? AND kind='assistant_delta'",
+            (conversation_id,),
+        ).fetchall()
+        persisted_agent_deltas = connection.execute(
+            "SELECT text FROM runtime_events WHERE conversation_id=? AND kind='agent_delta'",
+            (conversation_id,),
+        ).fetchall()
+        completed_agents = connection.execute(
+            "SELECT payload_json FROM runtime_events "
+            "WHERE conversation_id=? AND kind='agent_completed'",
+            (conversation_id,),
+        ).fetchall()
+    assert [row["text"] for row in persisted_deltas] == ["RESPOSTA FINAL"]
+    assert persisted_agent_deltas == []
+    assert any(event.kind == "agent_delta" for event in events)
+    assert completed_agents
+    assert all(
+        json.loads(row["payload_json"])["output"].startswith(
+            "resultado intermediário"
+        )
+        for row in completed_agents
+    )
+    assert any(event.kind == "parallel_group_started" for event in events)
+    all_sent = codex.sent + claude.sent
+    assert len([item for item in all_sent if ":vr:" in item["conversation_id"]]) == 5
+    main_calls = [item for item in all_sent if item["conversation_id"] == conversation_id]
+    assert len(main_calls) == 1
+    assert main_calls[0]["effort"] == "max"
+    assert "RESULTADOS DOS AGENTES" in main_calls[0]["message"]
+    worker_efforts = {
+        item["conversation_id"].split(":")[-2]: item["effort"]
+        for item in all_sent
+        if ":vr:" in item["conversation_id"]
+        and "vr_orchestrator_" not in item["conversation_id"]
+    }
+    assert set(worker_efforts.values()) >= {"medium", "high", "xhigh"}
+
+
+@pytest.mark.parametrize(
+    ("mode", "difficulty", "expected_effective", "expected_workers"),
+    (
+        ("off", 5, None, 0),
+        ("automatic", 1, "off", 0),
+        ("automatic", 3, "standard", 4),
+        ("automatic", 4, "ultra", 4),
+        ("standard", 4, "standard", 4),
+        ("ultra", 1, "ultra", 4),
+    ),
+)
+def test_execution_modes_select_the_expected_effective_flow(
+    tmp_path: Path,
+    mode: str,
+    difficulty: int,
+    expected_effective: str | None,
+    expected_workers: int,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", difficulty_level=difficulty)
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            mode=mode,
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+        ),
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Pedido", callback, use_vr=False)
+    assert completed.wait(5)
+    worker_calls = [
+        item
+        for item in provider.sent
+        if ":vr:" in item["conversation_id"]
+        and "vr_orchestrator_" not in item["conversation_id"]
+    ]
+    assert len(worker_calls) == expected_workers
+    plans = [event for event in events if event.kind == "plan_created"]
+    if expected_effective is None:
+        assert plans == []
+    else:
+        assert plans[-1].payload["mode"] == mode
+        assert plans[-1].payload["effective_mode"] == expected_effective
+
+
+def test_orchestrator_is_not_injected_into_an_explicit_worker_pool(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    codex = FakeProvider("codex")
+    claude = FakeProvider("claude")
+    orchestrator.providers = {"codex": codex, "claude": claude}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            enabled=True,
+            model_pool=(ModelRef("claude", "opus", "Opus"),),
+        ),
+    )
+    completed = threading.Event()
+    orchestrator.send(
+        conversation_id,
+        "Analise",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+    assert completed.wait(5)
+    codex_workers = [
+        item
+        for item in codex.sent
+        if ":vr:" in item["conversation_id"]
+        and "vr_orchestrator_" not in item["conversation_id"]
+    ]
+    assert codex_workers == []
+    assert any(
+        ":vr:" in item["conversation_id"]
+        and "vr_orchestrator_" not in item["conversation_id"]
+        for item in claude.sent
+    )
+
+
+def test_final_error_is_not_reported_as_orchestration_success(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FinalErrorProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            enabled=True,
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+        ),
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Falhe", callback, use_vr=False)
+    assert completed.wait(5)
+    assert any(event.kind == "error" for event in events)
+    assert not any(event.kind == "orchestration_completed" for event in events)
+    assert database.get_conversation(conversation_id)["status"] == "error"
+    delivered = len(events)
+    orchestrator._handle_event(RuntimeEvent(conversation_id, "error", "tardia"))
+    orchestrator._handle_event(RuntimeEvent(conversation_id, "turn_completed"))
+    assert len(events) == delivered
+    assert database.get_conversation(conversation_id)["status"] == "error"
+
+
+def test_ultra_revision_respects_dynamic_count_and_model_flags(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", divergent=True)
+    orchestrator.providers = {"codex": provider}
+    pool = (
+        ModelRef("codex", "luna", "Luna"),
+        ModelRef("codex", "opus", "Opus"),
+    )
+
+    def run(dynamic_agent_count: bool) -> list[dict[str, Any]]:
+        conversation_id = orchestrator.new_conversation(
+            "codex",
+            "sol",
+            defer_provider_start=True,
+            orchestration=OrchestrationOptions(
+                enabled=True,
+                model_pool=pool,
+                ultra=True,
+                dynamic_model_routing=False,
+                dynamic_agent_count=dynamic_agent_count,
+            ),
+        )
+        completed = threading.Event()
+        orchestrator.send(
+            conversation_id,
+            "Compare profundamente",
+            lambda event: completed.set()
+            if event.kind == "turn_completed"
+            else None,
+            use_vr=False,
+        )
+        assert completed.wait(5)
+        return [
+            item
+            for item in provider.sent
+            if item["conversation_id"].startswith(f"{conversation_id}:vr:")
+        ]
+
+    static_calls = run(False)
+    assert not any("vr_revision" in item["conversation_id"] for item in static_calls)
+
+    dynamic_calls = run(True)
+    revision = next(
+        item for item in dynamic_calls if "vr_revision" in item["conversation_id"]
+    )
+    assert revision["model"] == "luna"
+
+
+def test_codex_process_exit_terminates_registered_async_turn() -> None:
+    class DeadProcess:
+        def __init__(self):
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("fatal\n")
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 1
+
+        def poll(self) -> int:
+            return 1
+
+    provider = CodexProvider()
+    process = DeadProcess()
+    events: list[RuntimeEvent] = []
+    provider.process = process  # type: ignore[assignment]
+    with provider._state_lock:
+        provider._callbacks["conversation"] = events.append
+        provider._active_turns["conversation"] = "turn"
+
+    provider._read_loop(process)  # type: ignore[arg-type]
+
+    assert [event.kind for event in events] == ["error", "turn_completed"]
+    assert provider._active_turns == {}
+
+
+def test_codex_replacement_drains_state_owned_by_dead_process() -> None:
+    class DeadProcess:
+        stderr = io.StringIO("fatal\n")
+
+        def poll(self) -> int:
+            return 1
+
+    provider = CodexProvider()
+    provider.command = "codex"
+    process = DeadProcess()
+    events: list[RuntimeEvent] = []
+    provider.process = process  # type: ignore[assignment]
+    with provider._state_lock:
+        provider._callbacks["conversation"] = events.append
+        provider._active_turns["conversation"] = "turn"
+
+    with patch(
+        "vrsoft_extractor.mary.providers.subprocess.Popen",
+        side_effect=OSError("spawn failed"),
+    ):
+        with pytest.raises(OSError, match="spawn failed"):
+            provider._ensure_started()
+
+    assert [event.kind for event in events] == ["error", "turn_completed"]
+    assert provider._active_turns == {}
+
+
+def test_claude_rejects_two_concurrent_turns_for_the_same_conversation(
+    tmp_path: Path,
+) -> None:
+    class CompletedProcess:
+        def __init__(self):
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+
+        def wait(self) -> int:
+            return 0
+
+        def poll(self) -> int | None:
+            return None
+
+        def terminate(self) -> None:
+            return None
+
+    provider = ClaudeProvider()
+    provider.command = "claude"
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    native_id = provider.start_conversation(
+        "same", "opus", "medium", workspace
+    )
+    spawn_started = threading.Event()
+    allow_spawn = threading.Event()
+    first_errors: list[Exception] = []
+
+    def popen(*_args: Any, **_kwargs: Any) -> CompletedProcess:
+        spawn_started.set()
+        assert allow_spawn.wait(5)
+        return CompletedProcess()
+
+    def first_send() -> None:
+        try:
+            provider.send_message(
+                "same",
+                native_id,
+                "opus",
+                "medium",
+                workspace,
+                "primeira",
+                lambda _event: None,
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            first_errors.append(exc)
+
+    with patch(
+        "vrsoft_extractor.mary.providers.subprocess.Popen", side_effect=popen
+    ) as mocked_popen:
+        thread = threading.Thread(target=first_send)
+        thread.start()
+        assert spawn_started.wait(5)
+        with pytest.raises(ProviderError, match="Já existe"):
+            provider.send_message(
+                "same",
+                native_id,
+                "opus",
+                "medium",
+                workspace,
+                "segunda",
+                lambda _event: None,
+            )
+        allow_spawn.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert mocked_popen.call_count == 1
+        command = mocked_popen.call_args.args[0]
+        assert "--session-id" in command
+        assert "--resume" not in command
+    assert first_errors == []
+
+
+@pytest.mark.parametrize("cancel_action", ["close", "release"])
+def test_claude_cancellation_revokes_a_blocked_startup(
+    tmp_path: Path, cancel_action: str
+) -> None:
+    class SpawnedProcess:
+        def __init__(self):
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("")
+            self.terminated = False
+
+        def poll(self) -> int | None:
+            return -15 if self.terminated else None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+    provider = ClaudeProvider()
+    provider.command = "claude"
+    workspace = tmp_path / cancel_action
+    workspace.mkdir()
+    native_id = provider.start_conversation(
+        "same", "opus", "medium", workspace
+    )
+    spawn_started = threading.Event()
+    allow_spawn = threading.Event()
+    process = SpawnedProcess()
+    errors: list[Exception] = []
+
+    def popen(*_args: Any, **_kwargs: Any) -> SpawnedProcess:
+        spawn_started.set()
+        assert allow_spawn.wait(5)
+        return process
+
+    def send() -> None:
+        try:
+            provider.send_message(
+                "same",
+                native_id,
+                "opus",
+                "medium",
+                workspace,
+                "mensagem",
+                lambda _event: None,
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    with patch(
+        "vrsoft_extractor.mary.providers.subprocess.Popen", side_effect=popen
+    ):
+        thread = threading.Thread(target=send)
+        thread.start()
+        assert spawn_started.wait(5)
+        if cancel_action == "close":
+            provider.close()
+        else:
+            provider.release_conversation("same", native_id)
+        allow_spawn.set()
+        thread.join(5)
+
+    assert not thread.is_alive()
+    assert process.terminated
+    assert len(errors) == 1
+    assert isinstance(errors[0], ProviderError)
+    assert "cancelada" in str(errors[0])
+    assert provider._active == {}
+    assert provider._starting == {}
+
+
+def test_interrupt_cancels_blocked_planner_without_timing_sleep(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = BlockingPlannerProvider()
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            enabled=True,
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+        ),
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Cancele esta análise", callback, use_vr=False)
+    assert provider.planner_started.wait(5), "o planner não iniciou"
+    orchestrator.interrupt(conversation_id)
+    assert completed.wait(5), "o cancelamento não concluiu"
+
+    assert any(event.kind == "orchestration_cancelled" for event in events)
+    assert any(":vr:" in item for item in provider.interrupted)
+    assert conversation_id in provider.interrupted
+    assert not any(event.kind == "orchestration_completed" for event in events)
+    assert database.get_conversation(conversation_id)["status"] == "cancelled"
+    assert [(row["role"], row["content"]) for row in database.messages(conversation_id)] == [
+        ("user", "Cancele esta análise")
+    ]
+
+
+def test_opencode_verbose_catalog_preserves_qualified_ids_and_variants() -> None:
+    output = """opencode/fast-code
+{
+  "id": "fast-code",
+  "providerID": "opencode",
+  "name": "Fast Code",
+  "status": "active",
+  "limit": {"context": 200000},
+  "capabilities": {"reasoning": true},
+  "variants": {"low": {}, "high": {}}
+}
+other/retired
+{
+  "id": "retired",
+  "providerID": "other",
+  "name": "Retired",
+  "status": "deprecated",
+  "capabilities": {},
+  "variants": {}
+}
+"""
+
+    assert _parse_opencode_models(output) == [
+        {
+            "id": "opencode/fast-code",
+            "model": "opencode/fast-code",
+            "displayName": "Fast Code",
+            "description": "Modelo opencode/fast-code disponível no OpenCode.",
+            "capabilities": ["coding", "reasoning"],
+            "supportedReasoningEfforts": ["low", "high"],
+            "_opencodeVariants": ["low", "high"],
+            "contextWindow": 200000,
+        }
+    ]
+
+
+def test_opencode_permissions_follow_the_selected_approval_profile() -> None:
+    supervised = json.loads(
+        _opencode_environment("supervised")["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+    automatic = json.loads(
+        _opencode_environment("auto")["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+    full_access = json.loads(
+        _opencode_environment("full_access")["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+
+    assert supervised["read"] == "allow"
+    assert supervised["*"] == "deny"
+    assert "edit" not in supervised
+    assert automatic["edit"] == "allow"
+    assert automatic["*"] == "deny"
+    assert full_access == "allow"
+
+
+def test_opencode_streams_json_and_announces_native_session(
+    tmp_path: Path,
+) -> None:
+    class InputSink:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, value: str) -> int:
+            self.value += value
+            return len(value)
+
+        def close(self) -> None:
+            return None
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = InputSink()
+            self.stdout = io.StringIO(
+                '\n'.join(
+                    (
+                        '{"type":"step_start","sessionID":"ses-real","part":{}}',
+                        '{"type":"text","sessionID":"ses-real","part":{"text":"OK"}}',
+                        '{"type":"step_finish","sessionID":"ses-real","part":{}}',
+                    )
+                )
+                + '\n'
+            )
+            self.stderr = io.StringIO("")
+            self.returncode: int | None = None
+            self.terminated = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 1
+
+    provider = OpenCodeProvider()
+    provider.command = "opencode"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    native_id = provider.start_conversation(
+        "conversation", "opencode/fast-code", "high", workspace
+    )
+    provider._model_variants = {"opencode/fast-code": {"high"}}
+    process = Process()
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    with patch(
+        "vrsoft_extractor.mary.providers.subprocess.Popen", return_value=process
+    ) as popen:
+        provider.send_message(
+            "conversation",
+            native_id,
+            "opencode/fast-code",
+            "high",
+            workspace,
+            "Responda apenas OK",
+            callback,
+            ConversationOptions(
+                model="opencode/fast-code",
+                effort="high",
+                approval_profile="supervised",
+            ),
+        )
+        assert completed.wait(5)
+
+    command = popen.call_args.args[0]
+    assert command[:3] == ["opencode", "run", "--format"]
+    assert command[command.index("--model") + 1] == "opencode/fast-code"
+    assert command[command.index("--variant") + 1] == "high"
+    assert "--session" not in command
+    assert process.stdin.value == "Responda apenas OK"
+    assert [event.kind for event in events] == [
+        "turn_started",
+        "native_session_started",
+        "assistant_delta",
+        "turn_completed",
+    ]
+    assert events[1].payload["native_id"] == "ses-real"
+    assert events[2].text == "OK"
+
+
+def test_opencode_native_session_event_is_persisted(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "opencode", defer_provider_start=True
+    )
+
+    orchestrator._handle_event(
+        RuntimeEvent(
+            conversation_id,
+            "native_session_started",
+            payload={"native_id": "ses-persisted"},
+        )
+    )
+
+    assert database.get_conversation(conversation_id)["native_id"] == "ses-persisted"

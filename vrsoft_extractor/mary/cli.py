@@ -17,9 +17,9 @@ from .workspace import initialize_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="vr-mary", description="VR Norte Studio")
+    parser = argparse.ArgumentParser(prog="vr-studio", description="VR Norte Studio")
     parser.add_argument("--app-dir", default=".", help="Pasta do aplicativo e .env")
-    parser.add_argument("--root", default=None, help="Raiz da base VR_Mary_V2")
+    parser.add_argument("--root", default=None, help="Raiz da base VR")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="Cria a estrutura e o banco local")
     migrate_parser = sub.add_parser("migrate", help="Migra conteúdo funcional permitido")
@@ -57,12 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     portable = sub.add_parser(
         "export-portable",
-        help="Exporta um projeto Mary sem credenciais nem vídeos completos",
+        help="Exporta um projeto VR sem credenciais nem vídeos completos",
     )
     portable.add_argument("destination")
     sub.add_parser(
         "audit-portable",
-        help="Verifica caminhos absolutos e arquivos sensíveis no projeto Mary",
+        help="Verifica caminhos absolutos e arquivos sensíveis no projeto VR",
     )
     return parser
 

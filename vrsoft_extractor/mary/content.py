@@ -7,14 +7,26 @@ import re
 import unicodedata
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from .models import KnowledgeDocument
-from .paths import to_portable_path
+from .paths import resolve_portable_path, to_portable_path
+
+
+PersistedDocument = TypeVar("PersistedDocument")
+KNOWLEDGE_MODULES = {
+    "Fiscal",
+    "ADM_FIN_ESTOQUE",
+    "PDV",
+    "Multimodulo",
+    "Revisar",
+}
+MAX_ASSET_BYTES = 25 * 1024 * 1024
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -37,10 +49,10 @@ def html_to_markdown(html: str, base_url: str = "") -> tuple[str, list[str]]:
     for element in soup.select("script, style, noscript, iframe, form, button"):
         element.decompose()
     for anchor in soup.find_all("a", href=True):
-        anchor["href"] = urllib.parse.urljoin(base_url, anchor["href"])
+        anchor["href"] = urllib.parse.urljoin(base_url, str(anchor.get("href") or ""))
     image_urls: list[str] = []
     for image in soup.find_all("img", src=True):
-        absolute = urllib.parse.urljoin(base_url, image["src"])
+        absolute = urllib.parse.urljoin(base_url, str(image.get("src") or ""))
         image["src"] = absolute
         image_urls.append(absolute)
     markdown = markdownify(
@@ -59,8 +71,22 @@ def download_asset(
     *,
     opener: Callable[[str], bytes] | None = None,
 ) -> Path:
+    parsed_url = urllib.parse.urlsplit(url)
+    if (
+        parsed_url.scheme.casefold() not in {"http", "https"}
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+    ):
+        raise ValueError(f"URL de recurso insegura ou inválida: {url}")
     fetch = opener or _download_bytes
     data = fetch(url)
+    if not data:
+        raise ValueError(f"Recurso vazio recebido de {url}")
+    if len(data) > MAX_ASSET_BYTES:
+        raise ValueError(
+            f"Recurso excede o limite de {MAX_ASSET_BYTES // (1024 * 1024)} MiB: {url}"
+        )
     digest = sha256_bytes(data)
     path_part = urllib.parse.urlsplit(url).path
     extension = Path(path_part).suffix.lower()
@@ -70,17 +96,39 @@ def download_asset(
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination = destination_dir / f"{digest}{extension}"
     if not destination.exists():
-        destination.write_bytes(data)
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(data)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
     return destination
 
 
 def _download_bytes(url: str) -> bytes:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "VR-Mary-Studio/0.2 (+knowledge-sync)"},
+        headers={"User-Agent": "VR-Norte-Studio/0.2 (+knowledge-sync)"},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+    # The URL scheme, host and credentials were validated by download_asset.
+    with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = 0
+            if declared_size > MAX_ASSET_BYTES:
+                raise ValueError(
+                    "Recurso remoto excede o limite de "
+                    f"{MAX_ASSET_BYTES // (1024 * 1024)} MiB."
+                )
+        data = response.read(MAX_ASSET_BYTES + 1)
+        if len(data) > MAX_ASSET_BYTES:
+            raise ValueError(
+                f"Recurso remoto excede o limite de {MAX_ASSET_BYTES // (1024 * 1024)} MiB."
+            )
+        return data
 
 
 def replace_asset_urls(markdown: str, replacements: dict[str, str]) -> str:
@@ -137,6 +185,10 @@ def canonical_markdown(document: KnowledgeDocument) -> str:
 
 
 def target_path(root: Path, document: KnowledgeDocument) -> Path:
+    if document.source not in {"wiki", "kb"}:
+        raise ValueError(f"Fonte de conhecimento inválida: {document.source}")
+    if document.module not in KNOWLEDGE_MODULES:
+        raise ValueError(f"Módulo de conhecimento inválido: {document.module}")
     source_folder = "Wiki" if document.source == "wiki" else "KB"
     filename = f"{safe_slug(document.title)}--{safe_slug(document.source_id, 'id')}.md"
     if document.module in {"Fiscal", "ADM_FIN_ESTOQUE", "PDV"}:
@@ -144,13 +196,96 @@ def target_path(root: Path, document: KnowledgeDocument) -> Path:
     return root / "conhecimento" / document.module / filename
 
 
-def write_document(root: Path, document: KnowledgeDocument) -> Path:
+def preserve_validated_classification(
+    current,
+    document: KnowledgeDocument,
+) -> bool:
+    """Preserve a human decision and report whether changed content needs review."""
+
+    if current is None or str(current["review_status"]) not in {"approved", "kept"}:
+        return False
+    current_module = str(current["module"])
+    same_content = str(current["content_hash"] or "") == document.content_hash
+    if same_content:
+        document.module = current_module
+        document.review_status = "approved"
+        return False
+    if current_module != document.module:
+        document.module = current_module
+        document.review_status = "pending"
+        return True
+    return False
+
+
+def write_document(
+    root: Path,
+    document: KnowledgeDocument,
+    *,
+    previous_path: str | Path | None = None,
+) -> Path:
     path = target_path(root, document)
     path.parent.mkdir(parents=True, exist_ok=True)
     document.assets = [to_portable_path(root, asset) for asset in document.assets]
-    path.write_text(canonical_markdown(document), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(canonical_markdown(document), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     document.local_path = to_portable_path(root, path)
+    if previous_path:
+        remove_previous_document(root, previous_path, path)
     return path
+
+
+def write_and_persist_document(
+    root: Path,
+    document: KnowledgeDocument,
+    persist: Callable[[], PersistedDocument],
+    *,
+    previous_path: str | Path | None = None,
+) -> PersistedDocument:
+    """Write canonically and roll the file back when persistence fails."""
+
+    target = target_path(root, document)
+    previous_content = target.read_bytes() if target.is_file() else None
+    write_document(root, document)
+    try:
+        result = persist()
+    except Exception:
+        try:
+            if previous_content is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(previous_content)
+        except OSError:
+            pass
+        raise
+    if previous_path:
+        remove_previous_document(root, previous_path, target)
+    return result
+
+
+def remove_previous_document(
+    root: Path,
+    previous_path: str | Path,
+    current_path: str | Path,
+) -> None:
+    previous = resolve_portable_path(root, previous_path)
+    current = resolve_portable_path(root, current_path)
+    knowledge_root = (root / "conhecimento").resolve()
+    try:
+        previous = previous.resolve(strict=False)
+        if (
+            previous != current.resolve(strict=False)
+            and previous.is_relative_to(knowledge_root)
+            and previous.is_file()
+        ):
+            previous.unlink()
+    except OSError:
+        # The new canonical file and database row are already valid. A stale
+        # predecessor is safer than deleting or rolling back the new content.
+        pass
 
 
 def _strip_sensitive_query(url: str) -> str:

@@ -1,3 +1,3 @@
 @echo off
-rem Gerado pelo VR Mary Studio - pacote portatil
-start "" "%~dp0App\VRMaryStudio.exe" --mary-root "%~dp0MaryProject"
+rem Gerado pelo VR Norte Studio - pacote portatil
+start "" "%~dp0App\VRMaryStudio.exe" --vr-root "%~dp0MaryProject"

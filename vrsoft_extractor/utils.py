@@ -88,7 +88,8 @@ def absolutize_url(url: str, base_url: str) -> str:
 
 
 def stable_id(*parts: str) -> str:
-    digest = hashlib.sha1()
+    # This digest is a compatibility identifier, never a security primitive.
+    digest = hashlib.sha1(usedforsecurity=False)
     for part in parts:
         digest.update((part or "").encode("utf-8", errors="ignore"))
         digest.update(b"\0")

@@ -17,11 +17,11 @@ PORTABLE_ANCHORS = {
 
 
 def to_portable_path(root: Path, value: str | Path | None) -> str:
-    """Store Mary-owned paths relative to the project root.
+    """Store VR-owned paths relative to the project root.
 
     Stale absolute paths from an older machine are recovered from the first
-    known Mary directory (for example ``conhecimento`` or ``assets``).
-    Paths outside the Mary project are preserved verbatim.
+    known VR directory (for example ``conhecimento`` or ``assets``).
+    Paths outside the VR project are preserved verbatim.
     """
 
     if value is None:
@@ -46,7 +46,7 @@ def to_portable_path(root: Path, value: str | Path | None) -> str:
 
 
 def resolve_portable_path(root: Path, value: str | Path | None) -> Path:
-    """Resolve a portable path and repair a stale absolute Mary path."""
+    """Resolve a portable path and repair a stale absolute VR path."""
 
     root = root.resolve()
     raw = str(value or "").strip()

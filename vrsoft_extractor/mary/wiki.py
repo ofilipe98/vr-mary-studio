@@ -12,9 +12,10 @@ from .config import MarySettings
 from .content import (
     download_asset,
     html_to_markdown,
+    preserve_validated_classification,
     replace_asset_urls,
     sha256_text,
-    write_document,
+    write_and_persist_document,
 )
 from .db import MaryDatabase
 from .indexer import export_catalog
@@ -53,16 +54,34 @@ class WikiSync:
                 )
                 current = self.database.get_document("wiki", source_id)
                 if current and current["revision"] == revision and current["status"] == "active":
+                    if current["review_status"] not in {"approved", "kept"}:
+                        result = classify(
+                            current["title"],
+                            current["markdown"],
+                            current["category"],
+                            current["product"],
+                        )
+                        queued = self.database.queue_review(
+                            int(current["id"]),
+                            result.module,
+                            result.confidence,
+                            result.reasons,
+                            str(current["module"]),
+                        )
+                        stats.review += int(queued)
                     stats.unchanged += 1
                     self.progress(f"Wiki {index}: inalterada — {page['title']}")
                     continue
                 try:
                     document = self.fetch_document(page, revision)
-                    document_id, action = self.database.upsert_document(document)
-                    validated_module_changed = bool(
-                        current
-                        and current["review_status"] == "approved"
-                        and current["module"] != document.module
+                    validated_module_changed = preserve_validated_classification(
+                        current, document
+                    )
+                    document_id, action = write_and_persist_document(
+                        self.settings.root,
+                        document,
+                        lambda: self.database.upsert_document(document),
+                        previous_path=current["local_path"] if current else None,
                     )
                     if document.review_status != "approved" or validated_module_changed:
                         result = classify(
@@ -71,7 +90,7 @@ class WikiSync:
                             document.category,
                             document.product,
                         )
-                        self.database.queue_review(
+                        queued = self.database.queue_review(
                             document_id,
                             result.module,
                             result.confidence,
@@ -79,15 +98,19 @@ class WikiSync:
                             current["module"] if current else "",
                             validated_module_changed,
                         )
-                        stats.review += 1
+                        stats.review += int(queued)
                     setattr(stats, action, getattr(stats, action) + 1)
                     self.progress(f"Wiki {index}: {action} — {page['title']}")
                 except Exception as exc:  # keep batch running
                     LOGGER.exception("Falha na página Wiki %s", page.get("title"))
                     stats.errors += 1
                     self.progress(f"Wiki {index}: erro — {page['title']}: {exc}")
-            if not limit:
+            if not limit and stats.errors == 0:
                 stats.inactive = self.database.mark_missing_inactive("wiki", active_ids)
+            elif not limit and stats.errors:
+                LOGGER.warning(
+                    "Wiki incompleta: documentos ausentes não serão inativados nesta execução."
+                )
             export_catalog(self.database, self.settings.index_dir)
             self.database.finish_sync(run_id, stats)
             return stats
@@ -180,14 +203,13 @@ class WikiSync:
         document.content_hash = sha256_text(
             "\n".join([document.title, markdown, document.ocr_text])
         )
-        write_document(self.settings.root, document)
         return document
 
     def _api(self, params: dict[str, str]) -> dict[str, Any]:
         query = urllib.parse.urlencode(params)
         request = urllib.request.Request(
             f"{self.settings.wiki_api}?{query}",
-            headers={"User-Agent": "VR-Mary-Studio/0.2 (+knowledge-sync)"},
+            headers={"User-Agent": "VR-Norte-Studio/0.2 (+knowledge-sync)"},
         )
         with urllib.request.urlopen(request, timeout=90) as response:
             return json.loads(response.read().decode("utf-8"))

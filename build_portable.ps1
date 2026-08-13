@@ -27,6 +27,9 @@ $AppVersion = $VersionMatch.Groups[1].Value
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Ambiente virtual nao encontrado: $Python"
 }
+if (-not [Environment]::Is64BitProcess) {
+    throw "A distribuicao oficial deve ser gerada com Python 64 bits."
+}
 
 $CurrentBranch = (& git -C $ProjectRoot branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $CurrentBranch) {
@@ -71,11 +74,29 @@ try {
     }
 
     $DistRoot = Join-Path $ProjectRoot "dist\VRMaryStudio"
+    $Executable = Join-Path $DistRoot "VRMaryStudio.exe"
+    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+        throw "Executavel nao encontrado apos o build: $Executable"
+    }
+    $BundledBrowser = Get-ChildItem -LiteralPath $DistRoot -Recurse -Filter "chrome.exe" -File |
+        Where-Object { $_.FullName -like "*playwright*\.local-browsers*" } |
+        Select-Object -First 1
+    $BundledFfmpeg = Get-ChildItem -LiteralPath $DistRoot -Recurse -Filter "ffmpeg-win64.exe" -File |
+        Where-Object { $_.FullName -like "*playwright*\.local-browsers*" } |
+        Select-Object -First 1
+    if (-not $BundledBrowser -or -not $BundledFfmpeg) {
+        throw "A build nao incorporou Chromium e FFmpeg do Playwright. Execute 'python -m playwright install chromium' no ambiente de build."
+    }
     Copy-Item -LiteralPath (Join-Path $ProjectRoot ".env.example") -Destination (Join-Path $DistRoot ".env.example") -Force
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination (Join-Path $DistRoot "README.md") -Force
     $BuildInfo = [ordered]@{
-        product = "VR Mary Studio"
+        product = "VR Norte Studio"
         version = $AppVersion
+        platform = "windows-x64"
+        portable = $true
+        python_included = $true
+        chromium_included = $true
+        ffmpeg_included = $true
         channel = $ResolvedChannel
         branch = $CurrentBranch
         revision = $Revision
@@ -101,6 +122,7 @@ try {
         New-Item -ItemType Directory -Path $PortableApp -Force | Out-Null
         Copy-Item -Path (Join-Path $DistRoot "*") -Destination $PortableApp -Recurse -Force
         Copy-Item -LiteralPath (Join-Path $ProjectRoot "vrsoft_extractor\mary\data\Abrir-VR-Mary-Studio.cmd") -Destination $PortableRoot -Force
+        Copy-Item -LiteralPath (Join-Path $ProjectRoot "LEIA-ME-PORTATIL.txt") -Destination $PortableRoot -Force
         $BuildInfo | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PortableRoot "build-info.json") -Encoding UTF8
 
         $ExportArguments = @(
@@ -113,7 +135,7 @@ try {
         $ExportArguments += @("export-portable", $PortableMary)
         & $Python @ExportArguments
         if ($LASTEXITCODE -ne 0) {
-            throw "Exportacao do projeto Mary falhou com codigo $LASTEXITCODE"
+            throw "Exportacao do projeto VR falhou com codigo $LASTEXITCODE"
         }
 
         $PortableArchive = Join-Path $ReleaseRoot "VRMaryPortable-$ArtifactLabel.zip"
@@ -121,7 +143,20 @@ try {
             Remove-Item -LiteralPath $PortableArchive -Force
         }
         Compress-Archive -LiteralPath $PortableRoot -DestinationPath $PortableArchive
+        $ArchiveHash = (Get-FileHash -LiteralPath $PortableArchive -Algorithm SHA256).Hash
+        $ChecksumPath = Join-Path $ReleaseRoot "SHA256SUMS.txt"
+        $ChecksumLine = "$ArchiveHash  $([IO.Path]::GetFileName($PortableArchive))"
+        $ExistingChecksums = if (Test-Path -LiteralPath $ChecksumPath) {
+            @(Get-Content -LiteralPath $ChecksumPath | Where-Object {
+                $_ -and $_ -notmatch "\s+$([regex]::Escape([IO.Path]::GetFileName($PortableArchive)))$"
+            })
+        }
+        else {
+            @()
+        }
+        @($ExistingChecksums + $ChecksumLine) | Set-Content -LiteralPath $ChecksumPath -Encoding ASCII
         Write-Output $PortableArchive
+        Write-Output "SHA256: $ArchiveHash"
     }
 }
 finally {

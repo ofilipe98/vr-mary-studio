@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
+from typing import Any
 
 try:
-    from spellchecker import SpellChecker
+    _SpellChecker: Any = import_module("spellchecker").SpellChecker
 except ImportError:  # pragma: no cover - friendly fallback for old portable builds
-    SpellChecker = None  # type: ignore[assignment]
+    _SpellChecker = None
 
 
 WORD_PATTERN = re.compile(r"(?u)\b[A-Za-zÀ-ÖØ-öø-ÿ]{3,}\b")
@@ -29,7 +31,9 @@ class Misspelling:
 class LocalSpellChecker:
     def __init__(self, state_path: Path, domain_words: list[str] | None = None):
         self.state_path = state_path
-        self._checker = SpellChecker(language="pt", distance=1) if SpellChecker else None
+        self._checker: Any = (
+            _SpellChecker(language="pt", distance=1) if _SpellChecker is not None else None
+        )
         self.personal_words = self._load_personal_words()
         if self._checker:
             self._checker.word_frequency.load_words(self.personal_words)
@@ -39,7 +43,12 @@ class LocalSpellChecker:
     def available(self) -> bool:
         return self._checker is not None
 
-    def misspellings(self, text: str) -> list[Misspelling]:
+    def misspellings(
+        self,
+        text: str,
+        *,
+        include_suggestions: bool = True,
+    ) -> list[Misspelling]:
         if not self._checker or not text.strip():
             return []
         ignored = [(match.start(), match.end()) for match in IGNORED_PATTERN.finditer(text)]
@@ -54,23 +63,29 @@ class LocalSpellChecker:
                 continue
             if word.casefold() not in self._checker:
                 normalized = word.casefold()
-                candidates = self._checker.candidates(normalized) or set()
-                correction = self._checker.correction(normalized)
-                # Accent omissions such as "correcao" can be two edits away
-                # from the Portuguese dictionary entry. Keep the fast lookup
-                # first and widen it only for short words without candidates.
-                if not candidates and normalized.isascii() and len(normalized) <= 14:
-                    original_distance = self._checker.distance
-                    try:
-                        self._checker.distance = 2
-                        candidates = self._checker.candidates(normalized) or set()
-                        correction = self._checker.correction(normalized)
-                    finally:
-                        self._checker.distance = original_distance
-                ranked = sorted(
-                    candidates,
-                    key=lambda value: (value != correction, value),
-                )
+                ranked: list[str] = []
+                if include_suggestions:
+                    candidates = self._checker.candidates(normalized) or set()
+                    correction = self._checker.correction(normalized)
+                    # Accent omissions such as "correcao" can be two edits away
+                    # from the Portuguese dictionary entry. Keep the fast lookup
+                    # first and widen it only when suggestions are explicitly needed.
+                    if (
+                        not candidates
+                        and normalized.isascii()
+                        and len(normalized) <= 14
+                    ):
+                        original_distance = self._checker.distance
+                        try:
+                            self._checker.distance = 2
+                            candidates = self._checker.candidates(normalized) or set()
+                            correction = self._checker.correction(normalized)
+                        finally:
+                            self._checker.distance = original_distance
+                    ranked = sorted(
+                        candidates,
+                        key=lambda value: (value != correction, value),
+                    )
                 result.append(
                     Misspelling(word, match.start(), len(word), tuple(ranked[:6]))
                 )

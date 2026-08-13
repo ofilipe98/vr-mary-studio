@@ -10,15 +10,18 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .chat_tools import validate_tool_definition
+from .content import target_path, write_document
 from .models import (
     KnowledgeDocument,
+    ModelRef,
+    OrchestrationOptions,
     ReviewFilters,
     ReviewPage,
     RuntimeEvent,
     SyncStats,
     utc_now,
 )
-from .paths import to_portable_path
+from .paths import resolve_portable_path, to_portable_path
 from .search import (
     infer_search_module,
     matched_search_terms,
@@ -139,11 +142,30 @@ CREATE TABLE IF NOT EXISTS conversations (
     service_tier TEXT NOT NULL DEFAULT '',
     approval_profile TEXT NOT NULL DEFAULT 'auto',
     collaboration_mode TEXT NOT NULL DEFAULT 'default',
+    orchestration_enabled INTEGER NOT NULL DEFAULT 0,
+    orchestration_mode TEXT NOT NULL DEFAULT 'off',
+    orchestration_strategy TEXT NOT NULL DEFAULT 'automatic',
+    ultra_enabled INTEGER NOT NULL DEFAULT 0,
+    show_execution INTEGER NOT NULL DEFAULT 1,
+    explain_routing INTEGER NOT NULL DEFAULT 0,
+    dynamic_model_routing INTEGER NOT NULL DEFAULT 1,
+    dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
+    difficulty_routing INTEGER NOT NULL DEFAULT 1,
     trashed_at TEXT NOT NULL DEFAULT '',
     original_workspace TEXT NOT NULL DEFAULT '',
     cloned_from TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_model_pool (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model_id TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(conversation_id,provider,model_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -255,6 +277,8 @@ class MaryDatabase:
         self.root = root.resolve() if root else None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            if self.root and backup_portable_migration:
+                self._backup_before_multiagent_migration(connection)
             connection.executescript(SCHEMA)
             self._ensure_column(
                 connection,
@@ -266,10 +290,29 @@ class MaryDatabase:
                 ("service_tier", "TEXT NOT NULL DEFAULT ''"),
                 ("approval_profile", "TEXT NOT NULL DEFAULT 'auto_edits'"),
                 ("collaboration_mode", "TEXT NOT NULL DEFAULT 'default'"),
+                ("orchestration_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("orchestration_mode", "TEXT NOT NULL DEFAULT ''"),
+                ("orchestration_strategy", "TEXT NOT NULL DEFAULT 'automatic'"),
+                ("ultra_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("show_execution", "INTEGER NOT NULL DEFAULT 1"),
+                ("explain_routing", "INTEGER NOT NULL DEFAULT 0"),
+                ("dynamic_model_routing", "INTEGER NOT NULL DEFAULT 1"),
+                ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
+                ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("trashed_at", "TEXT NOT NULL DEFAULT ''"),
                 ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
             ):
                 self._ensure_column(connection, "conversations", column, definition)
+            connection.execute(
+                """UPDATE conversations
+                      SET orchestration_mode=CASE
+                            WHEN ultra_enabled=1 THEN 'ultra'
+                            WHEN orchestration_enabled=1 THEN 'automatic'
+                            ELSE 'off'
+                          END
+                    WHERE orchestration_mode NOT IN
+                          ('off','automatic','standard','ultra')"""
+            )
             for column, definition in (
                 ("turn_id", "TEXT NOT NULL DEFAULT ''"),
                 ("edited_from_message_id", "INTEGER"),
@@ -290,8 +333,21 @@ class MaryDatabase:
                     definition,
                 )
             if self.root and backup_portable_migration:
+                # sqlite3.Connection.backup() cannot make progress while its
+                # source connection still owns the migration write transaction.
+                connection.commit()
                 self._backup_before_portable_migration(connection)
             self._migrate_review_metadata(connection)
+            connection.execute(
+                """INSERT OR IGNORE INTO conversation_model_pool
+                   (conversation_id,provider,model_id,display_name)
+                   SELECT c.id,c.provider,c.model,c.model
+                     FROM conversations c
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM conversation_model_pool p
+                         WHERE p.conversation_id=c.id
+                    )"""
+            )
             if self.root:
                 self._migrate_portable_paths(connection)
             connection.executescript(
@@ -306,13 +362,59 @@ class MaryDatabase:
                     ON classification_reviews(updated_at);
                 CREATE INDEX IF NOT EXISTS idx_documents_review_facets
                     ON documents(source,module,product,updated_at);
+                CREATE INDEX IF NOT EXISTS idx_runtime_events_conversation_kind
+                    ON runtime_events(conversation_id,kind,id);
                 """
             )
+
+    def _backup_before_multiagent_migration(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """Create one recoverable SQLite snapshot before changing chat schema."""
+        root = self.root
+        if root is None:
+            raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
+        has_conversations = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversations'"
+        ).fetchone()
+        if not has_conversations:
+            return
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        has_pool = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='conversation_model_pool'"
+        ).fetchone()
+        required = {
+            "orchestration_enabled",
+            "orchestration_mode",
+            "orchestration_strategy",
+            "ultra_enabled",
+            "show_execution",
+            "explain_routing",
+            "dynamic_model_routing",
+            "dynamic_agent_count",
+            "difficulty_routing",
+        }
+        if required.issubset(columns) and has_pool:
+            return
+        backup_path = (
+            root / ".state" / "backups" / "conhecimento-pre-multiagent.sqlite"
+        )
+        if backup_path.exists():
+            return
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(backup_path) as target:
+            connection.backup(target)
 
     def _backup_before_portable_migration(
         self, connection: sqlite3.Connection
     ) -> None:
-        assert self.root is not None
+        root = self.root
+        if root is None:
+            raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
         absolute_pattern = "%:\\%"
         checks = (
             ("documents", "local_path LIKE ? OR assets_json LIKE ?"),
@@ -329,7 +431,7 @@ class MaryDatabase:
         if not has_absolute_paths:
             return
         backup_path = (
-            self.root / ".state" / "backups" / "conhecimento-pre-portable.sqlite"
+            root / ".state" / "backups" / "conhecimento-pre-portable.sqlite"
         )
         if backup_path.exists():
             return
@@ -338,7 +440,9 @@ class MaryDatabase:
             connection.backup(target)
 
     def _migrate_portable_paths(self, connection: sqlite3.Connection) -> None:
-        assert self.root is not None
+        root = self.root
+        if root is None:
+            raise RuntimeError("A raiz da base é obrigatória para migrar caminhos.")
         rows = connection.execute(
             "SELECT id,local_path,assets_json FROM documents"
         ).fetchall()
@@ -347,8 +451,8 @@ class MaryDatabase:
                 assets = json.loads(row["assets_json"] or "[]")
             except (TypeError, ValueError):
                 assets = []
-            local_path = to_portable_path(self.root, row["local_path"])
-            portable_assets = [to_portable_path(self.root, item) for item in assets]
+            local_path = to_portable_path(root, row["local_path"])
+            portable_assets = [to_portable_path(root, item) for item in assets]
             assets_json = json.dumps(portable_assets, ensure_ascii=False)
             if local_path != row["local_path"] or assets_json != row["assets_json"]:
                 connection.execute(
@@ -364,7 +468,7 @@ class MaryDatabase:
             )
             selected = ",".join(("id", *columns))
             for row in connection.execute(f"SELECT {selected} FROM {table}").fetchall():
-                values = {column: to_portable_path(self.root, row[column]) for column in columns}
+                values = {column: to_portable_path(root, row[column]) for column in columns}
                 if any(values[column] != row[column] for column in columns):
                     assignments = ",".join(f"{column}=?" for column in columns)
                     connection.execute(
@@ -448,17 +552,14 @@ class MaryDatabase:
                 to_portable_path(self.root, asset) for asset in document.assets
             ]
         current = self.get_document(document.source, document.source_id)
-        if current and current["content_hash"] == document.content_hash:
-            with self.connect() as connection:
-                connection.execute(
-                    "UPDATE documents SET synced_at=?, status='active' WHERE id=?",
-                    (document.synced_at, current["id"]),
-                )
-            return int(current["id"]), "unchanged"
-
-        action = "updated" if current else "created"
+        content_changed = bool(
+            current and current["content_hash"] != document.content_hash
+        )
+        action = "updated" if content_changed else "unchanged" if current else "created"
         with self.connect() as connection:
-            if current:
+            if content_changed:
+                if current is None:
+                    raise RuntimeError("Documento alterado sem versão anterior carregada.")
                 connection.execute(
                     """INSERT INTO document_versions
                        (document_id,revision,content_hash,markdown,captured_at)
@@ -488,7 +589,9 @@ class MaryDatabase:
                     review_status=CASE
                       WHEN documents.review_status='approved'
                            AND documents.module<>excluded.module THEN 'pending'
-                      WHEN documents.review_status='approved' THEN 'approved'
+                      WHEN documents.review_status='approved'
+                           AND documents.content_hash=excluded.content_hash
+                        THEN documents.review_status
                       ELSE excluded.review_status END,
                     status=excluded.status,category=excluded.category,product=excluded.product,
                     created_at=excluded.created_at,updated_at=excluded.updated_at,
@@ -580,6 +683,10 @@ class MaryDatabase:
                         active["id"],
                     ),
                 )
+                connection.execute(
+                    "UPDATE documents SET review_status='pending' WHERE id=?",
+                    (document_id,),
+                )
                 return True
 
             latest = connection.execute(
@@ -613,6 +720,10 @@ class MaryDatabase:
                     int(validated_change),
                 )
             )
+            connection.execute(
+                "UPDATE documents SET review_status='pending' WHERE id=?",
+                (document_id,),
+            )
             return True
 
     def decide_review(self, review_id: int, module: str) -> None:
@@ -635,104 +746,220 @@ class MaryDatabase:
             raise ValueError("Selecione um módulo de destino válido.")
 
         placeholders = ",".join("?" for _ in unique_ids)
-        with self.connect() as connection:
-            reviews = connection.execute(
-                f"""SELECT r.*,d.module AS current_module
+        file_snapshots: dict[Path, bytes | None] = {}
+        replaced_files: list[tuple[Path, Path]] = []
+        try:
+            with self.connect() as connection:
+                reviews = connection.execute(
+                    f"""SELECT r.*,d.module AS current_module,
+                           d.source AS document_source,
+                           d.source_id AS document_source_id,
+                           d.title AS document_title,d.url AS document_url,
+                           d.markdown AS document_markdown,
+                           d.classification_confidence,
+                           d.review_status AS document_review_status,
+                           d.status AS document_status,
+                           d.created_at AS document_created_at,
+                           d.updated_at AS document_updated_at,
+                           d.synced_at AS document_synced_at,
+                           d.revision AS document_revision,
+                           d.content_hash AS document_content_hash,
+                           d.category AS document_category,
+                           d.product AS document_product,
+                           d.ocr_text AS document_ocr_text,
+                           d.local_path AS document_local_path,
+                           d.assets_json AS document_assets_json
                     FROM classification_reviews r
                     JOIN documents d ON d.id=r.document_id
                     WHERE r.id IN ({placeholders})""",
-                unique_ids,
-            ).fetchall()
-            if len(reviews) != len(unique_ids):
-                raise KeyError("Uma ou mais revisões não existem.")
-            if action in {"approve", "keep", "defer"} and any(
-                row["status"] != "pending" for row in reviews
-            ):
-                raise ValueError(
-                    "Somente revisões pendentes podem receber essa decisão."
-                )
-            if action == "reopen":
-                if any(row["status"] == "pending" for row in reviews):
-                    raise ValueError("A revisão selecionada já está pendente.")
-                for review in reviews:
-                    newer = connection.execute(
-                        """SELECT 1 FROM classification_reviews
-                           WHERE document_id=? AND id>? LIMIT 1""",
-                        (review["document_id"], review["id"]),
-                    ).fetchone()
-                    if newer:
-                        raise ValueError(
-                            "Somente a decisão mais recente de cada documento "
-                            "pode ser reaberta."
-                        )
+                    unique_ids,
+                ).fetchall()
+                if len(reviews) != len(unique_ids):
+                    raise KeyError("Uma ou mais revisões não existem.")
+                if action in {"approve", "keep", "defer"} and any(
+                    row["status"] != "pending" for row in reviews
+                ):
+                    raise ValueError(
+                        "Somente revisões pendentes podem receber essa decisão."
+                    )
+                if action == "reopen":
+                    if any(row["status"] == "pending" for row in reviews):
+                        raise ValueError("A revisão selecionada já está pendente.")
+                    for review in reviews:
+                        newer = connection.execute(
+                            """SELECT 1 FROM classification_reviews
+                               WHERE document_id=? AND id>? LIMIT 1""",
+                            (review["document_id"], review["id"]),
+                        ).fetchone()
+                        if newer:
+                            raise ValueError(
+                                "Somente a decisão mais recente de cada documento "
+                                "pode ser reaberta."
+                            )
 
-            now = utc_now()
-            for review in reviews:
-                if action == "approve":
-                    connection.execute(
-                        """UPDATE classification_reviews
-                           SET status='approved',decided_module=?,decided_at=?,
-                               decision_note=?,updated_at=?
-                           WHERE id=?""",
-                        (destination, now, note.strip(), now, review["id"]),
+                now = utc_now()
+                for review in reviews:
+                    final_module = (
+                        destination if action == "approve" else review["current_module"]
                     )
-                    connection.execute(
-                        """UPDATE documents SET module=?,review_status='approved'
-                           WHERE id=?""",
-                        (destination, review["document_id"]),
+                    final_review_status = (
+                        "approved" if action in {"approve", "keep"} else "pending"
                     )
-                elif action == "keep":
-                    connection.execute(
-                        """UPDATE classification_reviews
-                           SET status='kept',decided_module=?,decided_at=?,
-                               decision_note=?,updated_at=?
-                           WHERE id=?""",
-                        (
-                            review["current_module"],
-                            now,
-                            note.strip(),
-                            now,
-                            review["id"],
-                        ),
-                    )
-                    connection.execute(
-                        """UPDATE documents SET review_status='approved'
-                           WHERE id=?""",
-                        (review["document_id"],),
-                    )
-                elif action == "defer":
-                    connection.execute(
-                        """UPDATE classification_reviews
-                           SET status='deferred',decided_module=?,decided_at=?,
-                               decision_note=?,updated_at=?
-                           WHERE id=?""",
-                        (
-                            review["current_module"],
-                            now,
-                            note.strip(),
-                            now,
-                            review["id"],
-                        ),
-                    )
-                    connection.execute(
-                        """UPDATE documents SET review_status='pending'
-                           WHERE id=?""",
-                        (review["document_id"],),
-                    )
-                else:
-                    connection.execute(
-                        """UPDATE classification_reviews
-                           SET status='pending',decided_module='',decided_at='',
-                               decision_note='',updated_at=?
-                           WHERE id=?""",
-                        (now, review["id"]),
-                    )
-                    connection.execute(
-                        """UPDATE documents SET review_status='pending'
-                           WHERE id=?""",
-                        (review["document_id"],),
-                    )
+                    local_path = str(review["document_local_path"] or "")
+                    if self.root:
+                        document = self._review_document(
+                            review,
+                            module=str(final_module),
+                            review_status=final_review_status,
+                        )
+                        target = target_path(self.root, document)
+                        if target not in file_snapshots:
+                            file_snapshots[target] = (
+                                target.read_bytes() if target.is_file() else None
+                            )
+                        previous = resolve_portable_path(
+                            self.root, review["document_local_path"]
+                        )
+                        write_document(self.root, document)
+                        local_path = document.local_path
+                        replaced_files.append((previous, target))
+
+                    if action == "approve":
+                        connection.execute(
+                            """UPDATE classification_reviews
+                               SET status='approved',decided_module=?,decided_at=?,
+                                   decision_note=?,updated_at=?
+                               WHERE id=?""",
+                            (destination, now, note.strip(), now, review["id"]),
+                        )
+                        connection.execute(
+                            """UPDATE documents
+                               SET module=?,review_status='approved',local_path=?
+                               WHERE id=?""",
+                            (destination, local_path, review["document_id"]),
+                        )
+                    elif action == "keep":
+                        connection.execute(
+                            """UPDATE classification_reviews
+                               SET status='kept',decided_module=?,decided_at=?,
+                                   decision_note=?,updated_at=?
+                               WHERE id=?""",
+                            (
+                                review["current_module"],
+                                now,
+                                note.strip(),
+                                now,
+                                review["id"],
+                            ),
+                        )
+                        connection.execute(
+                            """UPDATE documents
+                               SET review_status='approved',local_path=? WHERE id=?""",
+                            (local_path, review["document_id"]),
+                        )
+                    elif action == "defer":
+                        connection.execute(
+                            """UPDATE classification_reviews
+                               SET status='deferred',decided_module=?,decided_at=?,
+                                   decision_note=?,updated_at=?
+                               WHERE id=?""",
+                            (
+                                review["current_module"],
+                                now,
+                                note.strip(),
+                                now,
+                                review["id"],
+                            ),
+                        )
+                        connection.execute(
+                            """UPDATE documents
+                               SET review_status='pending',local_path=? WHERE id=?""",
+                            (local_path, review["document_id"]),
+                        )
+                    else:
+                        connection.execute(
+                            """UPDATE classification_reviews
+                               SET status='pending',decided_module='',decided_at='',
+                                   decision_note='',updated_at=?
+                               WHERE id=?""",
+                            (now, review["id"]),
+                        )
+                        connection.execute(
+                            """UPDATE documents
+                               SET review_status='pending',local_path=? WHERE id=?""",
+                            (local_path, review["document_id"]),
+                        )
+        except Exception:
+            self._restore_document_files(file_snapshots)
+            raise
+
+        self._remove_replaced_document_files(replaced_files)
         return len(unique_ids)
+
+    @staticmethod
+    def _review_document(
+        review: sqlite3.Row,
+        *,
+        module: str,
+        review_status: str,
+    ) -> KnowledgeDocument:
+        try:
+            assets = json.loads(review["document_assets_json"] or "[]")
+        except (TypeError, ValueError):
+            assets = []
+        return KnowledgeDocument(
+            source=str(review["document_source"]),
+            source_id=str(review["document_source_id"]),
+            title=str(review["document_title"]),
+            url=str(review["document_url"]),
+            markdown=str(review["document_markdown"] or ""),
+            module=module,
+            classification_confidence=float(
+                review["classification_confidence"] or 0.0
+            ),
+            review_status=review_status,
+            status=str(review["document_status"]),
+            created_at=str(review["document_created_at"] or ""),
+            updated_at=str(review["document_updated_at"] or ""),
+            synced_at=str(review["document_synced_at"] or ""),
+            revision=str(review["document_revision"] or ""),
+            content_hash=str(review["document_content_hash"] or ""),
+            category=str(review["document_category"] or ""),
+            product=str(review["document_product"] or ""),
+            assets=[str(asset) for asset in assets],
+            ocr_text=str(review["document_ocr_text"] or ""),
+            local_path=str(review["document_local_path"] or ""),
+        )
+
+    @staticmethod
+    def _restore_document_files(snapshots: dict[Path, bytes | None]) -> None:
+        for path, content in snapshots.items():
+            try:
+                if content is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+            except OSError:
+                pass
+
+    def _remove_replaced_document_files(
+        self, replaced_files: list[tuple[Path, Path]]
+    ) -> None:
+        if not self.root:
+            return
+        knowledge_root = (self.root / "conhecimento").resolve()
+        for previous, target in replaced_files:
+            try:
+                previous = previous.resolve(strict=False)
+                if (
+                    previous != target.resolve(strict=False)
+                    and previous.is_relative_to(knowledge_root)
+                    and previous.is_file()
+                ):
+                    previous.unlink()
+            except OSError:
+                pass
 
     def list_reviews(self) -> list[dict[str, Any]]:
         return self.query_reviews(ReviewFilters(limit=10_000)).items
@@ -810,12 +1037,12 @@ class MaryDatabase:
             "CASE WHEN trim(r.reasons_json) IN ('','[]') THEN 5 ELSE 0 END)"
         )
         order_by = {
-            "risk": f"risk_score DESC,r.confidence ASC,r.updated_at DESC,r.id DESC",
+            "risk": "risk_score DESC,r.confidence ASC,r.updated_at DESC,r.id DESC",
             "confidence_desc": "r.confidence DESC,r.updated_at DESC,r.id DESC",
             "confidence_asc": "r.confidence ASC,r.updated_at DESC,r.id DESC",
             "recent": "r.updated_at DESC,r.id DESC",
             "title": "d.title COLLATE NOCASE ASC,r.id DESC",
-        }.get(filters.sort, f"risk_score DESC,r.confidence ASC,r.id DESC")
+        }.get(filters.sort, "risk_score DESC,r.confidence ASC,r.id DESC")
         limit = min(max(int(filters.limit), 1), 500)
         offset = max(int(filters.offset), 0)
 
@@ -829,6 +1056,10 @@ class MaryDatabase:
                     params,
                 ).fetchone()[0]
             )
+            if total == 0:
+                offset = 0
+            elif offset >= total:
+                offset = ((total - 1) // limit) * limit
             rows = connection.execute(
                 f"""SELECT r.*,d.source_id,d.title,d.source,d.url,
                            d.module AS current_module,d.review_status,
@@ -962,16 +1193,17 @@ class MaryDatabase:
                 "INSERT INTO sync_runs(source,started_at,status) VALUES(?,?,'running')",
                 (source, utc_now()),
             )
-            return int(cursor.lastrowid)
+            return _last_insert_id(cursor)
 
     def finish_sync(self, run_id: int, stats: SyncStats, error: str = "") -> None:
+        status = "error" if error else "partial" if stats.errors else "completed"
         with self.connect() as connection:
             connection.execute(
                 """UPDATE sync_runs SET finished_at=?,status=?,stats_json=?,error=?
                    WHERE id=?""",
                 (
                     utc_now(),
-                    "error" if error else "completed",
+                    status,
                     json.dumps(stats.to_dict(), ensure_ascii=False),
                     error,
                     run_id,
@@ -1003,15 +1235,21 @@ class MaryDatabase:
         service_tier: str = "",
         approval_profile: str = "auto",
         collaboration_mode: str = "default",
+        orchestration: OrchestrationOptions | None = None,
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
+        orchestration = orchestration or OrchestrationOptions()
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO conversations
                    (id,title,provider,model,effort,service_tier,approval_profile,
-                    collaboration_mode,workspace,cloned_from,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    collaboration_mode,orchestration_enabled,orchestration_mode,
+                    orchestration_strategy,
+                    ultra_enabled,show_execution,explain_routing,dynamic_model_routing,
+                    dynamic_agent_count,difficulty_routing,workspace,cloned_from,
+                    created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
@@ -1021,12 +1259,25 @@ class MaryDatabase:
                     service_tier,
                     approval_profile,
                     collaboration_mode,
+                    int(orchestration.enabled),
+                    orchestration.mode,
+                    orchestration.strategy,
+                    int(orchestration.ultra),
+                    int(orchestration.show_execution),
+                    int(orchestration.explain_routing),
+                    int(orchestration.dynamic_model_routing),
+                    int(orchestration.dynamic_agent_count),
+                    int(orchestration.difficulty_routing),
                     to_portable_path(self.root, workspace) if self.root else str(workspace),
                     cloned_from,
                     now,
                     now,
                 ),
             )
+        pool = list(orchestration.model_pool) or [
+            ModelRef(provider=provider, model=model, display_name=model)
+        ]
+        self.set_conversation_model_pool(conversation_id, pool)
         return conversation_id
 
     def list_conversations(
@@ -1063,6 +1314,10 @@ class MaryDatabase:
         allowed = {
             "title", "provider", "model", "effort", "native_id", "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
+            "orchestration_enabled", "orchestration_mode",
+            "orchestration_strategy", "ultra_enabled",
+            "show_execution", "explain_routing",
+            "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
             "workspace", "original_workspace",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
@@ -1106,7 +1361,85 @@ class MaryDatabase:
                 "UPDATE conversations SET updated_at=? WHERE id=?",
                 (utc_now(), conversation_id),
             )
-            return int(cursor.lastrowid)
+            return _last_insert_id(cursor)
+
+    def begin_user_turn(self, conversation_id: str, content: str) -> int:
+        """Atomically claim an idle active conversation and persist its user turn."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            claimed = connection.execute(
+                """UPDATE conversations SET status='running',updated_at=?
+                   WHERE id=? AND status<>'running' AND archived=0 AND trashed_at=''""",
+                (now, conversation_id),
+            )
+            if claimed.rowcount != 1:
+                row = connection.execute(
+                    "SELECT status,archived,trashed_at FROM conversations WHERE id=?",
+                    (conversation_id,),
+                ).fetchone()
+                if not row:
+                    raise KeyError(conversation_id)
+                if str(row["status"] or "idle") == "running":
+                    raise RuntimeError(
+                        "Já existe uma resposta em andamento nesta conversa."
+                    )
+                raise RuntimeError("A conversa não está ativa para receber mensagens.")
+            cursor = connection.execute(
+                """INSERT INTO messages
+                   (conversation_id,role,content,turn_id,edited_from_message_id,created_at)
+                   VALUES(?,'user',?,'',NULL,?)""",
+                (conversation_id, content, now),
+            )
+            return _last_insert_id(cursor)
+
+    def abort_user_turn(self, conversation_id: str, message_id: int) -> None:
+        """Undo a turn that failed before an asynchronous provider run started."""
+
+        with self.connect() as connection:
+            connection.execute(
+                """DELETE FROM messages
+                   WHERE id=? AND conversation_id=? AND role='user' AND turn_id=''""",
+                (message_id, conversation_id),
+            )
+            connection.execute(
+                """UPDATE conversations SET status='idle',updated_at=?
+                   WHERE id=? AND status='running'""",
+                (utc_now(), conversation_id),
+            )
+
+    def recover_interrupted_conversations(self) -> list[str]:
+        """Mark turns that have no runtime owner after application startup."""
+
+        now = utc_now()
+        with self.connect() as connection:
+            conversation_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM conversations WHERE status='running'"
+                ).fetchall()
+            ]
+            if conversation_ids:
+                placeholders = ",".join("?" for _ in conversation_ids)
+                connection.execute(
+                    f"""UPDATE conversations SET status='interrupted',updated_at=?
+                        WHERE id IN ({placeholders})""",
+                    (now, *conversation_ids),
+                )
+                connection.executemany(
+                    """INSERT INTO runtime_events
+                       (conversation_id,kind,text,payload_json,created_at)
+                       VALUES(?,'turn_recovered',?,'{}',?)""",
+                    [
+                        (
+                            conversation_id,
+                            "Execução anterior interrompida pelo encerramento da aplicação.",
+                            now,
+                        )
+                        for conversation_id in conversation_ids
+                    ],
+                )
+            return conversation_ids
 
     def messages(self, conversation_id: str) -> list[sqlite3.Row]:
         with self.connect() as connection:
@@ -1283,11 +1616,120 @@ class MaryDatabase:
             ],
         }
 
+    def set_conversation_model_pool(
+        self, conversation_id: str, models: list[ModelRef] | tuple[ModelRef, ...]
+    ) -> None:
+        unique: dict[tuple[str, str], ModelRef] = {}
+        for raw_model in models:
+            model = raw_model if isinstance(raw_model, ModelRef) else ModelRef.from_mapping(raw_model)
+            if model.provider:
+                unique[(model.provider, model.model)] = model
+        if not unique:
+            row = self.get_conversation(conversation_id)
+            if not row:
+                raise KeyError(conversation_id)
+            fallback = ModelRef(
+                provider=str(row["provider"]),
+                model=str(row["model"] or ""),
+                display_name=str(row["model"] or ""),
+            )
+            unique[(fallback.provider, fallback.model)] = fallback
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM conversation_model_pool WHERE conversation_id=?",
+                (conversation_id,),
+            )
+            connection.executemany(
+                """INSERT INTO conversation_model_pool
+                   (conversation_id,provider,model_id,display_name,description,
+                    capabilities_json) VALUES(?,?,?,?,?,?)""",
+                [
+                    (
+                        conversation_id,
+                        model.provider,
+                        model.model,
+                        model.display_name,
+                        model.description,
+                        json.dumps(list(model.capabilities), ensure_ascii=False),
+                    )
+                    for model in unique.values()
+                ],
+            )
+
+    def conversation_model_pool(self, conversation_id: str) -> list[ModelRef]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT provider,model_id,display_name,description,capabilities_json
+                   FROM conversation_model_pool WHERE conversation_id=?
+                   ORDER BY provider,model_id""",
+                (conversation_id,),
+            ).fetchall()
+        result: list[ModelRef] = []
+        for row in rows:
+            try:
+                capabilities = json.loads(row["capabilities_json"] or "[]")
+            except (TypeError, ValueError):
+                capabilities = []
+            result.append(
+                ModelRef(
+                    provider=str(row["provider"]),
+                    model=str(row["model_id"] or ""),
+                    display_name=str(row["display_name"] or ""),
+                    description=str(row["description"] or ""),
+                    capabilities=tuple(str(item) for item in capabilities),
+                )
+            )
+        if result:
+            return result
+        row = self.get_conversation(conversation_id)
+        if not row:
+            return []
+        return [
+            ModelRef(
+                provider=str(row["provider"]),
+                model=str(row["model"] or ""),
+                display_name=str(row["model"] or ""),
+            )
+        ]
+
+    def latest_event(self, conversation_id: str, kind: str) -> sqlite3.Row | None:
+        with self.connect() as connection:
+            return connection.execute(
+                """SELECT * FROM runtime_events
+                   WHERE conversation_id=? AND kind=? ORDER BY id DESC LIMIT 1""",
+                (conversation_id, kind),
+            ).fetchone()
+
+    def orchestration_events_after(
+        self, conversation_id: str, event_id: int
+    ) -> list[sqlite3.Row]:
+        kinds = (
+            "agent_started",
+            "agent_completed",
+            "agent_failed",
+            "parallel_group_started",
+            "parallel_group_completed",
+            "validation_started",
+            "validation_completed",
+            "revision_started",
+            "synthesis_started",
+            "orchestration_completed",
+            "orchestration_cancelled",
+        )
+        placeholders = ",".join("?" for _kind in kinds)
+        with self.connect() as connection:
+            return connection.execute(
+                f"""SELECT * FROM runtime_events
+                    WHERE conversation_id=? AND id>? AND kind IN ({placeholders})
+                    ORDER BY id""",
+                (conversation_id, int(event_id), *kinds),
+            ).fetchall()
+
     def purge_conversation(self, conversation_id: str) -> None:
         with self.connect() as connection:
             for table in (
                 "source_citations", "artifacts", "approvals", "runtime_events",
-                "conversation_tools", "messages",
+                "conversation_tools", "conversation_model_pool", "messages",
             ):
                 connection.execute(f"DELETE FROM {table} WHERE conversation_id=?", (conversation_id,))
             connection.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
@@ -1306,11 +1748,17 @@ class MaryDatabase:
                     event.created_at,
                 ),
             )
-            return int(cursor.lastrowid)
+            return _last_insert_id(cursor)
 
 
 def _fts_query(query: str) -> str:
     return " OR ".join(_fts_literal(term) for term in search_terms(query))
+
+
+def _last_insert_id(cursor: sqlite3.Cursor) -> int:
+    if cursor.lastrowid is None:
+        raise RuntimeError("O SQLite não retornou o identificador do registro criado.")
+    return int(cursor.lastrowid)
 
 
 def _fts_and_query(terms: list[str]) -> str:

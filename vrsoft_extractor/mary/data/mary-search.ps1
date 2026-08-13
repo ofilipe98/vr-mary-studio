@@ -1,4 +1,4 @@
-# Gerado pelo VR Mary Studio - projeto Codex portatil
+# Gerado pelo VR Norte Studio - projeto Codex portatil
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -42,7 +42,7 @@ function Convert-ToSearchText([string]$Value) {
 }
 
 function Get-SearchTerms([string]$Value) {
-    $withoutPrefix = $Value -replace '^\s*(?i:mary)\s*:\s*', ''
+    $withoutPrefix = $Value -replace '^\s*(?i:vr|mary)\s*:\s*', ''
     $normalized = Convert-ToSearchText $withoutPrefix
     $unique = New-Object Collections.Generic.List[string]
     foreach ($term in ($normalized -split '\s+')) {
