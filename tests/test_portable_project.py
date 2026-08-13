@@ -26,7 +26,7 @@ from vrsoft_extractor.mary.workspace import (
 def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     root.mkdir()
     legacy = "# Fluxo Mary\n\nContrato completo da Mary e dos especialistas.\n"
     (root / "AGENTS.md").write_text(legacy, encoding="utf-8")
@@ -44,11 +44,17 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
         encoding="utf-8"
     )
     assert (root / ".codex" / "agents" / "fisco.toml").is_file()
-    assert (root / "tools" / "mary-search.ps1").is_file()
-    assert (root / "Abrir-Mary-no-Codex.cmd").is_file()
+    assert (root / "tools" / "vr-search.ps1").is_file()
+    assert (root / "Abrir-VR-no-Codex.cmd").is_file()
+    assert (root / "TrabalhoVR").is_dir()
+    assert not (root / "tools" / "mary-search.ps1").exists()
+    assert not (root / "Abrir-Mary-no-Codex.cmd").exists()
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    readme = (root / "README-CODEX.md").read_text(encoding="utf-8")
     assert "ativa o fluxo VR automaticamente" in agents
     assert "prefixo `VR:` é aceito, mas opcional" in agents
+    assert "Mary" not in agents
+    assert "Mary" not in readme
     assert "Modo multiagente real do Codex indisponível" not in agents
     assert "tente delegar o papel a um subagente" in agents
     assert not second.preserved
@@ -57,7 +63,7 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
 def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     legacy = root / "TrabalhoMary" / "legacy"
     legacy.mkdir(parents=True)
     (legacy / "AGENTS.md").write_text(
@@ -73,7 +79,7 @@ def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
     assert "O aplicativo fornece o contexto" in (legacy / "AGENTS.md").read_text(
         encoding="utf-8"
     )
-    assert (legacy / "tools" / "mary-search.ps1").is_file()
+    assert (legacy / "tools" / "vr-search.ps1").is_file()
 
     custom = root / "TrabalhoMary" / "custom"
     tools = custom / "tools"
@@ -88,7 +94,7 @@ def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
 
 
 def test_ensure_portable_project_preserves_user_owned_codex_config(tmp_path: Path) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     config = root / ".codex" / "config.toml"
     config.parent.mkdir(parents=True)
     config.write_text('model = "custom"\n', encoding="utf-8")
@@ -100,7 +106,7 @@ def test_ensure_portable_project_preserves_user_owned_codex_config(tmp_path: Pat
 
 
 def test_paths_relocate_old_machine_values(tmp_path: Path) -> None:
-    root = (tmp_path / "MaryProject").resolve()
+    root = (tmp_path / "VRProject").resolve()
     stale = r"D:\Codex\Projetos\VR_Mary_V2\conhecimento\PDV\KB\pinpad.md"
 
     portable = to_portable_path(root, stale)
@@ -110,7 +116,7 @@ def test_paths_relocate_old_machine_values(tmp_path: Path) -> None:
 
 
 def test_database_migrates_mary_owned_paths_to_relative(tmp_path: Path) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     database_path = root / "indice" / "conhecimento.sqlite"
     database = MaryDatabase(database_path)
     with database.connect() as connection:
@@ -134,8 +140,8 @@ def test_database_migrates_mary_owned_paths_to_relative(tmp_path: Path) -> None:
 
 
 def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> None:
-    source = tmp_path / "SourceMary"
-    destination = tmp_path / "PortableMary"
+    source = tmp_path / "SourceVR"
+    destination = tmp_path / "PortableVR"
     database = MaryDatabase(source / "indice" / "conhecimento.sqlite")
     article = source / "conhecimento" / "PDV" / "KB" / "pinpad.md"
     article.parent.mkdir(parents=True)
@@ -163,7 +169,7 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     video.parent.mkdir()
     video.write_bytes(b"video")
     (source / "videos" / "inventory.json").write_text("{}", encoding="utf-8")
-    private_workspace = source / "TrabalhoMary" / "private-chat"
+    private_workspace = source / "TrabalhoVR" / "private-chat"
     private_workspace.mkdir(parents=True)
     (private_workspace / "segredo.txt").write_text(
         "histórico privado", encoding="utf-8"
@@ -191,8 +197,8 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     assert not (destination / ".env").exists()
     assert not (destination / "videos" / "course.mp4").exists()
     assert (destination / "videos" / "inventory.json").is_file()
-    assert (destination / "TrabalhoMary").is_dir()
-    assert not (destination / "TrabalhoMary" / "private-chat").exists()
+    assert (destination / "TrabalhoVR").is_dir()
+    assert not (destination / "TrabalhoVR" / "private-chat").exists()
     assert not (destination / "conhecimento" / "PDV" / "KB" / "obsoleto.md").exists()
     assert "assets/kb/pinpad.png" in (
         destination / "conhecimento" / "PDV" / "KB" / "pinpad.md"
@@ -218,7 +224,7 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
 def test_portable_search_runs_without_python(tmp_path: Path) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     ensure_portable_project(root)
     article = root / "conhecimento" / "PDV" / "KB" / "pinpad.md"
     article.parent.mkdir(parents=True)
@@ -249,7 +255,7 @@ def test_portable_search_runs_without_python(tmp_path: Path) -> None:
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(root / "tools" / "mary-search.ps1"),
+            str(root / "tools" / "vr-search.ps1"),
             "-Query",
             "pinpad TEF",
             "-Limit",
@@ -269,7 +275,7 @@ def test_portable_search_runs_without_python(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
 def test_portable_search_resolves_function_102_without_fiscal_results(tmp_path: Path) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     ensure_portable_project(root)
     entries = [
         {
@@ -345,7 +351,7 @@ def test_portable_search_resolves_function_102_without_fiscal_results(tmp_path: 
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                str(root / "tools" / "mary-search.ps1"),
+                str(root / "tools" / "vr-search.ps1"),
                 "-Query",
                 query,
                 "-Limit",
@@ -374,7 +380,7 @@ def test_portable_search_resolves_function_102_without_fiscal_results(tmp_path: 
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
 def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -> None:
-    root = tmp_path / "MaryProject"
+    root = tmp_path / "VRProject"
     ensure_portable_project(root)
     article = root / "conhecimento" / "PDV" / "KB" / "pinpad.md"
     article.parent.mkdir(parents=True)
@@ -397,7 +403,7 @@ def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -
         + "\n",
         encoding="utf-8",
     )
-    workspace = ensure_conversation_workspace(root / "TrabalhoMary" / "saved-thread")
+    workspace = ensure_conversation_workspace(root / "TrabalhoVR" / "saved-thread")
 
     completed = subprocess.run(
         [
@@ -406,7 +412,7 @@ def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(workspace / "tools" / "mary-search.ps1"),
+            str(workspace / "tools" / "vr-search.ps1"),
             "-Query",
             "pinpad TEF",
         ],

@@ -1,6 +1,8 @@
 param(
-    [string]$MaryRoot = "",
-    [switch]$SkipMaryProject,
+    [Alias("MaryRoot")]
+    [string]$VRRoot = "",
+    [Alias("SkipMaryProject")]
+    [switch]$SkipVRProject,
     [ValidateSet("auto", "main", "dev")]
     [string]$BuildChannel = "auto",
     [string]$PythonPath = ""
@@ -68,13 +70,13 @@ else {
 
 Push-Location $ProjectRoot
 try {
-    & $Python -m PyInstaller --noconfirm --clean VRMaryStudio.spec
+    & $Python -m PyInstaller --noconfirm --clean VRNorteStudio.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller falhou com codigo $LASTEXITCODE"
     }
 
-    $DistRoot = Join-Path $ProjectRoot "dist\VRMaryStudio"
-    $Executable = Join-Path $DistRoot "VRMaryStudio.exe"
+    $DistRoot = Join-Path $ProjectRoot "dist\VRNorteStudio"
+    $Executable = Join-Path $DistRoot "VRNorteStudio.exe"
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
         throw "Executavel nao encontrado apos o build: $Executable"
     }
@@ -112,16 +114,16 @@ try {
         Remove-Item -LiteralPath $LegacyAppOnlyArchive.FullName -Force
     }
 
-    if (-not $SkipMaryProject) {
-        $PortableRoot = Join-Path $ProjectRoot "dist\VRMaryPortable"
+    if (-not $SkipVRProject) {
+        $PortableRoot = Join-Path $ProjectRoot "dist\VRNortePortable"
         $PortableApp = Join-Path $PortableRoot "App"
-        $PortableMary = Join-Path $PortableRoot "MaryProject"
+        $PortableVR = Join-Path $PortableRoot "VRProject"
         if (Test-Path -LiteralPath $PortableRoot) {
             Remove-Item -LiteralPath $PortableRoot -Recurse -Force
         }
         New-Item -ItemType Directory -Path $PortableApp -Force | Out-Null
         Copy-Item -Path (Join-Path $DistRoot "*") -Destination $PortableApp -Recurse -Force
-        Copy-Item -LiteralPath (Join-Path $ProjectRoot "vrsoft_extractor\mary\data\Abrir-VR-Mary-Studio.cmd") -Destination $PortableRoot -Force
+        Copy-Item -LiteralPath (Join-Path $ProjectRoot "vrsoft_extractor\mary\data\Abrir-VR-Studio.cmd") -Destination $PortableRoot -Force
         Copy-Item -LiteralPath (Join-Path $ProjectRoot "LEIA-ME-PORTATIL.txt") -Destination $PortableRoot -Force
         $BuildInfo | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PortableRoot "build-info.json") -Encoding UTF8
 
@@ -129,16 +131,16 @@ try {
             "-m", "vrsoft_extractor.mary.cli",
             "--app-dir", $ProjectRoot
         )
-        if ($MaryRoot) {
-            $ExportArguments += @("--root", $MaryRoot)
+        if ($VRRoot) {
+            $ExportArguments += @("--root", $VRRoot)
         }
-        $ExportArguments += @("export-portable", $PortableMary)
+        $ExportArguments += @("export-portable", $PortableVR)
         & $Python @ExportArguments
         if ($LASTEXITCODE -ne 0) {
             throw "Exportacao do projeto VR falhou com codigo $LASTEXITCODE"
         }
 
-        $PortableArchive = Join-Path $ReleaseRoot "VRMaryPortable-$ArtifactLabel.zip"
+        $PortableArchive = Join-Path $ReleaseRoot "VRNortePortable-$ArtifactLabel.zip"
         if (Test-Path -LiteralPath $PortableArchive) {
             Remove-Item -LiteralPath $PortableArchive -Force
         }

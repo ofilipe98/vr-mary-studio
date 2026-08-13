@@ -6,7 +6,7 @@ import unicodedata
 from typing import Iterable
 
 
-# Keep this list in sync with data/mary-search.ps1. Search behavior is part of
+# Keep this list in sync with data/vr-search.ps1. Search behavior is part of
 # the portable project contract and must not depend on the selected provider.
 SEARCH_STOPWORDS = frozenset(
     {

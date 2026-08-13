@@ -28,13 +28,13 @@ com Codex, Claude e OpenCode instalados localmente e operar o extrator de vídeo
 
 A VR não depende do aplicativo Python para responder perguntas. A própria
 pasta da base é preparada como projeto Codex com `AGENTS.md`, especialistas em
-`.codex/agents/` e pesquisa local PowerShell em `tools/mary-search.ps1`.
+`.codex/agents/` e pesquisa local PowerShell em `tools/vr-search.ps1`.
 
 Em uma máquina nova:
 
-1. Copie a pasta `MaryProject`.
+1. Copie a pasta `VRProject`.
 2. Instale e autentique o Codex normalmente, sem cadastrar outra API key.
-3. Execute `MaryProject\Abrir-Mary-no-Codex.cmd` ou abra essa pasta no Codex.
+3. Execute `VRProject\Abrir-VR-no-Codex.cmd` ou abra essa pasta no Codex.
 4. Faça a pergunta diretamente; o prefixo `VR:` é opcional.
 
 O Codex pesquisa o catálogo e os documentos localmente, encaminha a análise aos
@@ -104,11 +104,11 @@ ENDOO_EMAIL=
 ENDOO_PASSWORD=
 MOVIDESK_EMAIL=
 MOVIDESK_PASSWORD=
-MARY_ROOT=MaryProject
-MARY_OLD_ROOT=
-MARY_SYNC_INTERVAL_MINUTES=120
-MARY_DEFAULT_EFFORT=medium
-MARY_PRODUCTS_FILE=
+VR_ROOT=VRProject
+VR_OLD_ROOT=
+VR_SYNC_INTERVAL_MINUTES=120
+VR_DEFAULT_EFFORT=medium
+VR_PRODUCTS_FILE=
 ```
 
 O `.env` e as sessões em `.state` nunca entram no pacote ou nos logs.
@@ -127,30 +127,30 @@ Se houver MFA ou CAPTCHA, a sincronização normal abre automaticamente uma
 janela visível. Conclua o acesso e aguarde a sincronização continuar. O botão
 **Sincronizações > Login/KB visível** também permite iniciar diretamente nesse
 modo. A sessão autenticada é salva em
-`VR_Mary_V2\.state\movidesk.json`.
+`VRProject\.state\movidesk.json`.
 
 ## Uso
 
-Abra `Start-VRMaryStudio.bat` ou execute:
+Abra `Start-VRStudio.bat` ou execute:
 
 ```powershell
-.\.venv\Scripts\vr-mary-studio.exe --project-dir .
+.\.venv\Scripts\vr-norte-studio.exe --project-dir .
 ```
 
 CLI da base:
 
 ```powershell
-.\.venv\Scripts\vr-mary.exe init
-.\.venv\Scripts\vr-mary.exe migrate --dry-run
-.\.venv\Scripts\vr-mary.exe migrate
-.\.venv\Scripts\vr-mary.exe sync-wiki
-.\.venv\Scripts\vr-mary.exe sync-kb --headed
-.\.venv\Scripts\vr-mary.exe search "configuração PIX"
-.\.venv\Scripts\vr-mary.exe audit-classification --examples 10
-.\.venv\Scripts\vr-mary.exe audit-classification --queue-review --examples 0
-.\.venv\Scripts\vr-mary.exe status
-.\.venv\Scripts\vr-mary.exe prepare-codex
-.\.venv\Scripts\vr-mary.exe export-portable D:\Destino\MaryProject
+.\.venv\Scripts\vr-norte.exe init
+.\.venv\Scripts\vr-norte.exe migrate --dry-run
+.\.venv\Scripts\vr-norte.exe migrate
+.\.venv\Scripts\vr-norte.exe sync-wiki
+.\.venv\Scripts\vr-norte.exe sync-kb --headed
+.\.venv\Scripts\vr-norte.exe search "configuração PIX"
+.\.venv\Scripts\vr-norte.exe audit-classification --examples 10
+.\.venv\Scripts\vr-norte.exe audit-classification --queue-review --examples 0
+.\.venv\Scripts\vr-norte.exe status
+.\.venv\Scripts\vr-norte.exe prepare-codex
+.\.venv\Scripts\vr-norte.exe export-portable D:\Destino\VRProject
 ```
 
 Quando a categoria informa explicitamente `FISCAL`, `PDV` ou a família
@@ -229,7 +229,7 @@ inscrição é enviada ao Endoo.
   apenas para a pasta da conversa.
 - OpenCode usa `run --format json`, mantém a identidade completa
   `provider/model`, retoma por `sessionID` e respeita o perfil de aprovação do chat.
-- Cada conversa grava arquivos em `VR_Mary_V2\TrabalhoMary\<id>`.
+- Cada conversa grava arquivos em `VRProject\TrabalhoVR\<id>`.
 - Modelo, esforço, tier, perfil de aprovação, modo e seleção de tools ficam
   persistidos em cada conversa. `Auto` é o perfil padrão.
 - Tools locais executam sem shell, recebem JSON por `stdin` e devolvem
@@ -246,7 +246,7 @@ inscrição é enviada ao Endoo.
 ## OCR
 
 Na tela Configurações, use **Instalar OCR portátil por+eng**. O mecanismo e os
-idiomas são instalados em `VR_Mary_V2\tools\tesseract`; nada é enviado a um
+idiomas são instalados em `VRProject\tools\tesseract`; nada é enviado a um
 serviço online.
 
 ## Empacotamento
@@ -256,15 +256,15 @@ serviço online.
 ```
 
 O canal é determinado pela branch atual e o repositório deve estar limpo. Na
-branch `main`, é gerado `VRMaryPortable-main-<versão>.zip`. Na branch `dev`, é
-gerado `VRMaryPortable-dev-<versão>-<revisão>.zip`. Todo pacote inclui um
+branch `main`, é gerado `VRNortePortable-main-<versão>.zip`. Na branch `dev`, é
+gerado `VRNortePortable-dev-<versão>-<revisão>.zip`. Todo pacote inclui um
 `build-info.json` com canal, branch e commit exatos, evitando que uma build de
 teste seja confundida com a estável.
 
-O ZIP reúne `App` e `MaryProject`; o pacote completo já inclui o aplicativo. Nele, use
-`Abrir-VR-Mary-Studio.cmd` para o gerenciador ou
-`MaryProject\Abrir-Mary-no-Codex.cmd` para trabalhar diretamente no Codex. Se
-Inno Setup estiver instalado, compile `installer\VRMaryStudio.iss` para produzir
+O ZIP reúne `App` e `VRProject`; o pacote completo já inclui o aplicativo. Nele, use
+`Abrir-VR-Studio.cmd` para o gerenciador ou
+`VRProject\Abrir-VR-no-Codex.cmd` para trabalhar diretamente no Codex. Se
+Inno Setup estiver instalado, compile `installer\VRNorteStudio.iss` para produzir
 o instalador Windows.
 
 A distribuição portátil oficial é destinada ao Windows 10/11 x64, incorpora
@@ -293,6 +293,5 @@ Smoke test visual:
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-$env:MARY_DISABLE_STARTUP_SYNC='1'
-.\.venv\Scripts\vr-mary-studio.exe --smoke-test
+.\.venv\Scripts\vr-norte-studio.exe --smoke-test
 ```

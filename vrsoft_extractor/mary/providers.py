@@ -27,6 +27,9 @@ class ProviderError(RuntimeError):
 class AgentProvider(abc.ABC):
     name: str
 
+    def __init__(self, knowledge_root: Path | None = None):
+        self.knowledge_root = knowledge_root.resolve() if knowledge_root else None
+
     @abc.abstractmethod
     def available(self) -> bool: ...
 
@@ -132,7 +135,8 @@ class AgentProvider(abc.ABC):
 class CodexProvider(AgentProvider):
     name = "codex"
 
-    def __init__(self):
+    def __init__(self, knowledge_root: Path | None = None):
+        super().__init__(knowledge_root)
         self.command = _resolve_codex_command()
         self.process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
@@ -148,6 +152,7 @@ class CodexProvider(AgentProvider):
         self._stderr_lines: deque[str] = deque(maxlen=30)
         self._known_mcp_servers: list[str] = []
         self._mcp_server_configs: dict[str, dict[str, Any]] = {}
+        self._has_started_once = False
 
     def available(self) -> bool:
         return bool(self.command)
@@ -197,7 +202,7 @@ class CodexProvider(AgentProvider):
                     "initialize",
                     {
                         "clientInfo": {
-                            "name": "vr_mary_studio",
+                            "name": "vr_norte_studio",
                             "title": "VR Norte Studio",
                             "version": APP_VERSION,
                         },
@@ -206,6 +211,7 @@ class CodexProvider(AgentProvider):
                     timeout=10,
                 )
                 self._notify("initialized", {})
+                self._has_started_once = True
             except Exception:
                 self._stop_process(process)
                 raise
@@ -591,7 +597,7 @@ class CodexProvider(AgentProvider):
             "approvalPolicy": preset.approval_policy,
             "approvalsReviewer": preset.reviewer,
             "sandbox": preset.sandbox,
-            "serviceName": "vr_mary_studio",
+            "serviceName": "vr_norte_studio",
         }
         if options.service_tier:
             params["serviceTier"] = options.service_tier
@@ -696,7 +702,30 @@ class CodexProvider(AgentProvider):
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
     ) -> None:
+        process = self.process
+        reconnecting = bool(
+            self._has_started_once
+            and (process is None or process.poll() is not None)
+        )
+        if reconnecting:
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "provider_reconnecting",
+                    "Reconectando ao Codex…",
+                    {"provider": "codex"},
+                )
+            )
         self._ensure_started()
+        if reconnecting:
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "provider_reconnected",
+                    "Codex reconectado",
+                    {"provider": "codex"},
+                )
+            )
         options = options or ConversationOptions(model=model, effort=effort)
         with self._state_lock:
             native_known = native_id in self._native_to_local
@@ -958,7 +987,8 @@ class CodexProvider(AgentProvider):
 class ClaudeProvider(AgentProvider):
     name = "claude"
 
-    def __init__(self):
+    def __init__(self, knowledge_root: Path | None = None):
+        super().__init__(knowledge_root)
         self.command = (
             shutil.which("claude.exe")
             or shutil.which("claude.cmd")
@@ -1024,10 +1054,17 @@ class ClaudeProvider(AgentProvider):
             raise ProviderError("Claude não foi encontrado no PATH.")
         options = options or ConversationOptions(model=model, effort=effort)
         preset = approval_preset(options.approval_profile)
+        readable_roots = [workspace.resolve()]
+        if (
+            options.vr_enabled
+            and self.knowledge_root
+            and self.knowledge_root not in readable_roots
+        ):
+            readable_roots.append(self.knowledge_root)
         allowed_tools = [
-            f"Read({workspace.parent.parent}/**)",
-            f"Glob({workspace.parent.parent}/**)",
-            f"Grep({workspace.parent.parent}/**)",
+            f"{tool}({root}/**)"
+            for root in readable_roots
+            for tool in ("Read", "Glob", "Grep")
         ]
         if preset.sandbox != "read-only":
             allowed_tools.extend(
@@ -1041,15 +1078,19 @@ class ClaudeProvider(AgentProvider):
             "stream-json",
             "--verbose",
             "--include-partial-messages",
-            "--permission-mode",
-            "dontAsk",
-            "--add-dir",
-            str(workspace.parent.parent),
-            "--allowedTools",
-            ",".join(allowed_tools),
-            "--disallowedTools",
-            "Bash,WebFetch,WebSearch",
         ]
+        if options.vr_enabled:
+            command.extend(["--permission-mode", "dontAsk"])
+            for root in readable_roots:
+                command.extend(["--add-dir", str(root)])
+            command.extend(
+                [
+                    "--allowedTools",
+                    ",".join(allowed_tools),
+                    "--disallowedTools",
+                    "Bash,WebFetch,WebSearch",
+                ]
+            )
         if model and model != "default":
             command.extend(["--model", model])
         command.extend(["--effort", normalize_effort(effort, provider="claude")])
@@ -1233,7 +1274,8 @@ class OpenCodeProvider(AgentProvider):
 
     name = "opencode"
 
-    def __init__(self):
+    def __init__(self, knowledge_root: Path | None = None):
+        super().__init__(knowledge_root)
         self.command = _resolve_opencode_command()
         self._active: dict[str, subprocess.Popen[str]] = {}
         self._starting: dict[str, object] = {}
@@ -1322,6 +1364,8 @@ class OpenCodeProvider(AgentProvider):
             "json",
             "--dir",
             str(workspace),
+            "--agent",
+            "plan" if options.collaboration_mode == "plan" else "build",
         ]
         if resume_id and not resume_id.startswith("new:"):
             command.extend(["--session", resume_id])
@@ -1351,7 +1395,10 @@ class OpenCodeProvider(AgentProvider):
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
-                env=_opencode_environment(options.approval_profile),
+                env=_opencode_environment(
+                    options.approval_profile,
+                    self.knowledge_root if options.vr_enabled else None,
+                ),
                 **startup_info,
             )
         except Exception:
@@ -1546,11 +1593,11 @@ class OpenCodeProvider(AgentProvider):
             self.delete_thread(resolved)
 
 
-def provider_registry() -> dict[str, AgentProvider]:
+def provider_registry(knowledge_root: Path | None = None) -> dict[str, AgentProvider]:
     return {
-        "codex": CodexProvider(),
-        "claude": ClaudeProvider(),
-        "opencode": OpenCodeProvider(),
+        "codex": CodexProvider(knowledge_root),
+        "claude": ClaudeProvider(knowledge_root),
+        "opencode": OpenCodeProvider(knowledge_root),
     }
 
 
@@ -1633,7 +1680,9 @@ def _parse_opencode_models(output: str) -> list[dict[str, Any]]:
     return models
 
 
-def _opencode_environment(approval_profile: str) -> dict[str, str]:
+def _opencode_environment(
+    approval_profile: str, knowledge_root: Path | None = None
+) -> dict[str, str]:
     environment = os.environ.copy()
     config: dict[str, Any] = {}
     existing = environment.get("OPENCODE_CONFIG_CONTENT", "").strip()
@@ -1648,7 +1697,7 @@ def _opencode_environment(approval_profile: str) -> dict[str, str]:
     if preset.sandbox == "danger-full-access":
         permission: dict[str, str] | str = "allow"
     else:
-        permission = {
+        permission: dict[str, Any] = {
             "*": "deny",
             "read": "allow",
             "glob": "allow",
@@ -1657,6 +1706,19 @@ def _opencode_environment(approval_profile: str) -> dict[str, str]:
         }
         if preset.sandbox != "read-only":
             permission["edit"] = "allow"
+            permission["bash"] = "allow"
+        if knowledge_root:
+            resolved_root = str(knowledge_root.resolve()).replace("\\", "/")
+            knowledge_pattern = resolved_root.rstrip("/") + "/**"
+            permission["external_directory"] = {knowledge_pattern: "allow"}
+            if preset.sandbox != "read-only":
+                permission["edit"] = {"*": "allow", knowledge_pattern: "deny"}
+                search_script = resolved_root.rstrip("/") + "/tools/vr-search.ps1"
+                permission["bash"] = {
+                    "*": "allow",
+                    f"*{resolved_root}*": "deny",
+                    f"*{search_script}*": "allow",
+                }
     config["permission"] = permission
     environment["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
     return environment

@@ -9,8 +9,8 @@ Compatibilidade
 Como executar
 1. Extraia o ZIP inteiro para uma pasta local com espaco livre.
 2. Nao mova somente o arquivo EXE e nao execute o programa dentro do ZIP.
-3. Abra "Abrir-VR-Mary-Studio.cmd".
-4. Mantenha juntas as pastas "App" e "MaryProject".
+3. Abra "Abrir-VR-Studio.cmd".
+4. Mantenha juntas as pastas "App" e "VRProject".
 
 Servicos opcionais
 - Chat: instale e autentique o CLI do provedor que pretende usar (Codex,
@@ -23,6 +23,6 @@ Seguranca e integridade
 - O executavel nao possui assinatura digital; o Windows pode mostrar o
   SmartScreen na primeira abertura.
 - Conversas, senhas, cookies, logs, videos completos e workspaces privados
-  nao sao incluidos no MaryProject distribuido.
+  nao sao incluidos no VRProject distribuido.
 
 Em caso de erro, preserve a estrutura extraida e consulte "App\README.md".

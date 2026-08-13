@@ -69,6 +69,129 @@ class KnowledgeDocument:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class QueryProfile:
+    query: str
+    intents: dict[str, float]
+    module: str = ""
+    product: str = ""
+    entities: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    answer_type: str = "mixed"
+    terms: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "intents": dict(self.intents),
+            "module": self.module,
+            "product": self.product,
+            "entities": {
+                key: list(values) for key, values in self.entities.items()
+            },
+            "answer_type": self.answer_type,
+            "terms": list(self.terms),
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceCandidate:
+    evidence_id: str
+    source: str
+    source_id: str
+    document_id: int
+    chunk_id: int
+    title: str
+    heading: str
+    content_type: str
+    module: str
+    product: str
+    excerpt: str
+    url: str = ""
+    local_path: str = ""
+    updated_at: str = ""
+    score: float = 0.0
+    confidence: float = 0.0
+    matched_terms: tuple[str, ...] = ()
+    entities: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    score_breakdown: dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "source": self.source,
+            "source_id": self.source_id,
+            "document_id": self.document_id,
+            "chunk_id": self.chunk_id,
+            "title": self.title,
+            "heading": self.heading,
+            "content_type": self.content_type,
+            "module": self.module,
+            "product": self.product,
+            "excerpt": self.excerpt,
+            "url": self.url,
+            "local_path": self.local_path,
+            "updated_at": self.updated_at,
+            "score": self.score,
+            "confidence": self.confidence,
+            "matched_terms": list(self.matched_terms),
+            "entities": {
+                key: list(values) for key, values in self.entities.items()
+            },
+            "score_breakdown": dict(self.score_breakdown),
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceGroup:
+    group_id: str
+    concept: str
+    evidence_ids: tuple[str, ...]
+    relationship: str = "complementary"
+    preferred_evidence_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EvidenceConflict:
+    concept: str
+    evidence_ids: tuple[str, ...]
+    reason: str
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EvidenceBundle:
+    profile: QueryProfile
+    candidates: tuple[EvidenceCandidate, ...] = ()
+    groups: tuple[EvidenceGroup, ...] = ()
+    conflicts: tuple[EvidenceConflict, ...] = ()
+    missing_sources: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def source_counts(self) -> dict[str, int]:
+        counts = {"wiki": 0, "kb": 0, "schema": 0}
+        for candidate in self.candidates:
+            counts[candidate.source] = counts.get(candidate.source, 0) + 1
+        return counts
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile": self.profile.to_dict(),
+            "candidates": [item.to_dict() for item in self.candidates],
+            "groups": [item.to_dict() for item in self.groups],
+            "conflicts": [item.to_dict() for item in self.conflicts],
+            "missing_sources": list(self.missing_sources),
+            "warnings": list(self.warnings),
+            "source_counts": self.source_counts,
+        }
+
+
 @dataclass
 class SyncStats:
     source: str
@@ -233,6 +356,7 @@ class ConversationOptions:
     dynamic_tools: tuple[dict[str, Any], ...] = ()
     mcp_tools: tuple[dict[str, str], ...] = ()
     orchestration: OrchestrationOptions = field(default_factory=OrchestrationOptions)
+    vr_enabled: bool = False
 
     @classmethod
     def from_mapping(
@@ -253,6 +377,12 @@ class ConversationOptions:
             approval_profile=field_value("approval_profile", "auto") or "auto",
             collaboration_mode=field_value("collaboration_mode", "default") or "default",
             orchestration=OrchestrationOptions.from_mapping(value, model_pool),
+            vr_enabled=(
+                str(get("vr_enabled")).strip().casefold()
+                not in {"", "0", "false", "no", "off"}
+                if "vr_enabled" in keys
+                else False
+            ),
         )
 
 

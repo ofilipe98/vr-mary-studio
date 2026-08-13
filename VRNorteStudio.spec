@@ -5,15 +5,15 @@ playwright_datas, playwright_binaries, playwright_hidden = collect_all("playwrig
 spellchecker_datas, spellchecker_binaries, spellchecker_hidden = collect_all("spellchecker")
 
 a = Analysis(
-    ["VRMaryStudio.pyw"],
+    ["VRNorteStudio.pyw"],
     pathex=[],
     binaries=playwright_binaries + spellchecker_binaries,
     datas=playwright_datas + spellchecker_datas + [
         (".env.example", "."),
         ("README.md", "."),
         ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
-        ("vrsoft_extractor/mary/data/mary-search.ps1", "vrsoft_extractor/mary/data"),
-        ("vrsoft_extractor/mary/data/Abrir-Mary-no-Codex.cmd", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/vr-search.ps1", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/Abrir-VR-no-Codex.cmd", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/assets", "vrsoft_extractor/mary/assets"),
     ],
     hiddenimports=playwright_hidden + spellchecker_hidden + [
@@ -36,7 +36,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="VRMaryStudio",
+    name="VRNorteStudio",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -57,5 +57,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="VRMaryStudio",
+    name="VRNorteStudio",
 )

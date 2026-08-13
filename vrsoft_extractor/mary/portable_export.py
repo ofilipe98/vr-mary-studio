@@ -13,7 +13,15 @@ from .paths import to_portable_path
 from .portable_project import ensure_portable_project, write_portable_manifest
 
 
-EXCLUDED_TOP_LEVEL = {".state", ".trash", "downloads", "logs", "trabalhomary"}
+EXCLUDED_TOP_LEVEL = {
+    ".state",
+    ".trash",
+    "downloads",
+    "logs",
+    "trabalhovr",
+    # Compatibility with private workspaces created before the rename.
+    "trabalhomary",
+}
 EXCLUDED_NAMES = {".env", "thumbs.db", "desktop.ini"}
 EXCLUDED_SUFFIXES = {".sqlite-shm", ".sqlite-wal", ".tmp", ".log"}
 VIDEO_SUFFIXES = {
@@ -29,12 +37,12 @@ VIDEO_SUFFIXES = {
     ".webm",
 }
 TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".toml", ".txt", ".yaml", ".yml"}
-ABSOLUTE_MARY_PATH = re.compile(
+ABSOLUTE_VR_PATH = re.compile(
     r"(?i)[a-z]:[\\/](?:[^\\/\r\n]+[\\/])*"
-    r"(\.codex|agentes|assets|conhecimento|indice|tools|TrabalhoMary|videos)[\\/]"
+    r"(\.codex|agentes|assets|conhecimento|indice|tools|TrabalhoVR|TrabalhoMary|videos)[\\/]"
 )
-RELATIVE_MARY_PATH = re.compile(
-    r"(?i)(\.codex|agentes|assets|conhecimento|indice|tools|TrabalhoMary|videos)"
+RELATIVE_VR_PATH = re.compile(
+    r"(?i)(\.codex|agentes|assets|conhecimento|indice|tools|TrabalhoVR|TrabalhoMary|videos)"
     r"[\\/][^\s<>\"')\]]+"
 )
 
@@ -53,7 +61,7 @@ def audit_portable_project(root: Path) -> dict[str, object]:
     required = (
         "AGENTS.md",
         ".codex/config.toml",
-        "tools/mary-search.ps1",
+        "tools/vr-search.ps1",
         "indice/catalogo.jsonl",
         "indice/conhecimento.sqlite",
     )
@@ -93,7 +101,7 @@ def audit_portable_project(root: Path) -> dict[str, object]:
     catalog_has_absolute_paths = False
     if catalog_path.is_file():
         catalog_has_absolute_paths = bool(
-            ABSOLUTE_MARY_PATH.search(catalog_path.read_text(encoding="utf-8"))
+            ABSOLUTE_VR_PATH.search(catalog_path.read_text(encoding="utf-8"))
         )
     issues = (
         len(missing)
@@ -271,8 +279,8 @@ def _excluded(relative: Path) -> bool:
 
 
 def _portable_text(content: str) -> str:
-    content = ABSOLUTE_MARY_PATH.sub(lambda match: f"{match.group(1)}/", content)
-    return RELATIVE_MARY_PATH.sub(lambda match: match.group(0).replace("\\", "/"), content)
+    content = ABSOLUTE_VR_PATH.sub(lambda match: f"{match.group(1)}/", content)
+    return RELATIVE_VR_PATH.sub(lambda match: match.group(0).replace("\\", "/"), content)
 
 
 def _audit_sensitive_files(root: Path) -> None:

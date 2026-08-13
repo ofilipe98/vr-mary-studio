@@ -11,6 +11,8 @@ PORTABLE_ANCHORS = {
     "conhecimento",
     "indice",
     "tools",
+    "trabalhovr",
+    # Compatibility anchor for paths persisted by older installations.
     "trabalhomary",
     "videos",
 }

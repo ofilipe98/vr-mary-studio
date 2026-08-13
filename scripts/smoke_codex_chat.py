@@ -55,7 +55,7 @@ def main() -> int:
             )
         )
 
-        with tempfile.TemporaryDirectory(prefix="vr-mary-codex-smoke-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="vr-codex-smoke-") as temporary:
             workspace = Path(temporary).resolve()
             auto_native = ""
             auto_options: ConversationOptions | None = None
@@ -66,7 +66,7 @@ def main() -> int:
                     dynamic_tools = (
                         {
                             "type": "function",
-                            "name": "vr_mary_smoke",
+                            "name": "vr_smoke",
                             "description": "Returns a deterministic smoke-test confirmation.",
                             "inputSchema": {
                                 "type": "object",
@@ -124,7 +124,7 @@ def main() -> int:
                 if event.kind == "turn_completed":
                     completed.set()
 
-            requested_actions = ["call vr_mary_smoke with message 'ok'"]
+            requested_actions = ["call vr_smoke with message 'ok'"]
             if mcp_selection:
                 requested_actions.append("call the MCP tool mcp__node_repl__js with code '1 + 1'")
             prompt = "For an integration smoke test, " + ", then ".join(requested_actions) + ". Reply SMOKE_OK."

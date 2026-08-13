@@ -13,7 +13,7 @@ from ..settings import (
 from .paths import resolve_portable_path, to_portable_path
 
 
-DEFAULT_MARY_ROOT = Path("MaryProject")
+DEFAULT_VR_ROOT = Path("VRProject")
 LEGACY_MARY_ROOT = Path(r"D:\Codex\Projetos\VR_Mary_V2")
 LEGACY_OLD_ROOT = Path(r"D:\Codex\VR")
 DEFAULT_WIKI_API = "https://wiki.vrsoft.com.br/wiki/api.php"
@@ -55,6 +55,12 @@ class MarySettings:
 
     @property
     def work_dir(self) -> Path:
+        return self.root / "TrabalhoVR"
+
+    @property
+    def legacy_work_dir(self) -> Path:
+        """Workspace location used by installations created before the rename."""
+
         return self.root / "TrabalhoMary"
 
     @property
@@ -101,15 +107,20 @@ class MarySettings:
             directory.mkdir(parents=True, exist_ok=True)
 
 
-def load_mary_settings(
+def load_vr_settings(
     app_dir: str | Path | None = None,
     root: str | Path | None = None,
     old_root: str | Path | None = None,
 ) -> MarySettings:
     app = Path(app_dir or Path.cwd()).resolve()
     load_dotenv_file(app / ".env")
-    configured_root = _discover_root(app, root or os.environ.get("MARY_ROOT"))
-    configured_old_root = old_root or os.environ.get("MARY_OLD_ROOT")
+    configured_root = _discover_root(
+        app,
+        root or os.environ.get("VR_ROOT") or os.environ.get("MARY_ROOT"),
+    )
+    configured_old_root = (
+        old_root or os.environ.get("VR_OLD_ROOT") or os.environ.get("MARY_OLD_ROOT")
+    )
     if configured_old_root:
         old_path = _resolve_from_app(app, configured_old_root)
     elif LEGACY_OLD_ROOT.exists():
@@ -117,10 +128,16 @@ def load_mary_settings(
     else:
         old_path = configured_root / "legacy-source"
     try:
-        interval = int(os.environ.get("MARY_SYNC_INTERVAL_MINUTES", "120"))
+        interval = int(
+            os.environ.get("VR_SYNC_INTERVAL_MINUTES")
+            or os.environ.get("MARY_SYNC_INTERVAL_MINUTES", "120")
+        )
     except ValueError:
         interval = 120
-    effort = os.environ.get("MARY_DEFAULT_EFFORT", "medium").strip().lower()
+    effort = (
+        os.environ.get("VR_DEFAULT_EFFORT")
+        or os.environ.get("MARY_DEFAULT_EFFORT", "medium")
+    ).strip().lower()
     if effort == "ultra":
         effort = "max"
     if effort not in VALID_EFFORTS:
@@ -130,21 +147,27 @@ def load_mary_settings(
         root=configured_root,
         old_root=old_path,
         wiki_api=validated_http_url(
-            os.environ.get("MARY_WIKI_API", DEFAULT_WIKI_API), "URL da API Wiki"
+            os.environ.get("VR_WIKI_API")
+            or os.environ.get("MARY_WIKI_API", DEFAULT_WIKI_API),
+            "URL da API Wiki",
         ).rstrip("/"),
         wiki_base=validated_http_url(
-            os.environ.get("MARY_WIKI_BASE", DEFAULT_WIKI_BASE), "URL base da Wiki"
+            os.environ.get("VR_WIKI_BASE")
+            or os.environ.get("MARY_WIKI_BASE", DEFAULT_WIKI_BASE),
+            "URL base da Wiki",
         ),
         kb_url=validated_http_url(
-            os.environ.get("MARY_KB_URL", DEFAULT_KB_URL), "URL do KB"
+            os.environ.get("VR_KB_URL")
+            or os.environ.get("MARY_KB_URL", DEFAULT_KB_URL),
+            "URL do KB",
         ).rstrip("/"),
         sync_interval_minutes=max(15, interval),
         default_effort=effort,
     )
 
 
-def save_mary_env(app_dir: Path, values: dict[str, str]) -> None:
-    interval_text = values.get("MARY_SYNC_INTERVAL_MINUTES", "").strip()
+def save_vr_env(app_dir: Path, values: dict[str, str]) -> None:
+    interval_text = values.get("VR_SYNC_INTERVAL_MINUTES", "").strip()
     try:
         interval = int(interval_text)
     except ValueError as exc:
@@ -152,33 +175,40 @@ def save_mary_env(app_dir: Path, values: dict[str, str]) -> None:
     if interval < 15:
         raise ConfigError("O intervalo de sincronização deve ser de pelo menos 15 minutos.")
 
-    root = values.get("MARY_ROOT", "").strip()
+    root = values.get("VR_ROOT", "").strip()
     if not root:
         raise ConfigError("A raiz da base VR não pode ficar vazia.")
-    effort = values.get("MARY_DEFAULT_EFFORT", "").strip().lower()
+    effort = values.get("VR_DEFAULT_EFFORT", "").strip().lower()
     if effort not in VALID_EFFORTS:
         raise ConfigError("O nível de esforço padrão é inválido.")
 
     sanitized = {key: str(value) for key, value in values.items()}
-    sanitized["MARY_ROOT"] = root
-    sanitized["MARY_SYNC_INTERVAL_MINUTES"] = str(interval)
-    sanitized["MARY_DEFAULT_EFFORT"] = effort
+    sanitized["VR_ROOT"] = root
+    sanitized["VR_SYNC_INTERVAL_MINUTES"] = str(interval)
+    sanitized["VR_DEFAULT_EFFORT"] = effort
     update_dotenv_file(app_dir / ".env", sanitized)
+
+
+# Public compatibility alias for integrations created before the VR rename.
+load_mary_settings = load_vr_settings
+save_mary_env = save_vr_env
 
 
 def _discover_root(app: Path, configured: str | Path | None) -> Path:
     if configured:
         return _resolve_from_app(app, configured)
     candidates = (
+        app / "VRProject",
+        app.parent / "VRProject",
         app / "MaryProject",
         app.parent / "MaryProject",
         app,
         LEGACY_MARY_ROOT,
     )
     for candidate in candidates:
-        if _looks_like_mary_root(candidate):
+        if _looks_like_vr_root(candidate):
             return candidate.resolve()
-    return (app / DEFAULT_MARY_ROOT).resolve()
+    return (app / DEFAULT_VR_ROOT).resolve()
 
 
 def _resolve_from_app(app: Path, value: str | Path) -> Path:
@@ -186,7 +216,7 @@ def _resolve_from_app(app: Path, value: str | Path) -> Path:
     return (path if path.is_absolute() else app / path).resolve()
 
 
-def _looks_like_mary_root(path: Path) -> bool:
+def _looks_like_vr_root(path: Path) -> bool:
     return path.is_dir() and (
         (path / "conhecimento").is_dir()
         or (path / "indice" / "conhecimento.sqlite").is_file()

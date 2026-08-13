@@ -225,12 +225,17 @@ def _aliases_for_product(product: str) -> set[str]:
 
 
 def _catalog_candidates() -> Iterable[Path]:
-    explicit = os.environ.get("MARY_PRODUCTS_FILE", "").strip()
+    explicit = (
+        os.environ.get("VR_PRODUCTS_FILE")
+        or os.environ.get("MARY_PRODUCTS_FILE", "")
+    ).strip()
     if explicit:
         yield Path(explicit)
-    mary_root = os.environ.get("MARY_ROOT", "").strip()
-    if mary_root:
-        yield Path(mary_root) / "agentes" / "produtos_filas.md"
+    vr_root = (
+        os.environ.get("VR_ROOT") or os.environ.get("MARY_ROOT", "")
+    ).strip()
+    if vr_root:
+        yield Path(vr_root) / "agentes" / "produtos_filas.md"
     yield Path(__file__).resolve().parent / "data" / "produtos_filas.md"
 
 

@@ -18,13 +18,13 @@ Não restou nenhum defeito conhecido de severidade `CRITICAL` sem mitigação. A
 
 | Camada | Responsabilidade | Fonte de verdade |
 |---|---|---|
-| Entradas | `VRMaryStudio.pyw`, CLI Mary e CLI de vídeos | argumentos e `.env` |
+| Entradas | `VRNorteStudio.pyw`, CLI VR e CLI de vídeos | argumentos e `.env` |
 | UI principal | `mary/ui.py`, `mary/chat_widgets.py` | estado transitório Qt; nunca deve substituir persistência |
 | Chat/orquestração | `orchestrator.py`, `multiagent.py`, `providers.py`, `chat_tools.py` | SQLite para conversa/mensagem/evento; IDs nativos apenas como vínculo |
 | Conhecimento | Wiki, Movidesk, classificador, revisão, indexador e busca | SQLite para estado lógico; Markdown canônico para conteúdo portátil |
 | Vídeos | auth, cursos, scanner, classificação, downloader e inventário | `metadata/*.json` + arquivos válidos em disco |
 | OCR | `mary/ocr.py` | executável e `por+eng.traineddata` validados por existência/tamanho |
-| Portabilidade | paths, workspace, portable project/export | caminhos relativos à raiz Mary |
+| Portabilidade | paths, workspace, portable project/export | caminhos relativos à raiz VR |
 | Configuração | `.env`, `MarySettings`, `Settings`, `QSettings` | `.env` para runtime; `QSettings` para preferências visuais |
 | Logs/observabilidade | logging, logs da UI, `sync_runs`, `runtime_events` | arquivo/eventos persistidos conforme o fluxo |
 

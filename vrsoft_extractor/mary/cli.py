@@ -6,13 +6,14 @@ import sys
 from pathlib import Path
 
 from .classification_audit import audit_classification
-from .config import load_mary_settings
+from .config import load_vr_settings
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
 from .portable_export import audit_portable_project, export_portable_project
 from .portable_project import ensure_portable_project
 from .indexer import export_catalog
 from .wiki import WikiSync
+from .schema_sync import SchemaSync
 from .workspace import initialize_workspace
 
 
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
     kb = sub.add_parser("sync-kb", help="Sincroniza o Movidesk KB")
     kb.add_argument("--limit", type=int)
     kb.add_argument("--headed", action="store_true")
+    sub.add_parser("sync-schema", help="Indexa tabelas e relações do SchemaVR local")
+    reindex = sub.add_parser(
+        "reindex-knowledge",
+        help="Gera chunks pesquisáveis para documentos existentes",
+    )
+    reindex.add_argument("--limit", type=int, default=0)
     search = sub.add_parser("search", help="Pesquisa o índice local")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=10)
@@ -69,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_mary_settings(args.app_dir, args.root)
+    settings = load_vr_settings(args.app_dir, args.root)
     database = initialize_workspace(settings)
     if args.command == "init":
         print(settings.root)
@@ -93,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
             sync.login()
         stats = sync.sync(False, args.limit)
         print(json.dumps(stats.to_dict(), ensure_ascii=False))
+    elif args.command == "sync-schema":
+        stats = SchemaSync(settings, database, print).sync()
+        print(json.dumps(stats.to_dict(), ensure_ascii=False))
+    elif args.command == "reindex-knowledge":
+        print(json.dumps({"documents": database.backfill_knowledge_chunks(args.limit)}))
     elif args.command == "search":
         print(
             json.dumps(

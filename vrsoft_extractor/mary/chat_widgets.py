@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import (
+    Property,
     QEasingCurve,
     QEvent,
     QObject,
     QPoint,
     QPointF,
-    Property,
     QPropertyAnimation,
     QRectF,
-    QSize,
     QSettings,
-    QTimer,
+    QSize,
     Qt,
+    QTimer,
+    QUrl,
     Signal,
 )
 from PySide6.QtGui import (
@@ -25,6 +27,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QConicalGradient,
+    QFont,
     QIcon,
     QKeySequence,
     QLinearGradient,
@@ -37,6 +40,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
+    QTextDocument,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -62,6 +66,7 @@ from PySide6.QtWidgets import (
     QStylePainter,
     QTabBar,
     QTabWidget,
+    QTextBrowser,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -72,14 +77,30 @@ from .db import MaryDatabase
 from .models import ModelRef, OrchestrationOptions
 from .spellcheck import LocalSpellChecker
 
-
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
+CODE_WRAP_ICON_PATH = ASSET_DIR / "code-wrap.svg"
+CODE_COPY_ICON_PATH = ASSET_DIR / "code-copy.svg"
 PROVIDER_ICON_PATHS = {
     "codex": ASSET_DIR / "provider-gpt.png",
     "claude": ASSET_DIR / "provider-claude.webp",
     "opencode": ASSET_DIR / "provider-opencode.svg",
 }
 _PROVIDER_ICON_CACHE: dict[str, QIcon] = {}
+
+
+def application_reduced_motion() -> bool:
+    """Return the application-wide motion preference used by custom widgets."""
+    application = QApplication.instance()
+    if application is not None:
+        value = application.property("vr_reduce_motion")
+        if value is not None:
+            return bool(value)
+    return os.environ.get("VR_REDUCE_MOTION", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def provider_display_name(provider: str) -> str:
@@ -150,18 +171,22 @@ def _rainbow_gradient(bounds: QRectF, phase: float) -> QConicalGradient:
 class AnimatedVrFlowButton(QToolButton):
     """Compact split button for the local base and VR execution modes."""
 
+    optionsRequested = Signal()
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._glow = 0.0
         self._compact = False
+        self._options_press = False
+        self._reduced_motion = application_reduced_motion()
         self.setCheckable(True)
         self.setChecked(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(62, 30)
+        self.setFixedSize(64, 32)
         self.setAccessibleName("VR: base local e modos de orquestração")
 
         self._glow_animation = QPropertyAnimation(self, b"glow", self)
-        self._glow_animation.setDuration(950)
+        self._glow_animation.setDuration(160)
         self._glow_animation.setLoopCount(1)
         self._glow_animation.setEasingCurve(QEasingCurve.InOutSine)
         self._glow_animation.setKeyValueAt(0.0, 0.0)
@@ -172,8 +197,14 @@ class AnimatedVrFlowButton(QToolButton):
 
     def set_compact(self, compact: bool) -> None:
         self._compact = bool(compact)
-        self.setFixedSize(34 if self._compact else 62, 30)
+        self.setFixedSize(36 if self._compact else 64, 32)
         self.update()
+
+    def set_reduced_motion(self, enabled: bool) -> None:
+        self._reduced_motion = bool(enabled)
+        if self._reduced_motion:
+            self._glow_animation.stop()
+            self._set_glow(0.0)
 
     def _get_glow(self) -> float:
         return self._glow
@@ -184,11 +215,37 @@ class AnimatedVrFlowButton(QToolButton):
 
     glow = Property(float, _get_glow, _set_glow)
 
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if (
+            event.button() == Qt.LeftButton
+            and event.position().x() >= self.width() - 20
+        ):
+            self._options_press = True
+            self.optionsRequested.emit()
+            event.accept()
+            return
+        self._options_press = False
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if self._options_press:
+            self._options_press = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.key() == Qt.Key_Down and event.modifiers() & Qt.AltModifier:
+            self.optionsRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _sync_state(self, enabled: bool, animate: bool = True) -> None:
         if enabled:
             self._glow_animation.stop()
             self._set_glow(0.0)
-            if animate:
+            if animate and not self._reduced_motion:
                 self._glow_animation.start()
             description = "Fluxo VR ativo: consulta a base local antes de responder"
         else:
@@ -294,8 +351,9 @@ class VrComposerGlowFrame(QFrame):
         self.setObjectName("chatComposerGlow")
         self._mode = "off"
         self._phase = 0.0
+        self._reduced_motion = application_reduced_motion()
         self._phase_animation = QPropertyAnimation(self, b"phase", self)
-        self._phase_animation.setDuration(1100)
+        self._phase_animation.setDuration(160)
         self._phase_animation.setLoopCount(1)
         self._phase_animation.setEasingCurve(QEasingCurve.OutCubic)
         self._phase_animation.setStartValue(0.0)
@@ -310,6 +368,12 @@ class VrComposerGlowFrame(QFrame):
 
     phase = Property(float, _get_phase, _set_phase)
 
+    def set_reduced_motion(self, enabled: bool) -> None:
+        self._reduced_motion = bool(enabled)
+        if self._reduced_motion:
+            self._phase_animation.stop()
+            self._set_phase(0.14 if self._mode != "off" else 0.0)
+
     def set_mode(self, mode: str, *, animate: bool = True) -> None:
         mode = str(mode or "off").strip().casefold()
         if mode not in {"standard", "ultra"}:
@@ -321,23 +385,14 @@ class VrComposerGlowFrame(QFrame):
             self._set_phase(0.0)
             return
         self._phase_animation.stop()
-        if mode == "ultra":
-            self._phase_animation.setDuration(5200)
-            self._phase_animation.setLoopCount(-1)
-            self._phase_animation.setEasingCurve(QEasingCurve.Linear)
-        else:
-            self._phase_animation.setDuration(1100)
-            self._phase_animation.setLoopCount(1)
-            self._phase_animation.setEasingCurve(QEasingCurve.OutCubic)
-        if mode == "ultra":
-            if animate and changed:
-                self._set_phase(0.0)
-            self._phase_animation.start()
-        elif animate and changed:
-            self._phase_animation.stop()
+        self._phase_animation.setDuration(160)
+        self._phase_animation.setLoopCount(1)
+        self._phase_animation.setEasingCurve(QEasingCurve.OutCubic)
+        if animate and changed and not self._reduced_motion:
             self._set_phase(0.0)
             self._phase_animation.start()
         else:
+            self._set_phase(0.14)
             self.update()
 
     def mode(self) -> str:
@@ -352,8 +407,6 @@ class VrComposerGlowFrame(QFrame):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
-        if self._mode == "ultra" and self._phase_animation.state() != QPropertyAnimation.Running:
-            self._phase_animation.start()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt API
         self._phase_animation.stop()
@@ -550,6 +603,333 @@ class RoundedPopupDialog(QDialog):
         )
 
 
+class CodeSyntaxHighlighter(QSyntaxHighlighter):
+    """Small, dependency-free highlighter for chat code blocks."""
+
+    _GENERAL_KEYWORDS = {
+        "and", "as", "assert", "async", "await", "break", "case", "catch",
+        "class", "const", "continue", "def", "default", "del", "do", "elif",
+        "else", "enum", "except", "export", "extends", "false", "finally",
+        "for", "from", "function", "if", "import", "in", "interface", "is",
+        "lambda", "let", "match", "new", "none", "not", "null", "or", "pass",
+        "raise", "return", "static", "switch", "throw", "true", "try", "var",
+        "while", "with", "yield",
+    }
+    _SQL_KEYWORDS = {
+        "all", "and", "as", "asc", "by", "case", "count", "create", "delete",
+        "desc", "distinct", "else", "end", "false", "from", "full", "group",
+        "having", "in", "inner", "insert", "into", "is", "join", "left", "like",
+        "limit", "not", "null", "on", "or", "order", "outer", "right", "select",
+        "set", "table", "then", "true", "union", "update", "values", "when",
+        "where", "with",
+    }
+
+    def __init__(self, document: QTextDocument, language: str = ""):
+        super().__init__(document)
+        self.language = str(language or "").strip().casefold()
+        self.keyword_format = QTextCharFormat()
+        self.keyword_format.setForeground(QColor("#FF7AB2"))
+        self.keyword_format.setFontWeight(QFont.Bold)
+        self.string_format = QTextCharFormat()
+        self.string_format.setForeground(QColor("#43D17B"))
+        self.comment_format = QTextCharFormat()
+        self.comment_format.setForeground(QColor("#7F8C98"))
+        self.number_format = QTextCharFormat()
+        self.number_format.setForeground(QColor("#67B7FF"))
+
+    def highlightBlock(self, text: str) -> None:  # noqa: N802 - Qt API
+        sql = self.language in {"sql", "postgres", "postgresql", "plsql"}
+        keywords = self._SQL_KEYWORDS if sql else self._GENERAL_KEYWORDS
+        keyword_re = re.compile(
+            r"\b(?:" + "|".join(sorted(keywords, key=len, reverse=True)) + r")\b",
+            re.IGNORECASE if sql else 0,
+        )
+        for match in keyword_re.finditer(text):
+            self.setFormat(
+                match.start(), match.end() - match.start(), self.keyword_format
+            )
+        for match in re.finditer(r"\b(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?)\b", text):
+            self.setFormat(
+                match.start(), match.end() - match.start(), self.number_format
+            )
+        for match in re.finditer(r"(?:'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")", text):
+            self.setFormat(
+                match.start(), match.end() - match.start(), self.string_format
+            )
+        comment_pattern = r"--.*$" if sql else r"#.*$|//.*$"
+        for match in re.finditer(comment_pattern, text):
+            self.setFormat(
+                match.start(), match.end() - match.start(), self.comment_format
+            )
+
+
+class CodeBlockWidget(QFrame):
+    """T3-style code card with language badge, wrapping and copy actions."""
+
+    def __init__(self, code: str, language: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("codeBlockCard")
+        self.code = str(code).rstrip("\n")
+        self.language = str(language or "text").strip().casefold() or "text"
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        header = QFrame(objectName="codeBlockHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(12, 7, 8, 5)
+        header_layout.setSpacing(5)
+
+        badge = QLabel(self._language_badge(), objectName="codeLanguageBadge")
+        badge.setAccessibleName(f"Linguagem: {self.language}")
+        header_layout.addWidget(badge)
+        header_layout.addStretch()
+
+        self.wrap_button = QToolButton(objectName="codeBlockAction")
+        self.wrap_button.setIcon(QIcon(str(CODE_WRAP_ICON_PATH)))
+        self.wrap_button.setIconSize(QSize(15, 15))
+        self.wrap_button.setCheckable(True)
+        self.wrap_button.setAccessibleName("Alternar quebra de linha do código")
+        self.wrap_button.setToolTip("Quebrar linhas")
+        self.wrap_button.toggled.connect(self._set_line_wrap)
+        header_layout.addWidget(self.wrap_button)
+
+        self.copy_button = QToolButton(objectName="codeBlockAction")
+        self.copy_button.setIcon(QIcon(str(CODE_COPY_ICON_PATH)))
+        self.copy_button.setIconSize(QSize(15, 15))
+        self.copy_button.setAccessibleName("Copiar código")
+        self.copy_button.setToolTip("Copiar código")
+        self.copy_button.clicked.connect(self.copy_code)
+        header_layout.addWidget(self.copy_button)
+        layout.addWidget(header)
+
+        self.editor = QPlainTextEdit(objectName="codeBlockEditor")
+        self.editor.setReadOnly(True)
+        self.editor.setUndoRedoEnabled(False)
+        self.editor.setTabStopDistance(32)
+        self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.editor.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.editor.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        code_font = QFont("Consolas")
+        code_font.setStyleHint(QFont.Monospace)
+        code_font.setPointSizeF(10.0)
+        self.editor.setFont(code_font)
+        self.editor.setPlainText(self.code)
+        self.highlighter = CodeSyntaxHighlighter(self.editor.document(), self.language)
+        line_count = max(1, self.editor.document().blockCount())
+        editor_height = min(520, max(48, 18 * line_count + 20))
+        self.editor.setFixedHeight(editor_height)
+        layout.addWidget(self.editor)
+        self.setFixedHeight(editor_height + 40)
+
+    def _language_badge(self) -> str:
+        return {
+            "python": "Py",
+            "py": "Py",
+            "sql": "DB",
+            "postgres": "DB",
+            "postgresql": "DB",
+            "json": "{}",
+            "javascript": "JS",
+            "js": "JS",
+            "typescript": "TS",
+            "ts": "TS",
+            "powershell": ">_",
+            "shell": ">_",
+            "bash": ">_",
+        }.get(
+            self.language,
+            "<>" if self.language == "text" else self.language[:3].upper(),
+        )
+
+    def _set_line_wrap(self, enabled: bool) -> None:
+        self.editor.setLineWrapMode(
+            QPlainTextEdit.WidgetWidth if enabled else QPlainTextEdit.NoWrap
+        )
+        self.wrap_button.setToolTip(
+            "Não quebrar linhas" if enabled else "Quebrar linhas"
+        )
+
+    def copy_code(self) -> None:
+        QApplication.clipboard().setText(self.code)
+        self.copy_button.setIcon(QIcon())
+        self.copy_button.setText("✓")
+        self.copy_button.setToolTip("Copiado")
+        QTimer.singleShot(1200, self._restore_copy_button)
+
+    def _restore_copy_button(self) -> None:
+        self.copy_button.setText("")
+        self.copy_button.setIcon(QIcon(str(CODE_COPY_ICON_PATH)))
+        self.copy_button.setToolTip("Copiar código")
+
+
+class MarkdownMessageWidget(QWidget):
+    """Markdown message split into native text and polished code cards."""
+
+    anchorClicked = Signal(QUrl)
+    _FENCE_RE = re.compile(
+        r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+
+    def __init__(
+        self,
+        markdown: str,
+        configure_browser: Callable[[QTextBrowser], None],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setObjectName("messageBodyHost")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._markdown = ""
+        self._configure_browser = configure_browser
+        self._content_layout = QVBoxLayout(self)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(10)
+        self._style_probe = QTextBrowser(self)
+        self._style_probe.hide()
+        self._configure_browser(self._style_probe)
+        self.setMarkdown(markdown)
+
+    def setMarkdown(self, markdown: str) -> None:  # noqa: N802 - Qt compatibility
+        self._markdown = str(markdown or "")
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        cursor = 0
+        rendered = False
+        for match in self._FENCE_RE.finditer(self._markdown):
+            if match.start() > cursor:
+                rendered |= self._add_markdown_segment(
+                    self._markdown[cursor:match.start()]
+                )
+            block = CodeBlockWidget(match.group(2), match.group(1), self)
+            self._content_layout.addWidget(block)
+            rendered = True
+            cursor = match.end()
+        if cursor < len(self._markdown):
+            rendered |= self._add_markdown_segment(self._markdown[cursor:])
+        if not rendered:
+            self._add_markdown_segment("")
+        self.updateGeometry()
+
+    def _add_markdown_segment(self, markdown: str) -> bool:
+        if not markdown.strip() and self._markdown:
+            return False
+        browser = QTextBrowser(self)
+        browser.setObjectName("messageBody")
+        browser.setOpenExternalLinks(False)
+        browser.anchorClicked.connect(self.anchorClicked.emit)
+        browser.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._configure_browser(browser)
+        browser.setMarkdown(markdown)
+
+        def resize_browser(_size=None, widget=browser) -> None:
+            target = max(30, min(1200, int(widget.document().size().height()) + 8))
+            if widget.height() != target:
+                widget.setFixedHeight(target)
+                self.updateGeometry()
+
+        browser.document().documentLayout().documentSizeChanged.connect(resize_browser)
+        resize_browser()
+        QTimer.singleShot(0, resize_browser)
+        self._content_layout.addWidget(browser)
+        return True
+
+    def toPlainText(self) -> str:  # noqa: N802 - Qt compatibility
+        document = QTextDocument()
+        document.setMarkdown(self._markdown)
+        return document.toPlainText()
+
+    def document(self) -> QTextDocument:
+        return self._style_probe.document()
+
+    def refresh_theme(self) -> None:
+        self._configure_browser(self._style_probe)
+        self.setMarkdown(self._markdown)
+
+
+class ProjectPickerDialog(RoundedPopupDialog):
+    """Keyboard-friendly project chooser modeled after T3 Code's palette."""
+
+    def __init__(self, projects: list[Path], parent: QWidget | None = None):
+        super().__init__(parent, radius=18.0)
+        self.setObjectName("projectPickerDialog")
+        self.setWindowTitle("Selecionar projeto")
+        self.setModal(True)
+        self.setMinimumSize(560, 260)
+        self.resize(620, min(480, 170 + 58 * max(1, len(projects))))
+        self._projects = list(dict.fromkeys(path.resolve() for path in projects))
+        self._selected_project: Path | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        self.search = QLineEdit(objectName="projectPickerSearch")
+        self.search.setPlaceholderText("Buscar projeto")
+        self.search.setAccessibleName("Buscar projeto")
+        self.search.textChanged.connect(self._rebuild)
+        self.search.returnPressed.connect(self._accept_current)
+        layout.addWidget(self.search)
+
+        title = QLabel("Projetos", objectName="projectPickerLabel")
+        layout.addWidget(title)
+        self.project_list = QListWidget(objectName="projectPickerList")
+        self.project_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.project_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.project_list.itemActivated.connect(lambda _item: self._accept_current())
+        self.project_list.itemDoubleClicked.connect(
+            lambda _item: self._accept_current()
+        )
+        layout.addWidget(self.project_list, 1)
+
+        hint = QLabel(
+            "↑  ↓  Navegar     Enter  Selecionar     Esc  Fechar",
+            objectName="projectPickerHint",
+        )
+        layout.addWidget(hint)
+        self._rebuild()
+        QTimer.singleShot(0, self.search.setFocus)
+
+    def _rebuild(self, *_args: Any) -> None:
+        term = self.search.text().strip().casefold()
+        self.project_list.clear()
+        for project in self._projects:
+            haystack = f"{project.name} {project}".casefold()
+            if term and term not in haystack:
+                continue
+            item = QListWidgetItem(f"{project.name}\n{project}")
+            item.setData(Qt.UserRole, str(project))
+            item.setToolTip(str(project))
+            folder_icon = (
+                "project-folder-dark.svg"
+                if QApplication.instance()
+                and QApplication.instance().property("vr_theme") == "dark_orange"
+                else "project-folder.svg"
+            )
+            item.setIcon(QIcon(str(ASSET_DIR / folder_icon)))
+            item.setSizeHint(QSize(0, 54))
+            self.project_list.addItem(item)
+        if self.project_list.count():
+            self.project_list.setCurrentRow(0)
+
+    def _accept_current(self) -> None:
+        item = self.project_list.currentItem()
+        if item is None:
+            return
+        self._selected_project = Path(str(item.data(Qt.UserRole))).resolve()
+        self.accept()
+
+    def selected_project(self) -> Path | None:
+        return self._selected_project
+
+
 class RoundedOverlayFrame(QFrame):
     """In-window dropdown layer that avoids a separate native popup window."""
 
@@ -653,7 +1033,12 @@ class RoundedComboBox(QComboBox):
             self._rounded_popup_container.removeEventFilter(self)
         self._rounded_popup_container = container
         container.setObjectName("roundedComboPopup")
-        container.setAttribute(Qt.WA_TranslucentBackground, True)
+        # A translucent native combo window is rendered with an opaque black
+        # fringe by the Windows Fusion style in the light theme. The mask is
+        # sufficient to clip the corners, so keep the popup surface opaque.
+        container.setAttribute(Qt.WA_TranslucentBackground, False)
+        container.setAttribute(Qt.WA_StyledBackground, True)
+        container.setAutoFillBackground(True)
         container.setWindowFlag(Qt.NoDropShadowWindowHint, True)
         container.installEventFilter(self)
 
@@ -694,9 +1079,9 @@ class ModelOptionRow(QFrame):
         layout.setSpacing(9)
 
         icon_label = QLabel(self, objectName="modelOptionIcon")
-        icon_label.setFixedSize(22, 22)
+        icon_label.setFixedSize(30, 30)
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setPixmap(icon.pixmap(QSize(19, 19)))
+        icon_label.setPixmap(icon.pixmap(QSize(26, 26)))
         icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(icon_label)
 
@@ -729,6 +1114,7 @@ class ModelOptionRow(QFrame):
         self.favorite_button.setAccessibleName(
             "Remover modelo dos favoritos" if favorite else "Adicionar modelo aos favoritos"
         )
+        self.favorite_button.setToolTip(self.favorite_button.accessibleName())
         self.favorite_button.setVisible(can_favorite)
         self.favorite_button.clicked.connect(self.favoriteToggled)
         layout.addWidget(self.favorite_button)
@@ -795,7 +1181,7 @@ class AccessibleIconTabBar(QTabBar):
 
     def tabSizeHint(self, index: int) -> QSize:  # noqa: N802 - Qt API
         del index
-        return QSize(50, 48)
+        return QSize(56, 54)
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
         painter = QStylePainter(self)
@@ -807,7 +1193,18 @@ class AccessibleIconTabBar(QTabBar):
             option = QStyleOptionTab()
             self.initStyleOption(option, index)
             option.text = ""
+            option.icon = QIcon()
             painter.drawControl(QStyle.CE_TabBarTab, option)
+            icon = self.tabIcon(index)
+            if not icon.isNull():
+                icon_size = self.iconSize()
+                pixmap = icon.pixmap(icon_size)
+                target = self.tabRect(index)
+                painter.drawPixmap(
+                    target.center().x() - pixmap.width() // 2,
+                    target.center().y() - pixmap.height() // 2,
+                    pixmap,
+                )
 
 
 class SlashCommandPalette(QFrame):
@@ -1268,7 +1665,8 @@ class ModelPickerCombo(RoundedComboBox):
         provider.setDrawBase(False)
         provider.setShape(QTabBar.RoundedWest)
         provider.setExpanding(False)
-        provider.setFixedWidth(50)
+        provider.setFixedWidth(56)
+        provider.setIconSize(QSize(26, 26))
         provider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         provider.setAccessibleName("Filtrar modelos por provedor")
         recommended_index = provider.addTab(

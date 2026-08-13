@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 80" role="img" aria-label="OpenCode">
-  <path fill="#231f20" fill-rule="evenodd" d="M0 0h64v80H0zm16 16v48h32V16z"/>
-  <path fill="#cfcfcf" d="M16 32h32v32H16z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="OpenCode">
+  <path fill="#F7F4F2" stroke="#373231" stroke-width="3" fill-rule="evenodd" d="M8 4h64v72H8zm16 16v40h32V20z"/>
+  <path fill="#8B8583" d="M24 36h32v24H24z"/>
 </svg>

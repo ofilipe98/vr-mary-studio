@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 from .chat_tools import validate_tool_definition
 from .content import target_path, write_document
+from .knowledge import split_knowledge_document
 from .models import (
     KnowledgeDocument,
     ModelRef,
@@ -31,6 +32,7 @@ from .search import (
     search_terms,
     term_coverage,
 )
+from .schema_catalog import parse_schema_markdown
 
 
 REVIEW_MODULES = {
@@ -101,6 +103,57 @@ CREATE TABLE IF NOT EXISTS document_versions (
     captured_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_key TEXT NOT NULL,
+    heading TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT 'reference',
+    entities_json TEXT NOT NULL DEFAULT '{}',
+    content_hash TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(document_id,chunk_key)
+);
+
+CREATE TABLE IF NOT EXISTS schema_tables (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    schema_name TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    approximate_rows TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '',
+    UNIQUE(document_id,schema_name,table_name)
+);
+
+CREATE TABLE IF NOT EXISTS schema_columns (
+    id INTEGER PRIMARY KEY,
+    table_id INTEGER NOT NULL REFERENCES schema_tables(id) ON DELETE CASCADE,
+    column_name TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT '',
+    nullable INTEGER NOT NULL DEFAULT 1,
+    primary_key INTEGER NOT NULL DEFAULT 0,
+    default_value TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    UNIQUE(table_id,column_name)
+);
+
+CREATE TABLE IF NOT EXISTS schema_relations (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    from_schema TEXT NOT NULL,
+    from_table TEXT NOT NULL,
+    from_column TEXT NOT NULL,
+    to_schema TEXT NOT NULL,
+    to_table TEXT NOT NULL,
+    to_column TEXT NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'foreign_key',
+    evidence TEXT NOT NULL DEFAULT '',
+    UNIQUE(document_id,from_schema,from_table,from_column,to_schema,to_table,to_column)
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,
@@ -151,6 +204,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     dynamic_model_routing INTEGER NOT NULL DEFAULT 1,
     dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
     difficulty_routing INTEGER NOT NULL DEFAULT 1,
+    vr_enabled INTEGER NOT NULL DEFAULT 0,
     trashed_at TEXT NOT NULL DEFAULT '',
     original_workspace TEXT NOT NULL DEFAULT '',
     cloned_from TEXT NOT NULL DEFAULT '',
@@ -176,6 +230,7 @@ CREATE TABLE IF NOT EXISTS messages (
     provider_message_id TEXT NOT NULL DEFAULT '',
     turn_id TEXT NOT NULL DEFAULT '',
     edited_from_message_id INTEGER,
+    response_mode TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -248,6 +303,32 @@ CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
     tokenize='unicode61 remove_diacritics 2'
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(
+    heading,
+    content,
+    entities,
+    content='knowledge_chunks',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_chunks_ai AFTER INSERT ON knowledge_chunks BEGIN
+  INSERT INTO knowledge_chunks_fts(rowid,heading,content,entities)
+  VALUES(new.id,new.heading,new.content,new.entities_json);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_chunks_ad AFTER DELETE ON knowledge_chunks BEGIN
+  INSERT INTO knowledge_chunks_fts(knowledge_chunks_fts,rowid,heading,content,entities)
+  VALUES('delete',old.id,old.heading,old.content,old.entities_json);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_chunks_au AFTER UPDATE ON knowledge_chunks BEGIN
+  INSERT INTO knowledge_chunks_fts(knowledge_chunks_fts,rowid,heading,content,entities)
+  VALUES('delete',old.id,old.heading,old.content,old.entities_json);
+  INSERT INTO knowledge_chunks_fts(rowid,heading,content,entities)
+  VALUES(new.id,new.heading,new.content,new.entities_json);
+END;
+
 CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
   INSERT INTO knowledge_fts(rowid,title,markdown,ocr_text,module,category,product)
   VALUES(new.id,new.title,new.markdown,new.ocr_text,new.module,new.category,new.product);
@@ -279,6 +360,7 @@ class MaryDatabase:
         with self.connect() as connection:
             if self.root and backup_portable_migration:
                 self._backup_before_multiagent_migration(connection)
+                self._backup_before_knowledge_router_migration(connection)
             connection.executescript(SCHEMA)
             self._ensure_column(
                 connection,
@@ -299,6 +381,7 @@ class MaryDatabase:
                 ("dynamic_model_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
                 ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
+                ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("trashed_at", "TEXT NOT NULL DEFAULT ''"),
                 ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
             ):
@@ -316,6 +399,7 @@ class MaryDatabase:
             for column, definition in (
                 ("turn_id", "TEXT NOT NULL DEFAULT ''"),
                 ("edited_from_message_id", "INTEGER"),
+                ("response_mode", "TEXT NOT NULL DEFAULT ''"),
             ):
                 self._ensure_column(connection, "messages", column, definition)
             for column, definition in (
@@ -362,6 +446,18 @@ class MaryDatabase:
                     ON classification_reviews(updated_at);
                 CREATE INDEX IF NOT EXISTS idx_documents_review_facets
                     ON documents(source,module,product,updated_at);
+                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_type
+                    ON knowledge_chunks(document_id,content_type);
+                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_hash
+                    ON knowledge_chunks(content_hash);
+                CREATE INDEX IF NOT EXISTS idx_schema_tables_name
+                    ON schema_tables(schema_name,table_name);
+                CREATE INDEX IF NOT EXISTS idx_schema_columns_name
+                    ON schema_columns(column_name,table_id);
+                CREATE INDEX IF NOT EXISTS idx_schema_relations_from
+                    ON schema_relations(from_schema,from_table,from_column);
+                CREATE INDEX IF NOT EXISTS idx_schema_relations_to
+                    ON schema_relations(to_schema,to_table,to_column);
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_conversation_kind
                     ON runtime_events(conversation_id,kind,id);
                 """
@@ -402,6 +498,30 @@ class MaryDatabase:
             return
         backup_path = (
             root / ".state" / "backups" / "conhecimento-pre-multiagent.sqlite"
+        )
+        if backup_path.exists():
+            return
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(backup_path) as target:
+            connection.backup(target)
+
+    def _backup_before_knowledge_router_migration(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """Snapshot an existing knowledge database before adding chunk indexes."""
+        root = self.root
+        if root is None:
+            raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
+        has_documents = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'"
+        ).fetchone()
+        has_chunks = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_chunks'"
+        ).fetchone()
+        if not has_documents or has_chunks:
+            return
+        backup_path = (
+            root / ".state" / "backups" / "conhecimento-pre-knowledge-router.sqlite"
         )
         if backup_path.exists():
             return
@@ -625,7 +745,124 @@ class MaryDatabase:
                 "SELECT id FROM documents WHERE source=? AND source_id=?",
                 (document.source, document.source_id),
             ).fetchone()
-        return int(row["id"]), action
+            document_id = int(row["id"])
+            has_chunks = connection.execute(
+                "SELECT 1 FROM knowledge_chunks WHERE document_id=? LIMIT 1",
+                (document_id,),
+            ).fetchone()
+            if action != "unchanged" or not has_chunks:
+                self._replace_document_chunks(connection, document_id, document)
+            has_schema = connection.execute(
+                "SELECT 1 FROM schema_tables WHERE document_id=? LIMIT 1",
+                (document_id,),
+            ).fetchone()
+            if document.source == "schema" and (
+                action != "unchanged" or not has_schema
+            ):
+                self._replace_schema_catalog(connection, document_id, document)
+        return document_id, action
+
+    @staticmethod
+    def _replace_document_chunks(
+        connection: sqlite3.Connection,
+        document_id: int,
+        document: KnowledgeDocument,
+    ) -> None:
+        chunks = split_knowledge_document(
+            document.title,
+            document.markdown,
+            document.ocr_text,
+            source=document.source,
+        )
+        connection.execute(
+            "DELETE FROM knowledge_chunks WHERE document_id=?", (document_id,)
+        )
+        now = utc_now()
+        connection.executemany(
+            """INSERT INTO knowledge_chunks
+               (document_id,chunk_key,heading,content,content_type,entities_json,
+                content_hash,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    document_id,
+                    chunk.chunk_key,
+                    chunk.heading,
+                    chunk.content,
+                    chunk.content_type,
+                    json.dumps(chunk.entities, ensure_ascii=False),
+                    chunk.content_hash,
+                    now,
+                    now,
+                )
+                for chunk in chunks
+            ],
+        )
+
+    @staticmethod
+    def _replace_schema_catalog(
+        connection: sqlite3.Connection,
+        document_id: int,
+        document: KnowledgeDocument,
+    ) -> None:
+        connection.execute(
+            "DELETE FROM schema_relations WHERE document_id=?", (document_id,)
+        )
+        connection.execute(
+            "DELETE FROM schema_tables WHERE document_id=?", (document_id,)
+        )
+        for table in parse_schema_markdown(document.markdown):
+            cursor = connection.execute(
+                """INSERT INTO schema_tables
+                   (document_id,schema_name,table_name,description,approximate_rows,version)
+                   VALUES(?,?,?,?,?,?)""",
+                (
+                    document_id,
+                    table.schema_name,
+                    table.table_name,
+                    table.description,
+                    table.approximate_rows,
+                    document.revision,
+                ),
+            )
+            table_id = _last_insert_id(cursor)
+            connection.executemany(
+                """INSERT INTO schema_columns
+                   (table_id,column_name,data_type,nullable,primary_key,default_value,description)
+                   VALUES(?,?,?,?,?,?,?)""",
+                [
+                    (
+                        table_id,
+                        column.name,
+                        column.data_type,
+                        int(column.nullable),
+                        int(column.primary_key),
+                        column.default_value,
+                        column.description,
+                    )
+                    for column in table.columns
+                ],
+            )
+            connection.executemany(
+                """INSERT OR IGNORE INTO schema_relations
+                   (document_id,from_schema,from_table,from_column,
+                    to_schema,to_table,to_column,relation_type,evidence)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        document_id,
+                        relation.from_schema,
+                        relation.from_table,
+                        relation.from_column,
+                        relation.to_schema,
+                        relation.to_table,
+                        relation.to_column,
+                        "foreign_key",
+                        relation.evidence,
+                    )
+                    for relation in table.relations
+                ],
+            )
 
     def queue_review(
         self,
@@ -1113,6 +1350,191 @@ class MaryDatabase:
             ]
         return {"products": products, "categories": categories}
 
+    def backfill_knowledge_chunks(self, limit: int = 0) -> int:
+        """Create missing chunks for documents written before the chunk index."""
+        sql = """SELECT d.* FROM documents d
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM knowledge_chunks c WHERE c.document_id=d.id
+                  )
+                  ORDER BY d.id"""
+        params: tuple[Any, ...] = ()
+        if limit > 0:
+            sql += " LIMIT ?"
+            params = (int(limit),)
+        created = 0
+        with self.connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+            for row in rows:
+                document = KnowledgeDocument(
+                    source=str(row["source"]),
+                    source_id=str(row["source_id"]),
+                    title=str(row["title"]),
+                    url=str(row["url"]),
+                    markdown=str(row["markdown"]),
+                    ocr_text=str(row["ocr_text"]),
+                    module=str(row["module"]),
+                    product=str(row["product"]),
+                    category=str(row["category"]),
+                    review_status=str(row["review_status"]),
+                    status=str(row["status"]),
+                    revision=str(row["revision"]),
+                    content_hash=str(row["content_hash"]),
+                    local_path=str(row["local_path"]),
+                )
+                self._replace_document_chunks(connection, int(row["id"]), document)
+                if document.source == "schema":
+                    self._replace_schema_catalog(
+                        connection, int(row["id"]), document
+                    )
+                created += 1
+        return created
+
+    def search_chunks(
+        self,
+        query: str,
+        limit: int = 8,
+        *,
+        source: str = "",
+        module: str = "",
+        content_types: tuple[str, ...] = (),
+        include_unvalidated: bool = False,
+    ) -> list[dict[str, Any]]:
+        terms = search_terms(query)
+        if not terms:
+            return []
+        filters = ["d.status='active'"]
+        params: list[Any] = []
+        if not include_unvalidated:
+            filters.extend(
+                [
+                    "d.module<>'Revisar'",
+                    "d.review_status IN ('approved','kept')",
+                ]
+            )
+        if source:
+            filters.append("d.source=?")
+            params.append(source)
+        if module:
+            filters.append("d.module=?")
+            params.append(module)
+        if content_types:
+            placeholders = ",".join("?" for _ in content_types)
+            filters.append(f"c.content_type IN ({placeholders})")
+            params.extend(content_types)
+        sql = f"""
+            SELECT c.id AS chunk_id,c.heading,c.content,c.content_type,
+                   c.entities_json,c.content_hash AS chunk_hash,
+                   d.id AS document_id,d.source,d.source_id,d.title,d.url,
+                   d.module,d.product,d.category,d.updated_at,d.synced_at,
+                   d.local_path,d.review_status,d.classification_confidence,
+                   bm25(knowledge_chunks_fts,5.0,1.0,2.0) AS rank
+              FROM knowledge_chunks_fts
+              JOIN knowledge_chunks c ON c.id=knowledge_chunks_fts.rowid
+              JOIN documents d ON d.id=c.document_id
+             WHERE knowledge_chunks_fts MATCH ? AND {' AND '.join(filters)}
+             ORDER BY rank LIMIT ?
+        """
+        raw_by_chunk: dict[int, dict[str, Any]] = {}
+        with self.connect() as connection:
+            exact_params = [
+                _fts_and_query(terms),
+                *params,
+                max(40, int(limit) * 8),
+            ]
+            for row in connection.execute(sql, exact_params).fetchall():
+                raw_by_chunk[int(row["chunk_id"])] = dict(row)
+            if len(raw_by_chunk) < max(1, int(limit)):
+                broad_params = [
+                    _fts_query(query),
+                    *params,
+                    max(80, int(limit) * 16),
+                ]
+                for row in connection.execute(sql, broad_params).fetchall():
+                    raw_by_chunk.setdefault(int(row["chunk_id"]), dict(row))
+        scored: list[dict[str, Any]] = []
+        for raw in raw_by_chunk.values():
+            candidate_row = {
+                **raw,
+                "title": " ".join(
+                    value
+                    for value in (
+                        str(raw.get("title") or ""),
+                        str(raw.get("heading") or ""),
+                    )
+                    if value
+                ),
+                "markdown": str(raw.get("content") or ""),
+                "ocr_text": "",
+            }
+            candidate = _score_search_row(
+                candidate_row,
+                terms,
+                minimum_matches=max(1, min(2, len(terms) // 4)),
+            )
+            if candidate is None:
+                continue
+            candidate["title"] = str(raw.get("title") or "")
+            candidate["excerpt"] = search_excerpt(
+                str(raw.get("content") or ""), terms, limit=700
+            )
+            scored.append(candidate)
+        scored.sort(
+            key=lambda item: (
+                -float(item.get("score") or 0.0),
+                normalize_search_text(item.get("title") or ""),
+                int(item.get("chunk_id") or 0),
+            )
+        )
+        return scored[: max(1, int(limit))]
+
+    def search_schema_catalog(
+        self, query: str, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        terms = search_terms(query)
+        if not terms:
+            return []
+        where = " OR ".join(
+            "lower(t.schema_name||'.'||t.table_name||' '||c.column_name) LIKE ?"
+            for _ in terms
+        )
+        params = [f"%{term.casefold()}%" for term in terms]
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT t.id AS table_id,t.document_id,t.schema_name,t.table_name,
+                            t.description,t.approximate_rows,t.version,
+                            group_concat(
+                                c.column_name||' '||c.data_type||
+                                CASE WHEN c.primary_key=1 THEN ' PK' ELSE '' END,
+                                '; '
+                            ) AS columns
+                       FROM schema_tables t
+                       LEFT JOIN schema_columns c ON c.table_id=t.id
+                      WHERE {where}
+                      GROUP BY t.id
+                      LIMIT ?""",
+                [*params, max(1, int(limit))],
+            ).fetchall()
+            results = []
+            for row in rows:
+                relations = connection.execute(
+                    """SELECT * FROM schema_relations
+                       WHERE document_id=? AND (
+                           (from_schema=? AND from_table=?) OR
+                           (to_schema=? AND to_table=?)
+                       ) LIMIT 30""",
+                    (
+                        row["document_id"],
+                        row["schema_name"],
+                        row["table_name"],
+                        row["schema_name"],
+                        row["table_name"],
+                    ),
+                ).fetchall()
+                result = dict(row)
+                result["relations"] = [dict(item) for item in relations]
+                results.append(result)
+        return results
+
     def search(
         self,
         query: str,
@@ -1120,6 +1542,7 @@ class MaryDatabase:
         module: str = "",
         source: str = "",
         include_unvalidated: bool = False,
+        excluded_sources: tuple[str, ...] = (),
     ) -> list[dict[str, Any]]:
         filters = ["d.status='active'"]
         terms = search_terms(query)
@@ -1139,6 +1562,13 @@ class MaryDatabase:
         if source:
             filters.append("d.source=?")
             filter_params.append(source)
+        excluded_sources = tuple(
+            str(item).strip() for item in excluded_sources if str(item).strip()
+        )
+        if excluded_sources:
+            placeholders = ",".join("?" for _ in excluded_sources)
+            filters.append(f"d.source NOT IN ({placeholders})")
+            filter_params.extend(excluded_sources)
         exact_limit = max(60, min(240, int(limit) * 10))
         broad_limit = max(140, min(500, int(limit) * 24))
         sql = f"""
@@ -1236,6 +1666,7 @@ class MaryDatabase:
         approval_profile: str = "auto",
         collaboration_mode: str = "default",
         orchestration: OrchestrationOptions | None = None,
+        vr_enabled: bool = False,
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
@@ -1247,9 +1678,9 @@ class MaryDatabase:
                     collaboration_mode,orchestration_enabled,orchestration_mode,
                     orchestration_strategy,
                     ultra_enabled,show_execution,explain_routing,dynamic_model_routing,
-                    dynamic_agent_count,difficulty_routing,workspace,cloned_from,
-                    created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     dynamic_agent_count,difficulty_routing,vr_enabled,workspace,cloned_from,
+                     created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
@@ -1268,6 +1699,7 @@ class MaryDatabase:
                     int(orchestration.dynamic_model_routing),
                     int(orchestration.dynamic_agent_count),
                     int(orchestration.difficulty_routing),
+                    int(vr_enabled),
                     to_portable_path(self.root, workspace) if self.root else str(workspace),
                     cloned_from,
                     now,
@@ -1318,7 +1750,7 @@ class MaryDatabase:
             "orchestration_strategy", "ultra_enabled",
             "show_execution", "explain_routing",
             "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
-            "workspace", "original_workspace",
+            "workspace", "original_workspace", "vr_enabled",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
         if self.root:
@@ -1342,18 +1774,20 @@ class MaryDatabase:
         content: str,
         turn_id: str = "",
         edited_from_message_id: int | None = None,
+        response_mode: str = "",
     ) -> int:
         with self.connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO messages
-                   (conversation_id,role,content,turn_id,edited_from_message_id,created_at)
-                   VALUES(?,?,?,?,?,?)""",
+                   (conversation_id,role,content,turn_id,edited_from_message_id,response_mode,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     role,
                     content,
                     turn_id,
                     edited_from_message_id,
+                    response_mode,
                     utc_now(),
                 ),
             )
@@ -1362,6 +1796,32 @@ class MaryDatabase:
                 (utc_now(), conversation_id),
             )
             return _last_insert_id(cursor)
+
+    def add_source_citations(
+        self,
+        conversation_id: str,
+        message_id: int,
+        citations: list[dict[str, Any]],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM source_citations WHERE message_id=?", (message_id,)
+            )
+            connection.executemany(
+                """INSERT INTO source_citations
+                   (conversation_id,document_id,message_id,excerpt)
+                   VALUES(?,?,?,?)""",
+                [
+                    (
+                        conversation_id,
+                        int(item.get("document_id") or 0) or None,
+                        message_id,
+                        str(item.get("excerpt") or "")[:4000],
+                    )
+                    for item in citations
+                    if int(item.get("document_id") or 0) > 0
+                ],
+            )
 
     def begin_user_turn(self, conversation_id: str, content: str) -> int:
         """Atomically claim an idle active conversation and persist its user turn."""
@@ -1770,7 +2230,10 @@ def _fts_literal(value: str) -> str:
 
 
 def _score_search_row(
-    row: dict[str, Any], terms: list[str]
+    row: dict[str, Any],
+    terms: list[str],
+    *,
+    minimum_matches: int | None = None,
 ) -> dict[str, Any] | None:
     title = str(row.get("title") or "")
     markdown = str(row.get("markdown") or "")
@@ -1791,7 +2254,12 @@ def _score_search_row(
         or term in normalized_metadata
         or term in normalized_content
     ]
-    if len(matched) < minimum_term_matches(len(terms)):
+    required_matches = (
+        minimum_term_matches(len(terms))
+        if minimum_matches is None
+        else max(1, int(minimum_matches))
+    )
+    if len(matched) < required_matches:
         return None
     coverage = term_coverage(terms, matched)
     title_coverage = term_coverage(terms, title_matches)

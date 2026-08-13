@@ -1,7 +1,7 @@
 #define MyAppName "VR Norte Studio"
 #define MyAppVersion "0.3.11"
 #define MyAppPublisher "VRNorte"
-#define MyAppExeName "VRMaryStudio.exe"
+#define MyAppExeName "VRNorteStudio.exe"
 
 [Setup]
 AppId={{88340B2C-B18C-4A09-9F01-82D0DC28E1BD}
@@ -22,7 +22,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 
 [Files]
-Source: "..\dist\VRMaryStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\VRNorteStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\VR Norte Studio"; Filename: "{app}\{#MyAppExeName}"

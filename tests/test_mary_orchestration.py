@@ -15,8 +15,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
+from vrsoft_extractor.mary.schema_catalog import parse_schema_markdown
+from vrsoft_extractor.mary.schema_sync import SchemaSync
 from vrsoft_extractor.mary.models import (
     ConversationOptions,
+    KnowledgeDocument,
     ModelRef,
     OrchestrationOptions,
     RuntimeEvent,
@@ -71,6 +75,7 @@ class FakeProvider(AgentProvider):
         self.divergent = divergent
         self.difficulty_level = difficulty_level
         self.starts: list[str] = []
+        self.start_options: list[ConversationOptions | None] = []
         self.sent: list[dict[str, Any]] = []
         self.interrupted: list[str] = []
         self.released: list[tuple[str, str, bool]] = []
@@ -92,6 +97,7 @@ class FakeProvider(AgentProvider):
     ) -> str:
         with self._lock:
             self.starts.append(conversation_id)
+            self.start_options.append(options)
         return f"native:{conversation_id}"
 
     def resume_conversation(
@@ -125,6 +131,7 @@ class FakeProvider(AgentProvider):
                     "model": model,
                     "effort": effort,
                     "message": message,
+                    "options": options,
                 }
             )
         callback(
@@ -412,8 +419,16 @@ def test_standard_and_ultra_share_the_compact_composer_outline() -> None:
         frame.set_mode("ultra")
         application.processEvents()
         assert frame.mode() == "ultra"
-        assert frame._phase_animation.loopCount() == -1
+        # Accessibility contract: Ultra may animate its state change once,
+        # but it must never keep repainting indefinitely.
+        assert frame._phase_animation.loopCount() == 1
         assert frame._phase_animation.state() == QAbstractAnimation.Running
+
+        frame.set_reduced_motion(True)
+        frame.set_mode("standard")
+        application.processEvents()
+        assert frame._phase_animation.state() == QAbstractAnimation.Stopped
+        assert frame.phase == pytest.approx(0.14)
 
         frame.set_mode("off")
         application.processEvents()
@@ -423,9 +438,42 @@ def test_standard_and_ultra_share_the_compact_composer_outline() -> None:
         host.close()
 
 
-def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
+def test_codex_provider_emits_reconnection_lifecycle_before_resuming_turn(
     tmp_path: Path,
 ) -> None:
+    provider = CodexProvider(tmp_path)
+    provider._has_started_once = True
+    provider.process = None
+    provider._native_to_local["native-thread"] = "conversation"
+    events: list[RuntimeEvent] = []
+
+    with (
+        patch.object(provider, "_ensure_started"),
+        patch.object(provider, "_rpc", return_value={}),
+    ):
+        provider.send_message(
+            "conversation",
+            "native-thread",
+            "gpt-test",
+            "medium",
+            tmp_path,
+            "Continue",
+            events.append,
+            ConversationOptions(model="gpt-test", effort="medium"),
+        )
+
+    assert [event.kind for event in events] == [
+        "provider_reconnecting",
+        "provider_reconnected",
+    ]
+    assert all(event.payload["provider"] == "codex" for event in events)
+
+
+def test_vr_panel_explains_four_modes_and_local_base_keeps_its_own_state(
+    tmp_path: Path,
+) -> None:
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
     from vrsoft_extractor.mary.ui import MainWindow
@@ -442,6 +490,16 @@ def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
             "ultra",
         }
         assert window.vr_flow_button.menu() is window.vr_menu
+        assert set(window.vr_mode_panel._mode_rows) == {
+            "off",
+            "automatic",
+            "standard",
+            "ultra",
+        }
+        assert all(
+            row.description_label.text().strip()
+            for row in window.vr_mode_panel._mode_rows.values()
+        )
         assert (
             window.vr_local_base_action.isChecked()
             == window.vr_flow_button.isChecked()
@@ -456,6 +514,23 @@ def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
         assert all("Orange" not in label for label in menu_labels)
         assert all("Rainbow" not in label for label in menu_labels)
 
+        arrow_requests = []
+        window.vr_flow_button.optionsRequested.connect(
+            lambda: arrow_requests.append(True)
+        )
+        checked_before_arrow = window.vr_flow_button.isChecked()
+        QTest.mouseClick(
+            window.vr_flow_button,
+            Qt.LeftButton,
+            pos=QPoint(
+                window.vr_flow_button.width() - 5,
+                window.vr_flow_button.height() // 2,
+            ),
+        )
+        assert arrow_requests == [True]
+        assert window.vr_flow_button.isChecked() == checked_before_arrow
+
+        window.vr_flow_button.setChecked(True)
         for mode, visual in (
             ("off", "off"),
             ("automatic", "off"),
@@ -465,6 +540,7 @@ def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
             options = OrchestrationOptions(mode=mode)
             window._sync_orchestration_mode_ui(options, animate=False)
             assert window.orchestration_mode_actions[mode].isChecked()
+            assert window.vr_mode_panel._mode_rows[mode].property("selected")
             assert window.composer_glow.mode() == visual
 
         window.draft_orchestration = OrchestrationOptions(mode="standard")
@@ -473,7 +549,7 @@ def test_vr_menu_contains_four_modes_and_local_base_keeps_its_own_state(
         )
         window.vr_local_base_action.setChecked(False)
         assert not window.vr_flow_button.isChecked()
-        assert window.composer_glow.mode() == "standard"
+        assert window.composer_glow.mode() == "off"
 
         window.current_conversation = "draft"
         window.draft_orchestration = OrchestrationOptions(
@@ -915,8 +991,12 @@ def test_vrmaster_personality_is_applied_to_each_orchestration_stage() -> None:
 
     planner = build_planner_prompt("Analise o erro", options, model, (model,))
     worker = build_agent_prompt(assignment, "Analise o erro", [])
-    validation = build_consistency_prompt("Analise o erro", [])
+    validation = build_consistency_prompt(
+        "Analise o erro", [], "[E1] WIKI/FUNCIONAMENTO"
+    )
     synthesis = build_synthesis_prompt("Analise o erro", plan, [], None)
+
+    assert "[E1] WIKI/FUNCIONAMENTO" in validation
 
     assert "Sintoma -> Contexto -> Evidência" in planner
     assert "Não complete lacunas com conhecimento próprio" in worker
@@ -1041,7 +1121,7 @@ def test_runtime_starts_every_non_final_agent_concurrently(tmp_path: Path) -> No
         conversation_id,
         "Analise em paralelo",
         lambda event: completed.set() if event.kind == "turn_completed" else None,
-        use_vr=False,
+        use_vr=True,
     )
 
     assert completed.wait(5)
@@ -1077,7 +1157,7 @@ def test_orchestrated_turn_exposes_and_persists_only_final_synthesis(
         if event.kind == "turn_completed":
             completed.set()
 
-    orchestrator.send(conversation_id, "Resolva o problema", callback, use_vr=False)
+    orchestrator.send(conversation_id, "Resolva o problema", callback, use_vr=True)
     assert completed.wait(5), "o fluxo orquestrado não concluiu"
 
     assert [event.text for event in events if event.kind == "assistant_delta"] == [
@@ -1129,6 +1209,352 @@ def test_orchestrated_turn_exposes_and_persists_only_final_synthesis(
     assert set(worker_efforts.values()) >= {"medium", "high", "xhigh"}
 
 
+def test_vr_off_bypasses_personality_base_and_orchestration(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(
+            mode="standard",
+            model_pool=(ModelRef("codex", "sol", "Sol"),),
+        ),
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Responda como o Codex nativo.",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+
+    assert completed.wait(5)
+    assert len(provider.sent) == 1
+    assert provider.sent[0]["message"] == "Responda como o Codex nativo."
+    assert provider.sent[0]["options"].vr_enabled is False
+    assert provider.start_options[0].vr_enabled is False
+    assert not any(":vr:" in item["conversation_id"] for item in provider.sent)
+    assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+
+
+def test_vr_on_direct_adds_identity_and_local_base_without_multiagent(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        orchestration=OrchestrationOptions(mode="off"),
+        vr_enabled=True,
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Consulte o conhecimento local.",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=True,
+    )
+
+    assert completed.wait(5)
+    assert len(provider.sent) == 1
+    prompt = provider.sent[0]["message"]
+    assert "MODO VR ATIVO" in prompt
+    assert "Seu nome de atendimento é VR" in prompt
+    assert "PESQUISA LOCAL VR" in prompt
+    assert str(settings.root) in prompt
+    assert provider.sent[0]["options"].vr_enabled is True
+    assert provider.start_options[0].vr_enabled is True
+    assert database.messages(conversation_id)[-1]["response_mode"] == "vr"
+
+
+def test_changing_vr_mode_releases_session_and_starts_an_isolated_one(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    database.update_conversation(conversation_id, native_id="native-vr")
+
+    orchestrator.update_vr_mode(conversation_id, False)
+
+    row = database.get_conversation(conversation_id)
+    assert row["vr_enabled"] == 0
+    assert row["native_id"] == ""
+    assert provider.released == [(conversation_id, "native-vr", False)]
+
+
+def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    router = KnowledgeRouter(database, settings.root)
+
+    functional = router.classify("Para que serve e como funciona a função 102?")
+    process = router.classify("Como fazer o passo a passo para configurar o TEF?")
+    technical = router.classify(
+        "Qual tabela e chave estrangeira relacionam venda e estoque?"
+    )
+    hybrid = router.classify(
+        "Como funciona a baixa de estoque, qual o processo e quais tabelas participam?"
+    )
+
+    assert functional.answer_type == "functional"
+    assert functional.entities["functions"] == ("102",)
+    assert functional.entities["numbers"] == ("102",)
+    assert process.answer_type == "process"
+    assert technical.answer_type == "technical_schema"
+    assert hybrid.answer_type == "hybrid"
+    assert all(abs(sum(item.intents.values()) - 1.0) < 0.001 for item in (
+        functional, process, technical, hybrid
+    ))
+
+
+def test_router_retrieves_wiki_kb_and_schema_as_complementary_lanes(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    documents = (
+        KnowledgeDocument(
+            source="wiki",
+            source_id="wiki-venda",
+            title="Funcionamento da baixa de estoque na venda",
+            url="https://wiki.example/venda",
+            markdown=(
+                "A finalização da venda aciona a baixa de estoque e atualiza o saldo."
+            ),
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="wiki-venda",
+            local_path="conhecimento/ADM_FIN_ESTOQUE/Wiki/venda.md",
+        ),
+        KnowledgeDocument(
+            source="kb",
+            source_id="kb-venda",
+            title="Processo para conferir a baixa de estoque da venda",
+            url="https://kb.example/venda",
+            markdown=(
+                "Passo a passo: finalize a venda, consulte o estoque e confira a loja."
+            ),
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="kb-venda",
+            local_path="conhecimento/ADM_FIN_ESTOQUE/KB/venda.md",
+        ),
+        KnowledgeDocument(
+            source="schema",
+            source_id="schema-venda",
+            title="Schema venda e movimento de estoque",
+            url="",
+            markdown=(
+                "## `public`.`venda`\n\n| Coluna | Tipo | Nulo | PK | Default | Descricao |\n"
+                "|---|---|---|---|---|---|\n| `id` | `integer` | Nao | PK | | |\n"
+                "| `id_estoque` | `integer` | Nao | | | |\n\n"
+                "**Chaves Estrangeiras:**\n- `venda.id_estoque` -> `public.estoque.id`"
+            ),
+            module="Multimodulo",
+            review_status="approved",
+            content_hash="schema-venda",
+            local_path="agentes/SchemaVR/test-schema.md",
+        ),
+    )
+    for document in documents:
+        database.upsert_document(document)
+    router = KnowledgeRouter(database, settings.root, per_source_limit=3)
+
+    bundle = router.route(
+        "Como funciona a baixa de estoque da venda, qual processo conferir e quais tabelas se relacionam?"
+    )
+
+    assert {item.source for item in bundle.candidates} == {"wiki", "kb", "schema"}
+    assert bundle.source_counts == {"wiki": 1, "kb": 1, "schema": 1}
+    assert bundle.profile.answer_type == "hybrid"
+    prompt = router.prompt(bundle)
+    assert "WIKI/FUNCIONAMENTO" in prompt
+    assert "KB/PROCESSO" in prompt
+    assert "SCHEMA/ESTRUTURA" in prompt
+    assert "[Funcionamento da baixa" in prompt
+
+
+def test_router_prefers_exact_function_number_over_generic_function_hits(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    for source_id, title, markdown in (
+        ("102", "Funcao 102", "Funcao responsavel por identificar o operador."),
+        ("198", "Funcao 198", "Funcao usada para outro procedimento do PDV."),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_id=source_id,
+                title=title,
+                url="",
+                markdown=markdown,
+                module="PDV",
+                review_status="approved",
+                content_hash=source_id,
+                local_path=f"conhecimento/PDV/Wiki/funcao-{source_id}.md",
+            )
+        )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Para que serve a funcao 102?"
+    )
+
+    assert bundle.candidates[0].title == "Funcao 102"
+    assert bundle.candidates[0].score_breakdown["entities"] == 1.0
+
+
+def test_schema_parser_and_sync_create_structured_catalog(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    schema_dir = settings.root / "agentes" / "SchemaVR"
+    schema_dir.mkdir(parents=True)
+    markdown = """# Schema PostgreSQL
+
+## `public`.`venda`
+*Registros aproximados: 20*
+
+| Coluna | Tipo | Nulo | PK | Default | Descricao |
+|---|---|---|---|---|---|
+| `id` | `integer` | Nao | PK | | Venda |
+| `id_loja` | `integer` | Nao | | | Loja |
+
+**Chaves Estrangeiras:**
+- `venda.id_loja` -> `public.loja.id`
+"""
+    (schema_dir / "schema.md").write_text(markdown, encoding="utf-8")
+    parsed = parse_schema_markdown(markdown)
+    assert len(parsed) == 1
+    assert parsed[0].schema_name == "public"
+    assert parsed[0].table_name == "venda"
+    assert [item.name for item in parsed[0].columns] == ["id", "id_loja"]
+    assert parsed[0].relations[0].to_table == "loja"
+
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    stats = SchemaSync(settings, database).sync()
+    assert stats.created == 1
+    with database.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM schema_tables").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM schema_columns").fetchone()[0] == 2
+        assert connection.execute("SELECT count(*) FROM schema_relations").fetchone()[0] == 1
+    catalog = database.search_schema_catalog("venda id_loja")
+    assert catalog[0]["table_name"] == "venda"
+    assert catalog[0]["relations"][0]["to_table"] == "loja"
+
+
+def test_router_groups_cross_source_duplicates_and_flags_conflicts(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    for source, source_id, text in (
+        (
+            "wiki",
+            "cancelamento-wiki",
+            "O cancelamento da venda atualiza o estoque automaticamente após finalizar a rotina.",
+        ),
+        (
+            "kb",
+            "cancelamento-kb",
+            "O cancelamento da venda não atualiza o estoque automaticamente após finalizar a rotina.",
+        ),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source=source,
+                source_id=source_id,
+                title="Cancelamento da venda e atualização do estoque",
+                url=f"https://{source}.example/cancelamento",
+                markdown=text,
+                module="ADM_FIN_ESTOQUE",
+                review_status="approved",
+                content_hash=source_id,
+                local_path=f"conhecimento/ADM_FIN_ESTOQUE/{source}/{source_id}.md",
+            )
+        )
+    router = KnowledgeRouter(database, settings.root)
+
+    bundle = router.route(
+        "O cancelamento da venda atualiza o estoque automaticamente?"
+    )
+
+    assert len(bundle.groups) == 1
+    assert bundle.groups[0].relationship == "complementary"
+    assert len(bundle.groups[0].evidence_ids) == 2
+    assert len(bundle.conflicts) == 1
+    assert "polaridade diferente" in bundle.conflicts[0].reason
+
+
+def test_vr_turn_persists_routed_evidence_as_message_citations(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="funcao-102",
+            title="Função 102",
+            url="https://wiki.example/102",
+            markdown="A função 102 permite a entrada do operador no PDV.",
+            module="PDV",
+            review_status="approved",
+            content_hash="funcao-102",
+            local_path="conhecimento/PDV/Wiki/funcao-102.md",
+        )
+    )
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(
+        conversation_id,
+        "Para que serve a função 102 no PDV?",
+        callback,
+        use_vr=True,
+    )
+
+    assert completed.wait(5)
+    assert any(event.kind == "knowledge_routed" for event in events)
+    assistant = database.messages(conversation_id)[-1]
+    with database.connect() as connection:
+        citations = connection.execute(
+            "SELECT * FROM source_citations WHERE message_id=?",
+            (assistant["id"],),
+        ).fetchall()
+    assert len(citations) == 1
+    assert "entrada do operador" in citations[0]["excerpt"]
+
+
 @pytest.mark.parametrize(
     ("mode", "difficulty", "expected_effective", "expected_workers"),
     (
@@ -1169,7 +1595,7 @@ def test_execution_modes_select_the_expected_effective_flow(
         if event.kind == "turn_completed":
             completed.set()
 
-    orchestrator.send(conversation_id, "Pedido", callback, use_vr=False)
+    orchestrator.send(conversation_id, "Pedido", callback, use_vr=True)
     assert completed.wait(5)
     worker_calls = [
         item
@@ -1209,7 +1635,7 @@ def test_orchestrator_is_not_injected_into_an_explicit_worker_pool(
         conversation_id,
         "Analise",
         lambda event: completed.set() if event.kind == "turn_completed" else None,
-        use_vr=False,
+        use_vr=True,
     )
     assert completed.wait(5)
     codex_workers = [
@@ -1249,7 +1675,7 @@ def test_final_error_is_not_reported_as_orchestration_success(tmp_path: Path) ->
         if event.kind == "turn_completed":
             completed.set()
 
-    orchestrator.send(conversation_id, "Falhe", callback, use_vr=False)
+    orchestrator.send(conversation_id, "Falhe", callback, use_vr=True)
     assert completed.wait(5)
     assert any(event.kind == "error" for event in events)
     assert not any(event.kind == "orchestration_completed" for event in events)
@@ -1294,7 +1720,7 @@ def test_ultra_revision_respects_dynamic_count_and_model_flags(
             lambda event: completed.set()
             if event.kind == "turn_completed"
             else None,
-            use_vr=False,
+            use_vr=True,
         )
         assert completed.wait(5)
         return [
@@ -1531,7 +1957,7 @@ def test_interrupt_cancels_blocked_planner_without_timing_sleep(tmp_path: Path) 
         if event.kind == "turn_completed":
             completed.set()
 
-    orchestrator.send(conversation_id, "Cancele esta análise", callback, use_vr=False)
+    orchestrator.send(conversation_id, "Cancele esta análise", callback, use_vr=True)
     assert provider.planner_started.wait(5), "o planner não iniciou"
     orchestrator.interrupt(conversation_id)
     assert completed.wait(5), "o cancelamento não concluiu"
@@ -1599,6 +2025,157 @@ def test_opencode_permissions_follow_the_selected_approval_profile() -> None:
     assert automatic["edit"] == "allow"
     assert automatic["*"] == "deny"
     assert full_access == "allow"
+
+
+def test_opencode_allows_read_only_external_knowledge_and_keeps_project_tools(
+    tmp_path: Path,
+) -> None:
+    knowledge = (tmp_path / "VR_Mary_V2").resolve()
+    knowledge.mkdir()
+    permission = json.loads(
+        _opencode_environment("auto", knowledge)["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+    normalized_knowledge = str(knowledge).replace("\\", "/")
+    pattern = normalized_knowledge + "/**"
+
+    assert permission["external_directory"][pattern] == "allow"
+    assert permission["edit"]["*"] == "allow"
+    assert permission["edit"][pattern] == "deny"
+    assert permission["bash"]["*"] == "allow"
+    assert permission["bash"][f"*{normalized_knowledge}*"] == "deny"
+    assert any(
+        key.endswith("/tools/vr-search.ps1*") and value == "allow"
+        for key, value in permission["bash"].items()
+    )
+
+
+def test_conversation_can_bind_to_external_project_without_writing_managed_files(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    assert all(
+        provider.knowledge_root == settings.root
+        for provider in orchestrator.providers.values()
+    )
+    orchestrator.providers = {"codex": FakeProvider("codex")}
+    project = (tmp_path / "cliente" / "projeto-fiscal").resolve()
+    project.mkdir(parents=True)
+
+    conversation_id = orchestrator.new_conversation(
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        workspace=project,
+    )
+    row = database.get_conversation(conversation_id)
+
+    assert row is not None
+    assert settings.resolve_path(row["workspace"]) == project
+    assert not (project / "AGENTS.md").exists()
+    assert not (project / "CLAUDE.md").exists()
+    assert str(settings.root) in orchestrator._enrich_prompt("consultar cadastro")
+
+    clone_id = orchestrator.clone(conversation_id, "codex", "sol")
+    clone = database.get_conversation(clone_id)
+    assert clone is not None
+    assert settings.resolve_path(clone["workspace"]) == project
+
+
+def test_claude_receives_project_and_knowledge_as_distinct_readable_roots(
+    tmp_path: Path,
+) -> None:
+    knowledge = (tmp_path / "VR_Mary_V2").resolve()
+    project = (tmp_path / "projeto").resolve()
+    knowledge.mkdir()
+    project.mkdir()
+    provider = ClaudeProvider(knowledge)
+    provider.command = "claude"
+
+    with (
+        patch(
+            "vrsoft_extractor.mary.providers.subprocess.Popen",
+            side_effect=OSError("stop after command capture"),
+        ) as popen,
+        pytest.raises(OSError, match="command capture"),
+    ):
+            provider.send_message(
+                "local",
+                "native",
+                "sonnet",
+                "medium",
+                project,
+                "pesquise a base",
+                lambda _event: None,
+                ConversationOptions(vr_enabled=True),
+            )
+
+    command = popen.call_args.args[0]
+    add_dirs = [command[index + 1] for index, value in enumerate(command) if value == "--add-dir"]
+    allowed = command[command.index("--allowedTools") + 1]
+    assert str(project) in add_dirs
+    assert str(knowledge) in add_dirs
+    assert f"Read({knowledge}/**)" in allowed
+    assert f"Grep({knowledge}/**)" in allowed
+    assert f"Edit({knowledge}/**)" not in allowed
+    assert popen.call_args.kwargs["cwd"] == project
+
+
+def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
+    tmp_path: Path,
+) -> None:
+    knowledge = (tmp_path / "VR_Mary_V2").resolve()
+    project = (tmp_path / "projeto").resolve()
+    knowledge.mkdir()
+    project.mkdir()
+    provider = ClaudeProvider(knowledge)
+    provider.command = "claude"
+
+    with (
+        patch(
+            "vrsoft_extractor.mary.providers.subprocess.Popen",
+            side_effect=OSError("stop after command capture"),
+        ) as popen,
+        pytest.raises(OSError, match="command capture"),
+    ):
+        provider.send_message(
+            "local",
+            "native",
+            "sonnet",
+            "medium",
+            project,
+            "mensagem nativa",
+            lambda _event: None,
+            ConversationOptions(vr_enabled=False),
+        )
+
+    command = popen.call_args.args[0]
+    assert command[command.index("-p") + 1] == "mensagem nativa"
+    assert "--permission-mode" not in command
+    assert "--add-dir" not in command
+    assert "--allowedTools" not in command
+    assert "--disallowedTools" not in command
+    assert str(knowledge) not in command
+
+
+def test_opencode_native_environment_does_not_expose_knowledge_root(
+    tmp_path: Path,
+) -> None:
+    knowledge = (tmp_path / "VR_Mary_V2").resolve()
+    knowledge.mkdir()
+
+    vr_permission = json.loads(
+        _opencode_environment("auto", knowledge)["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+    native_permission = json.loads(
+        _opencode_environment("auto", None)["OPENCODE_CONFIG_CONTENT"]
+    )["permission"]
+
+    normalized = str(knowledge).replace("\\", "/")
+    assert f"{normalized}/**" in vr_permission["external_directory"]
+    assert "external_directory" not in native_permission
+    assert all(normalized not in key for key in native_permission["bash"])
 
 
 def test_opencode_streams_json_and_announces_native_session(
@@ -1675,6 +2252,7 @@ def test_opencode_streams_json_and_announces_native_session(
                 model="opencode/fast-code",
                 effort="high",
                 approval_profile="supervised",
+                collaboration_mode="plan",
             ),
         )
         assert completed.wait(5)
@@ -1683,6 +2261,7 @@ def test_opencode_streams_json_and_announces_native_session(
     assert command[:3] == ["opencode", "run", "--format"]
     assert command[command.index("--model") + 1] == "opencode/fast-code"
     assert command[command.index("--variant") + 1] == "high"
+    assert command[command.index("--agent") + 1] == "plan"
     assert "--session" not in command
     assert process.stdin.value == "Responda apenas OK"
     assert [event.kind for event in events] == [

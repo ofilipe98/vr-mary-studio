@@ -29,6 +29,9 @@ dev = [
 [project.scripts]
 vrsoft-extractor = "vrsoft_extractor.cli:main"
 vrsoft-extractor-gui = "vrsoft_extractor.mary.ui:main"
+vr-norte = "vrsoft_extractor.mary.cli:main"
+vr-norte-studio = "vrsoft_extractor.mary.ui:main"
+# Compatibility aliases for existing development environments.
 vr-mary = "vrsoft_extractor.mary.cli:main"
 vr-mary-studio = "vrsoft_extractor.mary.ui:main"
 
@@ -39,6 +42,6 @@ include = ["vrsoft_extractor*"]
 "vrsoft_extractor.mary" = [
     "assets/*",
     "data/*.md",
-    "data/*.ps1",
-    "data/*.cmd",
+  "data/*.ps1",
+  "data/*.cmd",
 ]

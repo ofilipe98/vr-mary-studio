@@ -439,12 +439,12 @@ def test_video_output_decoder_preserves_split_utf8_character():
     assert environment.value("PYTHONUTF8") == "1"
     assert environment.value("PYTHONIOENCODING") == "utf-8"
     executable, development = video_process_command(
-        Path("MaryProject"), "scan", frozen=False
+        Path("VRProject"), "scan", frozen=False
     )
     assert executable
     assert development[:2] == ["-m", "vrsoft_extractor"]
     _executable, packaged = video_process_command(
-        Path("MaryProject"), "scan", frozen=True
+        Path("VRProject"), "scan", frozen=True
     )
     assert packaged[:2] == ["--video-cli", "--project-dir"]
 

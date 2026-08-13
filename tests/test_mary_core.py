@@ -22,13 +22,16 @@ from vrsoft_extractor.mary.chat_tools import (
     validate_tool_definition,
 )
 from vrsoft_extractor.mary.chat_widgets import (
+    CodeBlockWidget,
+    MarkdownMessageWidget,
     ModelPickerCombo,
+    ProjectPickerDialog,
     RoundedPopupDialog,
     SpellcheckPlainTextEdit,
     provider_icon,
 )
 from vrsoft_extractor.mary.classification_audit import audit_classification
-from vrsoft_extractor.mary.config import MarySettings, save_mary_env
+from vrsoft_extractor.mary.config import MarySettings, save_vr_env
 from vrsoft_extractor.mary.content import (
     canonical_markdown,
     download_asset,
@@ -98,43 +101,43 @@ class MaryCoreTest(unittest.TestCase):
             old_root=self.old.resolve(),
         )
 
-    def test_save_mary_env_is_validated_atomic_and_preserves_unknown_values(self):
+    def test_save_vr_env_is_validated_atomic_and_preserves_unknown_values(self):
         env_path = self.app / ".env"
         env_path.write_text(
-            "# configuração local\nCUSTOM_FLAG=keep\nMARY_ROOT=old\n",
+            "# configuração local\nCUSTOM_FLAG=keep\nVR_ROOT=old\n",
             encoding="utf-8",
         )
-        save_mary_env(
+        save_vr_env(
             self.app,
             {
-                "MARY_ROOT": str(self.settings.root),
+                "VR_ROOT": str(self.settings.root),
                 "MOVIDESK_EMAIL": "user@example.com",
                 "MOVIDESK_PASSWORD": "secret",
                 "ENDOO_EMAIL": "video@example.com",
                 "ENDOO_PASSWORD": "video-secret",
-                "MARY_SYNC_INTERVAL_MINUTES": "30",
-                "MARY_DEFAULT_EFFORT": "high",
+                "VR_SYNC_INTERVAL_MINUTES": "30",
+                "VR_DEFAULT_EFFORT": "high",
             },
         )
 
         content = env_path.read_text(encoding="utf-8")
         self.assertIn("# configuração local", content)
         self.assertIn("CUSTOM_FLAG=keep", content)
-        self.assertEqual(content.count("MARY_ROOT="), 1)
-        self.assertIn("MARY_SYNC_INTERVAL_MINUTES=30", content)
+        self.assertEqual(content.count("VR_ROOT="), 1)
+        self.assertIn("VR_SYNC_INTERVAL_MINUTES=30", content)
         self.assertEqual(list(self.app.glob(".*.tmp")), [])
 
-    def test_save_mary_env_rejects_invalid_values_without_changing_file(self):
+    def test_save_vr_env_rejects_invalid_values_without_changing_file(self):
         env_path = self.app / ".env"
         env_path.write_text("CUSTOM_FLAG=keep\n", encoding="utf-8")
         invalid = {
-            "MARY_ROOT": str(self.settings.root),
-            "MARY_SYNC_INTERVAL_MINUTES": "0",
-            "MARY_DEFAULT_EFFORT": "medium",
+            "VR_ROOT": str(self.settings.root),
+            "VR_SYNC_INTERVAL_MINUTES": "0",
+            "VR_DEFAULT_EFFORT": "medium",
         }
 
         with self.assertRaisesRegex(RuntimeError, "pelo menos 15"):
-            save_mary_env(self.app, invalid)
+            save_vr_env(self.app, invalid)
 
         self.assertEqual(env_path.read_text(encoding="utf-8"), "CUSTOM_FLAG=keep\n")
 
@@ -260,7 +263,7 @@ class MaryCoreTest(unittest.TestCase):
 
         orchestrator.send(conversation_id, "Teste", lambda _event: None)
 
-        self.assertTrue((workspace / "tools" / "mary-search.ps1").is_file())
+        self.assertTrue((workspace / "tools" / "vr-search.ps1").is_file())
         self.assertIn("botão VR está", (workspace / "AGENTS.md").read_text("utf-8"))
         self.assertNotIn("../../AGENTS.md", (workspace / "AGENTS.md").read_text("utf-8"))
         self.assertNotIn("@../../AGENTS.md", (workspace / "CLAUDE.md").read_text("utf-8"))
@@ -1831,7 +1834,8 @@ class MaryCoreTest(unittest.TestCase):
         self.assertTrue(picker._model_popup.isVisible())
 
         provider_tabs = picker._model_popup.findChild(QTabBar, "modelProviderTabs")
-        self.assertEqual(provider_tabs.width(), 50)
+        self.assertEqual(provider_tabs.width(), 56)
+        self.assertEqual(provider_tabs.iconSize().width(), 26)
         self.assertTrue(
             all(
                 provider_tabs.tabRect(index).width() == provider_tabs.width()
@@ -2837,8 +2841,8 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             dialog.close()
 
-    def test_chat_header_is_responsive_and_settings_effort_is_localized(self):
-        from PySide6.QtWidgets import QApplication, QComboBox, QLabel
+    def test_chat_header_is_responsive_and_default_effort_is_hidden(self):
+        from PySide6.QtWidgets import QApplication, QLabel
 
         initialize_workspace(self.settings)
         application = QApplication.instance() or QApplication([])
@@ -2848,7 +2852,7 @@ class MaryCoreTest(unittest.TestCase):
             auto_close_smoke=False,
         )
         try:
-            from PySide6.QtCore import QPoint
+            from PySide6.QtCore import QPoint, QSize
 
             for width, height in ((1120, 700), (1366, 768), (1920, 1080)):
                 with self.subTest(size=(width, height)):
@@ -2908,6 +2912,16 @@ class MaryCoreTest(unittest.TestCase):
             self.assertTrue(window.tier_combo.isHidden())
             self.assertFalse(window.approval_combo.isHidden())
             self.assertFalse(window.vr_flow_button.isHidden())
+            self.assertEqual(window.chat_header_title.text(), "Nova conversa")
+            self.assertIn("Codex", window.chat_header_meta.text())
+            self.assertIn("Build", window.chat_header_meta.text())
+            self.assertIn("VR", window.chat_header_meta.text())
+            self.assertTrue(window.chat_header.isAncestorOf(window.chat_status))
+            window.chat_status.setText("Executando…")
+            self.assertEqual(window.chat_status.property("statusKind"), "running")
+            window.chat_status.setText("Falha ao executar")
+            self.assertEqual(window.chat_status.property("statusKind"), "error")
+            window.chat_status.setText("Pronto")
             window.vr_flow_button.setChecked(True)
             self.assertTrue(window.vr_flow_button.isChecked())
             self.assertIn("base local ativa", window.vr_flow_button.toolTip())
@@ -2948,11 +2962,35 @@ class MaryCoreTest(unittest.TestCase):
             self.assertFalse(provider_icon("claude").isNull())
             self.assertFalse(provider_icon("opencode").isNull())
             self.assertFalse(window.model_combo.itemIcon(0).isNull())
-            self.assertEqual(window.new_chat_button.text(), "Novo chat")
+            self.assertEqual(window.new_chat_button.text(), "")
+            self.assertEqual(window.new_chat_button.accessibleName(), "Novo chat")
             self.assertFalse(window.new_chat_button.icon().isNull())
             self.assertFalse(window.scheduled_placeholder_button.icon().isNull())
             self.assertFalse(window.plugins_placeholder_button.icon().isNull())
-            self.assertEqual(window.conversation_search.placeholderText(), "Buscar chats")
+            self.assertEqual(window.nav_toggle_button.size(), QSize(40, 40))
+            self.assertEqual(window.chat_sidebar_toggle_button.size(), QSize(40, 40))
+            self.assertEqual(window.nav_toggle_button.objectName(), "navSidebarToggle")
+            self.assertEqual(
+                window.chat_sidebar_toggle_button.objectName(),
+                "chatSidebarToggle",
+            )
+            self.assertEqual(
+                window.orchestration_trace_close_button.objectName(),
+                "traceSidebarToggle",
+            )
+            self.assertEqual(
+                window.vr_agents_toggle_button.objectName(),
+                "agentSidebarToggle",
+            )
+            self.assertEqual(
+                window.knowledge_expand_button.objectName(),
+                "knowledgeExpandToggle",
+            )
+            self.assertGreaterEqual(
+                window.chat_header.height(),
+                window.chat_sidebar_toggle_button.height(),
+            )
+            self.assertEqual(window.conversation_search.placeholderText(), "Buscar")
             self.assertFalse(window.scheduled_placeholder_button.isEnabled())
             self.assertFalse(window.plugins_placeholder_button.isEnabled())
             self.assertFalse(hasattr(window, "conversation_state_tabs"))
@@ -3002,19 +3040,181 @@ class MaryCoreTest(unittest.TestCase):
             application.processEvents()
             assistant = window._add_message(
                 "assistant",
-                "Resposta Mary com largura legível para evitar que cada linha "
+                "Resposta VR com largura legível para evitar que cada linha "
                 "seja quebrada em poucas palavras.",
             )
             application.processEvents()
             self.assertGreaterEqual(assistant.parentWidget().width(), 800)
             self.assertLessEqual(assistant.parentWidget().width(), 900)
 
-            effort_field = window.settings_fields["MARY_DEFAULT_EFFORT"]
-            self.assertIsInstance(effort_field, QComboBox)
-            self.assertEqual(effort_field.currentText(), "Médio")
-            self.assertEqual(effort_field.currentData(), "medium")
-            self.assertEqual(effort_field.findData("ultra"), -1)
+            self.assertNotIn("VR_DEFAULT_EFFORT", window.settings_fields)
+            self.assertNotIn("MARY_DEFAULT_EFFORT", window.settings_fields)
             self.assertEqual(window.effort_combo.findData("ultra"), -1)
+        finally:
+            window.close()
+
+    def test_chat_project_selector_binds_new_thread_and_preserves_project_files(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        project = (self.root / "projetos" / "cliente-a").resolve()
+        project.mkdir(parents=True)
+        existing = project / "codigo.sql"
+        existing.write_text("select 1;", encoding="utf-8")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        try:
+            with patch.object(window, "_request_file_catalog"):
+                window._select_project(project)
+            application.processEvents()
+            self.assertEqual(window.draft_project_path, project)
+            self.assertEqual(window.project_button.text(), "cliente-a")
+            self.assertIn(str(self.settings.root), window.project_button.toolTip())
+
+            result = window._create_conversation_request(
+                1,
+                "codex",
+                "gpt-test",
+                "medium",
+                "",
+                "auto",
+                "default",
+                [],
+                [],
+                window.draft_orchestration,
+                project,
+            )
+            row = window.database.get_conversation(result["conversation_id"])
+            self.assertIsNotNone(row)
+            self.assertEqual(
+                self.settings.resolve_path(row["workspace"]), project
+            )
+            self.assertEqual(existing.read_text(encoding="utf-8"), "select 1;")
+            self.assertFalse((project / "AGENTS.md").exists())
+            self.assertFalse((project / "CLAUDE.md").exists())
+        finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.close()
+
+    def test_chat_project_scope_matches_t3_all_projects_and_picker(self):
+        from PySide6.QtWidgets import QApplication, QDialog
+
+        application = QApplication.instance() or QApplication([])
+        first = (self.root / "projetos" / "alpha").resolve()
+        second = (self.root / "projetos" / "beta").resolve()
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        try:
+            window._remember_project(first)
+            window._remember_project(second)
+            window._select_project_scope(None)
+            application.processEvents()
+
+            self.assertEqual(window.project_button.text(), "Todos os projetos")
+            window._rebuild_project_menu()
+            labels = [action.text() for action in window.project_menu.actions()]
+            self.assertIn("Todos os projetos", labels)
+            self.assertIn("alpha", labels)
+            self.assertIn("beta", labels)
+
+            with (
+                patch.object(
+                    ProjectPickerDialog, "exec", return_value=QDialog.Accepted
+                ),
+                patch.object(
+                    ProjectPickerDialog, "selected_project", return_value=first
+                ),
+            ):
+                self.assertEqual(window._project_for_new_conversation(), first)
+        finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.close()
+
+    def test_recent_project_actions_open_folder_and_remove_only_the_shortcut(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        project = (self.root / "projetos" / "atalho").resolve()
+        project.mkdir(parents=True)
+        marker = project / "preservar.txt"
+        marker.write_text("conteúdo", encoding="utf-8")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        try:
+            window._select_project_scope(project)
+            with patch(
+                "vrsoft_extractor.mary.ui.QDesktopServices.openUrl",
+                return_value=True,
+            ) as open_url:
+                window._open_recent_project(project)
+            open_url.assert_called_once_with(QUrl.fromLocalFile(str(project)))
+
+            with patch.object(window, "_show_toast") as toast:
+                window._remove_recent_project(project)
+            self.assertNotIn(project, window._recent_project_paths())
+            self.assertIsNone(window.project_scope_path)
+            self.assertEqual(window.project_button.text(), "Todos os projetos")
+            self.assertTrue(project.is_dir())
+            self.assertEqual(marker.read_text(encoding="utf-8"), "conteúdo")
+            toast.assert_called_once()
+            application.processEvents()
+        finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.close()
+
+    def test_provider_reconnection_events_have_visible_chat_feedback(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.current_conversation = "reconnect-ui"
+            window._on_runtime_event(
+                RuntimeEvent(
+                    "reconnect-ui",
+                    "provider_reconnecting",
+                    payload={"provider": "codex"},
+                )
+            )
+            self.assertEqual(window.chat_status.text(), "Reconectando ao Codex…")
+            self.assertEqual(window.chat_status.property("statusKind"), "running")
+            window._on_runtime_event(
+                RuntimeEvent(
+                    "reconnect-ui",
+                    "provider_reconnected",
+                    payload={"provider": "codex"},
+                )
+            )
+            self.assertEqual(
+                window.chat_status.text(), "Codex reconectado · retomando…"
+            )
+            self.assertEqual(window.chat_status.property("statusKind"), "running")
+            application.processEvents()
         finally:
             window.close()
 
@@ -3191,6 +3391,12 @@ class MaryCoreTest(unittest.TestCase):
 
             window._navigate(window.pages["Revisão"])
             application.processEvents()
+            self.assertTrue(window.review_toolbar.isVisible())
+            self.assertTrue(window.review_toolbar.search.isVisible())
+            self.assertTrue(window.review_toolbar.counter.isVisible())
+            self.assertTrue(window.review_filters_panel.isHidden())
+            window.review_filters_button.click()
+            application.processEvents()
             review_rows = {
                 window.review_query.y(),
                 window.review_source.y(),
@@ -3202,11 +3408,160 @@ class MaryCoreTest(unittest.TestCase):
             self.assertGreaterEqual(window.review_sort.width(), 360)
             self.assertTrue(window.review_previous_page.isVisible())
             self.assertTrue(window.review_next_page.isVisible())
+            self.assertTrue(window.review_pagination.range_label.isVisible())
 
             window._navigate(window.pages["Vídeos"])
             application.processEvents()
+            self.assertTrue(window.video_toolbar.primary_button.isVisible())
+            self.assertTrue(window.video_filters_panel.isHidden())
             action_rows = {button.y() for button in window.video_action_buttons}
             self.assertEqual(len(action_rows), 2)
+
+            self.assertEqual(
+                window.review_table.verticalHeader().defaultSectionSize(), 38
+            )
+            self.assertTrue(
+                all(
+                    not hasattr(toolbar, "density_button")
+                    for toolbar in (
+                        window.knowledge_toolbar,
+                        window.sync_toolbar,
+                        window.review_toolbar,
+                        window.video_toolbar,
+                    )
+                )
+            )
+        finally:
+            window.close()
+
+    def test_data_pages_share_toolbar_and_actionable_empty_states(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+
+            self.assertNotIn("schema", window.source_count_labels)
+            self.assertNotIn(
+                "schema",
+                [
+                    window.knowledge_source.itemText(index).casefold()
+                    for index in range(window.knowledge_source.count())
+                ],
+            )
+            self.assertTrue(
+                all(
+                    button.variant() == "secondary"
+                    for button in window.dashboard_source_action_buttons
+                )
+            )
+            self.assertEqual(
+                [button.variant() for button in window.dashboard_quick_action_buttons],
+                ["primary", "secondary", "secondary", "secondary"],
+            )
+            self.assertTrue(
+                all(button.variant() == "secondary" for button in window.sync_action_buttons)
+            )
+            window._set_knowledge_preview_expanded(False, persist=False)
+            self.assertFalse(window.knowledge_preview_expanded)
+            self.assertFalse(window.knowledge_table.isHidden())
+            window._set_knowledge_preview_expanded(True, persist=False)
+            self.assertTrue(window.knowledge_preview_expanded)
+            self.assertTrue(window.knowledge_table.isHidden())
+            self.assertIn(
+                "Restaurar",
+                window.knowledge_expand_button.accessibleName(),
+            )
+            window._set_knowledge_preview_expanded(False, persist=False)
+            self.assertFalse(window.knowledge_preview_expanded)
+            self.assertFalse(window.knowledge_table.isHidden())
+
+            window._navigate(window.pages["Conhecimento"])
+            application.processEvents()
+            self.assertIs(
+                window.knowledge_content.currentWidget(),
+                window.knowledge_content.empty_state,
+            )
+            self.assertEqual(
+                window.knowledge_content.empty_state.action_button.text(),
+                "Sincronizar fontes",
+            )
+            window.knowledge_query.setText("inexistente")
+            window.search_knowledge()
+            self.assertEqual(
+                window.knowledge_content.empty_state.action_button.text(),
+                "Limpar busca e filtros",
+            )
+
+            window._navigate(window.pages["Sincronizações"])
+            application.processEvents()
+            self.assertIs(
+                window.sync_content.currentWidget(), window.sync_content.empty_state
+            )
+            self.assertTrue(window.sync_toolbar.primary_button.isVisible())
+
+            for toolbar in (
+                window.knowledge_toolbar,
+                window.sync_toolbar,
+                window.review_toolbar,
+                window.video_toolbar,
+            ):
+                self.assertEqual(toolbar.objectName(), "dataToolbar")
+                self.assertFalse(hasattr(toolbar, "density_button"))
+        finally:
+            window.close()
+
+    def test_knowledge_filters_apply_without_a_search_term(self):
+        from PySide6.QtWidgets import QApplication
+
+        database = initialize_workspace(self.settings)
+        for source_id, module in (("fiscal-doc", "Fiscal"), ("pdv-doc", "PDV")):
+            database.upsert_document(
+                KnowledgeDocument(
+                    source="wiki",
+                    source_id=source_id,
+                    title=f"Documento {module}",
+                    url=f"https://example.test/{source_id}",
+                    markdown=f"Conteúdo {module}",
+                    module=module,
+                    content_hash=source_id,
+                )
+            )
+        database.upsert_document(
+            KnowledgeDocument(
+                source="schema",
+                source_id="schema-doc",
+                title="Tabela de venda",
+                url="",
+                markdown="Tabela PDV venda e seus campos.",
+                module="PDV",
+                review_status="approved",
+                content_hash="schema-doc",
+            )
+        )
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.knowledge_module.setCurrentText("PDV")
+            application.processEvents()
+
+            self.assertEqual(window.knowledge_query.text(), "")
+            self.assertEqual(window.knowledge_total, 1)
+            self.assertEqual(window.knowledge_table.rowCount(), 1)
+            self.assertEqual(window.knowledge_table.item(0, 1).text(), "PDV")
+            self.assertEqual(window.knowledge_table.item(0, 2).text(), "WIKI")
+            self.assertEqual(window.knowledge_toolbar.filter_button.text(), "Filtros · 1")
         finally:
             window.close()
 
@@ -3277,6 +3632,78 @@ class MaryCoreTest(unittest.TestCase):
                         )
                     )
         finally:
+            window.close()
+
+    def test_phase_five_accessibility_contract_is_applied_across_pages(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication, QToolButton
+
+        application = QApplication.instance() or QApplication([])
+        apply_application_theme(application, "light")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        original_motion = window.reduce_motion
+        try:
+            window.resize(1480, 900)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            application.processEvents()
+
+            self.assertEqual(
+                window.knowledge_table.accessibleName(),
+                "Resultados do conhecimento",
+            )
+            self.assertEqual(
+                window.review_note.accessibleName(), "Nota de auditoria"
+            )
+            self.assertEqual(
+                window.video_tree.accessibleName(), "Vídeos encontrados"
+            )
+            self.assertEqual(
+                window._tab_sequences["chat"][-2:],
+                (window.composer, window.send_button),
+            )
+            self.assertEqual(
+                window._tab_sequences["appearance"],
+                (window.theme_combo, window.reduce_motion_check),
+            )
+            for group_name in ("chat", "knowledge", "sync", "review", "videos"):
+                sequence = window._tab_sequences[group_name]
+                self.assertEqual(len(sequence), len(set(sequence)))
+                for current in sequence:
+                    with self.subTest(
+                        tab_group=group_name,
+                        current=current.accessibleName() or current.objectName(),
+                    ):
+                        self.assertNotEqual(current.focusPolicy(), Qt.NoFocus)
+
+            for button in window.findChildren(QToolButton):
+                if not button.text().strip():
+                    with self.subTest(control=button.objectName()):
+                        self.assertTrue(button.accessibleName())
+                        self.assertTrue(button.toolTip())
+
+            for control in (
+                window.nav_toggle_button,
+                window.chat_sidebar_toggle_button,
+                window.new_chat_button,
+                window.vr_flow_button,
+                window.send_button,
+            ):
+                with self.subTest(target=control.objectName()):
+                    self.assertGreaterEqual(control.width(), 32)
+                    self.assertGreaterEqual(control.height(), 32)
+
+            window.reduce_motion_check.setChecked(True)
+            application.processEvents()
+            self.assertTrue(application.property("vr_reduce_motion"))
+            self.assertTrue(window.vr_flow_button._reduced_motion)
+            self.assertTrue(window.composer_glow._reduced_motion)
+        finally:
+            window._reduce_motion_changed(original_motion)
             window.close()
 
     def test_vr_toggle_persists_without_changing_the_execution_mode_glow(self):
@@ -3607,7 +4034,7 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_main_model_is_locked_after_chat_starts_but_not_for_empty_draft(self):
-        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtWidgets import QApplication
 
         application = QApplication.instance() or QApplication([])
         window = MainWindow(
@@ -3629,7 +4056,7 @@ class MaryCoreTest(unittest.TestCase):
             with (
                 patch.object(window, "_provider_enabled", return_value=True),
                 patch.object(window.pool, "start") as start,
-                patch.object(QMessageBox, "question") as question,
+                patch("vrsoft_extractor.mary.ui.ConfirmDialog.ask") as question,
             ):
                 window._model_picker_selected("claude", "claude-test")
 
@@ -3833,6 +4260,63 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_chat_fenced_code_uses_t3_style_card_with_copy_and_highlighting(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            message = window._add_message(
+                "assistant",
+                "## Mudança estrutural\n\n```python\n"
+                "if orchestration.enabled:\n"
+                "    run_vr_orchestration()\n"
+                "else:\n"
+                "    run_native_provider()\n```",
+            )
+            application.processEvents()
+
+            self.assertIsInstance(message, MarkdownMessageWidget)
+            block = message.findChild(CodeBlockWidget, "codeBlockCard")
+            self.assertIsNotNone(block)
+            self.assertEqual(block.language, "python")
+            self.assertEqual(block.editor.font().family(), "Consolas")
+            self.assertNotIn("```", message.toPlainText())
+            block.copy_code()
+            self.assertIn("run_vr_orchestration", QApplication.clipboard().text())
+        finally:
+            window.close()
+
+    def test_assistant_header_distinguishes_native_provider_from_vr(self):
+        from PySide6.QtWidgets import QApplication, QLabel
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.provider_combo.setCurrentText("codex")
+            native = window._add_message(
+                "assistant", "Resposta direta.", response_mode="native"
+            )
+            vr = window._add_message(
+                "assistant", "Resposta com a VR.", response_mode="vr"
+            )
+            application.processEvents()
+
+            native_label = native.parentWidget().findChild(QLabel, "messageRole")
+            vr_label = vr.parentWidget().findChild(QLabel, "messageRole")
+            self.assertEqual(native_label.text(), "Codex")
+            self.assertEqual(vr_label.text(), "VR")
+        finally:
+            window.close()
+
     def test_effective_effort_event_replaces_requested_value_in_chat(self):
         from PySide6.QtWidgets import QApplication
 
@@ -3878,7 +4362,12 @@ class MaryCoreTest(unittest.TestCase):
             smoke_test=True,
             auto_close_smoke=False,
         )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
         try:
+            project = (self.root / "projetos" / "digitacao").resolve()
+            project.mkdir(parents=True)
+            window._select_project_scope(project)
             window.show()
             window._navigate(window.pages["Chat VR"])
             application.processEvents()
@@ -3897,6 +4386,8 @@ class MaryCoreTest(unittest.TestCase):
                 window._ensure_draft_conversation()
                 start.assert_called_once()
         finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
             window.close()
 
     def test_typing_without_an_available_conversation_creates_a_draft(self):
@@ -3908,7 +4399,12 @@ class MaryCoreTest(unittest.TestCase):
             smoke_test=True,
             auto_close_smoke=False,
         )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
         try:
+            project = (self.root / "projetos" / "rascunho").resolve()
+            project.mkdir(parents=True)
+            window._select_project_scope(project)
             window.show()
             window._navigate(window.pages["Chat VR"])
             window.current_conversation = ""
@@ -3924,6 +4420,8 @@ class MaryCoreTest(unittest.TestCase):
             self.assertTrue(window._conversation_creation_in_progress)
             self.assertEqual(window.composer.toPlainText(), "teste")
         finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
             window.close()
 
     def test_chat_header_controls_align_with_sidebar_top(self):
@@ -4164,7 +4662,7 @@ class MaryCoreTest(unittest.TestCase):
             }
             with (
                 patch.object(window.pool, "start") as start,
-                patch("vrsoft_extractor.mary.ui.QMessageBox.question") as question,
+                patch("vrsoft_extractor.mary.ui.ConfirmDialog.ask") as question,
             ):
                 window._toggle_slash_tool(
                     {"kind": "local_tool", "id": "tool-id", "payload": tool}
@@ -4178,7 +4676,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_delete_conversation_runs_without_confirmation(self):
+    def test_delete_conversation_confirms_only_permanent_removal(self):
         from PySide6.QtWidgets import QApplication
 
         application = QApplication.instance() or QApplication([])
@@ -4189,14 +4687,29 @@ class MaryCoreTest(unittest.TestCase):
         )
         try:
             window.current_conversation = "conversation-id"
-            with patch.object(window, "_run_conversation_operation") as operation:
+            with (
+                patch.object(window, "_run_conversation_operation") as operation,
+                patch(
+                    "vrsoft_extractor.mary.ui.ConfirmDialog.ask"
+                ) as confirmation,
+            ):
                 window.conversation_state = "active"
                 window.delete_current_conversation()
                 self.assertEqual(operation.call_args.args[0], window.orchestrator.trash)
+                confirmation.assert_not_called()
+
                 operation.reset_mock()
                 window.conversation_state = "trash"
+                confirmation.return_value = False
+                window.delete_current_conversation()
+                operation.assert_not_called()
+
+                confirmation.return_value = True
                 window.delete_current_conversation()
                 self.assertEqual(operation.call_args.args[0], window.orchestrator.purge)
+                self.assertEqual(
+                    confirmation.call_args.kwargs["confirmation_phrase"], "EXCLUIR"
+                )
         finally:
             window.close()
 
@@ -4304,6 +4817,11 @@ class MaryCoreTest(unittest.TestCase):
             window.show()
             window._navigate(window.pages["Revisão"])
             application.processEvents()
+            self.assertTrue(window.review_filters_panel.isHidden())
+            self.assertEqual(window.review_filters_button.text(), "Filtros")
+            window.review_filters_button.click()
+            application.processEvents()
+            self.assertTrue(window.review_filters_panel.isVisible())
             self.assertEqual(window.review_table.rowCount(), 2)
             self.assertIn("Documento ui-review", window.review_detail_title.text())
             self.assertIn("pinpad", window.review_preview.toPlainText())
@@ -4322,12 +4840,58 @@ class MaryCoreTest(unittest.TestCase):
                 window.review_source.findData("wiki")
             )
             application.processEvents()
+            self.assertEqual(window.review_filters_button.text(), "Filtros · 1")
             self.assertEqual(window.review_table.rowCount(), 0)
             window.review_source.setCurrentIndex(
                 window.review_source.findData("kb")
             )
             application.processEvents()
             self.assertEqual(window.review_table.rowCount(), 2)
+        finally:
+            window.close()
+
+    def test_video_filters_sync_schedule_and_opencode_plan_controls(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        with patch.object(MainWindow, "_refresh_all"):
+            window = MainWindow(
+                self.settings,
+                smoke_test=False,
+                auto_close_smoke=False,
+            )
+        try:
+            self.assertFalse(window._auto_sync_enabled)
+            self.assertFalse(window.auto_sync_timer.isActive())
+            with patch.object(window, "sync_wiki_kb") as sync_wiki_kb:
+                window.start_scheduled_sync()
+            sync_wiki_kb.assert_called_once_with()
+            self.assertTrue(window._auto_sync_enabled)
+            window._schedule_next_auto_sync()
+            self.assertTrue(window.auto_sync_timer.isActive())
+            window.auto_sync_timer.stop()
+
+            window.show()
+            window._navigate(window.pages["Vídeos"])
+            application.processEvents()
+            self.assertTrue(window.video_filters_panel.isHidden())
+            window.video_filters_button.click()
+            application.processEvents()
+            self.assertTrue(window.video_filters_panel.isVisible())
+            window.video_status_filter.setCurrentIndex(
+                window.video_status_filter.findData("downloaded")
+            )
+            self.assertEqual(window.video_filters_button.text(), "Filtros · 1")
+
+            window.provider_combo.blockSignals(True)
+            window.provider_combo.setCurrentText("opencode")
+            window.provider_combo.blockSignals(False)
+            window._update_codex_controls()
+            self.assertTrue(window.options_button.isEnabled())
+            with patch.object(window, "_ensure_draft_conversation"):
+                window.options_button.click()
+            self.assertEqual(window.mode_combo.currentData(), "plan")
+            self.assertEqual(window.options_button.text(), "Plan")
         finally:
             window.close()
 
@@ -4449,7 +5013,7 @@ class MaryCoreTest(unittest.TestCase):
 
                 time.sleep(0.005)
             prompt = provider.prompts[-1]
-            self.assertEqual(prompt.count("CONTEXTO LOCAL MARY"), 1)
+            self.assertEqual(prompt.count("CONTEXTO LOCAL VR"), 1)
             self.assertIn("[Funcao 102](https://wiki.example", prompt)
             self.assertIn("funcao-102--3742.md", prompt)
             self.assertIn("Atalho O", prompt)
