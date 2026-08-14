@@ -20,6 +20,149 @@ from .models import ConversationOptions, RuntimeEvent, approval_preset
 EventCallback = Callable[[RuntimeEvent], None]
 
 
+def _as_token_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _token_breakdown(
+    *,
+    input_tokens: Any = 0,
+    output_tokens: Any = 0,
+    reasoning_tokens: Any = 0,
+    cached_tokens: Any = 0,
+    cache_write_tokens: Any = 0,
+    total_tokens: Any = 0,
+) -> dict[str, int]:
+    input_count = _as_token_count(input_tokens)
+    output_count = _as_token_count(output_tokens)
+    reasoning_count = _as_token_count(reasoning_tokens)
+    cached_count = _as_token_count(cached_tokens)
+    cache_write_count = _as_token_count(cache_write_tokens)
+    total_count = _as_token_count(total_tokens) or (
+        input_count + output_count + reasoning_count
+    )
+    return {
+        "inputTokens": input_count,
+        "outputTokens": output_count,
+        "reasoningOutputTokens": reasoning_count,
+        "cachedInputTokens": cached_count,
+        "cacheWriteInputTokens": cache_write_count,
+        "totalTokens": total_count,
+    }
+
+
+def _claude_token_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize the final Claude Code usage record to the shared event shape."""
+
+    usage = payload.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    model_usage = payload.get("modelUsage") or payload.get("model_usage") or {}
+    model_records = (
+        [item for item in model_usage.values() if isinstance(item, dict)]
+        if isinstance(model_usage, dict)
+        else []
+    )
+    if not usage and model_records:
+        usage = {
+            "input_tokens": sum(
+                _as_token_count(item.get("inputTokens") or item.get("input_tokens"))
+                for item in model_records
+            ),
+            "output_tokens": sum(
+                _as_token_count(item.get("outputTokens") or item.get("output_tokens"))
+                for item in model_records
+            ),
+            "cache_read_input_tokens": sum(
+                _as_token_count(
+                    item.get("cacheReadInputTokens")
+                    or item.get("cache_read_input_tokens")
+                )
+                for item in model_records
+            ),
+            "cache_creation_input_tokens": sum(
+                _as_token_count(
+                    item.get("cacheCreationInputTokens")
+                    or item.get("cache_creation_input_tokens")
+                )
+                for item in model_records
+            ),
+        }
+    if not usage:
+        return None
+    cached = _as_token_count(
+        usage.get("cache_read_input_tokens") or usage.get("cacheReadInputTokens")
+    )
+    cache_write = _as_token_count(
+        usage.get("cache_creation_input_tokens")
+        or usage.get("cacheCreationInputTokens")
+    )
+    input_tokens = _as_token_count(
+        usage.get("input_tokens") or usage.get("inputTokens")
+    ) + cached + cache_write
+    breakdown = _token_breakdown(
+        input_tokens=input_tokens,
+        output_tokens=usage.get("output_tokens") or usage.get("outputTokens"),
+        cached_tokens=cached,
+        cache_write_tokens=cache_write,
+        total_tokens=usage.get("total_tokens") or usage.get("totalTokens"),
+    )
+    context_window = max(
+        (
+            _as_token_count(
+                item.get("contextWindow") or item.get("context_window")
+            )
+            for item in model_records
+        ),
+        default=0,
+    )
+    return {
+        "tokenUsage": {
+            "last": breakdown,
+            "modelContextWindow": context_window or None,
+        }
+    }
+
+
+def _opencode_token_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize one OpenCode model step without assuming a model vendor."""
+
+    part = payload.get("part") or {}
+    if not isinstance(part, dict):
+        part = {}
+    usage = part.get("tokens") or payload.get("tokens") or payload.get("usage") or {}
+    if not isinstance(usage, dict) or not usage:
+        return None
+    cache = usage.get("cache") or {}
+    if not isinstance(cache, dict):
+        cache = {}
+    breakdown = _token_breakdown(
+        input_tokens=usage.get("input") or usage.get("inputTokens"),
+        output_tokens=usage.get("output") or usage.get("outputTokens"),
+        reasoning_tokens=usage.get("reasoning") or usage.get("reasoningTokens"),
+        cached_tokens=cache.get("read") or usage.get("cachedInputTokens"),
+        cache_write_tokens=cache.get("write") or usage.get("cacheWriteInputTokens"),
+        total_tokens=usage.get("total") or usage.get("totalTokens"),
+    )
+    if not breakdown["totalTokens"]:
+        return None
+    context_window = _as_token_count(
+        part.get("contextWindow")
+        or part.get("context_window")
+        or payload.get("contextWindow")
+        or payload.get("context_window")
+    )
+    return {
+        "tokenUsage": {
+            "last": breakdown,
+            "modelContextWindow": context_window or None,
+        }
+    }
+
+
 class ProviderError(RuntimeError):
     pass
 
@@ -390,7 +533,16 @@ class CodexProvider(AgentProvider):
             callback = self._callbacks.get(conversation_id)
         if not callback:
             return
-        if method == "thread/settings/updated":
+        if method == "thread/tokenUsage/updated":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "token_usage",
+                    "Uso de contexto atualizado",
+                    params,
+                )
+            )
+        elif method == "thread/settings/updated":
             callback(
                 RuntimeEvent(
                     conversation_id,
@@ -1216,6 +1368,16 @@ class ClaudeProvider(AgentProvider):
                 if result_text and not final_text:
                     final_text = result_text
                     callback(RuntimeEvent(conversation_id, "assistant_delta", result_text, payload))
+                token_usage = _claude_token_usage(payload)
+                if token_usage:
+                    callback(
+                        RuntimeEvent(
+                            conversation_id,
+                            "token_usage",
+                            "Uso de contexto atualizado",
+                            token_usage,
+                        )
+                    )
                 if payload.get("is_error"):
                     callback(RuntimeEvent(conversation_id, "error", result_text, payload))
         exit_code = process.wait()
@@ -1508,6 +1670,17 @@ class OpenCodeProvider(AgentProvider):
             elif kind == "tool_use":
                 tool = str(part.get("tool") or part.get("name") or "ferramenta")
                 callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
+            elif kind in {"step_finish", "step_completed"}:
+                token_usage = _opencode_token_usage(payload)
+                if token_usage:
+                    callback(
+                        RuntimeEvent(
+                            conversation_id,
+                            "token_usage",
+                            "Uso de contexto atualizado",
+                            token_usage,
+                        )
+                    )
             elif kind == "error":
                 reported_error = True
                 callback(

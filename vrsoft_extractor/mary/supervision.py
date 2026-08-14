@@ -272,7 +272,17 @@ def analyze_response_intent(
     )
     requires_steps = training or _contains_any(
         intent_text,
-        ("passo a passo", "como fazer", "procedimento", "etapa por etapa"),
+        (
+            "passo a passo",
+            "como fazer",
+            "como gerar",
+            "como exportar",
+            "crie um fluxo",
+            "monte um fluxo",
+            "fluxo completo",
+            "procedimento",
+            "etapa por etapa",
+        ),
     )
     if training:
         purpose = "training_manual"
@@ -620,40 +630,22 @@ def deterministic_supervision(
         for claim in merged.claims
         if claim.kind == "fact" and not claim.evidence_ids
     ]
+    material_conflicts = [
+        conflict for conflict in conflicts if _is_material_conflict(conflict)
+    ]
     if merged.failed_required_workers:
         reasons.append(RefinementReason.REQUIRED_WORKER_FAILED)
     if merged.source_reports:
-        reports_by_lane = {
-            (report.module, report.source): report
-            for report in merged.source_reports
-        }
-        incomplete_lanes: list[str] = []
         terminal_statuses = {
             "found", "exhausted", "unavailable", "not_applicable"
         }
-        scoped_modules = tuple(
-            dict.fromkeys(
-                report.module
-                for report in merged.source_reports
-                if report.module
-            )
-        )
-        lane_modules = scoped_modules or ("",)
-        module_sources = ("wiki", "kb") if scoped_modules else ("wiki", "kb", "schema")
-        for module in lane_modules:
-            for source in module_sources:
-                report = reports_by_lane.get((module, source))
-                if report is None or report.status not in terminal_statuses:
-                    incomplete_lanes.append(
-                        f"{module}/{source.upper()}" if module else source.upper()
-                    )
-        if scoped_modules:
-            schema_report = reports_by_lane.get(("", "schema"))
-            if (
-                schema_report is None
-                or schema_report.status not in terminal_statuses
-            ):
-                incomplete_lanes.append("VR DBA/SCHEMA")
+        incomplete_lanes = [
+            f"{report.module}/{report.source.upper()}"
+            if report.module
+            else report.source.upper()
+            for report in merged.source_reports
+            if report.status not in terminal_statuses
+        ]
         if incomplete_lanes:
             reasons.append(RefinementReason.MISSING_SOURCES)
             missing.extend(
@@ -673,12 +665,9 @@ def deterministic_supervision(
     ):
         reasons.append(RefinementReason.INCOMPLETE)
         missing.extend(contract.must_include)
-    if merged.gaps:
-        reasons.append(RefinementReason.INCOMPLETE)
-        missing.extend(merged.gaps)
     if unsupported:
         reasons.append(RefinementReason.UNSUPPORTED_CLAIMS)
-    if conflicts:
+    if material_conflicts:
         reasons.append(RefinementReason.CONFLICT_UNRESOLVED)
     verdict = "revise" if reasons else "approve"
     if merged.failed_required_workers and not merged.claims:
@@ -711,6 +700,21 @@ def build_supervision_prompt(
 Avalie o material consolidado, não redija a resposta ao usuário e não revele raciocínio privado.
 Separe qualidade factual de qualidade de apresentação. Verifique cobertura do contrato,
 suporte por fontes permitidas, conflitos, lacunas, adequação ao público e falhas de workers.
+
+Uma lacuna só bloqueia quando impede responder um requisito do contrato ou a pergunta
+original. Não solicite revisão para detalhes fora do escopo, fontes complementares
+ausentes ou informações que podem ser simplesmente omitidas. Diferenças de caminho,
+campo ou versão não são conflitos materiais quando representam fluxos distintos e
+podem ser apresentadas com o respectivo contexto. Se já houver afirmações suficientes
+e sustentadas para uma resposta segura e proporcional, aprove o material; refinamento
+meramente enriquecedor deve ser opcional e não mudar o veredito para revise.
+
+Termos como "completo", "detalhado" ou "fluxo" pedem profundidade no procedimento
+principal solicitado; não autorizam ampliar silenciosamente o escopo para todas as
+variantes, integrações, anexos, exceções ou etapas posteriores não mencionadas. Se as
+fontes sustentarem uma modalidade principal, aprove uma resposta delimitada a essa
+modalidade e peça que os limites sejam declarados. Uma fonte referenciada mas ausente
+não bloqueia quando outra evidência permitida já sustenta uma resposta operacional.
 
 Use somente worker_id listado em available_workers ao solicitar refinamento. Se nenhum
 worker específico for adequado, use string vazia. Retorne somente JSON.
@@ -828,17 +832,38 @@ def combine_supervision(
     deterministic: SupervisorAssessment,
     semantic: SupervisorAssessment,
 ) -> SupervisorAssessment:
+    deterministic_reasons = set(deterministic.reasons)
+    structurally_bounded = {
+        RefinementReason.INCOMPLETE,
+        RefinementReason.MISSING_SOURCES,
+        RefinementReason.REQUIRED_WORKER_FAILED,
+        RefinementReason.INVALID_OUTPUT,
+    }
+    semantic_reasons = tuple(
+        reason
+        for reason in semantic.reasons
+        if reason not in structurally_bounded or reason in deterministic_reasons
+    )
+    semantic_can_block = bool(semantic_reasons)
+    semantic_verdict = semantic.verdict if semantic_can_block else "approve"
     rank = {"approve": 0, "revise": 1, "reject": 2}
     verdict = max(
-        (deterministic.verdict, semantic.verdict),
+        (deterministic.verdict, semantic_verdict),
         key=lambda item: rank.get(item, 1),
+    )
+    keep_semantic_missing = bool(
+        {RefinementReason.INCOMPLETE, RefinementReason.MISSING_SOURCES}
+        .intersection(semantic_reasons)
     )
     return SupervisorAssessment(
         verdict=verdict,
-        reasons=tuple(dict.fromkeys((*deterministic.reasons, *semantic.reasons))),
+        reasons=tuple(dict.fromkeys((*deterministic.reasons, *semantic_reasons))),
         missing_required_topics=tuple(
             dict.fromkeys(
-                (*deterministic.missing_required_topics, *semantic.missing_required_topics)
+                (
+                    *deterministic.missing_required_topics,
+                    *(semantic.missing_required_topics if keep_semantic_missing else ()),
+                )
             )
         ),
         unsupported_claims=tuple(
@@ -852,8 +877,12 @@ def combine_supervision(
         audience_issues=tuple(
             dict.fromkeys((*deterministic.audience_issues, *semantic.audience_issues))
         ),
-        refinement_tasks=semantic.refinement_tasks,
-        summary=semantic.summary or deterministic.summary,
+        refinement_tasks=(semantic.refinement_tasks if semantic_can_block else ()),
+        summary=(
+            semantic.summary
+            if semantic_can_block and semantic.summary
+            else deterministic.summary
+        ),
         confidence=max(deterministic.confidence, semantic.confidence),
     )
 
@@ -947,6 +976,12 @@ def build_final_validation_prompt(
 sem reescrevê-la e sem revelar raciocínio privado. Confirme aderência ao pedido, público,
 profundidade, contrato, suporte factual e ausência de metadados internos. Retorne somente JSON.
 
+Não amplie o pedido. "Completo" significa cobrir de ponta a ponta o procedimento principal
+que a resposta declara, não incluir automaticamente todas as modalidades, integrações,
+exceções ou operações posteriores. Uma resposta pode delimitar a modalidade sustentada
+pelas fontes e declarar o que ficou fora. Não reprove por uma seção que não foi solicitada
+explicitamente nem exigida pelo contrato.
+
 Formato:
 {{"verdict":"approve|revise|reject","reasons":[],"missing_sections":[],"leaks":[],"unsupported_claims":[],"summary":"resumo curto"}}
 
@@ -986,16 +1021,35 @@ def combine_final_validations(
     deterministic: FinalResponseValidation,
     semantic: FinalResponseValidation,
 ) -> FinalResponseValidation:
+    deterministic_reasons = set(deterministic.reasons)
+    structurally_bounded = {
+        RefinementReason.INCOMPLETE,
+        RefinementReason.MISSING_SOURCES,
+        RefinementReason.INVALID_OUTPUT,
+    }
+    semantic_reasons = tuple(
+        reason
+        for reason in semantic.reasons
+        if reason not in structurally_bounded or reason in deterministic_reasons
+    )
+    semantic_can_block = bool(semantic_reasons)
+    semantic_verdict = semantic.verdict if semantic_can_block else "approve"
     rank = {"approve": 0, "revise": 1, "reject": 2}
     verdict = max(
-        (deterministic.verdict, semantic.verdict),
+        (deterministic.verdict, semantic_verdict),
         key=lambda item: rank.get(item, 1),
     )
+    keep_semantic_missing = RefinementReason.INCOMPLETE in semantic_reasons
     return FinalResponseValidation(
         verdict=verdict,
-        reasons=tuple(dict.fromkeys((*deterministic.reasons, *semantic.reasons))),
+        reasons=tuple(dict.fromkeys((*deterministic.reasons, *semantic_reasons))),
         missing_sections=tuple(
-            dict.fromkeys((*deterministic.missing_sections, *semantic.missing_sections))
+            dict.fromkeys(
+                (
+                    *deterministic.missing_sections,
+                    *(semantic.missing_sections if keep_semantic_missing else ()),
+                )
+            )
         ),
         leaks=tuple(dict.fromkeys((*deterministic.leaks, *semantic.leaks))),
         unsupported_claims=tuple(
@@ -1003,7 +1057,11 @@ def combine_final_validations(
                 (*deterministic.unsupported_claims, *semantic.unsupported_claims)
             )
         ),
-        summary=semantic.summary or deterministic.summary,
+        summary=(
+            semantic.summary
+            if semantic_can_block and semantic.summary
+            else deterministic.summary
+        ),
     )
 
 
@@ -1302,7 +1360,27 @@ def _string_list(value: Any) -> list[str]:
         value = [value]
     if not isinstance(value, (list, tuple, set)):
         return []
-    return [text for item in value if (text := _clean_text(item, 4000))]
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            detail = next(
+                (
+                    item.get(key)
+                    for key in ("detail", "claim", "text", "objective", "summary")
+                    if item.get(key)
+                ),
+                "",
+            )
+            resolution = item.get("resolution")
+            item = (
+                f"{detail} Resolução: {resolution}"
+                if detail and resolution
+                else detail
+            )
+        text = _clean_text(item, 4000)
+        if text:
+            result.append(text)
+    return result
 
 
 def _unique_text(values: Iterable[str]) -> list[str]:
@@ -1326,6 +1404,22 @@ def _normalize(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", str(value or "").casefold())
     plain = "".join(char for char in decomposed if not unicodedata.combining(char))
     return re.sub(r"\s+", " ", plain).strip()
+
+
+def _is_material_conflict(value: str) -> bool:
+    normalized = _normalize(value)
+    return any(
+        marker in normalized
+        for marker in (
+            "polaridade diferente",
+            "valores diferentes",
+            "contradicao",
+            "incompativ",
+            "nao e possivel conciliar",
+            "conflito material",
+            "divergencia sobre",
+        )
+    )
 
 
 def _contains_any(value: str, markers: Iterable[str]) -> bool:

@@ -73,6 +73,7 @@ from vrsoft_extractor.mary.ui import (
     ACCESSIBLE_ORANGE,
     BACKGROUND,
     BRAND_NAVY,
+    CONVERSATION_RUNNING_ROLE,
     DISABLED_BACKGROUND,
     DISABLED_TEXT,
     FOCUS_DARK,
@@ -352,6 +353,29 @@ class MaryCoreTest(unittest.TestCase):
             "PDV",
         )
 
+    def test_vrmaster_manual_title_uses_the_first_menu_in_the_hierarchy(self):
+        cases = [
+            ("Manual do sistema VR Master CRM Venda Cupom Médio", "ADM_FIN_ESTOQUE"),
+            (
+                "Manual do Sistema VR Master Ferramentas v4.2 Contabilidade "
+                "Encerramento Contábil",
+                "Fiscal",
+            ),
+            (
+                "Manual do Sistema VR Master Ferramentas v4.3 Fiscal "
+                "Encerramento Diário",
+                "Fiscal",
+            ),
+            ("Manual do sistema VR Master Utilitário Log Transação Pedido", "ADM_FIN_ESTOQUE"),
+            ("Manual do sistema VR Master PDV Parâmetro Geral", "PDV"),
+        ]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                result = classify(title, "", catalog=())
+                self.assertEqual(result.module, expected)
+                self.assertEqual(result.status, "approved")
+                self.assertIn("hierarquia do titulo", result.reasons[0])
+
     def test_explicit_category_module_overrides_other_evidence(self):
         fiscal = classify(
             "CFOP de entrada no cadastro de Tipo Saida",
@@ -398,6 +422,11 @@ class MaryCoreTest(unittest.TestCase):
             ("Fluxo de Caixa", "ADM_FIN_ESTOQUE"),
             ("Serviços Web Sefaz", "ADM_FIN_ESTOQUE"),
             ("DIME", "Fiscal"),
+            (
+                "FISCAL / VR GERENCIADOR XML / SISTEMA / CONFIGURAÇÃO",
+                "Fiscal",
+            ),
+            ("PDV / SISTEMA / CONFIGURAÇÃO", "PDV"),
         ]
         for category, expected in menu_hierarchy_cases:
             with self.subTest(category=category):
@@ -410,7 +439,7 @@ class MaryCoreTest(unittest.TestCase):
                 self.assertEqual(result.module, expected)
                 self.assertEqual(result.status, "approved")
 
-    def test_non_explicit_or_conflicting_category_requires_review(self):
+    def test_non_explicit_category_requires_review_and_conflicts_are_multimodule(self):
         ambiguous = classify(
             "Configuracao CliSiTef no checkout",
             "TEF, pinpad e pagamento da venda no PDV.",
@@ -425,8 +454,8 @@ class MaryCoreTest(unittest.TestCase):
             "Conteudo misto.",
             "Pagina inicial / FISCAL / PDV",
         )
-        self.assertEqual(conflicting.module, "Revisar")
-        self.assertEqual(conflicting.status, "pending")
+        self.assertEqual(conflicting.module, "Multimodulo")
+        self.assertEqual(conflicting.status, "approved")
         self.assertIn("categoria com modulos conflitantes", conflicting.reasons[0])
 
     def test_product_catalog_improves_module_classification(self):
@@ -820,6 +849,46 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(stored["module"], "ADM_FIN_ESTOQUE")
         self.assertEqual(stored["review_status"], "approved")
         self.assertEqual(database.query_reviews(ReviewFilters()).total, 0)
+
+    def test_wiki_sync_skips_the_broken_test_placeholder(self):
+        database = MaryDatabase(self.settings.database_path)
+        progress: list[str] = []
+        sync = WikiSync(self.settings, database, progress.append)
+        sync.iter_pages = lambda: iter(
+            [
+                {
+                    "pageid": 2030,
+                    "title": "Teste",
+                    "revisions": [{"revid": 23711}],
+                }
+            ]
+        )
+        sync.fetch_document = MagicMock()
+
+        stats = sync.sync(limit=1)
+
+        self.assertEqual(stats.discovered, 1)
+        self.assertEqual(stats.skipped, 1)
+        self.assertEqual(stats.errors, 0)
+        self.assertIn("página de teste", progress[0])
+        sync.fetch_document.assert_not_called()
+
+    def test_wiki_api_error_is_reported_with_code_and_message(self):
+        database = MaryDatabase(self.settings.database_path)
+        sync = WikiSync(self.settings, database)
+        response = MagicMock()
+        response.read.return_value = (
+            b'{"error":{"code":"internal_api_error_Error",'
+            b'"info":"Caught exception of type Error"}}'
+        )
+
+        with patch("urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value = response
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "internal_api_error_Error.*Caught exception",
+            ):
+                sync._api({"action": "parse", "pageid": "2030"})
 
     def test_sync_run_with_item_errors_is_partial(self):
         database = MaryDatabase(self.settings.database_path)
@@ -2541,6 +2610,45 @@ class MaryCoreTest(unittest.TestCase):
             orchestrator.archive(conversation_id)
         self.assertEqual(database.messages(conversation_id), [])
 
+    def test_token_usage_is_persisted_for_context_window_and_total(self):
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        conversation_id = database.create_conversation(
+            "Uso de contexto",
+            "codex",
+            "gpt-test",
+            self.settings.work_dir / "context-usage",
+        )
+
+        orchestrator._handle_event(
+            RuntimeEvent(
+                conversation_id,
+                "token_usage",
+                payload={
+                    "tokenUsage": {
+                        "last": {"totalTokens": 42_000},
+                        "total": {"totalTokens": 125_000},
+                        "modelContextWindow": 128_000,
+                    }
+                },
+            )
+        )
+        row = database.get_conversation(conversation_id)
+        self.assertEqual(row["context_used_tokens"], 42_000)
+        self.assertEqual(row["context_window_tokens"], 128_000)
+        self.assertEqual(row["total_processed_tokens"], 125_000)
+
+        orchestrator._handle_event(
+            RuntimeEvent(
+                conversation_id,
+                "token_usage",
+                payload={"tokenUsage": {"last": {"totalTokens": 5_000}}},
+            )
+        )
+        row = database.get_conversation(conversation_id)
+        self.assertEqual(row["context_used_tokens"], 5_000)
+        self.assertEqual(row["total_processed_tokens"], 130_000)
+
     def test_concurrent_turn_claim_persists_exactly_one_user_message(self):
         database = initialize_workspace(self.settings)
         conversation_id = database.create_conversation(
@@ -3186,6 +3294,8 @@ class MaryCoreTest(unittest.TestCase):
         )
         saved_current = window.app_preferences.value("chat/current_project", "")
         saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
             with patch.object(window, "_request_file_catalog"):
                 window._select_project(project)
@@ -3218,6 +3328,8 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
 
     def test_chat_project_scope_matches_t3_all_projects_and_picker(self):
@@ -3235,6 +3347,8 @@ class MaryCoreTest(unittest.TestCase):
         )
         saved_current = window.app_preferences.value("chat/current_project", "")
         saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
             window._remember_project(first)
             window._remember_project(second)
@@ -3265,6 +3379,8 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
 
     def test_recent_project_actions_open_folder_and_remove_only_the_shortcut(self):
@@ -3283,6 +3399,8 @@ class MaryCoreTest(unittest.TestCase):
         )
         saved_current = window.app_preferences.value("chat/current_project", "")
         saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
             window._select_project_scope(project)
             with patch(
@@ -3304,7 +3422,100 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
+
+    def test_project_menu_lists_persisted_projects_from_any_location(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        outside_project = (self.old / "projeto-fora-do-workspace").resolve()
+        outside_project.mkdir(parents=True)
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
+        try:
+            window.app_preferences.setValue("chat/current_project", "")
+            window.app_preferences.setValue("chat/recent_projects", "[]")
+            window.app_preferences.setValue("chat/hidden_projects", "[]")
+            window.app_preferences.setValue(
+                "chat/projects", json.dumps([str(outside_project)])
+            )
+            window.project_scope_path = None
+            window._rebuild_project_menu()
+
+            labels = [action.text() for action in window.project_menu.actions()]
+            self.assertEqual(labels[0], "Todos os projetos")
+            self.assertIn("projeto-fora-do-workspace", labels)
+            application.processEvents()
+        finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
+            window.close()
+
+    def test_new_project_action_opens_the_system_folder_picker(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        existing = (self.root / "existente").resolve()
+        existing.mkdir()
+        outside_project = (self.old / "selecionado-em-outro-local").resolve()
+        outside_project.mkdir()
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
+        try:
+            window._remember_project(existing)
+            with (
+                patch(
+                    "vrsoft_extractor.mary.ui.QFileDialog.getExistingDirectory",
+                    return_value=str(outside_project),
+                ) as folder_picker,
+            ):
+                window.add_project_button.click()
+
+            self.assertIn(outside_project, window._created_project_paths())
+            self.assertEqual(window.project_scope_path, outside_project)
+            folder_picker.assert_called_once()
+            self.assertFalse(window.add_project_button.isHidden())
+            application.processEvents()
+        finally:
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
+            window.close()
+
+    def test_project_picker_contains_only_search_and_existing_projects(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        project = (self.root / "projeto-listado").resolve()
+        project.mkdir()
+        picker = ProjectPickerDialog([project])
+        try:
+            self.assertEqual(picker.layout().indexOf(picker.search), 0)
+            self.assertFalse(hasattr(picker, "new_project_button"))
+            self.assertFalse(hasattr(picker, "folder_button"))
+            self.assertEqual(picker.project_list.count(), 1)
+            application.processEvents()
+        finally:
+            picker.close()
 
     def test_provider_reconnection_events_have_visible_chat_feedback(self):
         from PySide6.QtWidgets import QApplication
@@ -4347,6 +4558,78 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_running_chat_can_stay_active_while_another_chat_is_opened(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            running_id = window.database.create_conversation(
+                "Chat trabalhando",
+                "codex",
+                "gpt-test",
+                self.settings.work_dir / "parallel-running",
+            )
+            idle_id = window.database.create_conversation(
+                "Chat livre",
+                "claude",
+                "sonnet",
+                self.settings.work_dir / "parallel-idle",
+            )
+            window.database.update_conversation(running_id, status="running")
+            window.project_scope_path = None
+            window.refresh_conversations()
+            running_item = next(
+                window.conversation_list.item(index)
+                for index in range(window.conversation_list.count())
+                if window.conversation_list.item(index).data(Qt.UserRole) == running_id
+            )
+            idle_item = next(
+                window.conversation_list.item(index)
+                for index in range(window.conversation_list.count())
+                if window.conversation_list.item(index).data(Qt.UserRole) == idle_id
+            )
+
+            self.assertTrue(running_item.data(CONVERSATION_RUNNING_ROLE))
+            self.assertTrue(window.conversation_activity_delegate._timer.isActive())
+            window.conversation_list.setCurrentItem(running_item)
+            application.processEvents()
+            self.assertTrue(window.turn_running)
+            self.assertTrue(window.context_usage_button._timer.isActive())
+
+            with (
+                patch.object(window, "_select_project") as select_project,
+                patch.object(window, "_show_error") as show_error,
+            ):
+                window._start_new_conversation_for_project(self.settings.root)
+            select_project.assert_called_once_with(self.settings.root)
+            show_error.assert_not_called()
+
+            window.conversation_list.setCurrentItem(idle_item)
+            application.processEvents()
+            self.assertEqual(window.current_conversation, idle_id)
+            self.assertFalse(window.turn_running)
+            self.assertFalse(window.context_usage_button._timer.isActive())
+            self.assertFalse(window.composer.isReadOnly())
+
+            window.database.update_conversation(
+                idle_id,
+                context_used_tokens=40_000,
+                context_window_tokens=100_000,
+                total_processed_tokens=250_000,
+            )
+            window._refresh_context_usage()
+            self.assertIn("40%", window.context_usage_value.text())
+            self.assertEqual(window.context_usage_bar.value(), 400)
+            self.assertIn("250 mil", window.context_total_value.text())
+        finally:
+            window.close()
+
     def test_long_assistant_delta_types_smoothly_before_turn_finishes(self):
         from PySide6.QtWidgets import QApplication, QTextBrowser
 
@@ -4387,7 +4670,7 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_runtime_events_use_one_compact_activity_without_raw_payloads(self):
-        from PySide6.QtWidgets import QApplication, QFrame
+        from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
         application = QApplication.instance() or QApplication([])
         window = MainWindow(
@@ -4455,6 +4738,16 @@ class MaryCoreTest(unittest.TestCase):
             )
             application.processEvents()
             self.assertIsNone(window.chat_activity_widget)
+            completed = window.message_container.findChildren(
+                QFrame, "chatActivityCompleted"
+            )
+            self.assertEqual(len(completed), 1)
+            completed_steps = " ".join(
+                step.text()
+                for step in completed[0].findChildren(QLabel, "chatActivityStep")
+            )
+            self.assertIn("Trabalhando", completed_steps)
+            self.assertNotIn(raw_command, completed_steps)
             self.assertIsNotNone(window.assistant_widget)
             self.assertIn("Resposta final", window.assistant_widget.toPlainText())
             self.assertNotIn(raw_command, window.assistant_widget.toPlainText())
@@ -4601,7 +4894,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_first_typed_character_creates_one_draft_with_default_model_id(self):
+    def test_conversation_is_created_only_after_sending_typed_text(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QApplication
@@ -4614,6 +4907,8 @@ class MaryCoreTest(unittest.TestCase):
         )
         saved_current = window.app_preferences.value("chat/current_project", "")
         saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
             project = (self.root / "projetos" / "digitacao").resolve()
             project.mkdir(parents=True)
@@ -4627,20 +4922,24 @@ class MaryCoreTest(unittest.TestCase):
                 start.assert_not_called()
                 QTest.keyClicks(window.composer, "a")
                 application.processEvents()
+                start.assert_not_called()
+                self.assertFalse(window._conversation_creation_in_progress)
+
+                window.send_message()
                 start.assert_called_once()
                 worker = start.call_args.args[0]
                 self.assertEqual(worker.args[1], "codex")
                 self.assertEqual(worker.args[2], "")
                 self.assertEqual(worker.args[4], "")
                 self.assertTrue(window._conversation_creation_in_progress)
-                window._ensure_draft_conversation()
-                start.assert_called_once()
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
 
-    def test_typing_without_an_available_conversation_creates_a_draft(self):
+    def test_typing_without_an_available_conversation_remains_local_until_send(self):
         from PySide6.QtWidgets import QApplication
 
         application = QApplication.instance() or QApplication([])
@@ -4651,6 +4950,8 @@ class MaryCoreTest(unittest.TestCase):
         )
         saved_current = window.app_preferences.value("chat/current_project", "")
         saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
             project = (self.root / "projetos" / "rascunho").resolve()
             project.mkdir(parents=True)
@@ -4664,14 +4965,20 @@ class MaryCoreTest(unittest.TestCase):
             with patch.object(window.pool, "start") as start:
                 window.composer.setPlainText("teste")
                 application.processEvents()
+                start.assert_not_called()
+                self.assertFalse(window.draft_conversation)
+                self.assertFalse(window._conversation_creation_in_progress)
+                self.assertEqual(window.composer.toPlainText(), "teste")
 
-            start.assert_called_once()
-            self.assertTrue(window.draft_conversation)
-            self.assertTrue(window._conversation_creation_in_progress)
-            self.assertEqual(window.composer.toPlainText(), "teste")
+                window.send_message()
+                start.assert_called_once()
+                self.assertTrue(window.draft_conversation)
+                self.assertTrue(window._conversation_creation_in_progress)
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
 
     def test_chat_header_controls_align_with_sidebar_top(self):
@@ -4738,6 +5045,35 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("blockquote", css)
             self.assertIn("Resultado", browser.toPlainText())
             self.assertIn("Ponto importante", browser.toPlainText())
+        finally:
+            window.close()
+
+    def test_long_markdown_message_expands_without_clipping(self):
+        from PySide6.QtWidgets import QApplication, QTextBrowser
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            browser_host = window._add_message(
+                "assistant",
+                "\n\n".join(f"Parágrafo {index}: conteúdo validado." for index in range(180)),
+            )
+            application.processEvents()
+
+            browser = browser_host.findChild(QTextBrowser, "messageBody")
+            self.assertIsNotNone(browser)
+            self.assertGreater(browser.height(), 1200)
+            self.assertGreaterEqual(
+                browser.height(),
+                int(browser.document().size().height()),
+            )
         finally:
             window.close()
 
@@ -5337,6 +5673,7 @@ class MaryCoreTest(unittest.TestCase):
             missing = orchestrator._enrich_prompt("Pergunta sem fonte", "sem fonte")
         self.assertIn("nenhuma fonte validada", missing)
         self.assertIn("não invente referência", missing)
+        self.assertIn("não invalida fatos e passos confirmados", missing)
 
         ambiguous_rows = [
             {

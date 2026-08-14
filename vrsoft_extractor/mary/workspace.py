@@ -43,6 +43,11 @@ inicie uma pesquisa VR por conta própria.
 
 Quando o contexto VR solicitar aprofundamento, use `tools/vr-search.ps1`.
 Ele encaminha a consulta para o projeto VR sem depender do diretório atual.
+
+Responda na sessão principal com todo o conteúdo sustentado pelas fontes. Uma
+lacuna pontual não invalida as demais etapas confirmadas. Subagentes nativos são
+opcionais para investigações independentes; sua indisponibilidade nunca impede
+a resposta nem justifica uma recusa genérica.
 """
 
 
@@ -52,6 +57,8 @@ Trabalhe somente nesta pasta de conversa. O aplicativo fornece o contexto da
 base local apenas quando o botão VR está ativo. Sem esse contexto, responda
 normalmente e não inicie uma pesquisa VR por conta própria. Quando o contexto
 VR solicitar aprofundamento, use `tools/vr-search.ps1` e cite as fontes.
+Entregue todo o conteúdo confirmado e isole somente as lacunas locais; não
+recuse a resposta inteira por ausência de anexo, seção ou agente auxiliar.
 """
 
 

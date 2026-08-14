@@ -362,7 +362,15 @@ class ChatOrchestrator:
                                 self.knowledge_router.summary(evidence_bundle),
                             )
                         )
-                    if use_vr and options.orchestration.enabled:
+                    # The VR button mounts the local knowledge and identity on
+                    # the provider's main session.  The former proprietary
+                    # planner/worker/supervisor graph is retained only behind a
+                    # compatibility switch; it must not gate normal answers.
+                    if (
+                        use_vr
+                        and options.orchestration.enabled
+                        and self.settings.legacy_vr_orchestration
+                    ):
                         self._run_orchestrated_turn(
                             conversation_id,
                             dict(conversation),
@@ -544,18 +552,31 @@ class ChatOrchestrator:
                 plan.fallback,
                 plan.warnings,
             )
-        plan = ensure_source_research_plan(
-            plan,
-            orchestration,
-            main_model,
-            model_pool,
-            effective_mode=effective_mode,
-            modules=(
-                evidence_bundle.selected_modules
+        if effective_mode != "off":
+            routed_sources = (
+                self.knowledge_router.sources_for_profile(evidence_bundle.profile)
                 if evidence_bundle is not None
-                else ()
-            ),
-        )
+                else ("wiki", "kb", "schema")
+            )
+            required_sources = (
+                self.knowledge_router.required_sources_for_bundle(evidence_bundle)
+                if evidence_bundle is not None
+                else routed_sources
+            )
+            plan = ensure_source_research_plan(
+                plan,
+                orchestration,
+                main_model,
+                model_pool,
+                effective_mode=effective_mode,
+                modules=(
+                    evidence_bundle.selected_modules
+                    if evidence_bundle is not None
+                    else ()
+                ),
+                sources=routed_sources,
+                required_sources=required_sources,
+            )
         plan = bind_response_contract(plan, response_intent, response_contract)
         final_stage = next(
             item for item in reversed(plan.agents) if item.agent.final
@@ -659,7 +680,7 @@ class ChatOrchestrator:
                 )
 
         results = list(results_by_id.values())
-        results, merged, supervisor = self._supervise_and_refine(
+        results, merged, supervisor, evidence_bundle = self._supervise_and_refine(
             conversation_id,
             run_id,
             request,
@@ -674,6 +695,8 @@ class ChatOrchestrator:
             response_intent,
             response_contract,
         )
+        if evidence_bundle is not None:
+            self._pending_evidence_bundles[conversation_id] = evidence_bundle
         if supervisor.verdict == "reject":
             self._pending_used_evidence_ids[conversation_id] = ()
             self._publish_final_response(
@@ -718,12 +741,22 @@ class ChatOrchestrator:
         evidence_bundle: EvidenceBundle | None,
         intent: ResponseIntent,
         contract: ResponseContract,
-    ) -> tuple[list[VrAgentResult], MergedEvidence, SupervisorAssessment]:
+    ) -> tuple[
+        list[VrAgentResult],
+        MergedEvidence,
+        SupervisorAssessment,
+        EvidenceBundle | None,
+    ]:
         if not results:
-            return results, MergedEvidence(), SupervisorAssessment(
-                verdict="approve",
-                summary="Resposta direta sem workers intermediários.",
-                confidence=1.0,
+            return (
+                results,
+                MergedEvidence(),
+                SupervisorAssessment(
+                    verdict="approve",
+                    summary="Resposta direta sem workers intermediários.",
+                    confidence=1.0,
+                ),
+                evidence_bundle,
             )
         maximum_rounds = (
             effective_refinement_rounds(effective_mode)
@@ -816,6 +849,26 @@ class ChatOrchestrator:
                 LOGGER.exception("Falha na avaliação semântica do supervisor VR")
                 semantic = deterministic
             assessment = combine_supervision(deterministic, semantic)
+            epistemic_failures = {
+                RefinementReason.UNSUPPORTED_CLAIMS,
+                RefinementReason.MISSING_SOURCES,
+                RefinementReason.CONFLICT_UNRESOLVED,
+                RefinementReason.REQUIRED_WORKER_FAILED,
+                RefinementReason.INVALID_OUTPUT,
+            }
+            if (
+                assessment.verdict == "revise"
+                and refinement_round >= maximum_rounds
+                and epistemic_failures.intersection(assessment.reasons)
+            ):
+                assessment = replace(
+                    assessment,
+                    verdict="reject",
+                    summary=(
+                        "O limite de refinamento foi atingido com riscos factuais "
+                        "ainda não resolvidos."
+                    ),
+                )
             validation_payload = {
                 "run_id": run_id,
                 "refinement_round": refinement_round,
@@ -859,27 +912,7 @@ class ChatOrchestrator:
                 validation_payload,
             )
             if assessment.verdict != "revise" or refinement_round >= maximum_rounds:
-                epistemic_failures = {
-                    RefinementReason.UNSUPPORTED_CLAIMS,
-                    RefinementReason.MISSING_SOURCES,
-                    RefinementReason.CONFLICT_UNRESOLVED,
-                    RefinementReason.REQUIRED_WORKER_FAILED,
-                    RefinementReason.INVALID_OUTPUT,
-                }
-                if (
-                    assessment.verdict == "revise"
-                    and refinement_round >= maximum_rounds
-                    and epistemic_failures.intersection(assessment.reasons)
-                ):
-                    assessment = replace(
-                        assessment,
-                        verdict="reject",
-                        summary=(
-                            "O limite de refinamento foi atingido com riscos factuais "
-                            "ainda não resolvidos."
-                        ),
-                    )
-                return results, merged, assessment
+                return results, merged, assessment, evidence_bundle
 
             tasks = list(assessment.refinement_tasks)
             if not tasks:
@@ -954,6 +987,27 @@ class ChatOrchestrator:
                     ],
                 },
             )
+            if evidence_bundle is not None:
+                refinement_query = " ".join(
+                    [request, *(task.objective for task in tasks)]
+                )
+                try:
+                    evidence_bundle = self.knowledge_router.refine(
+                        evidence_bundle,
+                        refinement_query,
+                    )
+                    self._emit_orchestration_event(
+                        conversation_id,
+                        "knowledge_refined",
+                        "Nova recuperação direcionada concluída para o refinamento.",
+                        {
+                            "run_id": run_id,
+                            "refinement_round": next_round,
+                            "evidence_count": len(evidence_bundle.candidates),
+                        },
+                    )
+                except Exception:
+                    LOGGER.exception("Falha na recuperação direcionada do refinamento VR")
             with ThreadPoolExecutor(max_workers=max(1, len(assignments))) as executor:
                 futures = [
                     executor.submit(
@@ -977,7 +1031,7 @@ class ChatOrchestrator:
                 "Rodada de refinamento concluída.",
                 {"run_id": run_id, "refinement_round": next_round},
             )
-        return results, merged, assessment
+        return results, merged, assessment, evidence_bundle
 
     def _refinement_assignments(
         self,
@@ -1854,6 +1908,60 @@ class ChatOrchestrator:
                 updates["collaboration_mode"] = str(collaboration["mode"])
             if updates:
                 self.database.update_conversation(event.conversation_id, **updates)
+        elif event.kind == "token_usage":
+            token_usage = event.payload.get("tokenUsage") or event.payload.get(
+                "token_usage"
+            ) or {}
+            if isinstance(token_usage, dict):
+                last = token_usage.get("last") or {}
+                total = token_usage.get("total") or {}
+                if not isinstance(last, dict):
+                    last = {}
+                if not isinstance(total, dict):
+                    total = {}
+
+                def count(mapping: dict[str, Any], *keys: str) -> int:
+                    for key in keys:
+                        try:
+                            value = int(mapping.get(key) or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if value > 0:
+                            return value
+                    return 0
+
+                used = count(last, "totalTokens", "total_tokens") or (
+                    count(last, "inputTokens", "input_tokens")
+                    + count(last, "outputTokens", "output_tokens")
+                    + count(
+                        last,
+                        "reasoningOutputTokens",
+                        "reasoning_output_tokens",
+                    )
+                )
+                reported_total = count(total, "totalTokens", "total_tokens")
+                context_window = count(
+                    token_usage,
+                    "modelContextWindow",
+                    "model_context_window",
+                    "contextWindow",
+                    "context_window",
+                )
+                current = self.database.get_conversation(event.conversation_id)
+                if current and (used or reported_total or context_window):
+                    processed = reported_total or (
+                        int(current["total_processed_tokens"] or 0) + used
+                    )
+                    updates = {
+                        "context_used_tokens": used,
+                        "total_processed_tokens": processed,
+                    }
+                    if context_window:
+                        updates["context_window_tokens"] = context_window
+                    self.database.update_conversation(
+                        event.conversation_id,
+                        **updates,
+                    )
         elif event.kind == "native_session_started":
             native_id = str(event.payload.get("native_id") or "")
             if native_id and self.database.get_conversation(event.conversation_id):

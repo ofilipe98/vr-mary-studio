@@ -38,6 +38,33 @@ SOURCE_INTENT_PRIORS: dict[str, dict[str, float]] = {
 KNOWLEDGE_SOURCES = ("wiki", "kb", "schema")
 MODULE_KNOWLEDGE_SOURCES = ("wiki", "kb")
 KNOWLEDGE_MODULES = ("Fiscal", "ADM_FIN_ESTOQUE", "PDV")
+QUERY_PRESENTATION_TERMS = frozenset(
+    {
+        "ajude",
+        "completa",
+        "completas",
+        "completo",
+        "completos",
+        "crie",
+        "criar",
+        "detalhada",
+        "detalhadas",
+        "detalhado",
+        "detalhados",
+        "elabore",
+        "elaborar",
+        "explique",
+        "explicar",
+        "minuciosa",
+        "minuciosas",
+        "minucioso",
+        "minuciosos",
+        "monte",
+        "montar",
+        "mostre",
+        "mostrar",
+    }
+)
 ROLE_SOURCES: dict[str, tuple[str, ...]] = {
     "source_wiki": ("wiki",),
     "source_kb": ("kb",),
@@ -77,7 +104,10 @@ class KnowledgeRouter:
 
     def classify(self, query: str) -> QueryProfile:
         normalized = normalize_search_text(query)
-        terms = tuple(search_terms(query, limit=20))
+        raw_terms = tuple(search_terms(query, limit=20))
+        terms = tuple(
+            term for term in raw_terms if term not in QUERY_PRESENTATION_TERMS
+        ) or raw_terms
         scores = {"functional": 0.15, "process": 0.15, "technical_schema": 0.15}
         for marker, weight in (
             ("para que serve", 2.8),
@@ -93,9 +123,12 @@ class KnowledgeRouter:
         for marker, weight in (
             ("passo a passo", 2.8),
             ("como fazer", 2.5),
+            ("como gerar", 2.5),
             ("procedimento", 2.2),
             ("configurar", 1.9),
             ("cadastrar", 1.5),
+            ("exportar", 1.5),
+            ("gerar", 1.3),
             ("corrigir", 1.3),
             ("processo", 1.0),
         ):
@@ -107,6 +140,9 @@ class KnowledgeRouter:
             ("banco de dados", 2.4),
             ("foreign key", 2.4),
             ("schema", 2.3),
+            ("dados sao gravados", 2.3),
+            ("onde grava", 2.0),
+            ("persistencia", 1.8),
             ("tabela", 1.8),
             ("coluna", 1.6),
             ("campo", 1.0),
@@ -153,8 +189,9 @@ class KnowledgeRouter:
     def route(self, query: str) -> EvidenceBundle:
         self._ensure_index_ready()
         profile = self.classify(query)
+        routed_sources = self.sources_for_profile(profile)
         discovery_results, discovery_queries, discovery_errors, warnings = (
-            self._collect_lanes(profile)
+            self._collect_lanes(profile, sources=routed_sources)
         )
         discovery_candidates = self._rerank(profile, discovery_results)
         discovery_selected, _discovery_groups, _discovery_conflicts = (
@@ -177,6 +214,7 @@ class KnowledgeRouter:
                 discovery_queries,
                 discovery_errors,
                 discovery_selected,
+                sources=routed_sources,
             )
             selected = discovery_selected
             groups, conflicts = _discovery_groups, _discovery_conflicts
@@ -184,6 +222,11 @@ class KnowledgeRouter:
             modular_candidates: list[EvidenceCandidate] = []
             reports: list[SourceSearchReport] = []
             for module in selected_modules:
+                modular_sources = tuple(
+                    source
+                    for source in routed_sources
+                    if source in MODULE_KNOWLEDGE_SOURCES
+                )
                 lane_results, lane_queries, lane_errors, lane_warnings = (
                     self._collect_lanes(
                         profile,
@@ -191,7 +234,7 @@ class KnowledgeRouter:
                         seed_results=discovery_results,
                         seed_queries=discovery_queries,
                         seed_candidates=discovery_selected,
-                        sources=MODULE_KNOWLEDGE_SOURCES,
+                        sources=modular_sources,
                     )
                 )
                 warnings.extend(lane_warnings)
@@ -210,28 +253,31 @@ class KnowledgeRouter:
                         lane_queries,
                         lane_errors,
                         lane_selected,
-                        sources=MODULE_KNOWLEDGE_SOURCES,
+                        sources=modular_sources,
                     )
                 )
-            schema_candidates = [
-                item
-                for item in discovery_selected
-                if item.source == "schema"
-            ]
-            modular_candidates.extend(schema_candidates)
-            reports.extend(
-                self._build_source_reports(
-                    "",
-                    discovery_results,
-                    discovery_queries,
-                    discovery_errors,
-                    schema_candidates,
-                    sources=("schema",),
+            if "schema" in routed_sources:
+                schema_candidates = [
+                    item
+                    for item in discovery_selected
+                    if item.source == "schema"
+                ]
+                modular_candidates.extend(schema_candidates)
+                reports.extend(
+                    self._build_source_reports(
+                        "",
+                        discovery_results,
+                        discovery_queries,
+                        discovery_errors,
+                        schema_candidates,
+                        sources=("schema",),
+                    )
                 )
-            )
             selected, groups, conflicts = self._deduplicate_and_group(
                 modular_candidates
             )
+
+        selected = self._expand_selected_documents(profile, selected)
 
         candidate_limit = self.total_limit * max(1, len(selected_modules))
         missing = tuple(
@@ -249,6 +295,109 @@ class KnowledgeRouter:
             missing_sources=missing,
             warnings=tuple(dict.fromkeys(warnings)),
         )
+
+    @staticmethod
+    def sources_for_profile(profile: QueryProfile) -> tuple[str, ...]:
+        if profile.answer_type == "process":
+            return ("kb", "wiki")
+        if profile.answer_type == "functional":
+            return ("wiki", "kb")
+        if profile.answer_type == "technical_schema":
+            return ("schema",)
+        return KNOWLEDGE_SOURCES
+
+    @staticmethod
+    def required_sources_for_profile(profile: QueryProfile) -> tuple[str, ...]:
+        if profile.answer_type == "process":
+            return ("kb",)
+        if profile.answer_type == "functional":
+            return ("wiki",)
+        if profile.answer_type == "technical_schema":
+            return ("schema",)
+        return KnowledgeRouter.sources_for_profile(profile)
+
+    @classmethod
+    def required_sources_for_bundle(
+        cls,
+        bundle: EvidenceBundle,
+    ) -> tuple[str, ...]:
+        preferred = cls.required_sources_for_profile(bundle.profile)
+        available = tuple(
+            source
+            for source in cls.sources_for_profile(bundle.profile)
+            if any(item.source == source for item in bundle.candidates)
+        )
+        selected = tuple(source for source in preferred if source in available)
+        return selected or available[:1]
+
+    def refine(self, bundle: EvidenceBundle, query: str) -> EvidenceBundle:
+        """Run a targeted retrieval and merge new evidence into the original bundle."""
+
+        refreshed = self.route(query)
+        candidates = {
+            item.evidence_id: item
+            for item in (*bundle.candidates, *refreshed.candidates)
+        }
+        reports = {
+            (item.module, item.source): item
+            for item in (*bundle.source_reports, *refreshed.source_reports)
+        }
+        groups = {
+            item.group_id: item for item in (*bundle.groups, *refreshed.groups)
+        }
+        conflicts = {
+            (item.concept, item.evidence_ids): item
+            for item in (*bundle.conflicts, *refreshed.conflicts)
+        }
+        return EvidenceBundle(
+            profile=bundle.profile,
+            candidates=tuple(candidates.values()),
+            groups=tuple(groups.values()),
+            conflicts=tuple(conflicts.values()),
+            source_reports=tuple(reports.values()),
+            module_routing=bundle.module_routing,
+            missing_sources=tuple(
+                dict.fromkeys((*bundle.missing_sources, *refreshed.missing_sources))
+            ),
+            warnings=tuple(dict.fromkeys((*bundle.warnings, *refreshed.warnings))),
+        )
+
+    def _expand_selected_documents(
+        self,
+        profile: QueryProfile,
+        selected: list[EvidenceCandidate],
+    ) -> list[EvidenceCandidate]:
+        """Expand a selected Wiki index into its most useful sections."""
+
+        expanded = list(selected)
+        selected_ids = {item.evidence_id for item in expanded}
+        expanded_documents: set[int] = set()
+        for candidate in selected:
+            if candidate.source != "wiki" or candidate.document_id in expanded_documents:
+                continue
+            if normalize_search_text(candidate.heading) not in {"indice", "index"}:
+                continue
+            expanded_documents.add(candidate.document_id)
+            ranked_sections: list[tuple[float, EvidenceCandidate]] = []
+            for row in self.database.document_chunks(candidate.document_id):
+                if int(row.get("chunk_id") or 0) == candidate.chunk_id:
+                    continue
+                section_candidates = self._rerank(profile, {candidate.source: [row]})
+                if not section_candidates:
+                    continue
+                section = section_candidates[0]
+                priority = _section_expansion_priority(profile, section)
+                if priority > 0:
+                    ranked_sections.append((priority, section))
+            ranked_sections.sort(
+                key=lambda item: (-item[0], -item[1].score, item[1].evidence_id)
+            )
+            for _priority, section in ranked_sections[:4]:
+                if section.evidence_id in selected_ids:
+                    continue
+                expanded.append(section)
+                selected_ids.add(section.evidence_id)
+        return expanded
 
     def _collect_lanes(
         self,
@@ -438,7 +587,10 @@ class KnowledgeRouter:
         self, profile: QueryProfile, source: str, *, module: str = ""
     ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
         queries = _query_variants(profile, module)
-        scan_limit = max(4, self.per_source_limit)
+        # Retrieve beyond the display limit and let the cross-source reranker
+        # choose. Stopping at four FTS hits favored incidental troubleshooting
+        # articles over the primary manual for broad operational questions.
+        scan_limit = max(8, self.per_source_limit * 3)
         rows_by_key: dict[tuple[int, int], dict[str, Any]] = {}
         search_modules = (module, "Multimodulo") if module else ("",)
         for lane_query in queries:
@@ -822,7 +974,10 @@ class KnowledgeRouter:
                     )
                 )
         all_candidates.sort(
-            key=lambda item: (-item.score, item.source, item.evidence_id)
+            # Preserve the database relevance order for equal scores. Sorting
+            # ties by source_id made arbitrary article IDs outrank the primary
+            # procedure returned earlier by FTS.
+            key=lambda item: (-item.score, item.source)
         )
         if not all_candidates:
             return []
@@ -1068,6 +1223,9 @@ def _query_variants(
     focused = _focused_entity_query(profile)
     if focused:
         values.append(focused)
+    topic_query = " ".join(profile.terms)
+    if topic_query:
+        values.append(topic_query)
     values.append(profile.query)
     result: list[str] = []
     seen: set[str] = set()
@@ -1095,6 +1253,40 @@ def _content_type_fit(content_type: str, intents: dict[str, float]) -> float:
     if normalized == "troubleshooting":
         return max(intents.get("process", 0.0), intents.get("functional", 0.0))
     return intents.get(normalized, 0.25 if normalized == "reference" else 0.0)
+
+
+def _section_expansion_priority(
+    profile: QueryProfile,
+    candidate: EvidenceCandidate,
+) -> float:
+    heading = normalize_search_text(candidate.heading)
+    if not heading or heading in {"indice", "index"}:
+        return 0.0
+    priority = candidate.score
+    if profile.answer_type == "process":
+        for marker, weight in (
+            ("geracao", 140.0),
+            ("configur", 120.0),
+            ("recurso", 110.0),
+            ("parametr", 110.0),
+            ("perfi", 90.0),
+            ("gerar", 70.0),
+            ("export", 65.0),
+        ):
+            if marker in heading:
+                priority += weight
+    elif profile.answer_type == "functional":
+        for marker, weight in (
+            ("introdu", 120.0),
+            ("recurso", 110.0),
+            ("configur", 100.0),
+            ("funcion", 90.0),
+        ):
+            if marker in heading:
+                priority += weight
+    else:
+        priority += sum(term in heading for term in profile.terms) * 20.0
+    return priority
 
 
 def _detect_conflict(members: list[EvidenceCandidate]) -> str:

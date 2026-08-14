@@ -950,7 +950,7 @@ class _ProjectScopeRow(QFrame):
                 lambda: self.openRequested.emit(self.project),
             )
             self.action_menu.add_action(
-                "Remover dos recentes",
+                "Remover da lista",
                 lambda: self.removeRequested.emit(self.project),
             )
             self.action_button.setMenu(self.action_menu)
@@ -1001,7 +1001,6 @@ class ProjectScopePopup(RoundedPopupDialog):
     """Anchored, searchable project scope selector inspired by T3 Code."""
 
     projectSelected = Signal(object)
-    addProjectRequested = Signal()
     openProjectRequested = Signal(object)
     removeProjectRequested = Signal(object)
 
@@ -1038,13 +1037,6 @@ class ProjectScopePopup(RoundedPopupDialog):
         self.scroll.setWidget(self.rows_host)
         layout.addWidget(self.scroll)
 
-        self.add_button = QPushButton("Adicionar projeto…", objectName="projectMenuAdd")
-        self.add_button.setIcon(_theme_icon("project-add"))
-        self.add_button.setIconSize(QSize(16, 16))
-        self.add_button.setAccessibleName("Adicionar projeto")
-        self.add_button.clicked.connect(self._request_add_project)
-        layout.addWidget(self.add_button)
-
     def set_projects(self, projects: list[Path], current: Path | None) -> None:
         unique: list[Path] = []
         for project in projects:
@@ -1066,7 +1058,6 @@ class ProjectScopePopup(RoundedPopupDialog):
         actions: list[QAction] = []
         for label in ["Todos os projetos", *[p.name or str(p) for p in self._projects]]:
             actions.append(QAction(label, self))
-        actions.append(QAction("Adicionar projeto…", self))
         return actions
 
     def show_anchored(self) -> None:
@@ -1076,7 +1067,7 @@ class ProjectScopePopup(RoundedPopupDialog):
         width = max(260, self.anchor.width())
         row_count = max(1, len(self._rows))
         search_height = 40 if not self.search.isHidden() else 0
-        height = min(430, 16 + search_height + row_count * 38 + 42)
+        height = min(430, 16 + search_height + row_count * 38)
         self.setFixedSize(width, height)
         position = self.anchor.mapToGlobal(QPoint(0, self.anchor.height() + 5))
         screen = self.anchor.screen() or QApplication.primaryScreen()
@@ -1179,10 +1170,6 @@ class ProjectScopePopup(RoundedPopupDialog):
     def _activate_project(self, project: Path | None) -> None:
         self.projectSelected.emit(project)
         self.accept()
-
-    def _request_add_project(self) -> None:
-        self.accept()
-        self.addProjectRequested.emit()
 
     def _request_open_project(self, project: Path) -> None:
         self.accept()

@@ -180,10 +180,12 @@ CLI da base:
 Quando a categoria informa explicitamente `FISCAL`, `PDV` ou a família
 `ADM`/`FINANCEIRO`/`ESTOQUE`, esse módulo prevalece sobre título, produto e
 conteúdo. Se uma categoria preenchida não informa um módulo de forma explícita
-e inequívoca, o item permanece em `Revisar`. Sem categoria, o classificador
+e inequívoca, o item permanece em `Revisar`; quando ela identifica dois ou mais
+módulos, o item segue aprovado para `Multimodulo`. Sem categoria, o classificador
 prioriza o produto mais específico encontrado no título ou campo de produto.
 Produtos híbridos, como `VRAdm` e `VRCaixa`, usam o contexto do artigo para
-desempate e permanecem em `Multimodulo` quando não há evidência suficiente. A
+desempate e permanecem aprovados em `Multimodulo` quando há evidência para mais
+de um módulo. A
 auditoria é somente leitura.
 Use `--queue-review` para atualizar apenas as sugestões da tela Revisão,
 mantendo o módulo atual até a aprovação humana.

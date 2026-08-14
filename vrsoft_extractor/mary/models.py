@@ -283,9 +283,13 @@ class SyncStats:
     inactive: int = 0
     errors: int = 0
     review: int = 0
+    skipped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        values = asdict(self)
+        if not self.skipped:
+            values.pop("skipped")
+        return values
 
 
 @dataclass

@@ -24,6 +24,7 @@ from .ocr import OcrManager
 
 
 LOGGER = logging.getLogger(__name__)
+IGNORED_PAGE_IDS = {"2030"}
 
 
 class WikiSync:
@@ -46,6 +47,11 @@ class WikiSync:
             for index, page in enumerate(self.iter_pages(), start=1):
                 if limit and index > limit:
                     break
+                if str(page.get("pageid") or "") in IGNORED_PAGE_IDS:
+                    stats.discovered += 1
+                    stats.skipped += 1
+                    self.progress(f"Wiki {index}: ignorada — {page['title']} (página de teste)")
+                    continue
                 source_id = str(page["pageid"])
                 active_ids.add(source_id)
                 stats.discovered += 1
@@ -212,4 +218,10 @@ class WikiSync:
             headers={"User-Agent": "VR-Norte-Studio/0.2 (+knowledge-sync)"},
         )
         with urllib.request.urlopen(request, timeout=90) as response:
-            return json.loads(response.read().decode("utf-8"))
+            data = json.loads(response.read().decode("utf-8"))
+        error = data.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code") or "erro_desconhecido")
+            info = str(error.get("info") or "A Wiki não informou detalhes.")
+            raise RuntimeError(f"API da Wiki retornou {code}: {info}")
+        return data
