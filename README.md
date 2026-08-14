@@ -47,9 +47,8 @@ No chat do VR Norte Studio, o botão animado **VR** concentra a pesquisa local e
 os modos de orquestração VR em um único menu. A opção **Consultar base local**
 pesquisa a base e preserva o assunto em perguntas curtas de continuação; quando
 desmarcada, não consulta a base local. O prefixo `VR:` continua opcional quando
-o fluxo local está ligado. As respostas
-citam a URL original da Wiki/KB como link web e mantêm o caminho local em texto
-copiável.
+o fluxo local está ligado. As respostas citam a URL original da Wiki/KB como
+link web ao final e não expõem caminhos locais ou metadados internos.
 
 ### Orquestração VR no chat
 
@@ -67,6 +66,31 @@ mostra a solicitação, a tarefa roteada e a resposta completa, inclusive durant
 a execução. Os motivos operacionais são opcionais e não exibem raciocínio
 privado. A identidade dos modelos é qualificada pelo provedor, por exemplo
 `codex:sol`, `claude:opus` e `opencode:opencode/big-pickle`.
+
+O roteamento de conhecimento é hierárquico. Uma descoberta inicial combina os
+termos da pergunta com o módulo dos documentos recuperados. Para cada módulo
+aplicável, o orquestrador cria um suborquestrador: **VR Fisco** para Fiscal,
+**VR Atlas** para ADM/Financeiro/Estoque e **VR Caixa** para PDV. Cada um recebe
+dois workers subordinados e exclusivos — Wiki e KB — executados em paralelo.
+O **VR DBA** é o especialista global em banco de dados e suborquestra uma única
+trilha de Schema, sem duplicá-la dentro dos módulos. Cada especialista só
+consolida depois que suas fontes chegam a `encontrada`, `esgotada`,
+`indisponível` ou `não aplicável`.
+
+O modo multimódulo não é um agente separado: ele só é ativado quando o
+Orquestrador VR seleciona dois ou mais módulos para a pergunta. Nesse caso, os
+especialistas aplicáveis executam em paralelo; com um único módulo, somente o
+especialista correspondente é acionado. O Supervisor global aguarda os módulos
+selecionados e o VR DBA antes de liberar o Sintetizador final.
+
+Antes de executar os agentes, o supervisor interpreta a intenção, define o
+público, o nível de detalhe e um contrato de resposta. Os agentes recebem tarefas
+estruturadas e devolvem insumos com procedência; seus nomes, IDs e personalidades
+permanecem inalterados. O supervisor consolida e valida o material, solicita uma
+rodada limitada de refinamento quando necessário e só então cria um novo rascunho
+final. Esse rascunho é validado e, se preciso, reescrito de forma privada antes de
+ser publicado. Assim, a saída de um agente nunca é usada diretamente como resposta
+final, e apenas as fontes efetivamente utilizadas são exibidas ao usuário.
 
 Em todas as etapas, contratos específicos da personalidade **Especialista ERP
 VRMaster** exigem evidência antes de afirmações sobre o produto, separam fato de
@@ -276,10 +300,11 @@ distribuí-lo. Credenciais e CLIs de provedores de chat não são incorporados.
 ## Fluxo de versões
 
 - `main` contém apenas a versão estável aprovada.
+- Logo após cada promoção, `dev` avança para o número da próxima versão.
 - Toda melhoria, correção ou alteração nova entra primeiro em `dev`.
 - A build `dev` é entregue para homologação e permanece identificada pelo commit.
-- Depois da aprovação, atualize a versão, integre `dev` em `main`, execute a
-  suíte completa e gere a nova build `main`.
+- Depois da aprovação explícita, integre a versão validada de `dev` em `main`,
+  execute a suíte completa e gere a nova build `main`.
 - Não desenvolva diretamente em `main` nem promova uma árvore com alterações
   locais pendentes.
 

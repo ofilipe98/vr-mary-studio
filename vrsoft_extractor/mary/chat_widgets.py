@@ -783,6 +783,7 @@ class MarkdownMessageWidget(QWidget):
         self.setObjectName("messageBodyHost")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._markdown = ""
+        self._stream_browser: QTextBrowser | None = None
         self._configure_browser = configure_browser
         self._content_layout = QVBoxLayout(self)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
@@ -794,15 +795,23 @@ class MarkdownMessageWidget(QWidget):
 
     def setMarkdown(self, markdown: str) -> None:  # noqa: N802 - Qt compatibility
         self._markdown = str(markdown or "")
+        self._stream_browser = None
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
 
+        matches = list(self._FENCE_RE.finditer(self._markdown))
+        if not matches:
+            self._stream_browser = self._create_markdown_browser(self._markdown)
+            self._content_layout.addWidget(self._stream_browser)
+            self.updateGeometry()
+            return
+
         cursor = 0
         rendered = False
-        for match in self._FENCE_RE.finditer(self._markdown):
+        for match in matches:
             if match.start() > cursor:
                 rendered |= self._add_markdown_segment(
                     self._markdown[cursor:match.start()]
@@ -817,9 +826,30 @@ class MarkdownMessageWidget(QWidget):
             self._add_markdown_segment("")
         self.updateGeometry()
 
-    def _add_markdown_segment(self, markdown: str) -> bool:
-        if not markdown.strip() and self._markdown:
-            return False
+    def setStreamingMarkdown(self, markdown: str) -> None:  # noqa: N802
+        """Update a live response without rebuilding its widget tree."""
+        self._markdown = str(markdown or "")
+        if self._stream_browser is None:
+            while self._content_layout.count():
+                item = self._content_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            self._stream_browser = self._create_markdown_browser(self._markdown)
+            self._content_layout.addWidget(self._stream_browser)
+        else:
+            self._stream_browser.setMarkdown(self._markdown)
+            self._resize_markdown_browser(self._stream_browser)
+        self.updateGeometry()
+
+    def finishStreaming(self) -> None:  # noqa: N802
+        """Promote completed fenced code to code cards after streaming ends."""
+        if self._FENCE_RE.search(self._markdown):
+            self.setMarkdown(self._markdown)
+        else:
+            self.updateGeometry()
+
+    def _create_markdown_browser(self, markdown: str) -> QTextBrowser:
         browser = QTextBrowser(self)
         browser.setObjectName("messageBody")
         browser.setOpenExternalLinks(False)
@@ -829,16 +859,23 @@ class MarkdownMessageWidget(QWidget):
         browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._configure_browser(browser)
         browser.setMarkdown(markdown)
+        browser.document().documentLayout().documentSizeChanged.connect(
+            lambda _size=None, widget=browser: self._resize_markdown_browser(widget)
+        )
+        self._resize_markdown_browser(browser)
+        QTimer.singleShot(0, lambda widget=browser: self._resize_markdown_browser(widget))
+        return browser
 
-        def resize_browser(_size=None, widget=browser) -> None:
-            target = max(30, min(1200, int(widget.document().size().height()) + 8))
-            if widget.height() != target:
-                widget.setFixedHeight(target)
-                self.updateGeometry()
+    def _resize_markdown_browser(self, browser: QTextBrowser) -> None:
+        target = max(30, min(1200, int(browser.document().size().height()) + 8))
+        if browser.height() != target:
+            browser.setFixedHeight(target)
+            self.updateGeometry()
 
-        browser.document().documentLayout().documentSizeChanged.connect(resize_browser)
-        resize_browser()
-        QTimer.singleShot(0, resize_browser)
+    def _add_markdown_segment(self, markdown: str) -> bool:
+        if not markdown.strip() and self._markdown:
+            return False
+        browser = self._create_markdown_browser(markdown)
         self._content_layout.addWidget(browser)
         return True
 

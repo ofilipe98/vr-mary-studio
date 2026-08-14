@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.knowledge import extract_knowledge_entities
 from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.schema_catalog import parse_schema_markdown
 from vrsoft_extractor.mary.schema_sync import SchemaSync
@@ -34,6 +35,7 @@ from vrsoft_extractor.mary.multiagent import (
     build_planner_prompt,
     build_synthesis_prompt,
     effective_orchestration_mode,
+    ensure_source_research_plan,
     execution_batches,
     parse_plan,
 )
@@ -667,7 +669,26 @@ def test_execution_transparency_can_be_hidden_and_replayed_safely(
 
         window.current_conversation = visible_id
         window.vr_agents_sidebar_preferred = True
-        window._restore_orchestration_trace(visible_id, visible)
+        window._on_runtime_event(
+            RuntimeEvent(
+                visible_id,
+                "intent_analysis_started",
+                "Analisando intenção e requisitos.",
+                {"run_id": run_id},
+            )
+        )
+        assert window.chat_status.text() == "Analisando intenção e requisitos."
+        assert (
+            window.orchestration_trace_status.text()
+            == "Analisando intenção e requisitos."
+        )
+        with patch.object(
+            window,
+            "_render_orchestration_trace",
+            wraps=window._render_orchestration_trace,
+        ) as render_trace:
+            window._restore_orchestration_trace(visible_id, visible)
+        assert render_trace.call_count == 1
         application.processEvents()
         assert window.orchestration_agent_list.count() == 2
         window.orchestration_agent_list.setCurrentRow(0)
@@ -1195,7 +1216,14 @@ def test_orchestrated_turn_exposes_and_persists_only_final_synthesis(
     )
     assert any(event.kind == "parallel_group_started" for event in events)
     all_sent = codex.sent + claude.sent
-    assert len([item for item in all_sent if ":vr:" in item["conversation_id"]]) == 5
+    internal_calls = [
+        item for item in all_sent if ":vr:" in item["conversation_id"]
+    ]
+    assert len(internal_calls) == 7
+    assert any(
+        "vr_orchestrator_validation" in item["conversation_id"]
+        for item in internal_calls
+    )
     main_calls = [item for item in all_sent if item["conversation_id"] == conversation_id]
     assert len(main_calls) == 1
     assert main_calls[0]["effort"] == "max"
@@ -1206,7 +1234,20 @@ def test_orchestrated_turn_exposes_and_persists_only_final_synthesis(
         if ":vr:" in item["conversation_id"]
         and "vr_orchestrator_" not in item["conversation_id"]
     }
-    assert set(worker_efforts.values()) >= {"medium", "high", "xhigh"}
+    assert {
+        "vr_wiki_researcher",
+        "vr_kb_researcher",
+        "vr_dba__schema",
+        "vr_dba",
+    }.issubset(worker_efforts)
+    assert all(
+        worker_efforts[agent_id] == "medium"
+        for agent_id in (
+            "vr_wiki_researcher",
+            "vr_kb_researcher",
+            "vr_dba__schema",
+        )
+    )
 
 
 def test_vr_off_bypasses_personality_base_and_orchestration(tmp_path: Path) -> None:
@@ -1326,6 +1367,102 @@ def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
     ))
 
 
+def test_generic_alphanumeric_entities_are_recognized_without_topic_rules() -> None:
+    entities = extract_knowledge_entities(
+        "Como funciona o bloco ZX742 e o retorno E116 na rotina pedido_item?"
+    )
+
+    assert {"zx742", "e116"}.issubset(entities["identifiers"])
+    assert "pedido_item" in entities["tables"]
+
+
+def test_source_research_plan_is_mandatory_even_for_a_simple_plan() -> None:
+    model = ModelRef("codex", "sol", "Sol")
+    final = VrAgentAssignment(
+        "final",
+        AGENT_CATALOG["vr_synthesizer"],
+        model,
+        "Responder.",
+        "",
+    )
+    plan = VrPlan(1, "Simples", "Resposta direta.", "direct", (final,))
+
+    expanded = ensure_source_research_plan(
+        plan,
+        OrchestrationOptions(mode="standard", model_pool=(model,)),
+        model,
+        (model,),
+    )
+
+    source_workers = [item for item in expanded.agents if item.agent.source]
+    assert [item.agent.source for item in source_workers] == ["wiki", "kb", "schema"]
+    assert all(item.required for item in source_workers)
+    assert set(expanded.agents[-1].depends_on) == {
+        "vr_wiki_researcher",
+        "vr_kb_researcher",
+        "vr_dba",
+    }
+    dba = next(item for item in expanded.agents if item.id == "vr_dba")
+    schema = next(item for item in expanded.agents if item.id == "vr_dba__schema")
+    assert dba.depends_on == ("vr_dba__schema",)
+    assert schema.parent_id == "vr_dba"
+
+
+def test_module_specialists_use_wiki_kb_and_dba_owns_global_schema() -> None:
+    model = ModelRef("codex", "sol", "Sol")
+    final = VrAgentAssignment(
+        "final",
+        AGENT_CATALOG["vr_synthesizer"],
+        model,
+        "Responder.",
+        "",
+    )
+    plan = VrPlan(3, "Complexa", "Multimódulo.", "parallel", (final,))
+
+    expanded = ensure_source_research_plan(
+        plan,
+        OrchestrationOptions(mode="standard", model_pool=(model,)),
+        model,
+        (model,),
+        modules=("Fiscal", "PDV"),
+    )
+
+    fisco = next(item for item in expanded.agents if item.id == "vr_fisco")
+    caixa = next(item for item in expanded.agents if item.id == "vr_caixa")
+    dba = next(item for item in expanded.agents if item.id == "vr_dba")
+    assert fisco.module == "Fiscal"
+    assert caixa.module == "PDV"
+    assert set(fisco.depends_on) == {
+        "vr_fisco__wiki",
+        "vr_fisco__kb",
+    }
+    assert all(
+        item.parent_id == "vr_fisco" and item.module == "Fiscal"
+        for item in expanded.agents
+        if item.id.startswith("vr_fisco__")
+    )
+    assert dba.depends_on == ("vr_dba__schema",)
+    assert next(
+        item for item in expanded.agents if item.id == "vr_dba__schema"
+    ).parent_id == "vr_dba"
+    assert [[item.id for item in batch] for batch in execution_batches(expanded)] == [
+        [
+            "vr_fisco__wiki",
+            "vr_fisco__kb",
+            "vr_caixa__wiki",
+            "vr_caixa__kb",
+            "vr_dba__schema",
+        ],
+        ["vr_fisco", "vr_caixa", "vr_dba"],
+    ]
+    assert set(expanded.agents[-1].depends_on) == {
+        "vr_fisco",
+        "vr_caixa",
+        "vr_dba",
+    }
+    assert any("multimódulo" in warning for warning in expanded.warnings)
+
+
 def test_router_retrieves_wiki_kb_and_schema_as_complementary_lanes(
     tmp_path: Path,
 ) -> None:
@@ -1385,6 +1522,20 @@ def test_router_retrieves_wiki_kb_and_schema_as_complementary_lanes(
 
     assert {item.source for item in bundle.candidates} == {"wiki", "kb", "schema"}
     assert bundle.source_counts == {"wiki": 1, "kb": 1, "schema": 1}
+    assert bundle.selected_modules == ("ADM_FIN_ESTOQUE", "PDV")
+    assert bundle.routing_scope == "multimodule"
+    reports = {
+        (report.module, report.source): report.status
+        for report in bundle.source_reports
+    }
+    assert reports == {
+        ("ADM_FIN_ESTOQUE", "wiki"): "found",
+        ("ADM_FIN_ESTOQUE", "kb"): "found",
+        ("PDV", "wiki"): "exhausted",
+        ("PDV", "kb"): "exhausted",
+        ("", "schema"): "found",
+    }
+    assert all(report.queries for report in bundle.source_reports)
     assert bundle.profile.answer_type == "hybrid"
     prompt = router.prompt(bundle)
     assert "WIKI/FUNCIONAMENTO" in prompt
@@ -1424,6 +1575,73 @@ def test_router_prefers_exact_function_number_over_generic_function_hits(
     assert bundle.candidates[0].score_breakdown["entities"] == 1.0
 
 
+def test_router_uses_generic_identifier_across_all_three_sources(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    for source, suffix, body in (
+        ("wiki", "conceito", "O bloco ZX742 registra a configuração funcional."),
+        ("kb", "procedimento", "Para validar ZX742, confira o cadastro e o resultado."),
+        ("schema", "estrutura", "A tabela regra_zx742 contém id_regra e situacao."),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source=source,
+                source_id=f"{source}-{suffix}",
+                title=f"ZX742 - {suffix}",
+                url=f"https://example.test/{source}/zx742" if source != "schema" else "",
+                markdown=body,
+                module="Fiscal",
+                review_status="approved",
+                content_hash=f"{source}-{suffix}",
+                local_path=f"conhecimento/Fiscal/{source}/{suffix}.md",
+            )
+        )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Como funciona ZX742 e onde seus dados são gravados?"
+    )
+
+    assert bundle.profile.entities["identifiers"] == ("zx742",)
+    assert {item.source for item in bundle.candidates} == {"wiki", "kb", "schema"}
+    assert {item.status for item in bundle.source_reports} == {"found"}
+
+
+def test_document_metadata_resolves_a_code_or_lexical_module_mismatch(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="entrada-operacional",
+            title="Entrada de nota fiscal",
+            url="https://example.test/entrada",
+            markdown="A rotina cadastra fornecedor, itens e parcelas da entrada.",
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="entrada-operacional",
+            local_path="conhecimento/ADM_FIN_ESTOQUE/Wiki/entrada.md",
+        )
+    )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Como realizar a entrada de nota fiscal?"
+    )
+
+    assert bundle.profile.module == "Fiscal"
+    assert bundle.selected_modules == ("ADM_FIN_ESTOQUE",)
+    assert bundle.routing_scope == "single_module"
+    assert all(
+        report.module == "ADM_FIN_ESTOQUE"
+        for report in bundle.source_reports
+        if report.source in {"wiki", "kb"}
+    )
+    assert bundle.source_report("schema").module == ""
+
+
 def test_schema_parser_and_sync_create_structured_catalog(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     schema_dir = settings.root / "agentes" / "SchemaVR"
@@ -1459,6 +1677,32 @@ def test_schema_parser_and_sync_create_structured_catalog(tmp_path: Path) -> Non
     catalog = database.search_schema_catalog("venda id_loja")
     assert catalog[0]["table_name"] == "venda"
     assert catalog[0]["relations"][0]["to_table"] == "loja"
+
+
+def test_schema_sync_accepts_a_user_selected_file(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    selected = settings.root / "imports" / "novo-schema.md"
+    selected.parent.mkdir(parents=True)
+    selected.write_text(
+        """# Schema PostgreSQL
+
+## `public`.`produto`
+
+| Coluna | Tipo | Nulo | PK | Default | Descricao |
+|---|---|---|---|---|---|
+| `id` | `integer` | Nao | PK | | Produto |
+""",
+        encoding="utf-8",
+    )
+    database = MaryDatabase(settings.database_path, root=settings.root)
+
+    stats = SchemaSync(settings, database, schema_path=selected).sync()
+
+    assert stats.created == 1
+    document = database.get_document("schema", "postgresql-vr")
+    assert document is not None
+    assert document["local_path"] == "imports/novo-schema.md"
+    assert database.search_schema_catalog("produto")[0]["table_name"] == "produto"
 
 
 def test_router_groups_cross_source_duplicates_and_flags_conflicts(
@@ -1559,11 +1803,11 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
     ("mode", "difficulty", "expected_effective", "expected_workers"),
     (
         ("off", 5, None, 0),
-        ("automatic", 1, "off", 0),
-        ("automatic", 3, "standard", 4),
-        ("automatic", 4, "ultra", 4),
-        ("standard", 4, "standard", 4),
-        ("ultra", 1, "ultra", 4),
+        ("automatic", 1, "off", 4),
+        ("automatic", 3, "standard", 5),
+        ("automatic", 4, "ultra", 8),
+        ("standard", 4, "standard", 5),
+        ("ultra", 1, "ultra", 8),
     ),
 )
 def test_execution_modes_select_the_expected_effective_flow(

@@ -322,6 +322,36 @@ class MaryCoreTest(unittest.TestCase):
         )
         self.assertEqual(pdv.module, "PDV")
 
+    def test_vrmaster_menu_vocabulary_complements_module_classification(self):
+        cases = [
+            ("Fluxo de Caixa", "", "ADM_FIN_ESTOQUE"),
+            ("Controle Bancário", "Custódia Cheque", "ADM_FIN_ESTOQUE"),
+            ("Crédito Rotativo", "Emissão Boleto", "ADM_FIN_ESTOQUE"),
+            ("Acompanhamento Estoque", "Tabela Estoque", "ADM_FIN_ESTOQUE"),
+            ("Análise RFM", "Clientes sem Compra", "ADM_FIN_ESTOQUE"),
+            ("Log Transação Pedido", "Log Workflow", "ADM_FIN_ESTOQUE"),
+            ("Encerramento Contábil", "Plano Conta Referencial", "Fiscal"),
+            ("Carta Correção", "Nota Entrada e Nota Saída", "Fiscal"),
+            ("DIME", "Arquivos Magnéticos e Sintegra", "Fiscal"),
+            ("Depreciação", "Ativo Imobilizado", "Fiscal"),
+        ]
+        for title, body, expected in cases:
+            with self.subTest(title=title):
+                result = classify(title, body, catalog=())
+                self.assertEqual(result.module, expected)
+                self.assertEqual(result.status, "approved")
+
+        # A evidência nova é complementar: o contexto clássico de TEF no
+        # checkout continua sendo classificado como PDV.
+        self.assertEqual(
+            classify(
+                "TEF no checkout",
+                "Venda no PDV com pinpad e CliSiTef.",
+                catalog=(),
+            ).module,
+            "PDV",
+        )
+
     def test_explicit_category_module_overrides_other_evidence(self):
         fiscal = classify(
             "CFOP de entrada no cadastro de Tipo Saida",
@@ -354,6 +384,31 @@ class MaryCoreTest(unittest.TestCase):
             "Pagina inicial / ADM_FIN_ESTOQUE / Cadastro",
         )
         self.assertEqual(canonical_administrative.module, "ADM_FIN_ESTOQUE")
+
+        menu_hierarchy_cases = [
+            ("Financeiro / TEF / Transação", "ADM_FIN_ESTOQUE"),
+            ("Nota Fiscal / Recebimento", "Fiscal"),
+            ("Contabilidade / Arquivos Magnéticos / DIME", "Fiscal"),
+            ("Ativo Imobilizado / Depreciação", "Fiscal"),
+            ("Estoque / Produção / Consumo", "ADM_FIN_ESTOQUE"),
+            ("CRM / Connect / Serviços Web Sefaz", "ADM_FIN_ESTOQUE"),
+            ("Sistema / Serviços Web Sefaz", "ADM_FIN_ESTOQUE"),
+            ("Utilitário / Estoque Online", "ADM_FIN_ESTOQUE"),
+            ("PDV / TEF / Transação", "PDV"),
+            ("Fluxo de Caixa", "ADM_FIN_ESTOQUE"),
+            ("Serviços Web Sefaz", "ADM_FIN_ESTOQUE"),
+            ("DIME", "Fiscal"),
+        ]
+        for category, expected in menu_hierarchy_cases:
+            with self.subTest(category=category):
+                result = classify(
+                    "Função do VRMaster",
+                    "Conteúdo compartilhado entre módulos.",
+                    category,
+                    catalog=(),
+                )
+                self.assertEqual(result.module, expected)
+                self.assertEqual(result.status, "approved")
 
     def test_non_explicit_or_conflicting_category_requires_review(self):
         ambiguous = classify(
@@ -723,6 +778,48 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(stats.unchanged, 1)
         self.assertEqual(stats.review, 1)
         self.assertEqual(database.query_reviews(ReviewFilters()).total, 1)
+
+    def test_wiki_sync_approves_known_menu_without_queueing_review(self):
+        database = MaryDatabase(self.settings.database_path)
+        classification = classify(
+            "Conciliação bancária",
+            "Procedimento da função no VRMaster.",
+            "Financeiro / Controle Bancário / Conciliação Bancária",
+            catalog=(),
+        )
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="financeiro-menu-1",
+            title="Conciliação bancária",
+            url="https://example.com/wiki/financeiro-menu-1",
+            markdown="Procedimento da função no VRMaster.",
+            module=classification.module,
+            classification_confidence=classification.confidence,
+            review_status=classification.status,
+            revision="1",
+            content_hash="financeiro-menu-hash",
+            category="Financeiro / Controle Bancário / Conciliação Bancária",
+        )
+        sync = WikiSync(self.settings, database)
+        sync.iter_pages = lambda: iter(
+            [
+                {
+                    "pageid": document.source_id,
+                    "title": document.title,
+                    "revisions": [{"revid": 1}],
+                }
+            ]
+        )
+        sync.fetch_document = MagicMock(return_value=document)
+
+        stats = sync.sync(limit=1)
+
+        stored = database.get_document("wiki", document.source_id)
+        self.assertEqual(stats.created, 1)
+        self.assertEqual(stats.review, 0)
+        self.assertEqual(stored["module"], "ADM_FIN_ESTOQUE")
+        self.assertEqual(stored["review_status"], "approved")
+        self.assertEqual(database.query_reviews(ReviewFilters()).total, 0)
 
     def test_sync_run_with_item_errors_is_partial(self):
         database = MaryDatabase(self.settings.database_path)
@@ -1362,6 +1459,27 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(turn["model"], "gpt-5.6")
         self.assertEqual(turn["effort"], "max")
         self.assertNotIn("collaborationMode", turn)
+
+    def test_codex_reasoning_summary_delta_is_exposed_as_safe_runtime_event(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        provider._handle_server_message(
+            {
+                "method": "item/reasoning/summaryTextDelta",
+                "params": {
+                    "threadId": "native-1",
+                    "itemId": "reasoning-1",
+                    "delta": "Consultando a base local",
+                },
+            }
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "reasoning_delta")
+        self.assertEqual(events[0].text, "Consultando a base local")
 
     def test_effective_thread_settings_event_is_emitted_and_persisted(self):
         provider = CodexProvider()
@@ -3130,15 +3248,20 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("alpha", labels)
             self.assertIn("beta", labels)
 
+            window._select_project_scope(second)
             with (
                 patch.object(
                     ProjectPickerDialog, "exec", return_value=QDialog.Accepted
-                ),
+                ) as picker_exec,
                 patch.object(
                     ProjectPickerDialog, "selected_project", return_value=first
                 ),
             ):
-                self.assertEqual(window._project_for_new_conversation(), first)
+                window.new_chat_button.click()
+            picker_exec.assert_called_once()
+            self.assertEqual(window.draft_project_path, first)
+            self.assertEqual(window.project_scope_path, first)
+            self.assertIn("Shift+clique", window.new_chat_button.toolTip())
         finally:
             window.app_preferences.setValue("chat/current_project", saved_current)
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
@@ -3430,6 +3553,55 @@ class MaryCoreTest(unittest.TestCase):
                         window.video_toolbar,
                     )
                 )
+            )
+        finally:
+            window.close()
+
+    def test_sync_page_selects_and_indexes_a_new_schema_file(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        selected = self.settings.root / "imports" / "schema-selecionado.md"
+        selected.parent.mkdir(parents=True)
+        selected.write_text(
+            """# Schema PostgreSQL
+
+## `public`.`cliente`
+
+| Coluna | Tipo | Nulo | PK | Default | Descricao |
+|---|---|---|---|---|---|
+| `id` | `integer` | Nao | PK | | Cliente |
+""",
+            encoding="utf-8",
+        )
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.app_preferences = MagicMock()
+            with patch(
+                "vrsoft_extractor.mary.ui.QFileDialog.getOpenFileName",
+                return_value=(str(selected), "Schema Markdown (*.md *.markdown)"),
+            ):
+                window.choose_schema_file()
+
+            self.assertEqual(
+                Path(window.schema_path_input.text()), selected.resolve()
+            )
+            window.app_preferences.setValue.assert_called_once_with(
+                "sync/schema_path", "imports/schema-selecionado.md"
+            )
+            with patch.object(window, "_run_sync") as run_sync:
+                window.sync_schema()
+            label, operation = run_sync.call_args.args
+            self.assertIn("schema-selecionado.md", label)
+            stats = operation()
+            self.assertEqual(stats.created, 1)
+            self.assertEqual(
+                window.database.search_schema_catalog("cliente")[0]["table_name"],
+                "cliente",
             )
         finally:
             window.close()
@@ -3831,6 +4003,7 @@ class MaryCoreTest(unittest.TestCase):
             auto_close_smoke=False,
         )
         try:
+            window.project_scope_path = None
             first = window.database.create_conversation(
                 "Primeira", "codex", "gpt-test", self.settings.work_dir / "first"
             )
@@ -3917,6 +4090,7 @@ class MaryCoreTest(unittest.TestCase):
         )
         try:
             window.app_preferences = MemoryPreferences()
+            window.project_scope_path = None
             active = window.database.create_conversation(
                 "Ativo", "codex", "gpt-test", self.settings.work_dir / "active"
             )
@@ -4149,6 +4323,69 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_background_stream_does_not_rebuild_conversation_sidebar_per_delta(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.current_conversation = "visible-chat"
+            with patch.object(window, "refresh_conversations") as refresh:
+                window._on_runtime_event(
+                    RuntimeEvent("background-chat", "assistant_delta", "trecho")
+                )
+                refresh.assert_not_called()
+
+            window._on_runtime_event(
+                RuntimeEvent("background-chat", "turn_completed")
+            )
+            self.assertTrue(window._conversation_refresh_timer.isActive())
+        finally:
+            window.close()
+
+    def test_long_assistant_delta_types_smoothly_before_turn_finishes(self):
+        from PySide6.QtWidgets import QApplication, QTextBrowser
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            conversation_id = "typing-stream-test"
+            answer = "Resposta VR com efeito de digitação. " * 40
+            window.current_conversation = conversation_id
+            window._on_runtime_event(RuntimeEvent(conversation_id, "turn_started"))
+            window._on_runtime_event(
+                RuntimeEvent(conversation_id, "assistant_delta", answer)
+            )
+
+            self.assertIsNotNone(window.assistant_widget)
+            self.assertGreater(len(window.assistant_markdown), 0)
+            self.assertLess(len(window.assistant_markdown), len(answer))
+            stream_browser = window.assistant_widget.findChild(
+                QTextBrowser, "messageBody"
+            )
+
+            window._on_runtime_event(RuntimeEvent(conversation_id, "turn_completed"))
+            self.assertTrue(window.turn_running)
+            while window._assistant_pending_text:
+                window._render_assistant_typing_step()
+
+            self.assertEqual(window.assistant_markdown, answer)
+            self.assertFalse(window.turn_running)
+            self.assertIs(
+                stream_browser,
+                window.assistant_widget.findChild(QTextBrowser, "messageBody"),
+            )
+        finally:
+            window.close()
+
     def test_runtime_events_use_one_compact_activity_without_raw_payloads(self):
         from PySide6.QtWidgets import QApplication, QFrame
 
@@ -4199,6 +4436,19 @@ class MaryCoreTest(unittest.TestCase):
             )
             self.assertIs(window.chat_activity_widget, first_activity)
             self.assertEqual(window.chat_activity_label.text(), "Analisando…")
+
+            window._on_runtime_event(
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    "Verificando as evidências relevantes.",
+                )
+            )
+            self.assertIs(window.chat_activity_widget, first_activity)
+            self.assertEqual(
+                window.chat_activity_label.text(),
+                "Pensando… Verificando as evidências relevantes.",
+            )
 
             window._on_runtime_event(
                 RuntimeEvent(conversation_id, "assistant_delta", "Resposta final")
@@ -4725,6 +4975,7 @@ class MaryCoreTest(unittest.TestCase):
             auto_close_smoke=False,
         )
         try:
+            window.project_scope_path = None
             conversation_id = window.database.create_conversation(
                 "Arquivar agora",
                 "claude",
@@ -5015,7 +5266,7 @@ class MaryCoreTest(unittest.TestCase):
             prompt = provider.prompts[-1]
             self.assertEqual(prompt.count("CONTEXTO LOCAL VR"), 1)
             self.assertIn("[Funcao 102](https://wiki.example", prompt)
-            self.assertIn("funcao-102--3742.md", prompt)
+            self.assertNotIn("funcao-102--3742.md", prompt)
             self.assertIn("Atalho O", prompt)
 
     def test_disabled_vr_flow_sends_plain_prompt_without_local_search(self):

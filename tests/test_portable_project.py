@@ -44,6 +44,7 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
         encoding="utf-8"
     )
     assert (root / ".codex" / "agents" / "fisco.toml").is_file()
+    assert (root / ".codex" / "agents" / "dba.toml").is_file()
     assert (root / "tools" / "vr-search.ps1").is_file()
     assert (root / "Abrir-VR-no-Codex.cmd").is_file()
     assert (root / "TrabalhoVR").is_dir()

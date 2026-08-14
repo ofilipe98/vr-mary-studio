@@ -130,16 +130,30 @@ def minimum_term_matches(term_count: int) -> int:
 
 
 def infer_search_module(terms: Iterable[str]) -> str:
-    term_set = set(terms)
-    scores = {
-        module: len(term_set.intersection(hints))
-        for module, hints in MODULE_HINTS.items()
-    }
+    scores = module_search_scores(terms)
     best_module, best_score = max(scores.items(), key=lambda item: item[1])
     if best_score <= 0:
         return ""
     tied = [module for module, score in scores.items() if score == best_score]
     return best_module if len(tied) == 1 else ""
+
+
+def module_search_scores(terms: Iterable[str]) -> dict[str, int]:
+    term_set = set(terms)
+    return {
+        module: len(term_set.intersection(hints))
+        for module, hints in MODULE_HINTS.items()
+    }
+
+
+def infer_search_modules(terms: Iterable[str]) -> tuple[str, ...]:
+    scores = module_search_scores(terms)
+    best_score = max(scores.values(), default=0)
+    if best_score <= 0:
+        return ()
+    return tuple(
+        module for module, score in scores.items() if score == best_score
+    )
 
 
 def search_excerpt(markdown: str, terms: Iterable[str], *, limit: int = 360) -> str:

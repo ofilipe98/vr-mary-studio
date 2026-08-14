@@ -26,9 +26,11 @@ ativa o fluxo VR automaticamente. O prefixo `VR:` é aceito, mas opcional.
 4. Classifique a demanda em Fiscal, ADM_FIN_ESTOQUE, PDV ou Multimodulo.
 5. Em pergunta factual simples, responda diretamente a partir das fontes locais.
 6. Em diagnóstico, treinamento ou criação de fluxo, use o especialista Codex
-   correspondente: Fisco, Atlas ou Caixa.
-7. Use Grace para Wiki, Rocky para KB e Stratt para SchemaVR quando faltarem
-   evidências; envie trabalhos complexos a Yao antes da resposta final.
+   correspondente: Fisco, Atlas ou Caixa. Acione mais de um somente quando o
+   Orquestrador VR classificar a pergunta como multimódulo.
+7. Use Grace para Wiki e Rocky para KB dentro de cada módulo. O VR DBA é o
+   especialista global em banco de dados e usa Stratt para validar o SchemaVR
+   uma única vez; envie trabalhos complexos a Yao antes da resposta final.
 8. Cite os arquivos locais efetivamente utilizados e informe lacunas e confiança.
 
 Para ingestão ou curadoria, use Cora. MentorVR só pode ser acionado por pedido
@@ -122,6 +124,11 @@ AGENT_SPECS = {
         "Caixa",
         "Especialista PDV, frente de loja, vendas e checkout.",
         "agentes/Caixa/AGENTS.md",
+    ),
+    "dba": (
+        "DBA",
+        "Especialista global em banco de dados, schema, tabelas, campos e relacionamentos.",
+        "agentes/SchemaVR/AGENTS.md",
     ),
     "yao": (
         "Yao",

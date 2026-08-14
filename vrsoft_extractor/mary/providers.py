@@ -403,6 +403,15 @@ class CodexProvider(AgentProvider):
             callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
         elif method == "item/plan/delta":
             callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
+        elif method == "item/reasoning/summaryTextDelta":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    str(params.get("delta", "")),
+                    params,
+                )
+            )
         elif method == "turn/started":
             turn = params.get("turn") or {}
             with self._state_lock:

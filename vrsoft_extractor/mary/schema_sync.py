@@ -20,14 +20,23 @@ class SchemaSync:
         settings: MarySettings,
         database: MaryDatabase,
         progress: Progress | None = None,
+        *,
+        schema_path: Path | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.progress = progress or (lambda _message: None)
+        self._schema_path = (
+            Path(schema_path).expanduser().resolve(strict=False)
+            if schema_path is not None
+            else None
+        )
 
     @property
     def schema_path(self) -> Path:
-        return self.settings.root / "agentes" / "SchemaVR" / "schema.md"
+        return self._schema_path or (
+            self.settings.root / "agentes" / "SchemaVR" / "schema.md"
+        )
 
     def sync(self) -> SyncStats:
         stats = SyncStats("schema")

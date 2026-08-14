@@ -1695,6 +1695,19 @@ class MainWindow(QMainWindow):
         self._pending_first_message = ""
         self.assistant_widget: MarkdownMessageWidget | None = None
         self.assistant_markdown = ""
+        self._assistant_pending_text = ""
+        self._assistant_chars_per_tick = 1
+        self._assistant_completion_pending = False
+        self._assistant_typing_timer = QTimer(self)
+        self._assistant_typing_timer.setInterval(18)
+        self._assistant_typing_timer.timeout.connect(
+            self._render_assistant_typing_step
+        )
+        self._reasoning_summary = ""
+        self._conversation_refresh_timer = QTimer(self)
+        self._conversation_refresh_timer.setSingleShot(True)
+        self._conversation_refresh_timer.setInterval(120)
+        self._conversation_refresh_timer.timeout.connect(self.refresh_conversations)
         self._active_response_mode = "vr"
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
@@ -1730,6 +1743,12 @@ class MainWindow(QMainWindow):
         self._configure_accessibility()
         self.new_conversation_shortcut = QShortcut(QKeySequence("Ctrl+Shift+O"), self)
         self.new_conversation_shortcut.activated.connect(self.start_new_conversation)
+        self.new_conversation_current_project_shortcut = QShortcut(
+            QKeySequence("Ctrl+Shift+N"), self
+        )
+        self.new_conversation_current_project_shortcut.activated.connect(
+            self.start_new_conversation_in_current_project
+        )
         self._refresh_all()
         self._setup_auto_sync()
         if smoke_test and auto_close_smoke:
@@ -1850,6 +1869,8 @@ class MainWindow(QMainWindow):
             "sync",
             self.sync_toolbar.primary_button,
             *self.sync_action_buttons,
+            self.schema_path_input,
+            self.schema_choose_button,
             self.sync_log,
         )
         self._set_tab_sequence(
@@ -2245,9 +2266,12 @@ class MainWindow(QMainWindow):
         self.new_chat_button = QToolButton(objectName="sidebarNewChat")
         self.new_chat_button.setIcon(QIcon(str(SIDEBAR_ICON_PATHS["new_chat"])))
         self.new_chat_button.setAccessibleName("Novo chat")
-        self.new_chat_button.setToolTip("Nova conversa (Ctrl+Shift+O)")
+        self.new_chat_button.setToolTip(
+            "Novo chat (Ctrl+Shift+O)\n"
+            "Novo chat no projeto atual: Shift+clique (Ctrl+Shift+N)"
+        )
         self.new_chat_button.setCheckable(True)
-        self.new_chat_button.clicked.connect(self.start_new_conversation)
+        self.new_chat_button.clicked.connect(self._new_chat_button_clicked)
         search_row.addWidget(self.new_chat_button)
         left.addLayout(search_row)
 
@@ -2945,8 +2969,9 @@ class MainWindow(QMainWindow):
         wiki_button.clicked.connect(self.sync_wiki)
         kb_button = ActionButton("Sincronizar KB", variant="secondary")
         kb_button.clicked.connect(self.sync_kb)
-        schema_button = ActionButton("Indexar Schema", variant="secondary")
-        schema_button.clicked.connect(self.sync_schema)
+        schema_button = ActionButton("Indexar Schema selecionado", variant="secondary")
+        schema_button.clicked.connect(lambda: self.sync_schema())
+        self.schema_index_button = schema_button
         kb_visible = ActionButton("Login/KB visível", variant="secondary")
         kb_visible.clicked.connect(lambda: self.sync_kb(True))
         self.sync_action_buttons = [
@@ -2967,6 +2992,36 @@ class MainWindow(QMainWindow):
             breakpoint=720,
         )
         layout.addWidget(self.sync_actions_host)
+
+        schema_file = QFrame(objectName="settingsSurface")
+        schema_file_layout = QHBoxLayout(schema_file)
+        schema_file_layout.setContentsMargins(12, 10, 12, 10)
+        schema_file_layout.setSpacing(10)
+        schema_file_label = QLabel("Arquivo do Schema", objectName="fieldLabel")
+        schema_file_layout.addWidget(schema_file_label)
+        default_schema_path = SchemaSync(self.settings, self.database).schema_path
+        saved_schema_path = str(
+            self.app_preferences.value("sync/schema_path", "") or ""
+        ).strip()
+        selected_schema_path = (
+            self.settings.resolve_path(saved_schema_path)
+            if saved_schema_path
+            else default_schema_path.resolve(strict=False)
+        )
+        self.schema_path_input = QLineEdit(str(selected_schema_path))
+        self.schema_path_input.setObjectName("settingsField")
+        self.schema_path_input.setReadOnly(True)
+        self.schema_path_input.setAccessibleName("Arquivo do Schema selecionado")
+        self.schema_path_input.setToolTip(str(selected_schema_path))
+        schema_file_layout.addWidget(self.schema_path_input, 1)
+        self.schema_choose_button = ActionButton(
+            "Escolher arquivo…", variant="secondary"
+        )
+        self.schema_choose_button.setAccessibleName("Escolher um novo arquivo do Schema")
+        self.schema_choose_button.clicked.connect(self.choose_schema_file)
+        schema_file_layout.addWidget(self.schema_choose_button)
+        layout.addWidget(schema_file)
+
         self.sync_status = StatusBadge("Pronto", kind="idle")
         layout.addWidget(self.sync_status)
         self.sync_log = QPlainTextEdit()
@@ -4376,6 +4431,10 @@ class MainWindow(QMainWindow):
         self.conversation_list.setVisible(not is_empty)
         self.conversation_empty.setVisible(is_empty)
 
+    def _schedule_conversation_refresh(self) -> None:
+        """Coalesce sidebar updates from conversations running in background."""
+        self._conversation_refresh_timer.start()
+
     def _saved_project_path(self) -> Path | None:
         raw = str(self.app_preferences.value("chat/current_project", "") or "").strip()
         if not raw:
@@ -4492,26 +4551,49 @@ class MainWindow(QMainWindow):
         )
 
     def _project_for_new_conversation(self) -> Path | None:
-        if self.project_scope_path is not None:
-            return self.project_scope_path
         projects = self._recent_project_paths()
+        current = self.project_scope_path or self.draft_project_path
+        if current is not None and current.is_dir() and current not in projects:
+            projects.insert(0, current)
         if not projects:
             self.choose_project_folder()
             return self.project_scope_path
-        if len(projects) == 1:
-            return projects[0]
         picker = ProjectPickerDialog(projects, self)
         if picker.exec() != QDialog.Accepted:
             return None
         return picker.selected_project()
+
+    def _new_chat_button_clicked(self, *_args: Any) -> None:
+        if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+            self.start_new_conversation_in_current_project()
+            return
+        self.start_new_conversation()
 
     def start_new_conversation(self) -> None:
         project = self._project_for_new_conversation()
         if project is None:
             self.new_chat_button.setChecked(False)
             return
+        self._start_new_conversation_for_project(project)
+
+    def start_new_conversation_in_current_project(self) -> None:
+        project = self.project_scope_path or self.draft_project_path
+        if project is None:
+            self.start_new_conversation()
+            return
+        self._start_new_conversation_for_project(project)
+
+    def _start_new_conversation_for_project(self, project: Path) -> None:
+        if self._conversation_creation_in_progress or self.turn_running:
+            self.new_chat_button.setChecked(False)
+            self._show_error(
+                "Aguarde o turno atual terminar antes de iniciar outro chat."
+            )
+            return
+        had_current_conversation = bool(self.current_conversation)
         self._select_project(project)
-        self.new_conversation()
+        if not had_current_conversation:
+            self.new_conversation()
 
     def _select_project(self, project: Path | None) -> None:
         if self._conversation_creation_in_progress or self.turn_running:
@@ -4808,6 +4890,7 @@ class MainWindow(QMainWindow):
         self._update_orchestration_summary()
 
     def _clear_messages(self) -> None:
+        self._reset_assistant_stream()
         while self.message_layout.count():
             item = self.message_layout.takeAt(0)
             widget = item.widget()
@@ -4974,7 +5057,7 @@ class MainWindow(QMainWindow):
             dot.setAccessibleName("Em andamento")
             layout.addWidget(dot, 0, Qt.AlignTop)
             self.chat_activity_label = QLabel(label, objectName="chatActivityText")
-            self.chat_activity_label.setWordWrap(False)
+            self.chat_activity_label.setWordWrap(True)
             layout.addWidget(self.chat_activity_label, 1)
             self.chat_activity_widget = activity
             self.message_layout.insertWidget(
@@ -5002,6 +5085,80 @@ class MainWindow(QMainWindow):
         self.message_layout.removeWidget(activity)
         activity.hide()
         activity.deleteLater()
+
+    def _reset_assistant_stream(self) -> None:
+        if hasattr(self, "_assistant_typing_timer"):
+            self._assistant_typing_timer.stop()
+        self._assistant_pending_text = ""
+        self._assistant_chars_per_tick = 1
+        self._assistant_completion_pending = False
+        self._reasoning_summary = ""
+
+    def _queue_assistant_delta(self, text: str) -> None:
+        delta = str(text or "")
+        if not delta:
+            return
+        self._hide_chat_activity()
+        if self.assistant_widget is None:
+            self.assistant_widget = self._add_message(
+                "assistant", "", response_mode=self._active_response_mode
+            )
+
+        if self.reduce_motion or (
+            not self._assistant_pending_text and len(delta) <= 48
+        ):
+            self.assistant_markdown += delta
+            self.assistant_widget.setStreamingMarkdown(self.assistant_markdown)
+            return
+
+        self._assistant_pending_text += delta
+        # A complete VR answer arrives as one delta. Keep the animation visible,
+        # but bound its duration so long answers do not hold the composer hostage.
+        self._assistant_chars_per_tick = max(
+            self._assistant_chars_per_tick,
+            (len(delta) + 74) // 75,
+        )
+        if not self._assistant_typing_timer.isActive():
+            self._render_assistant_typing_step()
+
+    def _render_assistant_typing_step(self) -> None:
+        if not self._assistant_pending_text:
+            self._assistant_typing_timer.stop()
+            if self._assistant_completion_pending:
+                self._assistant_completion_pending = False
+                self._finish_visible_turn()
+            return
+        backlog_boost = (len(self._assistant_pending_text) + 49) // 50
+        count = max(1, self._assistant_chars_per_tick, backlog_boost)
+        chunk = self._assistant_pending_text[:count]
+        self._assistant_pending_text = self._assistant_pending_text[count:]
+        self.assistant_markdown += chunk
+        if self.assistant_widget is not None:
+            self.assistant_widget.setStreamingMarkdown(self.assistant_markdown)
+        if self._assistant_pending_text:
+            self._assistant_typing_timer.start()
+        elif self._assistant_completion_pending:
+            self._assistant_completion_pending = False
+            self._finish_visible_turn()
+
+    def _finish_visible_turn(self) -> None:
+        self._assistant_typing_timer.stop()
+        if self._assistant_pending_text:
+            self.assistant_markdown += self._assistant_pending_text
+            self._assistant_pending_text = ""
+            if self.assistant_widget is not None:
+                self.assistant_widget.setStreamingMarkdown(self.assistant_markdown)
+        if self.assistant_widget is not None:
+            self.assistant_widget.finishStreaming()
+        self._hide_chat_activity()
+        # Tools may have created or removed files during the turn.
+        self._file_catalog_state = "idle"
+        self.chat_status.setText("Pronto")
+        self._set_turn_running(False)
+        self._sync_orchestration_mode_ui(
+            self._conversation_orchestration(), animate=False
+        )
+        self.refresh_conversations()
 
     @staticmethod
     def _runtime_activity_text(event: RuntimeEvent) -> str:
@@ -5959,6 +6116,7 @@ class MainWindow(QMainWindow):
         self.composer.clear()
         self._refresh_composer_chips()
         self._add_message("user", display_text)
+        self._reset_assistant_stream()
         self.assistant_markdown = ""
         self.assistant_widget = None
         self._show_chat_activity("Trabalhando…")
@@ -5994,17 +6152,18 @@ class MainWindow(QMainWindow):
 
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
         if event.conversation_id != self.current_conversation:
-            self.refresh_conversations()
+            if event.kind in {
+                "turn_started",
+                "turn_completed",
+                "error",
+                "settings_updated",
+                "orchestration_completed",
+                "orchestration_cancelled",
+            }:
+                self._schedule_conversation_refresh()
             return
         if event.kind == "assistant_delta":
-            self._hide_chat_activity()
-            if self.assistant_widget is None:
-                self.assistant_widget = self._add_message(
-                    "assistant", "", response_mode=self._active_response_mode
-                )
-            self.assistant_markdown += event.text
-            if self.assistant_widget:
-                self.assistant_widget.setMarkdown(self.assistant_markdown)
+            self._queue_assistant_delta(event.text)
             final_agent = next(
                 (
                     item
@@ -6021,12 +6180,32 @@ class MainWindow(QMainWindow):
                     )
                     if self._trace_selected_agent == final_id:
                         self._render_selected_agent_chat()
+        elif event.kind == "reasoning_delta":
+            self._reasoning_summary += event.text
+            summary = " ".join(self._reasoning_summary.split())
+            if len(summary) > 280:
+                summary = "…" + summary[-279:]
+            self._show_chat_activity(
+                f"Pensando… {summary}" if summary else "Pensando…"
+            )
         elif event.kind == "knowledge_routed":
             counts = event.payload.get("source_counts") or {}
+            modules = [
+                str(item or "")
+                for item in event.payload.get("selected_modules") or []
+                if str(item or "")
+            ]
+            routing_scope = str(event.payload.get("routing_scope") or "")
+            module_label = (
+                "Multimódulo"
+                if routing_scope == "multimodule"
+                else "Módulo"
+            )
             summary = (
                 f"Fontes: Wiki {int(counts.get('wiki', 0) or 0)} · "
                 f"KB {int(counts.get('kb', 0) or 0)} · "
                 f"Schema {int(counts.get('schema', 0) or 0)}"
+                + (f" · {module_label}: {' + '.join(modules)}" if modules else "")
             )
             self.chat_status.setText(summary)
             self._show_chat_activity("Filtrando evidências complementares…")
@@ -6056,6 +6235,9 @@ class MainWindow(QMainWindow):
             self._show_chat_activity(message)
         elif event.kind in {
             "orchestration_started",
+            "intent_analysis_started",
+            "intent_analysis_completed",
+            "response_contract_created",
             "plan_created",
             "parallel_group_started",
             "parallel_group_completed",
@@ -6063,10 +6245,21 @@ class MainWindow(QMainWindow):
             "agent_delta",
             "agent_completed",
             "agent_failed",
+            "evidence_merge_completed",
+            "evidence_validation_completed",
+            "critic_completed",
             "validation_started",
             "validation_completed",
+            "refinement_requested",
+            "refinement_started",
+            "refinement_completed",
             "revision_started",
+            "final_validation_started",
+            "final_validation_completed",
+            "response_rewrite_started",
+            "response_rewrite_completed",
             "synthesis_started",
+            "synthesis_completed",
             "orchestration_completed",
             "orchestration_cancelled",
         }:
@@ -6077,10 +6270,10 @@ class MainWindow(QMainWindow):
                     effective if effective in {"standard", "ultra"} else "off",
                     animate=True,
                 )
-            self._handle_orchestration_event(event)
+            self._handle_orchestration_event(event, options=configured)
             if event.kind == "agent_delta":
                 activity_text = "Agentes VR trabalhando…"
-            elif self._conversation_orchestration().show_execution:
+            elif configured.show_execution:
                 activity_text = event.text
             elif event.kind == "orchestration_cancelled":
                 activity_text = "Execução interrompida."
@@ -6118,15 +6311,12 @@ class MainWindow(QMainWindow):
                 )
             self.refresh_conversations()
         elif event.kind == "turn_completed":
-            self._hide_chat_activity()
-            # Tools may have created or removed files during the turn.
-            self._file_catalog_state = "idle"
-            self.chat_status.setText("Pronto")
-            self._set_turn_running(False)
-            self._sync_orchestration_mode_ui(
-                self._conversation_orchestration(), animate=False
-            )
-            self.refresh_conversations()
+            if self._assistant_pending_text and not self.reduce_motion:
+                self._assistant_completion_pending = True
+                if not self._assistant_typing_timer.isActive():
+                    self._assistant_typing_timer.start()
+            else:
+                self._finish_visible_turn()
         elif event.kind == "tool_event":
             self._show_chat_activity(self._runtime_activity_text(event))
         elif event.kind == "approval_requested":
@@ -6144,6 +6334,13 @@ class MainWindow(QMainWindow):
                 self._show_chat_activity("Continuando…")
                 self.chat_status.setText("Continuando…")
         elif event.kind == "error":
+            if self._assistant_pending_text:
+                self.assistant_markdown += self._assistant_pending_text
+                self._assistant_pending_text = ""
+                if self.assistant_widget is not None:
+                    self.assistant_widget.setStreamingMarkdown(
+                        self.assistant_markdown
+                    )
             self._hide_chat_activity()
             self.chat_status.setText("Erro")
             self._set_turn_running(False)
@@ -6166,7 +6363,7 @@ class MainWindow(QMainWindow):
                     self.assistant_markdown.rstrip() + f"\n\n> {error_message}"
                 )
                 self.assistant_widget.setMarkdown(self.assistant_markdown)
-        if event.kind != "agent_delta":
+        if event.kind not in {"agent_delta", "reasoning_delta"}:
             self._append_log(f"{event.kind}: {event.text}")
 
     def _request_approval(self, event: RuntimeEvent) -> None:
@@ -7418,6 +7615,7 @@ class MainWindow(QMainWindow):
 
     def _reset_orchestration_trace(self) -> None:
         self._trace_agents = {}
+        self._trace_source_status: dict[str, str] = {}
         self._trace_agent_outputs: dict[str, str] = {}
         self._trace_plan_agents: list[dict[str, Any]] = []
         self._trace_selected_agent = ""
@@ -7448,7 +7646,7 @@ class MainWindow(QMainWindow):
             payload = json.loads(row["payload_json"] or "{}")
         except (TypeError, ValueError, json.JSONDecodeError):
             return
-        self._apply_trace_plan(payload)
+        self._apply_trace_plan(payload, render=False)
         run_id = str(payload.get("run_id") or "")
         last_text = ""
         for event_row in self.database.orchestration_events_after(
@@ -7466,7 +7664,11 @@ class MainWindow(QMainWindow):
                 str(event_row["text"] or ""),
                 event_payload,
             )
-            self._handle_orchestration_event(replay)
+            self._handle_orchestration_event(
+                replay,
+                render=False,
+                options=options,
+            )
             last_text = replay.text
         self.orchestration_trace_status.setText(
             f"Última execução · {last_text}" if last_text else "Última execução"
@@ -7485,26 +7687,36 @@ class MainWindow(QMainWindow):
                 ]
                 if assistant_messages:
                     self._trace_agent_outputs[final_id] = assistant_messages[-1]
-                    self._render_orchestration_trace()
+        self._render_orchestration_trace()
         self.vr_agents_toggle_button.show()
         self._set_vr_agent_sidebar_visible(
             self.vr_agents_sidebar_preferred,
             persist=False,
         )
 
-    def _apply_trace_plan(self, payload: dict[str, Any]) -> None:
+    def _apply_trace_plan(
+        self, payload: dict[str, Any], *, render: bool = True
+    ) -> None:
         plan = payload.get("plan") or {}
         difficulty = plan.get("difficulty") or {}
         agents = plan.get("agents") or []
         if not isinstance(agents, list):
             agents = []
-        self._trace_plan_agents = [
-            item for item in agents if isinstance(item, dict)
+        planned_agents = [item for item in agents if isinstance(item, dict)]
+        runtime_stages = [
+            item
+            for item in payload.get("runtime_stages") or []
+            if isinstance(item, dict)
         ]
+        final_agents = [item for item in planned_agents if bool(item.get("final"))]
+        self._trace_plan_agents = [
+            item for item in planned_agents if not bool(item.get("final"))
+        ] + runtime_stages + final_agents
         self._trace_agents = {
             str(item.get("id") or ""): "aguardando"
             for item in self._trace_plan_agents
         }
+        self._trace_source_status = {}
         self._trace_agent_outputs = {}
         self._trace_selected_agent = ""
         self._trace_user_request = ""
@@ -7535,6 +7747,23 @@ class MainWindow(QMainWindow):
         )
         requested_label = mode_labels.get(requested_mode, "Automático")
         effective_label = mode_labels.get(effective_mode, "Ligado")
+        selected_modules = [
+            str(item.get("module") or "")
+            for item in payload.get("module_routing") or []
+            if isinstance(item, dict) and bool(item.get("selected"))
+        ]
+        routing_scope = str(payload.get("routing_scope") or "")
+        module_suffix = (
+            " · "
+            + (
+                "Multimódulo: "
+                if routing_scope == "multimodule"
+                else "Módulo: "
+            )
+            + " + ".join(selected_modules)
+            if selected_modules
+            else ""
+        )
         self.orchestration_trace_title.setText(
             f"🌈 {effective_label}"
             if effective_mode == "ultra"
@@ -7543,14 +7772,15 @@ class MainWindow(QMainWindow):
         self.orchestration_trace_status.setText(
             f"Modo {requested_label} → {effective_label} · "
             f"{difficulty.get('label') or 'Classificada'} · "
-            f"nível {difficulty.get('level') or '?'}"
+            f"nível {difficulty.get('level') or '?'}{module_suffix}"
         )
-        self._render_orchestration_trace()
-        self.vr_agents_toggle_button.show()
-        self._set_vr_agent_sidebar_visible(
-            self.vr_agents_sidebar_preferred,
-            persist=False,
-        )
+        if render:
+            self._render_orchestration_trace()
+            self.vr_agents_toggle_button.show()
+            self._set_vr_agent_sidebar_visible(
+                self.vr_agents_sidebar_preferred,
+                persist=False,
+            )
 
     def _render_orchestration_trace(self) -> None:
         selected = self._trace_selected_agent
@@ -7577,8 +7807,18 @@ class MainWindow(QMainWindow):
                 "falhou": "!",
                 "interrompido": "■",
             }.get(state, "○")
+            source_status = self._trace_source_status.get(identifier, "")
+            source_status_label = {
+                "found": "evidência encontrada",
+                "exhausted": "fonte esgotada",
+                "unavailable": "fonte indisponível",
+                "not_applicable": "não aplicável",
+            }.get(source_status, "")
+            visible_state = source_status_label or state
+            indent = "    ↳ " if str(item.get("parent_id") or "") else ""
             row = QListWidgetItem(
-                f"{marker}  {name}\n{model_name} · {effort} · {state}"
+                f"{indent}{marker}  {name}\n"
+                f"{indent}{model_name} · {effort} · {visible_state}"
             )
             row.setData(Qt.UserRole, identifier)
             row.setData(Qt.UserRole + 1, name)
@@ -7674,6 +7914,15 @@ class MainWindow(QMainWindow):
         else:
             self.orchestration_agent_request.hide()
         context_lines = []
+        module = str(item.get("module") or "").strip()
+        source = str(item.get("source") or "").strip().upper()
+        parent_id = str(item.get("parent_id") or "").strip()
+        if module:
+            context_lines.append(f"Módulo: {module}")
+        if source:
+            context_lines.append(f"Fonte: {source}")
+        if parent_id:
+            context_lines.append(f"Subordinado a: {parent_id}")
         if task:
             context_lines.append(f"Tarefa: {task}")
         if reason:
@@ -7692,12 +7941,18 @@ class MainWindow(QMainWindow):
         self._configure_message_document(self.orchestration_trace_details)
         self.orchestration_trace_details.setMarkdown("\n\n".join(sections))
 
-    def _handle_orchestration_event(self, event: RuntimeEvent) -> None:
-        options = self._conversation_orchestration()
+    def _handle_orchestration_event(
+        self,
+        event: RuntimeEvent,
+        *,
+        render: bool = True,
+        options: OrchestrationOptions | None = None,
+    ) -> None:
+        options = options or self._conversation_orchestration()
         if not options.show_execution:
             return
         if event.kind == "plan_created":
-            self._apply_trace_plan(event.payload)
+            self._apply_trace_plan(event.payload, render=render)
         elif event.kind == "orchestration_started":
             self.orchestration_trace_status.setText(event.text)
         elif event.kind == "synthesis_started":
@@ -7707,7 +7962,27 @@ class MainWindow(QMainWindow):
                     self._trace_agents[identifier] = "executando"
                     self._trace_selected_agent = identifier
             self.orchestration_trace_status.setText(event.text)
-            self._render_orchestration_trace()
+            if render:
+                self._render_orchestration_trace()
+        elif event.kind in {"validation_started", "validation_completed"}:
+            identifier = "vr_supervisor_global"
+            if any(
+                str(item.get("id") or "") == identifier
+                for item in self._trace_plan_agents
+            ):
+                self._trace_agents[identifier] = (
+                    "executando"
+                    if event.kind == "validation_started"
+                    else "concluído"
+                )
+                summary = str(event.payload.get("summary") or event.text or "").strip()
+                if summary:
+                    self._trace_agent_outputs[identifier] = summary
+                if event.kind == "validation_started":
+                    self._trace_selected_agent = identifier
+            self.orchestration_trace_status.setText(event.text)
+            if render:
+                self._render_orchestration_trace()
         elif event.kind == "agent_delta":
             identifier = str(event.payload.get("agent_id") or "")
             if identifier:
@@ -7717,7 +7992,7 @@ class MainWindow(QMainWindow):
                 )
                 if not self._trace_selected_agent:
                     self._trace_selected_agent = identifier
-                if self._trace_selected_agent == identifier:
+                if render and self._trace_selected_agent == identifier:
                     self._render_selected_agent_chat()
         elif event.kind in {"agent_started", "agent_completed", "agent_failed"}:
             identifier = str(event.payload.get("agent_id") or "")
@@ -7728,6 +8003,16 @@ class MainWindow(QMainWindow):
             }[event.kind]
             if identifier:
                 self._trace_agents[identifier] = state
+                report = event.payload.get("report") or {}
+                source_report = (
+                    report.get("source_report")
+                    if isinstance(report, dict)
+                    else None
+                ) or {}
+                if isinstance(source_report, dict):
+                    source_status = str(source_report.get("status") or "")
+                    if source_status:
+                        self._trace_source_status[identifier] = source_status
                 output = str(
                     event.payload.get("output")
                     or event.payload.get("output_preview")
@@ -7737,13 +8022,41 @@ class MainWindow(QMainWindow):
                 if output:
                     self._trace_agent_outputs[identifier] = output
             self.orchestration_trace_status.setText(event.text)
-            self._render_orchestration_trace()
+            if render:
+                self._render_orchestration_trace()
+        elif event.kind == "refinement_started":
+            known = {
+                str(item.get("id") or "") for item in self._trace_plan_agents
+            }
+            for item in event.payload.get("agents") or []:
+                if not isinstance(item, dict):
+                    continue
+                identifier = str(item.get("id") or "")
+                if not identifier or identifier in known:
+                    continue
+                self._trace_plan_agents.append(item)
+                self._trace_agents[identifier] = "aguardando"
+                known.add(identifier)
+            self.orchestration_trace_status.setText(event.text)
+            if render:
+                self._render_orchestration_trace()
         elif event.kind in {
+            "intent_analysis_started",
+            "intent_analysis_completed",
+            "response_contract_created",
             "parallel_group_started",
             "parallel_group_completed",
-            "validation_started",
-            "validation_completed",
+            "evidence_merge_completed",
+            "evidence_validation_completed",
+            "critic_completed",
+            "refinement_requested",
+            "refinement_completed",
             "revision_started",
+            "final_validation_started",
+            "final_validation_completed",
+            "response_rewrite_started",
+            "response_rewrite_completed",
+            "synthesis_completed",
         }:
             self.orchestration_trace_status.setText(event.text)
         elif event.kind == "orchestration_completed":
@@ -7751,18 +8064,15 @@ class MainWindow(QMainWindow):
                 if bool(item.get("final")):
                     self._trace_agents[str(item.get("id") or "")] = "concluído"
             self.orchestration_trace_status.setText(event.text)
-            self._render_orchestration_trace()
+            if render:
+                self._render_orchestration_trace()
         elif event.kind == "orchestration_cancelled":
             for identifier, state in tuple(self._trace_agents.items()):
                 if state == "executando":
                     self._trace_agents[identifier] = "interrompido"
             self.orchestration_trace_status.setText(event.text)
-            self._render_orchestration_trace()
-        self._set_vr_agent_sidebar_visible(
-            self.vr_agents_sidebar_preferred,
-            persist=False,
-        )
-
+            if render:
+                self._render_orchestration_trace()
     def search_context(self) -> None:
         query = self.context_search.text().strip()
         self.context_results.clear()
@@ -8519,11 +8829,47 @@ class MainWindow(QMainWindow):
             lambda: self._sync_kb_with_auth_fallback(headed=headed),
         )
 
+    def selected_schema_path(self) -> Path:
+        raw = (
+            self.schema_path_input.text().strip()
+            if hasattr(self, "schema_path_input")
+            else ""
+        )
+        if raw:
+            return Path(raw).expanduser().resolve(strict=False)
+        return SchemaSync(self.settings, self.database).schema_path.resolve(
+            strict=False
+        )
+
+    def choose_schema_file(self) -> None:
+        current = self.selected_schema_path()
+        initial = current.parent if current.parent.is_dir() else self.settings.root
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar arquivo do Schema",
+            str(initial),
+            "Schema Markdown (*.md *.markdown);;Arquivos de texto (*.txt);;Todos os arquivos (*.*)",
+        )
+        if not selected:
+            return
+        path = Path(selected).expanduser().resolve(strict=False)
+        self.schema_path_input.setText(str(path))
+        self.schema_path_input.setToolTip(str(path))
+        self.app_preferences.setValue(
+            "sync/schema_path", self.settings.relative_path(path)
+        )
+        self.app_preferences.sync()
+        self.sync_status.setText(f"Schema selecionado: {path.name}")
+
     def sync_schema(self) -> None:
+        schema_path = self.selected_schema_path()
         self._run_sync(
-            "Schema",
+            f"Schema · {schema_path.name}",
             lambda: SchemaSync(
-                self.settings, self.database, self._sync_progress
+                self.settings,
+                self.database,
+                self._sync_progress,
+                schema_path=schema_path,
             ).sync(),
         )
 
@@ -8551,6 +8897,8 @@ class MainWindow(QMainWindow):
         sources: tuple[str, ...],
         label: str,
     ) -> None:
+        schema_path = self.selected_schema_path()
+
         def operation():
             results: dict[str, Any] = {}
             operations: dict[str, Callable[[], Any]] = {
@@ -8559,7 +8907,10 @@ class MainWindow(QMainWindow):
                 ).sync(),
                 "kb": self._sync_kb_with_auth_fallback,
                 "schema": lambda: SchemaSync(
-                    self.settings, self.database, self._sync_progress
+                    self.settings,
+                    self.database,
+                    self._sync_progress,
+                    schema_path=schema_path,
                 ).sync(),
             }
             for source in sources:

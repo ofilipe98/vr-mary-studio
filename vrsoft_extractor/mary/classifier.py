@@ -24,11 +24,17 @@ class _GroupedProduct(TypedDict):
 
 CATEGORY_MODULE_SEGMENTS = {
     "fiscal": "Fiscal",
+    "nota fiscal": "Fiscal",
+    "contabilidade": "Fiscal",
+    "ativo imobilizado": "Fiscal",
     "pdv": "PDV",
     "adm": ADM_MODULE,
     "administrativo": ADM_MODULE,
     "financeiro": ADM_MODULE,
     "estoque": ADM_MODULE,
+    "crm": ADM_MODULE,
+    "sistema": ADM_MODULE,
+    "utilitario": ADM_MODULE,
     "adm fin estoque": ADM_MODULE,
     "adm_fin_estoque": ADM_MODULE,
     "adm financeiro estoque": ADM_MODULE,
@@ -98,6 +104,114 @@ KEYWORDS: dict[str, dict[str, float]] = {
 }
 
 
+# Nomes de funções exibidos nos menus do VRMaster. Esta camada complementa as
+# palavras-chave gerais acima e usa correspondência por palavras inteiras para
+# que siglas curtas, como DIME e GIA, não casem dentro de outras palavras.
+MENU_KEYWORDS: dict[str, dict[str, float]] = {
+    "Fiscal": {
+        "contabilidade": 3.2,
+        "encerramento contabil": 3.6,
+        "fato contabil": 3.6,
+        "lacs": 3.6,
+        "lalur": 3.6,
+        "plano conta referencial": 3.6,
+        "ativo imobilizado": 3.6,
+        "credito tributos": 3.2,
+        "depreciacao": 3.2,
+        "analise bonificacao": 3.2,
+        "carta correcao": 3.6,
+        "divergencia entrada": 3.2,
+        "nota entrada": 3.6,
+        "entrada conferencia": 3.2,
+        "entrada produto": 3.2,
+        "nota saida": 3.6,
+        "servico saida": 3.2,
+        "apuracao": 3.2,
+        "arquivos magneticos": 3.2,
+        "escrituracao": 3.6,
+        "mapa resumo": 3.2,
+        "mudanca tributacao": 3.6,
+        "retencao tributo": 3.6,
+        "efd reinf": 3.6,
+        "dief": 3.6,
+        "dime": 3.6,
+        "dma": 3.6,
+        "gia": 3.6,
+        "nota fiscal paulista": 3.6,
+        "sef": 3.2,
+        "sintegra": 3.6,
+        "sped contribuicoes": 3.6,
+        "sped fiscal": 3.6,
+        "fcp": 3.2,
+        "credito outorgado": 3.6,
+        "daicms antecipado": 3.6,
+        "drcst": 3.6,
+        "estorno icms": 3.6,
+        "icms fronteira": 3.6,
+        "operacao pag eletronico": 3.2,
+        "outros valores icms": 3.6,
+        "relatorio icms": 3.2,
+        "credito presumido": 3.6,
+        "simples nacional": 3.6,
+        "substituicao estadual": 3.6,
+        "uso e consumo": 3.2,
+    },
+    ADM_MODULE: {
+        "centro custo": 3.6,
+        "centro de custo": 3.6,
+        "controle bancario": 3.6,
+        "conciliacao bancaria": 3.6,
+        "custodia cheque": 3.6,
+        "fluxo de caixa": 4.0,
+        "calendario financeiro": 3.6,
+        "analise performance financeira": 3.6,
+        "configuracao recebivel": 3.2,
+        "credito rotativo": 3.6,
+        "emissao boleto": 3.6,
+        "outras receitas": 3.2,
+        "venda prazo": 3.2,
+        "venda a prazo": 3.2,
+        "dda": 3.2,
+        "relacao doc": 3.2,
+        "doacao entidade": 3.2,
+        "analise fornecedor": 3.2,
+        "despesas e ajustes": 3.2,
+        "acompanhamento estoque": 3.6,
+        "cesta basica": 3.2,
+        "comparativo lojas": 3.2,
+        "estoque loja": 3.6,
+        "estoque terceiro": 3.6,
+        "estoque transito": 3.6,
+        "extrato movimentacao": 3.2,
+        "gerenciamento estoque": 3.6,
+        "tabela estoque": 3.6,
+        "transferencia interna": 3.2,
+        "transferencia lojas": 3.2,
+        "analise cliente": 3.2,
+        "analise pesquisa": 3.2,
+        "analise regiao": 3.2,
+        "analise rfm": 3.6,
+        "clientes sem compra": 3.6,
+        "frequencia compra": 3.2,
+        "mala direta": 3.2,
+        "resumo promocao": 3.2,
+        "venda cupom medio": 3.6,
+        "parametro banco api": 3.2,
+        "inf resp tecnico": 3.2,
+        "licenca mobile": 3.2,
+        "servicos web sefaz": 3.6,
+        "atualizar tabelas": 3.2,
+        "atualizacao pendencia": 3.2,
+        "estoque online": 3.6,
+        "log transacao custo": 3.6,
+        "log transacao pedido": 3.6,
+        "log workflow": 3.6,
+        "peps": 3.6,
+        "reposicao inteligente": 3.6,
+    },
+}
+
+
 @dataclass(frozen=True)
 class ProductRule:
     product: str
@@ -131,6 +245,26 @@ def product_phrase(value: str) -> str:
 
 def product_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", product_phrase(value))
+
+
+@lru_cache(maxsize=1)
+def _menu_module_segments() -> dict[str, str]:
+    candidates: dict[str, set[str]] = defaultdict(set)
+    for module, keywords in MENU_KEYWORDS.items():
+        for keyword in keywords:
+            candidates[product_phrase(keyword)].add(module)
+    return {
+        segment: next(iter(modules))
+        for segment, modules in candidates.items()
+        if segment and len(modules) == 1
+    }
+
+
+def _explicit_segment_module(value: str) -> str | None:
+    direct = CATEGORY_MODULE_SEGMENTS.get(normalize_text(value))
+    if direct:
+        return direct
+    return _menu_module_segments().get(product_phrase(value))
 
 
 def parse_product_catalog(markdown: str) -> tuple[ProductRule, ...]:
@@ -335,6 +469,20 @@ def classify(
                 scores[module] += contribution
                 _append_reason(reasons[module], f"{keyword} ({field_name})")
 
+        menu_haystack = product_phrase(value)
+        for module, keywords in MENU_KEYWORDS.items():
+            for keyword, weight in keywords.items():
+                occurrences = _whole_phrase_occurrences(menu_haystack, keyword)
+                if not occurrences:
+                    continue
+                contribution = (
+                    weight
+                    * field_weight
+                    * (1.0 + 0.20 * (occurrences - 1))
+                )
+                scores[module] += contribution
+                _append_reason(reasons[module], f"menu {keyword} ({field_name})")
+
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     if not ranked or ranked[0][1] < 1.5:
         return Classification("Revisar", 0.35, "pending", ["poucos indícios"])
@@ -377,6 +525,22 @@ def classify(
     return Classification(leader, confidence, status, reasons[leader][:7])
 
 
+def explicit_module_category(segments: Iterable[str]) -> str:
+    """Retorna somente os segmentos que identificam um módulo sem ambiguidade."""
+
+    matches: list[str] = []
+    for value in segments:
+        for raw_segment in re.split(r"[/|>]+", value or ""):
+            segment = raw_segment.strip()
+            if (
+                segment
+                and _explicit_segment_module(segment) is not None
+                and segment not in matches
+            ):
+                matches.append(segment)
+    return " / ".join(matches)
+
+
 def _classify_explicit_category(category: str) -> Classification | None:
     if not (category or "").strip():
         return None
@@ -384,7 +548,7 @@ def _classify_explicit_category(category: str) -> Classification | None:
     explicit_modules: dict[str, list[str]] = defaultdict(list)
     for raw_segment in re.split(r"[/|>]+", category):
         segment = normalize_text(raw_segment)
-        module = CATEGORY_MODULE_SEGMENTS.get(segment)
+        module = _explicit_segment_module(raw_segment)
         if module and segment not in explicit_modules[module]:
             explicit_modules[module].append(segment)
 
@@ -497,3 +661,10 @@ def _keyword_haystack(
 def _append_reason(target: list[str], reason: str) -> None:
     if reason not in target:
         target.append(reason)
+
+
+def _whole_phrase_occurrences(haystack: str, keyword: str) -> int:
+    phrase = product_phrase(keyword)
+    if not haystack or not phrase:
+        return 0
+    return min(f" {haystack} ".count(f" {phrase} "), 3)

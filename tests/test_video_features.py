@@ -107,6 +107,38 @@ def test_classification_inherits_course_module():
     assert rows[0].classification_source == "course_inherited"
 
 
+@pytest.mark.parametrize(
+    ("folder_path", "expected"),
+    [
+        (["VR Master", "Financeiro", "TEF", "Transação"], "ADM_FIN_ESTOQUE"),
+        (["VR Master", "Nota Fiscal", "Recebimento"], "Fiscal"),
+        (
+            ["VR Master", "Contabilidade", "Arquivos Magnéticos", "DIME"],
+            "Fiscal",
+        ),
+        (["VR Master", "Estoque", "Produção", "Consumo"], "ADM_FIN_ESTOQUE"),
+        (["VR Master", "Sistema", "Serviços Web Sefaz"], "ADM_FIN_ESTOQUE"),
+        (["VR Master", "PDV", "TEF", "Transação"], "PDV"),
+    ],
+)
+def test_classification_uses_explicit_vrmaster_menu_hierarchy(
+    folder_path, expected
+):
+    item = video(
+        area="biblioteca",
+        course=folder_path[0],
+        chapter=folder_path[-2],
+        title=folder_path[-1],
+    )
+    item.folder_path = folder_path
+
+    rows = classify_inventory([item])
+
+    assert rows[0].business_module == expected
+    assert rows[0].classification_status == "approved"
+    assert rows[0].classification_source == "course_inherited"
+
+
 def _test_dir() -> Path:
     path = Path(".test-tmp") / f"video-features-{uuid.uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)

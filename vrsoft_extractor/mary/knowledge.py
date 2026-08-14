@@ -162,6 +162,14 @@ def extract_knowledge_entities(text: str) -> dict[str, tuple[str, ...]]:
             flags=re.I,
         )
     )
+    identifiers = set(
+        match.group(0).casefold()
+        for match in re.finditer(
+            r"\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z][a-z0-9_-]{2,}\b",
+            raw,
+            flags=re.I,
+        )
+    )
     routines = set()
     for marker in ("venda", "estoque", "nota fiscal", "tef", "cadastro", "importacao"):
         if marker in normalized:
@@ -171,6 +179,7 @@ def extract_knowledge_entities(text: str) -> dict[str, tuple[str, ...]]:
         "tables": tuple(sorted(tables)[:40]),
         "fields": tuple(sorted(fields)[:40]),
         "functions": tuple(sorted(functions)[:30]),
+        "identifiers": tuple(sorted(identifiers)[:40]),
         "errors": tuple(sorted(errors)[:12]),
         "routines": tuple(sorted(routines)),
         "numbers": tuple(sorted(numbers)),

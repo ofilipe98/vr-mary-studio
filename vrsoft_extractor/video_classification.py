@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
-from .mary.classifier import classify
+from .mary.classifier import classify, explicit_module_category
 from .models import VideoItem
 
 
@@ -129,6 +129,11 @@ def classify_inventory(
 
 def _classify_group(items: list[VideoItem]):
     first = items[0]
+    category = explicit_module_category(
+        part
+        for item in items
+        for part in (item.course, item.module, *item.folder_path)
+    )
     if first.area == "curso":
         title = first.course or (first.folder_path[0] if first.folder_path else "")
         chapters = " ".join(
@@ -137,23 +142,33 @@ def _classify_group(items: list[VideoItem]):
         return classify(
             title,
             chapters,
+            category=category,
             product=_video_product(title),
         )
 
     folder_path = first.folder_path or [first.course]
     title = folder_path[-1] if folder_path else first.course
     context = " ".join(folder_path)
-    return classify(title, context, product=_video_product(title))
+    return classify(
+        title,
+        context,
+        category=category,
+        product=_video_product(title),
+    )
 
 
 def _classify_lesson(item: VideoItem):
     hierarchy = " ".join(item.folder_path)
+    category = explicit_module_category(
+        (item.course, item.module, *item.folder_path)
+    )
     product = item.course if item.area == "curso" else (
         item.folder_path[-1] if item.folder_path else item.course
     )
     return classify(
         item.lesson_title,
         f"{item.course} {item.module} {hierarchy}",
+        category=category,
         product=_video_product(product),
     )
 

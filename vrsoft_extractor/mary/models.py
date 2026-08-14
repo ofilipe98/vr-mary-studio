@@ -165,11 +165,56 @@ class EvidenceConflict:
 
 
 @dataclass(frozen=True)
+class SourceSearchReport:
+    source: str
+    status: str
+    module: str = ""
+    queries: tuple[str, ...] = ()
+    candidates_examined: int = 0
+    documents_examined: int = 0
+    selected_evidence_ids: tuple[str, ...] = ()
+    exhaustion_reason: str = ""
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "status": self.status,
+            "module": self.module,
+            "queries": list(self.queries),
+            "candidates_examined": self.candidates_examined,
+            "documents_examined": self.documents_examined,
+            "selected_evidence_ids": list(self.selected_evidence_ids),
+            "exhaustion_reason": self.exhaustion_reason,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class ModuleRoutingDecision:
+    module: str
+    selected: bool
+    confidence: float = 0.0
+    reasons: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "module": self.module,
+            "selected": self.selected,
+            "status": "selected" if self.selected else "not_applicable",
+            "confidence": self.confidence,
+            "reasons": list(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
 class EvidenceBundle:
     profile: QueryProfile
     candidates: tuple[EvidenceCandidate, ...] = ()
     groups: tuple[EvidenceGroup, ...] = ()
     conflicts: tuple[EvidenceConflict, ...] = ()
+    source_reports: tuple[SourceSearchReport, ...] = ()
+    module_routing: tuple[ModuleRoutingDecision, ...] = ()
     missing_sources: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -180,12 +225,48 @@ class EvidenceBundle:
             counts[candidate.source] = counts.get(candidate.source, 0) + 1
         return counts
 
+    @property
+    def selected_modules(self) -> tuple[str, ...]:
+        return tuple(
+            item.module for item in self.module_routing if item.selected
+        )
+
+    @property
+    def routing_scope(self) -> str:
+        if len(self.selected_modules) > 1:
+            return "multimodule"
+        if self.selected_modules:
+            return "single_module"
+        return "unclassified"
+
+    def source_report(
+        self, source: str, module: str = ""
+    ) -> SourceSearchReport | None:
+        normalized = str(source or "").strip().casefold()
+        normalized_module = str(module or "").strip().casefold()
+        return next(
+            (
+                item
+                for item in self.source_reports
+                if item.source == normalized
+                and (
+                    not normalized_module
+                    or item.module.casefold() == normalized_module
+                )
+            ),
+            None,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile": self.profile.to_dict(),
             "candidates": [item.to_dict() for item in self.candidates],
             "groups": [item.to_dict() for item in self.groups],
             "conflicts": [item.to_dict() for item in self.conflicts],
+            "source_reports": [item.to_dict() for item in self.source_reports],
+            "module_routing": [item.to_dict() for item in self.module_routing],
+            "selected_modules": list(self.selected_modules),
+            "routing_scope": self.routing_scope,
             "missing_sources": list(self.missing_sources),
             "warnings": list(self.warnings),
             "source_counts": self.source_counts,
