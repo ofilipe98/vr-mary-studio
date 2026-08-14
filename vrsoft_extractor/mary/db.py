@@ -205,6 +205,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
     difficulty_routing INTEGER NOT NULL DEFAULT 1,
     vr_enabled INTEGER NOT NULL DEFAULT 0,
+    context_used_tokens INTEGER NOT NULL DEFAULT 0,
+    context_window_tokens INTEGER NOT NULL DEFAULT 0,
+    total_processed_tokens INTEGER NOT NULL DEFAULT 0,
     trashed_at TEXT NOT NULL DEFAULT '',
     original_workspace TEXT NOT NULL DEFAULT '',
     cloned_from TEXT NOT NULL DEFAULT '',
@@ -382,6 +385,9 @@ class MaryDatabase:
                 ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
                 ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("context_used_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("context_window_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("total_processed_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("trashed_at", "TEXT NOT NULL DEFAULT ''"),
                 ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
             ):
@@ -1487,6 +1493,24 @@ class MaryDatabase:
         )
         return scored[: max(1, int(limit))]
 
+    def document_chunks(self, document_id: int) -> list[dict[str, Any]]:
+        """Return every indexed section for one document with source metadata."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT c.id AS chunk_id,c.heading,c.content,c.content_type,
+                          c.entities_json,c.content_hash AS chunk_hash,
+                          d.id AS document_id,d.source,d.source_id,d.title,d.url,
+                          d.module,d.product,d.category,d.updated_at,d.synced_at,
+                          d.local_path,d.review_status,d.classification_confidence
+                     FROM knowledge_chunks c
+                     JOIN documents d ON d.id=c.document_id
+                    WHERE d.id=? AND d.status='active'
+                    ORDER BY c.id""",
+                (max(0, int(document_id)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def search_schema_catalog(
         self, query: str, limit: int = 8
     ) -> list[dict[str, Any]]:
@@ -1751,6 +1775,7 @@ class MaryDatabase:
             "show_execution", "explain_routing",
             "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
             "workspace", "original_workspace", "vr_enabled",
+            "context_used_tokens", "context_window_tokens", "total_processed_tokens",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
         if self.root:

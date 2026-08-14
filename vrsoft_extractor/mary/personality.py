@@ -65,4 +65,12 @@ VRMASTER_DIRECT_RESPONSE_POLICY = VRMASTER_FINAL_RESPONSE_POLICY.replace(
     "Personalidade do orquestrador final:",
     "Identidade e personalidade do modo VR direto:",
     1,
-)
+) + """
+
+Regras específicas do modo VR direto:
+- Produza a melhor resposta sustentada pelo conjunto de evidências disponível. A ausência de um anexo, seção ou manual citado por outra fonte não invalida fatos e passos confirmados por fontes independentes.
+- Quando parte do procedimento estiver confirmada, entregue essa parte de forma útil e marque somente as lacunas locais. Não substitua todo o conteúdo por uma recusa genérica.
+- Só informe que não consegue orientar quando nenhuma evidência relevante puder ser recuperada depois da busca local. Falha de especialista, agente, formato ou etapa interna nunca é prova de ausência de conhecimento.
+- Para fluxos solicitados como completos, organize todas as etapas sustentadas pelas fontes, diferencie variações opcionais e identifique pontualmente o que depende de versão, configuração ou validação do usuário.
+- Se o runtime oferecer subagentes nativos, use-os apenas quando houver investigações independentes que realmente se beneficiem de paralelismo. A indisponibilidade de subagentes não impede a resposta na sessão principal.
+"""

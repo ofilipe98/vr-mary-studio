@@ -26,7 +26,6 @@ from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
-    QConicalGradient,
     QFont,
     QIcon,
     QKeySequence,
@@ -146,26 +145,6 @@ def provider_icon(provider: str) -> QIcon:
     icon = QIcon(pixmap)
     _PROVIDER_ICON_CACHE[provider_name] = icon
     return icon
-
-
-_RAINBOW_STOPS = (
-    (0.00, "#FF4D4D"),
-    (0.14, "#FF9F1C"),
-    (0.28, "#FFE66D"),
-    (0.42, "#35D07F"),
-    (0.57, "#26C6DA"),
-    (0.71, "#4F7CFF"),
-    (0.85, "#A855F7"),
-    (0.93, "#FF4D9D"),
-    (1.00, "#FF4D4D"),
-)
-
-
-def _rainbow_gradient(bounds: QRectF, phase: float) -> QConicalGradient:
-    gradient = QConicalGradient(bounds.center(), -90.0 + (360.0 * phase))
-    for position, color in _RAINBOW_STOPS:
-        gradient.setColorAt(position, QColor(color))
-    return gradient
 
 
 class AnimatedVrFlowButton(QToolButton):
@@ -419,28 +398,15 @@ class VrComposerGlowFrame(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         bounds = QRectF(self.rect()).adjusted(3.0, 3.0, -3.0, -3.0)
-        if self._mode == "ultra":
-            gradient = _rainbow_gradient(bounds, self._phase)
-        else:
-            gradient = QConicalGradient(
-                bounds.center(),
-                -90.0 + (360.0 * self._phase),
-            )
-            gradient.setColorAt(0.00, QColor("#7A3500"))
-            gradient.setColorAt(0.18, QColor("#FF7200"))
-            gradient.setColorAt(0.36, QColor("#FCBD0F"))
-            gradient.setColorAt(0.55, QColor("#E85B00"))
-            gradient.setColorAt(0.74, QColor("#C45100"))
-            gradient.setColorAt(0.90, QColor("#FF9A3D"))
-            gradient.setColorAt(1.00, QColor("#7A3500"))
+        outline = QColor("#FF9A3D" if self._mode == "ultra" else "#D96B20")
         if self._phase_animation.state() == QPropertyAnimation.Running:
             pulse = 1.0 - abs((2.0 * self._phase) - 1.0)
-            painter.setOpacity(0.16 + (0.18 * pulse))
-            painter.setPen(QPen(QBrush(gradient), 6.0))
+            painter.setOpacity(0.10 + (0.10 * pulse))
+            painter.setPen(QPen(outline, 4.0))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(bounds, 27.0, 27.0)
         painter.setOpacity(1.0)
-        painter.setPen(QPen(QBrush(gradient), 2.4))
+        painter.setPen(QPen(outline, 1.6 if self._mode == "standard" else 2.0))
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(bounds, 27.0, 27.0)
 
@@ -867,7 +833,9 @@ class MarkdownMessageWidget(QWidget):
         return browser
 
     def _resize_markdown_browser(self, browser: QTextBrowser) -> None:
-        target = max(30, min(1200, int(browser.document().size().height()) + 8))
+        # The browser has no internal vertical scrollbar, so its viewport must
+        # grow with the full document. Capping this value clipped long answers.
+        target = max(30, min(16_000_000, int(browser.document().size().height()) + 8))
         if browser.height() != target:
             browser.setFixedHeight(target)
             self.updateGeometry()
@@ -901,7 +869,7 @@ class ProjectPickerDialog(RoundedPopupDialog):
         self.setWindowTitle("Selecionar projeto")
         self.setModal(True)
         self.setMinimumSize(560, 260)
-        self.resize(620, min(480, 170 + 58 * max(1, len(projects))))
+        self.resize(620, min(480, 132 + 58 * max(1, len(projects))))
         self._projects = list(dict.fromkeys(path.resolve() for path in projects))
         self._selected_project: Path | None = None
 

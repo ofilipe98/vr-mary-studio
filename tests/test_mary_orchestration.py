@@ -46,16 +46,56 @@ from vrsoft_extractor.mary.providers import (
     CodexProvider,
     OpenCodeProvider,
     ProviderError,
+    _claude_token_usage,
     _opencode_environment,
+    _opencode_token_usage,
     _parse_opencode_models,
 )
 
 
-def _settings(tmp_path: Path) -> MarySettings:
+def test_provider_usage_payloads_share_one_context_shape() -> None:
+    claude = _claude_token_usage(
+        {
+            "usage": {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 40,
+                "cache_creation_input_tokens": 10,
+                "output_tokens": 25,
+            },
+            "modelUsage": {"sonnet": {"contextWindow": 200_000}},
+        }
+    )
+    opencode = _opencode_token_usage(
+        {
+            "type": "step_finish",
+            "part": {
+                "tokens": {
+                    "input": 80,
+                    "output": 20,
+                    "reasoning": 5,
+                    "cache": {"read": 30, "write": 4},
+                },
+                "contextWindow": 128_000,
+            },
+        }
+    )
+
+    assert claude is not None
+    assert claude["tokenUsage"]["last"]["totalTokens"] == 175
+    assert claude["tokenUsage"]["modelContextWindow"] == 200_000
+    assert opencode is not None
+    assert opencode["tokenUsage"]["last"]["totalTokens"] == 105
+    assert opencode["tokenUsage"]["modelContextWindow"] == 128_000
+
+
+def _settings(
+    tmp_path: Path, *, legacy_vr_orchestration: bool = True
+) -> MarySettings:
     settings = MarySettings(
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "mary").resolve(),
         old_root=(tmp_path / "old").resolve(),
+        legacy_vr_orchestration=legacy_vr_orchestration,
     )
     settings.app_dir.mkdir(parents=True)
     settings.old_root.mkdir(parents=True)
@@ -1021,11 +1061,13 @@ def test_vrmaster_personality_is_applied_to_each_orchestration_stage() -> None:
 
     assert "Sintoma -> Contexto -> Evidência" in planner
     assert "Não complete lacunas com conhecimento próprio" in worker
+    assert "A presença de uma evidência no pacote não" in worker
     assert "ações destrutivas ou de alto impacto" in validation
     assert "Especialista Técnico em ERP VRMaster" in synthesis
     assert "Precisão > Evidência" in synthesis
     assert "Nunca esconda incerteza" in synthesis
     assert "Não recomende alteração direta de banco" in synthesis
+    assert "evidência disponível não amplia o escopo" in synthesis
 
 
 def test_execution_batches_run_every_non_final_agent_in_parallel() -> None:
@@ -1283,19 +1325,25 @@ def test_vr_off_bypasses_personality_base_and_orchestration(tmp_path: Path) -> N
     assert database.messages(conversation_id)[-1]["response_mode"] == "native"
 
 
+@pytest.mark.parametrize("provider_name", ("codex", "opencode"))
 def test_vr_on_direct_adds_identity_and_local_base_without_multiagent(
     tmp_path: Path,
+    provider_name: str,
 ) -> None:
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, legacy_vr_orchestration=False)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
-    provider = FakeProvider("codex")
-    orchestrator.providers = {"codex": provider}
+    provider = FakeProvider(provider_name)
+    orchestrator.providers = {provider_name: provider}
     conversation_id = orchestrator.new_conversation(
-        "codex",
+        provider_name,
         "sol",
         defer_provider_start=True,
-        orchestration=OrchestrationOptions(mode="off"),
+        # Stored legacy choices must no longer reactivate the proprietary graph.
+        orchestration=OrchestrationOptions(
+            mode="standard",
+            model_pool=(ModelRef(provider_name, "sol", "Sol"),),
+        ),
         vr_enabled=True,
     )
     completed = threading.Event()
@@ -1316,6 +1364,7 @@ def test_vr_on_direct_adds_identity_and_local_base_without_multiagent(
     assert str(settings.root) in prompt
     assert provider.sent[0]["options"].vr_enabled is True
     assert provider.start_options[0].vr_enabled is True
+    assert not any(":vr:" in item["conversation_id"] for item in provider.sent)
     assert database.messages(conversation_id)[-1]["response_mode"] == "vr"
 
 
@@ -1349,6 +1398,7 @@ def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
 
     functional = router.classify("Para que serve e como funciona a função 102?")
     process = router.classify("Como fazer o passo a passo para configurar o TEF?")
+    sped_process = router.classify("Como gerar SPED Fiscal no VR?")
     technical = router.classify(
         "Qual tabela e chave estrangeira relacionam venda e estoque?"
     )
@@ -1360,11 +1410,130 @@ def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
     assert functional.entities["functions"] == ("102",)
     assert functional.entities["numbers"] == ("102",)
     assert process.answer_type == "process"
+    assert sped_process.answer_type == "process"
     assert technical.answer_type == "technical_schema"
     assert hybrid.answer_type == "hybrid"
     assert all(abs(sum(item.intents.values()) - 1.0) < 0.001 for item in (
-        functional, process, technical, hybrid
+        functional, process, sped_process, technical, hybrid
     ))
+
+
+def test_process_route_expands_wiki_index_and_does_not_inject_schema(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    documents = (
+        KnowledgeDocument(
+            source="wiki",
+            source_id="sped-wiki",
+            title="SPED Fiscal",
+            url="https://wiki.example/sped",
+            markdown="""# Índice
+
+1. Recursos
+2. Configurar
+3. Geração SPED Fiscal
+
+## Recursos
+
+A rotina exporta a escrituração fiscal.
+
+## Configurar
+
+Selecione o perfil e a versão do leiaute.
+
+## Geração SPED Fiscal
+
+Informe período, data de apuração, loja e destino; depois clique em Exportar.
+""",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="sped-wiki",
+            local_path="conhecimento/Fiscal/Wiki/sped.md",
+        ),
+        KnowledgeDocument(
+            source="kb",
+            source_id="sped-kb",
+            title="Como gerar o SPED Fiscal",
+            url="https://kb.example/sped",
+            markdown="Preencha período, versão, loja e destino e clique em Exportar.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="sped-kb",
+            local_path="conhecimento/Fiscal/KB/sped.md",
+        ),
+        KnowledgeDocument(
+            source="schema",
+            source_id="sped-schema",
+            title="Tabela SPED Fiscal",
+            url="",
+            markdown="A tabela sped_fiscal possui id e periodo.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="sped-schema",
+            local_path="conhecimento/Fiscal/Schema/sped.md",
+        ),
+    )
+    for document in documents:
+        database.upsert_document(document)
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Como gerar SPED Fiscal no VR?"
+    )
+
+    headings = {item.heading for item in bundle.candidates if item.source == "wiki"}
+    assert bundle.profile.answer_type == "process"
+    assert bundle.source_counts["schema"] == 0
+    assert "Geração SPED Fiscal" in headings
+    assert "Configurar" in headings
+
+
+def test_router_ignores_presentation_modifiers_and_keeps_primary_procedure(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="entrada-principal",
+            title="Manual Nota Fiscal Entrada",
+            url="https://wiki.example/entrada",
+            markdown="""# Processo de entrada de nota
+
+## Lançamento manual de nota fiscal entrada
+
+Acesse Nota Fiscal, inclua a nota, preencha o cabeçalho, informe os itens,
+salve e finalize a entrada.
+""",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="entrada-principal",
+            local_path="conhecimento/Fiscal/Wiki/entrada.md",
+        )
+    )
+    for index in range(6):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_id=f"entrada-incidental-{index}",
+                title=f"Erro {index} ao finalizar nota entrada",
+                url=f"https://wiki.example/erro-{index}",
+                markdown="Mensagem específica de erro durante um caso excepcional.",
+                module="Fiscal",
+                review_status="approved",
+                content_hash=f"entrada-incidental-{index}",
+                local_path=f"conhecimento/Fiscal/Wiki/erro-{index}.md",
+            )
+        )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Crie um fluxo completo do processo de entrada de nota"
+    )
+
+    assert bundle.profile.terms == ("fluxo", "processo", "entrada", "nota")
+    assert any(item.source_id == "entrada-principal" for item in bundle.candidates)
 
 
 def test_generic_alphanumeric_entities_are_recognized_without_topic_rules() -> None:
@@ -1406,6 +1575,54 @@ def test_source_research_plan_is_mandatory_even_for_a_simple_plan() -> None:
     schema = next(item for item in expanded.agents if item.id == "vr_dba__schema")
     assert dba.depends_on == ("vr_dba__schema",)
     assert schema.parent_id == "vr_dba"
+
+
+def test_source_research_plan_respects_the_routed_source_contract() -> None:
+    model = ModelRef("codex", "sol", "Sol")
+    final = VrAgentAssignment(
+        "final",
+        AGENT_CATALOG["vr_synthesizer"],
+        model,
+        "Responder.",
+        "",
+    )
+    plan = VrPlan(2, "Moderada", "Pesquisa dirigida.", "specialized", (final,))
+    options = OrchestrationOptions(mode="standard", model_pool=(model,))
+
+    process = ensure_source_research_plan(
+        plan,
+        options,
+        model,
+        (model,),
+        modules=("Fiscal",),
+        sources=("kb", "wiki"),
+        required_sources=("kb",),
+    )
+    technical = ensure_source_research_plan(
+        plan,
+        options,
+        model,
+        (model,),
+        modules=("Fiscal",),
+        sources=("schema",),
+        required_sources=("schema",),
+    )
+
+    assert {item.id for item in process.agents} == {
+        "vr_fisco",
+        "vr_fisco__wiki",
+        "vr_fisco__kb",
+        "final",
+    }
+    assert next(item for item in process.agents if item.id == "vr_fisco__kb").required
+    assert not next(
+        item for item in process.agents if item.id == "vr_fisco__wiki"
+    ).required
+    assert {item.id for item in technical.agents} == {
+        "vr_dba",
+        "vr_dba__schema",
+        "final",
+    }
 
 
 def test_module_specialists_use_wiki_kb_and_dba_owns_global_schema() -> None:
@@ -1803,7 +2020,7 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
     ("mode", "difficulty", "expected_effective", "expected_workers"),
     (
         ("off", 5, None, 0),
-        ("automatic", 1, "off", 4),
+        ("automatic", 1, "off", 0),
         ("automatic", 3, "standard", 5),
         ("automatic", 4, "ultra", 8),
         ("standard", 4, "standard", 5),

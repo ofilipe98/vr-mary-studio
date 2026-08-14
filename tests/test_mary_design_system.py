@@ -52,7 +52,7 @@ class MaryDesignSystemTest(unittest.TestCase):
         self.assertEqual(button.focusPolicy(), Qt.StrongFocus)
         button.close()
 
-    def test_project_scope_popup_exposes_all_recent_and_add_actions(self):
+    def test_project_scope_popup_exposes_only_scope_and_recent_projects(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             projects = []
@@ -70,8 +70,12 @@ class MaryDesignSystemTest(unittest.TestCase):
                     "Todos os projetos",
                     "alpha",
                     "beta",
-                    "Adicionar projeto…",
                 ],
+            )
+            self.assertFalse(hasattr(popup, "add_button"))
+            self.assertLess(
+                popup.layout().indexOf(popup.search),
+                popup.layout().indexOf(popup.scroll),
             )
             self.assertEqual(len(popup._rows), 3)
             self.assertTrue(popup._rows[2].property("selected"))
@@ -116,7 +120,7 @@ class MaryDesignSystemTest(unittest.TestCase):
             self.assertIsInstance(row.action_menu, ContextActionMenu)
             self.assertEqual(
                 [action.text() for action in row.action_menu.actions()],
-                ["Abrir pasta", "Remover dos recentes"],
+                ["Abrir pasta", "Remover da lista"],
             )
             row.openRequested.emit(project)
             row.removeRequested.emit(project)

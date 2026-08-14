@@ -40,7 +40,7 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
     assert MANAGED_MARKER in (root / ".codex" / "config.toml").read_text(
         encoding="utf-8"
     )
-    assert "max_threads = 4" in (root / ".codex" / "config.toml").read_text(
+    assert "max_concurrent_threads_per_session = 4" in (root / ".codex" / "config.toml").read_text(
         encoding="utf-8"
     )
     assert (root / ".codex" / "agents" / "fisco.toml").is_file()
@@ -57,7 +57,12 @@ def test_ensure_portable_project_backs_up_full_agents_and_is_idempotent(
     assert "Mary" not in agents
     assert "Mary" not in readme
     assert "Modo multiagente real do Codex indisponível" not in agents
-    assert "tente delegar o papel a um subagente" in agents
+    assert "Use subagentes nativos somente" in agents
+    grace = (root / ".codex" / "agents" / "grace.toml").read_text(
+        encoding="utf-8"
+    )
+    assert "-Source wiki" in grace
+    assert "ausência nunca bloqueia" in grace
     assert not second.preserved
 
 

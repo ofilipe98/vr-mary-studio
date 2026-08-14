@@ -14,8 +14,10 @@ from typing import Any, Callable
 
 from PySide6.QtCore import (
     QObject,
+    QPoint,
     QProcess,
     QProcessEnvironment,
+    QRectF,
     QRunnable,
     QSettings,
     QSize,
@@ -34,6 +36,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QPainter,
     QPalette,
+    QPen,
     QPixmap,
     QShortcut,
     QTextCursor,
@@ -56,11 +59,14 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTabBar,
     QTableWidget,
     QTableWidgetItem,
@@ -260,6 +266,7 @@ STATUS_LABELS = {
     "completed": "Concluído",
     "error": "Erro",
 }
+CONVERSATION_RUNNING_ROLE = int(Qt.UserRole) + 1
 SLASH_COMMANDS = (
     ("plan", "Ativar ou alternar o modo Plan"),
     ("build", "Ativar o modo Build"),
@@ -357,7 +364,14 @@ QLabel#projectSelectorLabel {{
     font-size: 12px; font-weight: 600;
 }}
 QLineEdit#sidebarSearch {{
-    min-height: 34px; background: transparent; border: 0; padding: 0 8px;
+    min-height: 34px; background: transparent; border: 1px solid transparent;
+    border-radius: 8px; padding: 0 8px;
+}}
+QLineEdit#sidebarSearch:hover {{
+    background: #E7E7EA; border-color: #DADAE1;
+}}
+QLineEdit#sidebarSearch:focus {{
+    background: #FFFFFF; border-color: {ACCESSIBLE_ORANGE};
 }}
 QToolButton#sidebarNewChat, QToolButton#sidebarProjectAdd {{
     min-width: 32px; max-width: 32px; min-height: 34px; max-height: 34px;
@@ -410,14 +424,6 @@ QLabel#projectMenuIcon, QLabel#projectMenuName, QLabel#projectMenuCheck {{
     background: transparent;
 }}
 QLabel#projectMenuCheck {{ color: {ACCESSIBLE_ORANGE}; font-weight: 800; }}
-QPushButton#projectMenuAdd {{
-    min-height: 34px; background: transparent; color: {BRAND_NAVY};
-    border: 0; border-top: 1px solid #E2E2E7; border-radius: 0;
-    padding: 4px 8px; text-align: left; font-weight: 600;
-}}
-QPushButton#projectMenuAdd:hover {{
-    background: #F0F0F3; border-radius: 8px;
-}}
 QLabel#chatHeaderTitle {{
     background: transparent; color: {BRAND_NAVY};
     font-size: 13px; font-weight: 700;
@@ -440,6 +446,32 @@ QLabel#chatStatus[statusKind="warning"] {{
 }}
 QLabel#chatStatus[statusKind="error"] {{
     background: #FDE8E7; color: #8C211B;
+}}
+QFrame#contextUsagePanel {{
+    background: #FFFFFF; border: 1px solid #DEDEE7; border-radius: 10px;
+}}
+QLabel#contextUsageTitle {{
+    background: transparent; color: {TEXT_MUTED}; font-size: 11px; font-weight: 700;
+}}
+QLabel#contextUsageValue {{
+    background: transparent; color: {BRAND_NAVY}; font-size: 11px; font-weight: 700;
+}}
+QLabel#contextUsageNote {{
+    background: transparent; color: {TEXT_MUTED}; font-size: 10px;
+}}
+QProgressBar#contextUsageBar {{
+    min-height: 6px; max-height: 6px; background: #E4E4EA;
+    border: 0; border-radius: 3px; text-align: center;
+}}
+QProgressBar#contextUsageBar::chunk {{
+    background: {ACCESSIBLE_ORANGE}; border-radius: 3px;
+}}
+QToolButton#contextUsageButton {{
+    background: transparent; border: 1px solid transparent; border-radius: 16px;
+    padding: 0;
+}}
+QToolButton#contextUsageButton:hover, QToolButton#contextUsageButton:focus {{
+    background: #ECECF1; border-color: #D4D4DC;
 }}
 QLabel#statusBadge {{
     min-height: 26px; padding: 0 9px; border-radius: 8px;
@@ -656,29 +688,56 @@ QFrame#chatComposer {{
 }}
 QFrame#chatComposerGlow {{ background: transparent; border: 0; }}
 QFrame#orchestrationTrace {{
-    background: #FFFFFF; border: 1px solid #DDDDE7; border-radius: 13px;
+    background: #FFFFFF; border: 0; border-left: 1px solid #DDDDE3;
+    border-radius: 0;
 }}
-QLabel#orchestrationTraceTitle {{ font-weight: 700; color: {BRAND_NAVY}; }}
-QLabel#orchestrationTraceStatus {{ color: {ACCESSIBLE_ORANGE}; font-weight: 600; }}
+QFrame#orchestrationTraceTabBar, QFrame#orchestrationAgentHeader {{
+    background: #FFFFFF; border: 0; border-bottom: 1px solid #E1E1E6;
+}}
+QLabel#orchestrationTraceTitle {{
+    color: {BRAND_NAVY}; font-size: 13px; font-weight: 600;
+}}
+QLabel#orchestrationOverviewTitle {{
+    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600;
+}}
+QLabel#orchestrationTraceStatus {{
+    color: {BRAND_NAVY}; font-weight: 400; line-height: 1.4;
+}}
+QLabel#orchestrationTraceElapsed {{ color: {TEXT_MUTED}; font-size: 12px; }}
+QFrame#orchestrationTraceDivider {{
+    min-height: 1px; max-height: 1px; background: #E1E1E6; border: 0;
+}}
+QToolButton#orchestrationBack, QToolButton#traceSidebarToggle {{
+    min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+    color: {TEXT_MUTED}; background: transparent; border: 0; border-radius: 7px;
+    font-size: 18px; padding: 0;
+}}
+QToolButton#orchestrationBack:hover, QToolButton#traceSidebarToggle:hover {{
+    color: {BRAND_NAVY}; background: #EEEEF2;
+}}
+QLabel#orchestrationAgentGlyph {{
+    min-width: 24px; max-width: 24px; color: #7650A8; font-size: 20px;
+    font-weight: 800;
+}}
 QListWidget#orchestrationAgentList {{
     background: transparent; border: 0; outline: 0; padding: 2px 0;
 }}
 QListWidget#orchestrationAgentList::item {{
-    color: {TEXT_MUTED}; border-radius: 9px; padding: 7px 9px; margin: 1px 0;
+    color: {TEXT_MUTED}; border-radius: 9px; padding: 9px 10px; margin: 2px 0;
 }}
 QListWidget#orchestrationAgentList::item:selected {{
-    background: #FFF0E4; color: {BRAND_NAVY};
+    background: #F0EFF3; color: {BRAND_NAVY};
 }}
 QLabel#orchestrationAgentChatTitle {{
-    color: {BRAND_NAVY}; font-size: 14px; font-weight: 700;
+    color: {BRAND_NAVY}; font-size: 13px; font-weight: 700;
 }}
 QTextBrowser#orchestrationAgentRequest {{
-    color: #FFFFFF; background: #7A3210; border-radius: 12px;
+    color: {BRAND_NAVY}; background: #F0EFF3; border-radius: 12px;
     padding: 9px 11px;
 }}
 QLabel#orchestrationAgentTask {{
-    color: {TEXT_MUTED}; background: #F4F4F7; border-radius: 8px;
-    padding: 7px 9px;
+    color: {BRAND_NAVY}; background: transparent; border: 0;
+    padding: 2px 0;
 }}
 QTextBrowser#orchestrationTraceDetails {{
     color: {BRAND_NAVY}; font-size: 13px; background: transparent; border: 0;
@@ -860,14 +919,32 @@ QFrame#userMessage {{
     background: #FFF0E4; border: 0; border-radius: 18px;
 }}
 QFrame#assistantMessage {{ background: transparent; border: 0; }}
-QFrame#chatActivity {{ background: transparent; border: 0; }}
+QFrame#chatActivity, QFrame#chatActivityCompleted {{
+    background: transparent; border: 0;
+}}
 QLabel#chatActivityDot {{
     color: {ACCESSIBLE_ORANGE}; font-size: 10px; padding: 0;
 }}
+QLabel#chatActivityDot[activityState="done"] {{ color: #187A42; font-weight: 700; }}
+QLabel#chatActivityDot[activityState="error"] {{ color: #A1261D; font-weight: 700; }}
 QLabel#chatActivityText {{
-    color: {TEXT_MUTED}; font-size: 12px; padding: 3px 0;
+    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600; padding: 3px 0;
 }}
-QLabel#messageRole {{ color: {BRAND_NAVY}; font-weight: 700; }}
+QFrame#chatActivitySteps {{ background: transparent; border: 0; }}
+QLabel#chatActivityStep {{
+    color: {TEXT_MUTED}; background: transparent; font-size: 11px; padding: 1px 0;
+}}
+QToolButton#chatActivityToggle {{
+    min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px;
+    color: {TEXT_MUTED}; background: transparent; border: 0; border-radius: 6px;
+    padding: 0;
+}}
+QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
+    color: {BRAND_NAVY}; background: #EEEEF2;
+}}
+QLabel#messageRole {{
+    color: {TEXT_MUTED}; font-size: 11px; font-weight: 700; padding-bottom: 1px;
+}}
 QTextBrowser#messageBody {{
     background: transparent; border: 0; padding: 0; font-size: 14px;
 }}
@@ -1110,7 +1187,15 @@ QFrame#projectSelector:focus, QFrame#projectSelector[expanded="true"] {{
     background: #302C29; border-color: #FF9A3D;
 }}
 QLabel#projectSelectorLabel {{ color: {DARK_TEXT}; }}
-QLineEdit#sidebarSearch {{ background: transparent; color: {DARK_TEXT}; border: 0; }}
+QLineEdit#sidebarSearch {{
+    background: transparent; color: {DARK_TEXT}; border-color: transparent;
+}}
+QLineEdit#sidebarSearch:hover {{
+    background: #302C29; border-color: #4B413B;
+}}
+QLineEdit#sidebarSearch:focus {{
+    background: #2B2724; border-color: #FF9A3D;
+}}
 QToolButton#sidebarNewChat, QToolButton#sidebarProjectAdd {{
     background: transparent; color: {DARK_TEXT}; border: 0;
 }}
@@ -1135,10 +1220,6 @@ QToolButton#projectMenuActions {{ color: {DARK_MUTED}; }}
 QToolButton#projectMenuActions:hover, QToolButton#projectMenuActions:focus {{
     background: #403933; color: {DARK_TEXT}; border-color: #FF9A3D;
 }}
-QPushButton#projectMenuAdd {{
-    background: transparent; color: {DARK_TEXT}; border-top-color: #3B3531;
-}}
-QPushButton#projectMenuAdd:hover {{ background: #302C29; }}
 QLabel#chatHeaderTitle {{ color: {DARK_TEXT}; }}
 QLabel#chatHeaderMeta {{ color: {DARK_MUTED}; }}
 QLabel#chatStatus[statusKind="info"] {{
@@ -1152,6 +1233,17 @@ QLabel#chatStatus[statusKind="warning"] {{
 }}
 QLabel#chatStatus[statusKind="error"] {{
     background: #482321; color: #FFAAA3;
+}}
+QFrame#contextUsagePanel {{
+    background: {DARK_SURFACE}; border-color: {DARK_BORDER};
+}}
+QLabel#contextUsageTitle, QLabel#contextUsageNote {{ color: {DARK_MUTED}; }}
+QLabel#contextUsageValue {{ color: {DARK_TEXT}; }}
+QProgressBar#contextUsageBar {{ background: #403832; }}
+QProgressBar#contextUsageBar::chunk {{ background: #FF8A2A; }}
+QToolButton#contextUsageButton {{ background: transparent; border-color: transparent; }}
+QToolButton#contextUsageButton:hover, QToolButton#contextUsageButton:focus {{
+    background: #302C29; border-color: #4B413B;
 }}
 QLabel#statusBadge {{ background: #2B2724; color: {DARK_MUTED}; }}
 QLabel#statusBadge[statusKind="running"] {{ background: #4A2A17; color: #FFCB8F; }}
@@ -1268,20 +1360,34 @@ QFrame#optionPickerPopup,
 QFrame#slashPalette {{
     background: {DARK_SURFACE}; border-color: {DARK_BORDER};
 }}
+QFrame#orchestrationTraceTabBar, QFrame#orchestrationAgentHeader {{
+    background: {DARK_SURFACE}; border-bottom-color: #3A3633;
+}}
 QLabel#orchestrationTraceTitle {{ color: {DARK_TEXT}; }}
-QLabel#orchestrationTraceStatus {{ color: #FFB55C; }}
+QLabel#orchestrationOverviewTitle, QLabel#orchestrationTraceElapsed {{
+    color: {DARK_MUTED};
+}}
+QLabel#orchestrationTraceStatus {{ color: {DARK_TEXT}; }}
+QFrame#orchestrationTraceDivider {{ background: #3A3633; }}
+QToolButton#orchestrationBack, QToolButton#traceSidebarToggle {{
+    color: {DARK_MUTED}; background: transparent; border: 0;
+}}
+QToolButton#orchestrationBack:hover, QToolButton#traceSidebarToggle:hover {{
+    color: {DARK_TEXT}; background: #302C29;
+}}
+QLabel#orchestrationAgentGlyph {{ color: #A98BD0; }}
 QListWidget#orchestrationAgentList::item {{ color: {DARK_MUTED}; }}
 QListWidget#orchestrationAgentList::item:selected {{
-    background: #35251E; color: {DARK_TEXT};
+    background: #302C32; color: {DARK_TEXT};
 }}
 QLabel#orchestrationAgentChatTitle {{ color: {DARK_TEXT}; }}
 QTextBrowser#orchestrationAgentRequest {{
-    color: {DARK_TEXT}; background: #582A12;
+    color: {DARK_TEXT}; background: #302C32;
 }}
 QLabel#orchestrationAgentTask {{
-    color: {DARK_MUTED}; background: {DARK_SURFACE_RAISED};
+    color: {DARK_TEXT}; background: transparent;
 }}
-QLabel#messageRole {{ color: #FFB55C; font-weight: 700; }}
+QLabel#messageRole {{ color: {DARK_MUTED}; }}
 QTextBrowser#orchestrationTraceDetails {{
     color: {DARK_TEXT}; background: transparent; border: 0;
 }}
@@ -1381,8 +1487,16 @@ QPushButton#composerChip:hover {{ background: #4A2A17; }}
 QToolButton#conversationMenu {{ color: {DARK_MUTED}; }}
 QToolButton#conversationMenu:hover {{ background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT}; }}
 QFrame#userMessage {{ background: #45230E; }}
-QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivity {{
+QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivity,
+QFrame#chatActivityCompleted, QFrame#chatActivitySteps {{
     background: transparent; color: {DARK_TEXT};
+}}
+QLabel#chatActivityStep {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityDot[activityState="done"] {{ color: {DARK_STATUS_GOOD}; }}
+QLabel#chatActivityDot[activityState="error"] {{ color: #FFAAA3; }}
+QToolButton#chatActivityToggle {{ color: {DARK_MUTED}; background: transparent; }}
+QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
+    color: {DARK_TEXT}; background: #302C29;
 }}
 QWidget#messageBodyHost {{ background: transparent; }}
 QFrame#codeBlockCard {{
@@ -1557,6 +1671,116 @@ class ChatStatusLabel(QLabel):
         self.setVisible(bool(value.strip()) and value.strip() != "Pronto")
 
 
+class ConversationActivityDelegate(QStyledItemDelegate):
+    """Reserve a small status lane and animate running conversations in place."""
+
+    def __init__(self, parent: QListWidget, *, reduce_motion: bool = False):
+        super().__init__(parent)
+        self._list = parent
+        self._phase = 0
+        self._reduce_motion = bool(reduce_motion)
+        self._timer = QTimer(self)
+        self._timer.setInterval(80)
+        self._timer.timeout.connect(self._advance)
+
+    def set_running(self, running: bool) -> None:
+        if running and not self._reduce_motion:
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
+            self._phase = 0
+            self._list.viewport().update()
+
+    def set_reduced_motion(self, reduced: bool) -> None:
+        self._reduce_motion = bool(reduced)
+        self.set_running(
+            any(
+                bool(self._list.item(index).data(CONVERSATION_RUNNING_ROLE))
+                for index in range(self._list.count())
+            )
+        )
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + 30) % 360
+        self._list.viewport().update()
+
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802 - Qt API
+        running = bool(index.data(CONVERSATION_RUNNING_ROLE))
+        styled = QStyleOptionViewItem(option)
+        if running:
+            styled.rect = option.rect.adjusted(0, 0, -26, 0)
+        super().paint(painter, styled, index)
+        if not running:
+            return
+        diameter = 14.0
+        bounds = QRectF(
+            option.rect.right() - 20.0,
+            option.rect.center().y() - diameter / 2.0,
+            diameter,
+            diameter,
+        )
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        track = QColor(ACCESSIBLE_ORANGE)
+        track.setAlpha(55)
+        painter.setPen(QPen(track, 2.0))
+        painter.drawEllipse(bounds)
+        painter.setPen(QPen(QColor(BRAND_ORANGE), 2.4))
+        painter.drawArc(bounds, int((90 - self._phase) * 16), int(112 * 16))
+        painter.restore()
+
+
+class ContextUsageButton(QToolButton):
+    """Compact context affordance that becomes a spinner during the active turn."""
+
+    def __init__(self, parent: QWidget | None = None, *, reduce_motion: bool = False):
+        super().__init__(parent)
+        self.setObjectName("contextUsageButton")
+        self.setFixedSize(32, 32)
+        self.setAccessibleName("Ver uso da janela de contexto")
+        self.setToolTip("Ver uso da janela de contexto")
+        self._running = False
+        self._phase = 0
+        self._reduce_motion = bool(reduce_motion)
+        self._timer = QTimer(self)
+        self._timer.setInterval(80)
+        self._timer.timeout.connect(self._advance)
+
+    def set_running(self, running: bool) -> None:
+        self._running = bool(running)
+        self.setProperty("running", self._running)
+        if self._running and not self._reduce_motion:
+            self._timer.start()
+        else:
+            self._timer.stop()
+            self._phase = 0
+        self.update()
+
+    def set_reduced_motion(self, reduced: bool) -> None:
+        self._reduce_motion = bool(reduced)
+        self.set_running(self._running)
+
+    def _advance(self) -> None:
+        self._phase = (self._phase + 30) % 360
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        bounds = QRectF(8.0, 8.0, 16.0, 16.0)
+        track = QColor("#77716D" if self.palette().window().color().lightness() < 100 else "#777782")
+        track.setAlpha(115)
+        painter.setPen(QPen(track, 2.4))
+        painter.drawEllipse(bounds)
+        accent = QColor(BRAND_ORANGE if self._running else "#99939A")
+        painter.setPen(QPen(accent, 2.8))
+        span = 105 if self._running else 72
+        painter.drawArc(bounds, int((90 - self._phase) * 16), int(span * 16))
+        painter.end()
+
+
 class ResponsiveComposerHost(QWidget):
     compactChanged = Signal(bool)
 
@@ -1711,6 +1935,11 @@ class MainWindow(QMainWindow):
         self._active_response_mode = "vr"
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
+        self.chat_activity_dot: QLabel | None = None
+        self.chat_activity_toggle: QToolButton | None = None
+        self.chat_activity_details: QFrame | None = None
+        self.chat_activity_details_layout: QVBoxLayout | None = None
+        self._chat_activity_steps: list[str] = []
         self.video_process: QProcess | None = None
         self._video_decoder = new_video_output_decoder()
         self.sync_running = False
@@ -2251,8 +2480,8 @@ class MainWindow(QMainWindow):
 
         conversations = QFrame(objectName="chatSidebar")
         self.chat_sidebar = conversations
-        conversations.setMinimumWidth(210)
-        conversations.setMaximumWidth(330)
+        conversations.setMinimumWidth(220)
+        conversations.setMaximumWidth(290)
         left = QVBoxLayout(conversations)
         left.setContentsMargins(10, 16, 10, 12)
         left.setSpacing(6)
@@ -2281,7 +2510,6 @@ class MainWindow(QMainWindow):
         self.project_button = ProjectScopeButton()
         self.project_menu = ProjectScopePopup(self.project_button, self)
         self.project_menu.projectSelected.connect(self._select_project_scope)
-        self.project_menu.addProjectRequested.connect(self.choose_project_folder)
         self.project_menu.openProjectRequested.connect(self._open_recent_project)
         self.project_menu.removeProjectRequested.connect(
             self._remove_recent_project
@@ -2297,10 +2525,9 @@ class MainWindow(QMainWindow):
         self.add_project_button.setIcon(QIcon(str(ASSET_DIR / project_add_icon)))
         self.add_project_button.setIconSize(QSize(16, 16))
         self.add_project_button.setAccessibleName("Adicionar projeto")
-        self.add_project_button.setToolTip("Adicionar projeto")
+        self.add_project_button.setToolTip("Adicionar projeto de qualquer pasta")
         self.add_project_button.clicked.connect(self.choose_project_folder)
         project_row.addWidget(self.add_project_button)
-        self.add_project_button.hide()
         left.addLayout(project_row)
         self._update_project_button()
 
@@ -2331,6 +2558,11 @@ class MainWindow(QMainWindow):
         left.addSpacing(6)
         self.conversation_list = QListWidget()
         self.conversation_list.setObjectName("conversationList")
+        self.conversation_activity_delegate = ConversationActivityDelegate(
+            self.conversation_list,
+            reduce_motion=self.reduce_motion,
+        )
+        self.conversation_list.setItemDelegate(self.conversation_activity_delegate)
         self.conversation_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.conversation_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.conversation_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -2393,7 +2625,7 @@ class MainWindow(QMainWindow):
         self.chat_status = ChatStatusLabel()
         header.addWidget(self.chat_status, 0, Qt.AlignVCenter)
         self.vr_agents_toggle_button = QToolButton(objectName="agentSidebarToggle")
-        self.vr_agents_toggle_button.setText("Agentes")
+        self.vr_agents_toggle_button.setText("Subagentes")
         self.vr_agents_toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.vr_agents_toggle_button.setAccessibleName(
             "Expandir acompanhamento dos agentes VR"
@@ -2435,6 +2667,9 @@ class MainWindow(QMainWindow):
         self.model_combo.currentIndexChanged.connect(
             lambda _index: self._update_orchestration_summary()
         )
+        self.model_combo.currentIndexChanged.connect(
+            lambda _index: self._refresh_context_usage()
+        )
         self.model_combo.providerModelSelected.connect(self._model_picker_selected)
         self.model_combo.retryRequested.connect(
             lambda provider: self.load_models(force=True, provider_override=provider)
@@ -2448,7 +2683,6 @@ class MainWindow(QMainWindow):
             "Controla quanto raciocínio o agente usa nesta conversa."
         )
         self.effort_combo.currentTextChanged.connect(self._chat_option_changed)
-        self.effort_combo.activated.connect(self._ensure_draft_conversation)
         self.tier_combo = RoundedComboBox()
         self.tier_combo.setAccessibleName("Camada de serviço")
         self.tier_combo.setToolTip("Camada de serviço anunciada pelo modelo.")
@@ -2481,10 +2715,10 @@ class MainWindow(QMainWindow):
         self.message_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.message_container = QWidget(objectName="messageContainer")
         message_outer_layout = QHBoxLayout(self.message_container)
-        message_outer_layout.setContentsMargins(14, 10, 14, 10)
+        message_outer_layout.setContentsMargins(20, 12, 20, 12)
         message_outer_layout.setSpacing(0)
         self.message_column = QWidget(objectName="messageColumn")
-        self.message_column.setMaximumWidth(920)
+        self.message_column.setMaximumWidth(880)
         self.message_column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.message_layout = QVBoxLayout(self.message_column)
         self.message_layout.setContentsMargins(0, 0, 0, 0)
@@ -2497,26 +2731,25 @@ class MainWindow(QMainWindow):
         self.message_scroll.setWidget(self.message_container)
         center_layout.addWidget(self.message_scroll, 1)
         self.orchestration_trace = QFrame(objectName="orchestrationTrace")
-        self.orchestration_trace.setMinimumWidth(360)
-        self.orchestration_trace.setMaximumWidth(540)
+        self.orchestration_trace.setMinimumWidth(340)
+        self.orchestration_trace.setMaximumWidth(520)
         self.orchestration_trace.setSizePolicy(
             QSizePolicy.Preferred, QSizePolicy.Expanding
         )
         trace_layout = QVBoxLayout(self.orchestration_trace)
-        trace_layout.setContentsMargins(14, 10, 14, 10)
-        trace_layout.setSpacing(4)
+        trace_layout.setContentsMargins(0, 0, 0, 0)
+        trace_layout.setSpacing(0)
+        trace_tab_bar = QFrame(objectName="orchestrationTraceTabBar")
+        trace_tab_bar.setFixedHeight(48)
         trace_header = QHBoxLayout()
+        trace_header.setContentsMargins(14, 0, 10, 0)
+        trace_header.setSpacing(8)
         self.orchestration_trace_title = QLabel(
-            "Orquestração VR", objectName="orchestrationTraceTitle"
+            "Subagentes", objectName="orchestrationTraceTitle"
         )
-        self.orchestration_trace_status = QLabel(
-            "", objectName="orchestrationTraceStatus"
-        )
-        self.orchestration_trace_status.setWordWrap(True)
         trace_header.addWidget(self.orchestration_trace_title)
         trace_header.addStretch()
         close_trace = QToolButton(objectName="traceSidebarToggle")
-        close_trace.setFixedSize(32, 32)
         close_trace.setText("×")
         close_trace.setAccessibleName("Recolher acompanhamento dos agentes VR")
         close_trace.setToolTip("Recolher acompanhamento dos agentes VR")
@@ -2525,8 +2758,24 @@ class MainWindow(QMainWindow):
         )
         self.orchestration_trace_close_button = close_trace
         trace_header.addWidget(close_trace)
-        trace_layout.addLayout(trace_header)
-        trace_layout.addWidget(self.orchestration_trace_status)
+        trace_tab_bar.setLayout(trace_header)
+        trace_layout.addWidget(trace_tab_bar)
+
+        self.orchestration_trace_stack = QStackedWidget(
+            objectName="orchestrationTraceStack"
+        )
+        self.orchestration_trace_overview = QWidget(
+            objectName="orchestrationTraceOverview"
+        )
+        overview_layout = QVBoxLayout(self.orchestration_trace_overview)
+        overview_layout.setContentsMargins(14, 16, 14, 12)
+        overview_layout.setSpacing(10)
+        overview_layout.addWidget(
+            QLabel(
+                "Subagentes desta execução",
+                objectName="orchestrationOverviewTitle",
+            )
+        )
         self.orchestration_agent_list = QListWidget(
             objectName="orchestrationAgentList"
         )
@@ -2539,17 +2788,65 @@ class MainWindow(QMainWindow):
         self.orchestration_agent_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarAlwaysOff
         )
-        self.orchestration_agent_list.setMinimumHeight(86)
-        self.orchestration_agent_list.setMaximumHeight(190)
         self.orchestration_agent_list.currentItemChanged.connect(
             self._select_orchestration_agent
         )
-        trace_layout.addWidget(self.orchestration_agent_list)
+        overview_layout.addWidget(self.orchestration_agent_list, 1)
+        self.orchestration_trace_stack.addWidget(self.orchestration_trace_overview)
+
+        self.orchestration_trace_detail = QWidget(
+            objectName="orchestrationTraceDetail"
+        )
+        detail_layout = QVBoxLayout(self.orchestration_trace_detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(0)
+        agent_header = QFrame(objectName="orchestrationAgentHeader")
+        agent_header.setMinimumHeight(48)
+        agent_header_layout = QHBoxLayout(agent_header)
+        agent_header_layout.setContentsMargins(12, 7, 14, 7)
+        agent_header_layout.setSpacing(8)
+        self.orchestration_agent_back_button = QToolButton(
+            objectName="orchestrationBack"
+        )
+        self.orchestration_agent_back_button.setText("‹")
+        self.orchestration_agent_back_button.setAccessibleName(
+            "Voltar à lista de subagentes"
+        )
+        self.orchestration_agent_back_button.setToolTip(
+            "Voltar à lista de subagentes"
+        )
+        self.orchestration_agent_back_button.clicked.connect(
+            self._show_orchestration_agent_overview
+        )
+        agent_header_layout.addWidget(self.orchestration_agent_back_button)
+        agent_header_layout.addWidget(
+            QLabel("#", objectName="orchestrationAgentGlyph")
+        )
         self.orchestration_agent_chat_title = QLabel(
             "Selecione um agente", objectName="orchestrationAgentChatTitle"
         )
         self.orchestration_agent_chat_title.setWordWrap(True)
-        trace_layout.addWidget(self.orchestration_agent_chat_title)
+        agent_header_layout.addWidget(self.orchestration_agent_chat_title, 1)
+        detail_layout.addWidget(agent_header)
+
+        detail_body = QWidget(objectName="orchestrationAgentBody")
+        detail_body_layout = QVBoxLayout(detail_body)
+        detail_body_layout.setContentsMargins(30, 18, 24, 16)
+        detail_body_layout.setSpacing(10)
+        self.orchestration_trace_elapsed = QLabel(
+            "", objectName="orchestrationTraceElapsed"
+        )
+        detail_body_layout.addWidget(self.orchestration_trace_elapsed)
+        detail_divider = QFrame(objectName="orchestrationTraceDivider")
+        detail_body_layout.addWidget(detail_divider)
+        self.orchestration_trace_status = QLabel(
+            "", objectName="orchestrationTraceStatus"
+        )
+        self.orchestration_trace_status.setWordWrap(True)
+        self.orchestration_trace_status.setTextInteractionFlags(
+            Qt.TextSelectableByMouse
+        )
+        detail_body_layout.addWidget(self.orchestration_trace_status)
         self.orchestration_agent_request = QTextBrowser(
             objectName="orchestrationAgentRequest"
         )
@@ -2565,7 +2862,7 @@ class MainWindow(QMainWindow):
         )
         self.orchestration_agent_request.setMaximumWidth(430)
         self.orchestration_agent_request.hide()
-        trace_layout.addWidget(
+        detail_body_layout.addWidget(
             self.orchestration_agent_request, 0, Qt.AlignRight
         )
         self.orchestration_agent_task = QLabel(
@@ -2576,7 +2873,7 @@ class MainWindow(QMainWindow):
             Qt.TextSelectableByMouse
         )
         self.orchestration_agent_task.hide()
-        trace_layout.addWidget(self.orchestration_agent_task)
+        detail_body_layout.addWidget(self.orchestration_agent_task)
         self.orchestration_trace_details = QTextBrowser(
             objectName="orchestrationTraceDetails"
         )
@@ -2593,21 +2890,71 @@ class MainWindow(QMainWindow):
         self.orchestration_trace_details.setTextInteractionFlags(
             Qt.TextSelectableByMouse
         )
-        trace_layout.addWidget(self.orchestration_trace_details)
+        detail_body_layout.addWidget(self.orchestration_trace_details, 1)
+        detail_layout.addWidget(detail_body, 1)
+        self.orchestration_trace_stack.addWidget(self.orchestration_trace_detail)
+        trace_layout.addWidget(self.orchestration_trace_stack, 1)
+        self.orchestration_trace_stack.setCurrentWidget(
+            self.orchestration_trace_overview
+        )
+        self._trace_started_at: datetime | None = None
+        self._trace_finished_at: datetime | None = None
+        self._trace_elapsed_timer = QTimer(self)
+        self._trace_elapsed_timer.setInterval(1000)
+        self._trace_elapsed_timer.timeout.connect(self._refresh_trace_elapsed)
         self.orchestration_trace.hide()
+        self.context_usage_panel = QFrame(self, Qt.Popup)
+        self.context_usage_panel.setObjectName("contextUsagePanel")
+        self.context_usage_panel.setMinimumWidth(300)
+        self.context_usage_panel.setMaximumWidth(420)
+        self.context_usage_panel.setAccessibleName("Uso da janela de contexto")
+        context_usage_layout = QVBoxLayout(self.context_usage_panel)
+        context_usage_layout.setContentsMargins(12, 8, 12, 8)
+        context_usage_layout.setSpacing(5)
+        context_usage_header = QHBoxLayout()
+        context_usage_header.setContentsMargins(0, 0, 0, 0)
+        self.context_usage_title = QLabel(
+            "Contexto do modelo", objectName="contextUsageTitle"
+        )
+        self.context_usage_value = QLabel("Aguardando dados", objectName="contextUsageValue")
+        self.context_usage_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        context_usage_header.addWidget(self.context_usage_title)
+        context_usage_header.addStretch(1)
+        context_usage_header.addWidget(self.context_usage_value)
+        context_usage_layout.addLayout(context_usage_header)
+        self.context_usage_bar = QProgressBar(objectName="contextUsageBar")
+        self.context_usage_bar.setRange(0, 1000)
+        self.context_usage_bar.setValue(0)
+        self.context_usage_bar.setTextVisible(False)
+        context_usage_layout.addWidget(self.context_usage_bar)
+        context_usage_footer = QHBoxLayout()
+        context_usage_footer.setContentsMargins(0, 0, 0, 0)
+        context_usage_footer.addWidget(
+            QLabel("Total processado", objectName="contextUsageNote")
+        )
+        context_usage_footer.addStretch(1)
+        self.context_total_value = QLabel("0 tokens", objectName="contextUsageValue")
+        context_usage_footer.addWidget(self.context_total_value)
+        context_usage_layout.addLayout(context_usage_footer)
+        self.context_usage_note = QLabel(
+            "Atualizado conforme os dados enviados pelo provedor.",
+            objectName="contextUsageNote",
+        )
+        context_usage_layout.addWidget(self.context_usage_note)
+        self.context_usage_panel.hide()
         composer_glow = VrComposerGlowFrame()
         self.composer_glow = composer_glow
         composer_glow.setMinimumWidth(368)
-        composer_glow.setMaximumWidth(928)
+        composer_glow.setMaximumWidth(884)
         composer_glow.setMaximumHeight(164)
         composer_glow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         glow_layout = QVBoxLayout(composer_glow)
-        glow_layout.setContentsMargins(4, 4, 4, 4)
+        glow_layout.setContentsMargins(2, 2, 2, 2)
         glow_layout.setSpacing(0)
         composer_card = QFrame(objectName="chatComposer")
         self.composer_card = composer_card
         composer_card.setMinimumWidth(360)
-        composer_card.setMaximumWidth(920)
+        composer_card.setMaximumWidth(880)
         composer_card.setMaximumHeight(156)
         composer_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         glow_layout.addWidget(composer_card)
@@ -2640,7 +2987,6 @@ class MainWindow(QMainWindow):
         self._composer_resize_timer.setInterval(0)
         self._composer_resize_timer.timeout.connect(self._resize_composer_input)
         self.composer.textChanged.connect(self._schedule_composer_text_work)
-        self.composer.textChanged.connect(self._ensure_conversation_for_typing)
         composer_layout.addWidget(self.composer)
         self.composer_chips = QFrame(composer_card)
         self.composer_chips_layout = QHBoxLayout(self.composer_chips)
@@ -2719,6 +3065,12 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.options_button)
         controls.addStretch(1)
         controls.addWidget(self.vr_flow_button)
+        self.context_usage_button = ContextUsageButton(
+            composer_card,
+            reduce_motion=self.reduce_motion,
+        )
+        self.context_usage_button.clicked.connect(self._toggle_context_usage_popup)
+        controls.addWidget(self.context_usage_button)
         self.stop_button = QToolButton()
         self.stop_button.setObjectName("roundStop")
         self.stop_button.setIcon(QIcon(str(CHAT_ACTION_ICON_PATHS["stop"])))
@@ -4109,6 +4461,10 @@ class MainWindow(QMainWindow):
             self.vr_flow_button.set_reduced_motion(self.reduce_motion)
         if hasattr(self, "composer_glow"):
             self.composer_glow.set_reduced_motion(self.reduce_motion)
+        if hasattr(self, "conversation_activity_delegate"):
+            self.conversation_activity_delegate.set_reduced_motion(self.reduce_motion)
+        if hasattr(self, "context_usage_button"):
+            self.context_usage_button.set_reduced_motion(self.reduce_motion)
         self.theme_status.setText(
             "Movimento reduzido ativado."
             if self.reduce_motion
@@ -4391,11 +4747,125 @@ class MainWindow(QMainWindow):
             return "Autenticação necessária. Use “Login/KB visível”."
         return error.strip().splitlines()[0][:140]
 
+    @staticmethod
+    def _format_token_count(value: int) -> str:
+        count = max(0, int(value or 0))
+        if count >= 1_000_000:
+            formatted = f"{count / 1_000_000:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted.replace('.', ',')} mi"
+        if count >= 1_000:
+            formatted = f"{count / 1_000:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted.replace('.', ',')} mil"
+        return str(count)
+
+    def _model_context_window(self, provider: str, model_id: str) -> int:
+        models = list(self.model_cache.get(provider, []))
+        selected = next(
+            (
+                item
+                for item in models
+                if model_id
+                and str(item.get("id") or item.get("model") or "") == model_id
+            ),
+            None,
+        )
+        if selected is None and not model_id:
+            selected = next((item for item in models if item.get("isDefault")), None)
+        if selected is None and provider == self.provider_combo.currentText():
+            selected = self.model_metadata.get(
+                str(self.model_combo.currentData() or "")
+            )
+        if not isinstance(selected, dict):
+            return 0
+        limit = selected.get("limit") or {}
+        candidates = (
+            selected.get("contextWindow"),
+            selected.get("context_window"),
+            selected.get("contextWindowTokens"),
+            limit.get("context") if isinstance(limit, dict) else 0,
+        )
+        for value in candidates:
+            try:
+                parsed = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return 0
+
+    def _refresh_context_usage(self) -> None:
+        if not hasattr(self, "context_usage_panel"):
+            return
+        row = (
+            self.database.get_conversation(self.current_conversation)
+            if self.current_conversation
+            else None
+        )
+        provider = str(row["provider"] if row else self.provider_combo.currentText())
+        model_id = str(
+            row["model"] if row else (self.model_combo.currentData() or "")
+        )
+        used = int(row["context_used_tokens"] or 0) if row else 0
+        processed = int(row["total_processed_tokens"] or 0) if row else 0
+        context_window = int(row["context_window_tokens"] or 0) if row else 0
+        context_window = context_window or self._model_context_window(provider, model_id)
+        percentage = (
+            min(100.0, used * 100.0 / context_window)
+            if context_window > 0
+            else 0.0
+        )
+        if context_window:
+            self.context_usage_value.setText(
+                f"{percentage:.0f}% · {self._format_token_count(used)}/"
+                f"{self._format_token_count(context_window)}"
+            )
+        elif used:
+            self.context_usage_value.setText(
+                f"{self._format_token_count(used)} · limite não informado"
+            )
+        else:
+            self.context_usage_value.setText("Aguardando dados")
+        self.context_usage_bar.setValue(round(percentage * 10))
+        self.context_total_value.setText(
+            f"{self._format_token_count(processed)} tokens"
+        )
+        details = (
+            f"{used:,} de {context_window:,} tokens usados; "
+            f"{processed:,} tokens processados no total."
+            if context_window
+            else f"{processed:,} tokens processados no total; limite ainda não informado."
+        )
+        self.context_usage_panel.setToolTip(details.replace(",", "."))
+
+    def _toggle_context_usage_popup(self) -> None:
+        if self.context_usage_panel.isVisible():
+            self.context_usage_panel.hide()
+            return
+        self._refresh_context_usage()
+        self.context_usage_panel.adjustSize()
+        anchor = self.context_usage_button.mapToGlobal(QPoint(0, 0))
+        width = self.context_usage_panel.width()
+        height = self.context_usage_panel.height()
+        screen = QApplication.screenAt(anchor)
+        available = screen.availableGeometry() if screen is not None else self.geometry()
+        x = anchor.x() + self.context_usage_button.width() - width
+        x = max(available.left() + 8, min(x, available.right() - width - 8))
+        above = anchor.y() - height - 8
+        y = (
+            above
+            if above >= available.top() + 8
+            else anchor.y() + self.context_usage_button.height() + 8
+        )
+        self.context_usage_panel.move(x, y)
+        self.context_usage_panel.show()
+        self.context_usage_panel.raise_()
+
     def refresh_conversations(self, *_args: Any) -> None:
         selected = self.current_conversation
         term = self.conversation_search.text().lower() if hasattr(self, "conversation_search") else ""
         self.conversation_list.blockSignals(True)
         self.conversation_list.clear()
+        has_running_conversation = False
         for row in self.database.list_conversations(state="active"):
             workspace = self.settings.resolve_path(row["workspace"])
             if (
@@ -4423,6 +4893,9 @@ class MainWindow(QMainWindow):
                 f"Projeto: {workspace}\nFonte VR: {self.settings.root}"
             )
             item.setData(Qt.UserRole, row["id"])
+            is_running = str(row["status"] or "") == "running"
+            item.setData(CONVERSATION_RUNNING_ROLE, is_running)
+            has_running_conversation = has_running_conversation or is_running
             self.conversation_list.addItem(item)
             if row["id"] == selected:
                 self.conversation_list.setCurrentItem(item)
@@ -4430,6 +4903,7 @@ class MainWindow(QMainWindow):
         is_empty = self.conversation_list.count() == 0
         self.conversation_list.setVisible(not is_empty)
         self.conversation_empty.setVisible(is_empty)
+        self.conversation_activity_delegate.set_running(has_running_conversation)
 
     def _schedule_conversation_refresh(self) -> None:
         """Coalesce sidebar updates from conversations running in background."""
@@ -4455,16 +4929,75 @@ class MainWindow(QMainWindow):
                 projects.append(candidate)
         return projects[:8]
 
+    def _hidden_project_paths(self) -> set[Path]:
+        raw = self.app_preferences.value("chat/hidden_projects", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        return {
+            Path(str(value)).expanduser().resolve(strict=False)
+            for value in values
+            if str(value).strip()
+        }
+
+    def _created_project_paths(self) -> list[Path]:
+        raw = self.app_preferences.value("chat/projects", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        projects: list[Path] = []
+        for value in values:
+            stored = value.get("path", "") if isinstance(value, dict) else value
+            candidate = Path(str(stored)).expanduser().resolve(strict=False)
+            if candidate.is_dir() and candidate not in projects:
+                projects.append(candidate)
+        return projects
+
+    def _known_project_paths(self) -> list[Path]:
+        """Return persisted projects plus compatible entries from older versions."""
+
+        hidden = self._hidden_project_paths()
+        projects: list[Path] = []
+
+        def include(candidate: Path) -> None:
+            resolved = candidate.expanduser().resolve(strict=False)
+            if resolved.is_dir() and resolved not in hidden and resolved not in projects:
+                projects.append(resolved)
+
+        for project in self._created_project_paths():
+            include(project)
+        for project in self._recent_project_paths():
+            include(project)
+        for row in self.database.list_conversations(state="all"):
+            workspace = self.settings.resolve_path(row["workspace"])
+            if not is_managed_conversation_workspace(self.settings, workspace):
+                include(workspace)
+
+        return projects[:32]
+
     def _remember_project(self, project: Path | None) -> None:
         if project is None:
             self.app_preferences.setValue("chat/current_project", "")
             return
         resolved = project.resolve()
+        hidden = [path for path in self._hidden_project_paths() if path != resolved]
+        created = [resolved]
+        created.extend(
+            path for path in self._created_project_paths() if path != resolved
+        )
         recent = [resolved]
         recent.extend(path for path in self._recent_project_paths() if path != resolved)
         self.app_preferences.setValue("chat/current_project", str(resolved))
         self.app_preferences.setValue(
             "chat/recent_projects", json.dumps([str(path) for path in recent[:8]])
+        )
+        self.app_preferences.setValue(
+            "chat/projects", json.dumps([str(path) for path in created[:32]])
+        )
+        self.app_preferences.setValue(
+            "chat/hidden_projects", json.dumps([str(path) for path in hidden])
         )
 
     def _project_display_path(self) -> Path | None:
@@ -4489,7 +5022,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_project_menu(self) -> None:
         current = self._project_display_path()
-        self.project_menu.set_projects(self._recent_project_paths(), current)
+        self.project_menu.set_projects(self._known_project_paths(), current)
 
     def _show_project_menu(self) -> None:
         self._rebuild_project_menu()
@@ -4533,9 +5066,20 @@ class MainWindow(QMainWindow):
     def _remove_recent_project(self, project: Path) -> None:
         resolved = Path(project).resolve()
         recent = [path for path in self._recent_project_paths() if path != resolved]
+        created = [path for path in self._created_project_paths() if path != resolved]
+        hidden = self._hidden_project_paths()
+        hidden.add(resolved)
         self.app_preferences.setValue(
             "chat/recent_projects",
             json.dumps([str(path) for path in recent]),
+        )
+        self.app_preferences.setValue(
+            "chat/projects",
+            json.dumps([str(path) for path in created]),
+        )
+        self.app_preferences.setValue(
+            "chat/hidden_projects",
+            json.dumps([str(path) for path in sorted(hidden, key=str)]),
         )
         if self.project_scope_path == resolved:
             self.project_scope_path = None
@@ -4546,12 +5090,12 @@ class MainWindow(QMainWindow):
         self._update_project_button()
         self.refresh_conversations()
         self._show_toast(
-            f"{resolved.name or resolved} removido dos projetos recentes.",
+            f"{resolved.name or resolved} removido da lista de projetos.",
             kind="success",
         )
 
     def _project_for_new_conversation(self) -> Path | None:
-        projects = self._recent_project_paths()
+        projects = self._known_project_paths()
         current = self.project_scope_path or self.draft_project_path
         if current is not None and current.is_dir() and current not in projects:
             projects.insert(0, current)
@@ -4584,11 +5128,9 @@ class MainWindow(QMainWindow):
         self._start_new_conversation_for_project(project)
 
     def _start_new_conversation_for_project(self, project: Path) -> None:
-        if self._conversation_creation_in_progress or self.turn_running:
+        if self._conversation_creation_in_progress:
             self.new_chat_button.setChecked(False)
-            self._show_error(
-                "Aguarde o turno atual terminar antes de iniciar outro chat."
-            )
+            self.chat_status.setText("Aguarde a criação da conversa terminar")
             return
         had_current_conversation = bool(self.current_conversation)
         self._select_project(project)
@@ -4596,10 +5138,8 @@ class MainWindow(QMainWindow):
             self.new_conversation()
 
     def _select_project(self, project: Path | None) -> None:
-        if self._conversation_creation_in_progress or self.turn_running:
-            self._show_error(
-                "Aguarde o turno atual terminar antes de trocar de projeto."
-            )
+        if self._conversation_creation_in_progress:
+            self.chat_status.setText("Aguarde a criação da conversa terminar")
             return
         resolved = project.resolve() if project is not None else None
         if resolved is not None and not resolved.is_dir():
@@ -4661,6 +5201,7 @@ class MainWindow(QMainWindow):
         self._update_codex_controls()
         self._update_orchestration_summary()
         self._update_project_button()
+        self._refresh_context_usage()
 
     def _ensure_draft_conversation(self, *_args: Any) -> None:
         if self.draft_project_path is None:
@@ -4668,15 +5209,6 @@ class MainWindow(QMainWindow):
             return
         if self.draft_conversation and not self.current_conversation:
             self._create_draft_conversation()
-
-    def _ensure_conversation_for_typing(self) -> None:
-        if self.current_conversation or self._conversation_creation_in_progress:
-            return
-        if not self.composer.toPlainText().strip():
-            return
-        if not self.draft_conversation:
-            self.new_conversation()
-        self._ensure_draft_conversation()
 
     def _create_draft_conversation(self) -> None:
         if self._conversation_creation_in_progress or not self.draft_conversation:
@@ -4796,6 +5328,7 @@ class MainWindow(QMainWindow):
         self._update_tools_label()
         self._refresh_composer_chips()
         self._update_codex_controls()
+        self._refresh_context_usage()
         is_active = self.conversation_state == "active"
         self.composer.setReadOnly(not is_active)
         if self._pending_first_message or self.pending_skills or self.pending_file_mentions:
@@ -4888,9 +5421,12 @@ class MainWindow(QMainWindow):
         self._set_turn_running(row["status"] == "running")
         self._update_codex_controls()
         self._update_orchestration_summary()
+        self._refresh_context_usage()
 
     def _clear_messages(self) -> None:
         self._reset_assistant_stream()
+        if hasattr(self, "context_usage_panel"):
+            self.context_usage_panel.hide()
         while self.message_layout.count():
             item = self.message_layout.takeAt(0)
             widget = item.widget()
@@ -4902,6 +5438,11 @@ class MainWindow(QMainWindow):
         self.assistant_markdown = ""
         self.chat_activity_widget = None
         self.chat_activity_label = None
+        self.chat_activity_dot = None
+        self.chat_activity_toggle = None
+        self.chat_activity_details = None
+        self.chat_activity_details_layout = None
+        self._chat_activity_steps = []
         if hasattr(self, "orchestration_trace"):
             self._reset_orchestration_trace()
 
@@ -4940,7 +5481,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "chat_empty_state"):
             self.chat_empty_state.hide()
         card = QFrame(objectName="userMessage" if role == "user" else "assistantMessage")
-        card.setMaximumWidth(760 if role == "user" else 900)
+        card.setMaximumWidth(560 if role == "user" else 880)
         card.setSizePolicy(
             QSizePolicy.Preferred if role == "user" else QSizePolicy.Expanding,
             QSizePolicy.Minimum,
@@ -4954,9 +5495,9 @@ class MainWindow(QMainWindow):
         browser.anchorClicked.connect(open_safe_external_url)
         if role == "user":
             longest_line = max((len(line) for line in content.splitlines()), default=0)
-            browser.setMinimumWidth(min(720, max(220, longest_line * 7 + 28)))
+            browser.setMinimumWidth(min(520, max(180, longest_line * 7 + 28)))
         else:
-            browser.setMinimumWidth(680)
+            browser.setMinimumWidth(0)
         message_header = QHBoxLayout()
         if role != "user":
             label = (
@@ -5011,10 +5552,10 @@ class MainWindow(QMainWindow):
         browser.document().setDocumentMargin(0)
         browser.document().setDefaultStyleSheet(
             f"""
-            body {{ color: {text}; font-family: 'Segoe UI'; font-size: 14px; line-height: 1.5; }}
+            body {{ color: {text}; font-family: 'Segoe UI'; font-size: 14px; line-height: 1.55; }}
             p {{ margin-top: 0; margin-bottom: 10px; }}
-            h1 {{ color: {text}; font-size: 22px; margin: 16px 0 9px 0; }}
-            h2 {{ color: {text}; font-size: 19px; margin: 14px 0 8px 0; }}
+            h1 {{ color: {text}; font-size: 20px; margin: 16px 0 9px 0; }}
+            h2 {{ color: {text}; font-size: 18px; margin: 14px 0 8px 0; }}
             h3 {{ color: {text}; font-size: 16px; margin: 12px 0 7px 0; }}
             ul, ol {{ margin: 5px 0 10px 22px; }}
             li {{ margin-bottom: 4px; }}
@@ -5047,19 +5588,42 @@ class MainWindow(QMainWindow):
         label = str(text or "Trabalhando…").strip()
         if self.chat_activity_widget is None:
             activity = QFrame(objectName="chatActivity")
-            activity.setMaximumWidth(900)
+            activity.setMaximumWidth(880)
             activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             activity.setAccessibleName("Atividade em andamento")
-            layout = QHBoxLayout(activity)
-            layout.setContentsMargins(3, 2, 3, 2)
-            layout.setSpacing(7)
+            layout = QVBoxLayout(activity)
+            layout.setContentsMargins(3, 3, 3, 3)
+            layout.setSpacing(5)
+            header = QHBoxLayout()
+            header.setContentsMargins(0, 0, 0, 0)
+            header.setSpacing(7)
             dot = QLabel("●", objectName="chatActivityDot")
             dot.setAccessibleName("Em andamento")
-            layout.addWidget(dot, 0, Qt.AlignTop)
+            header.addWidget(dot, 0, Qt.AlignTop)
             self.chat_activity_label = QLabel(label, objectName="chatActivityText")
             self.chat_activity_label.setWordWrap(True)
-            layout.addWidget(self.chat_activity_label, 1)
+            header.addWidget(self.chat_activity_label, 1)
+            toggle = QToolButton(objectName="chatActivityToggle")
+            toggle.setText("⌄")
+            toggle.setCheckable(True)
+            toggle.setAccessibleName("Exibir etapas da atividade")
+            toggle.setToolTip("Exibir etapas da atividade")
+            toggle.hide()
+            header.addWidget(toggle, 0, Qt.AlignTop)
+            layout.addLayout(header)
+            details = QFrame(objectName="chatActivitySteps")
+            details_layout = QVBoxLayout(details)
+            details_layout.setContentsMargins(17, 0, 0, 2)
+            details_layout.setSpacing(3)
+            details.hide()
+            layout.addWidget(details)
+            toggle.toggled.connect(self._toggle_chat_activity_details)
             self.chat_activity_widget = activity
+            self.chat_activity_dot = dot
+            self.chat_activity_toggle = toggle
+            self.chat_activity_details = details
+            self.chat_activity_details_layout = details_layout
+            self._chat_activity_steps = []
             self.message_layout.insertWidget(
                 self.message_layout.count(),
                 activity,
@@ -5067,6 +5631,9 @@ class MainWindow(QMainWindow):
                 Qt.AlignLeft,
             )
         elif self.chat_activity_label is not None:
+            previous = self.chat_activity_label.text().strip()
+            if previous and self._activity_category(previous) != self._activity_category(label):
+                self._append_chat_activity_step(previous)
             self.chat_activity_label.setText(label)
             self.chat_activity_widget.show()
         QTimer.singleShot(
@@ -5076,15 +5643,62 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _hide_chat_activity(self) -> None:
+    @staticmethod
+    def _activity_category(label: str) -> str:
+        return re.split(r"[…\.·:]", str(label or ""), maxsplit=1)[0].strip().casefold()
+
+    def _append_chat_activity_step(self, label: str) -> None:
+        value = " ".join(str(label or "").split())
+        if not value or value in self._chat_activity_steps:
+            return
+        self._chat_activity_steps.append(value)
+        if self.chat_activity_details_layout is None:
+            return
+        step = QLabel(f"✓  {value}", objectName="chatActivityStep")
+        step.setWordWrap(True)
+        self.chat_activity_details_layout.addWidget(step)
+        if self.chat_activity_toggle is not None:
+            self.chat_activity_toggle.show()
+            self.chat_activity_toggle.setChecked(True)
+
+    def _toggle_chat_activity_details(self, expanded: bool) -> None:
+        if self.chat_activity_details is not None:
+            self.chat_activity_details.setVisible(bool(expanded))
+        if self.chat_activity_toggle is not None:
+            self.chat_activity_toggle.setText("⌃" if expanded else "⌄")
+            self.chat_activity_toggle.setToolTip(
+                "Recolher etapas da atividade" if expanded else "Exibir etapas da atividade"
+            )
+
+    def _hide_chat_activity(self, *, failed: bool = False) -> None:
         if self.chat_activity_widget is None:
             return
         activity = self.chat_activity_widget
+        if self.chat_activity_label is not None:
+            self._append_chat_activity_step(self.chat_activity_label.text())
+            self.chat_activity_label.setText(
+                "Execução interrompida" if failed else "Atividade concluída"
+            )
+        if self.chat_activity_dot is not None:
+            self.chat_activity_dot.setText("!" if failed else "✓")
+            self.chat_activity_dot.setProperty("activityState", "error" if failed else "done")
+            self.chat_activity_dot.style().unpolish(self.chat_activity_dot)
+            self.chat_activity_dot.style().polish(self.chat_activity_dot)
+        if self.chat_activity_toggle is not None:
+            self.chat_activity_toggle.setChecked(failed)
+        activity.setObjectName("chatActivityCompleted")
+        activity.setAccessibleName(
+            "Atividade interrompida" if failed else "Atividade concluída"
+        )
+        activity.style().unpolish(activity)
+        activity.style().polish(activity)
         self.chat_activity_widget = None
         self.chat_activity_label = None
-        self.message_layout.removeWidget(activity)
-        activity.hide()
-        activity.deleteLater()
+        self.chat_activity_dot = None
+        self.chat_activity_toggle = None
+        self.chat_activity_details = None
+        self.chat_activity_details_layout = None
+        self._chat_activity_steps = []
 
     def _reset_assistant_stream(self) -> None:
         if hasattr(self, "_assistant_typing_timer"):
@@ -5779,7 +6393,6 @@ class MainWindow(QMainWindow):
             self.composer.setTextCursor(cursor)
         self._file_mention_span = None
         self.slash_palette.dismiss()
-        self._ensure_draft_conversation()
         self._refresh_composer_chips()
         self.chat_status.setText("Arquivo referenciado no próximo envio")
         self.composer.setFocus()
@@ -5831,7 +6444,6 @@ class MainWindow(QMainWindow):
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
-            self._ensure_draft_conversation()
         self.composer.clear()
         self.slash_palette.dismiss()
         self.chat_status.setText("Op\u00e7\u00e3o atualizada")
@@ -5868,7 +6480,6 @@ class MainWindow(QMainWindow):
             self.pending_skills.append(skill)
         self.composer.clear()
         self.slash_palette.dismiss()
-        self._ensure_draft_conversation()
         self._refresh_composer_chips()
         self.chat_status.setText(
             "Habilidade anexada ao pr\u00f3ximo envio" if not existing else "Habilidade removida"
@@ -5903,7 +6514,6 @@ class MainWindow(QMainWindow):
         if not self.current_conversation:
             self.draft_dynamic_tools[:] = dynamic
             self.draft_mcp_tools[:] = mcp
-            self._ensure_draft_conversation()
             self._update_tools_label()
             self._refresh_composer_chips()
             self.chat_status.setText("Tool configurada para esta conversa")
@@ -6072,7 +6682,6 @@ class MainWindow(QMainWindow):
         if command_handled:
             return
         if not text and not self.pending_skills and not self.pending_file_mentions:
-            self._ensure_draft_conversation()
             return
         if not self.current_conversation:
             if self.draft_project_path is None:
@@ -6122,6 +6731,7 @@ class MainWindow(QMainWindow):
         self._show_chat_activity("Trabalhando…")
         self.chat_status.setText("Executando…")
         self._set_turn_running(True)
+        self._schedule_conversation_refresh()
         try:
             self.orchestrator.send(
                 self.current_conversation,
@@ -6152,10 +6762,15 @@ class MainWindow(QMainWindow):
 
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
         if event.conversation_id != self.current_conversation:
+            if event.kind == "approval_requested":
+                self._request_approval(event)
+            elif event.kind == "dynamic_tool_approval_requested":
+                self._request_dynamic_tool_approval(event)
             if event.kind in {
                 "turn_started",
                 "turn_completed",
                 "error",
+                "token_usage",
                 "settings_updated",
                 "orchestration_completed",
                 "orchestration_cancelled",
@@ -6188,6 +6803,8 @@ class MainWindow(QMainWindow):
             self._show_chat_activity(
                 f"Pensando… {summary}" if summary else "Pensando…"
             )
+        elif event.kind == "token_usage":
+            self._refresh_context_usage()
         elif event.kind == "knowledge_routed":
             counts = event.payload.get("source_counts") or {}
             modules = [
@@ -6217,6 +6834,7 @@ class MainWindow(QMainWindow):
         elif event.kind == "turn_started":
             self.chat_status.setText("Executando…")
             self._set_turn_running(True)
+            self._schedule_conversation_refresh()
             if not self.assistant_markdown:
                 self._show_chat_activity("Trabalhando…")
         elif event.kind == "provider_reconnecting":
@@ -6341,9 +6959,10 @@ class MainWindow(QMainWindow):
                     self.assistant_widget.setStreamingMarkdown(
                         self.assistant_markdown
                     )
-            self._hide_chat_activity()
+            self._hide_chat_activity(failed=True)
             self.chat_status.setText("Erro")
             self._set_turn_running(False)
+            self._schedule_conversation_refresh()
             self._sync_orchestration_mode_ui(
                 self._conversation_orchestration(), animate=False
             )
@@ -6411,6 +7030,8 @@ class MainWindow(QMainWindow):
 
     def _set_turn_running(self, running: bool) -> None:
         self.turn_running = running
+        if hasattr(self, "context_usage_button"):
+            self.context_usage_button.set_running(running)
         if running and hasattr(self, "vr_mode_panel"):
             self.vr_mode_panel.reject()
         self.send_button.setVisible(not running)
@@ -6608,7 +7229,7 @@ class MainWindow(QMainWindow):
             if len(sizes) > 3 and self.chat_context_panel.isVisible()
             else 0
         )
-        agents = min(520, max(380, total // 3)) if visible else 0
+        agents = min(520, max(420, int(total * 0.35))) if visible else 0
         self.chat_splitter.setSizes(
             [left, max(360, total - left - agents - context), agents, context]
         )
@@ -6662,7 +7283,6 @@ class MainWindow(QMainWindow):
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
-            self._ensure_draft_conversation()
 
     def _selected_tools_count(self) -> int:
         if self.current_conversation:
@@ -6736,7 +7356,6 @@ class MainWindow(QMainWindow):
             self.draft_dynamic_tools = dynamic_ids
             self.draft_mcp_tools = mcp_tools
             self._update_tools_label()
-            self._ensure_draft_conversation()
 
     def _update_tools_label(self) -> None:
         count = self._selected_tools_count()
@@ -6988,6 +7607,7 @@ class MainWindow(QMainWindow):
         self.model_combo.setToolTip("Escolher modelo. Ctrl+1…9 seleciona favoritos.")
         self.load_efforts()
         self.load_service_tiers()
+        self._refresh_context_usage()
 
     def load_collaboration_modes(self) -> None:
         selected = str(self.mode_combo.currentData() or "default")
@@ -7079,12 +7699,10 @@ class MainWindow(QMainWindow):
             self._add_model_combo_item("Modelo padrão", "", provider)
             self.model_combo.blockSignals(False)
             self.provider_combo.setCurrentText(provider)
-            self._ensure_draft_conversation()
             return
         index = self.model_combo.findData(model_id)
         if index >= 0:
             self.model_combo.setCurrentIndex(index)
-            self._ensure_draft_conversation()
 
     def _provider_switch_completed(
         self, conversation_id: str, provider: str, model_id: str
@@ -7519,9 +8137,8 @@ class MainWindow(QMainWindow):
         mode_label = mode_labels.get(options.mode, "Automático")
         vr_enabled = self.vr_flow_button.isChecked()
         description = (
-            f"VR ativo · personalidade ativa · base local ativa\n"
-            f"Modo {mode_label} · estratégia {strategy} · "
-            f"{count} modelo(s) no pool. Use a seta para escolher."
+            "VR ativo · personalidade e base local ativas\n"
+            "Modo direto pelo modelo selecionado; subagentes nativos são opcionais."
             if vr_enabled
             else "Modo nativo · base local inativa · mensagem direta ao provedor\n"
             "Sem personalidade ou orquestração VR."
@@ -7531,6 +8148,7 @@ class MainWindow(QMainWindow):
         has_agent_trace = bool(getattr(self, "_trace_plan_agents", []))
         can_show_agents = bool(
             vr_enabled
+            and self.settings.legacy_vr_orchestration
             and options.enabled
             and options.show_execution
             and has_agent_trace
@@ -7540,17 +8158,29 @@ class MainWindow(QMainWindow):
             self.orchestration_trace.hide()
         if hasattr(self, "orchestration_settings_summary"):
             orchestrator = self._current_orchestrator_ref()
-            self.orchestration_settings_summary.setText(
-                f"Orquestrador: {orchestrator.display_name or orchestrator.model}\n"
-                f"Modelos disponíveis para orquestração: {count}\n"
-                f"Modo: {mode_label} · Estratégia: {strategy}"
-            )
+            if self.settings.legacy_vr_orchestration:
+                self.orchestration_settings_summary.setText(
+                    f"Orquestrador: {orchestrator.display_name or orchestrator.model}\n"
+                    f"Modelos disponíveis para orquestração: {count}\n"
+                    f"Modo: {mode_label} · Estratégia: {strategy}"
+                )
+            else:
+                self.orchestration_settings_summary.setText(
+                    f"Executor: {orchestrator.display_name or orchestrator.model}\n"
+                    "Base local enviada diretamente ao modelo\n"
+                    "Subagentes nativos somente quando o provedor decidir delegar"
+                )
         self._update_chat_header_summary()
 
     def _show_vr_mode_panel(self) -> None:
         if self.turn_running or not self.vr_flow_button.isEnabled():
             self.chat_status.setText(
                 "Aguarde a resposta terminar para alterar o fluxo VR"
+            )
+            return
+        if not self.settings.legacy_vr_orchestration:
+            self.chat_status.setText(
+                "VR direto: base local no modelo principal; subagentes nativos sob demanda"
             )
             return
         self._update_orchestration_summary()
@@ -7587,15 +8217,8 @@ class MainWindow(QMainWindow):
         collaboration = (
             "Plan" if self.mode_combo.currentData() == "plan" else "Build"
         )
-        options = self._conversation_orchestration()
-        mode_labels = {
-            "off": "agentes desligados",
-            "automatic": "automático",
-            "standard": "ligado",
-            "ultra": "Ultra",
-        }
         vr_label = (
-            f"VR {mode_labels.get(options.mode, 'automático')}"
+            "VR direto"
             if self.vr_flow_button.isChecked()
             else "VR desativado"
         )
@@ -7620,8 +8243,16 @@ class MainWindow(QMainWindow):
         self._trace_plan_agents: list[dict[str, Any]] = []
         self._trace_selected_agent = ""
         self._trace_user_request = ""
+        self._trace_started_at = None
+        self._trace_finished_at = None
+        self._trace_detail_open = False
+        if hasattr(self, "_trace_elapsed_timer"):
+            self._trace_elapsed_timer.stop()
         if hasattr(self, "orchestration_trace"):
             self.orchestration_trace.hide()
+            self.orchestration_trace_stack.setCurrentWidget(
+                self.orchestration_trace_overview
+            )
             self.orchestration_agent_list.clear()
             self.orchestration_agent_chat_title.setText("Selecione um agente")
             self.orchestration_agent_request.clear()
@@ -7630,6 +8261,7 @@ class MainWindow(QMainWindow):
             self.orchestration_agent_task.hide()
             self.orchestration_trace_details.clear()
             self.orchestration_trace_status.clear()
+            self.orchestration_trace_elapsed.clear()
         if hasattr(self, "vr_agents_toggle_button"):
             self.vr_agents_toggle_button.hide()
 
@@ -7647,8 +8279,15 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError, json.JSONDecodeError):
             return
         self._apply_trace_plan(payload, render=False)
+        try:
+            self._trace_started_at = datetime.fromisoformat(
+                str(row["created_at"] or "").replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            self._trace_started_at = datetime.now()
         run_id = str(payload.get("run_id") or "")
         last_text = ""
+        last_event_at: datetime | None = None
         for event_row in self.database.orchestration_events_after(
             conversation_id, int(row["id"])
         ):
@@ -7670,6 +8309,14 @@ class MainWindow(QMainWindow):
                 options=options,
             )
             last_text = replay.text
+            try:
+                last_event_at = datetime.fromisoformat(
+                    str(event_row["created_at"] or "").replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                pass
+        if self._trace_finished_at is not None and last_event_at is not None:
+            self._trace_finished_at = last_event_at
         self.orchestration_trace_status.setText(
             f"Última execução · {last_text}" if last_text else "Última execução"
         )
@@ -7688,6 +8335,7 @@ class MainWindow(QMainWindow):
                 if assistant_messages:
                     self._trace_agent_outputs[final_id] = assistant_messages[-1]
         self._render_orchestration_trace()
+        self._refresh_trace_elapsed()
         self.vr_agents_toggle_button.show()
         self._set_vr_agent_sidebar_visible(
             self.vr_agents_sidebar_preferred,
@@ -7720,6 +8368,10 @@ class MainWindow(QMainWindow):
         self._trace_agent_outputs = {}
         self._trace_selected_agent = ""
         self._trace_user_request = ""
+        self._trace_started_at = datetime.now()
+        self._trace_finished_at = None
+        self._trace_detail_open = True
+        self._trace_elapsed_timer.start()
         if self.current_conversation:
             try:
                 self._trace_user_request = next(
@@ -7764,11 +8416,6 @@ class MainWindow(QMainWindow):
             if selected_modules
             else ""
         )
-        self.orchestration_trace_title.setText(
-            f"🌈 {effective_label}"
-            if effective_mode == "ultra"
-            else "Orquestração VR"
-        )
         self.orchestration_trace_status.setText(
             f"Modo {requested_label} → {effective_label} · "
             f"{difficulty.get('label') or 'Classificada'} · "
@@ -7776,6 +8423,7 @@ class MainWindow(QMainWindow):
         )
         if render:
             self._render_orchestration_trace()
+            self._refresh_trace_elapsed()
             self.vr_agents_toggle_button.show()
             self._set_vr_agent_sidebar_visible(
                 self.vr_agents_sidebar_preferred,
@@ -7863,7 +8511,33 @@ class MainWindow(QMainWindow):
         if current is None:
             return
         self._trace_selected_agent = str(current.data(Qt.UserRole) or "")
+        self._trace_detail_open = True
         self._render_selected_agent_chat()
+
+    def _show_orchestration_agent_overview(self) -> None:
+        self._trace_detail_open = False
+        self.orchestration_trace_stack.setCurrentWidget(
+            self.orchestration_trace_overview
+        )
+
+    def _refresh_trace_elapsed(self) -> None:
+        started_at = getattr(self, "_trace_started_at", None)
+        if started_at is None or not hasattr(self, "orchestration_trace_elapsed"):
+            return
+        finished_at = getattr(self, "_trace_finished_at", None)
+        if finished_at is None:
+            now = datetime.now(started_at.tzinfo) if started_at.tzinfo else datetime.now()
+            prefix = "Processando há"
+            elapsed = max(0, int((now - started_at).total_seconds()))
+        else:
+            prefix = "Concluído em"
+            elapsed = max(0, int((finished_at - started_at).total_seconds()))
+        minutes, seconds = divmod(elapsed, 60)
+        if minutes:
+            duration = f"{minutes} min {seconds} s"
+        else:
+            duration = f"{seconds} s"
+        self.orchestration_trace_elapsed.setText(f"{prefix} {duration}")
 
     def _render_selected_agent_chat(self) -> None:
         identifier = str(getattr(self, "_trace_selected_agent", "") or "")
@@ -7880,6 +8554,9 @@ class MainWindow(QMainWindow):
             self.orchestration_agent_request.hide()
             self.orchestration_agent_task.hide()
             self.orchestration_trace_details.clear()
+            self.orchestration_trace_stack.setCurrentWidget(
+                self.orchestration_trace_overview
+            )
             return
         model = item.get("model") or {}
         model_name = str(
@@ -7899,20 +8576,7 @@ class MainWindow(QMainWindow):
         task = str(item.get("task") or "").strip()
         reason = str(item.get("reason") or "").strip()
         output = self._trace_agent_outputs.get(identifier, "").strip()
-        user_request = str(getattr(self, "_trace_user_request", "") or "")
-        if user_request:
-            self.orchestration_agent_request.setPlainText(user_request)
-            request_width = max(260, self.orchestration_trace.width() - 54)
-            self.orchestration_agent_request.document().setTextWidth(request_width)
-            request_height = int(
-                self.orchestration_agent_request.document().size().height()
-            ) + 48
-            self.orchestration_agent_request.setFixedHeight(
-                min(150, max(72, request_height))
-            )
-            self.orchestration_agent_request.show()
-        else:
-            self.orchestration_agent_request.hide()
+        self.orchestration_agent_request.hide()
         context_lines = []
         module = str(item.get("module") or "").strip()
         source = str(item.get("source") or "").strip().upper()
@@ -7928,7 +8592,8 @@ class MainWindow(QMainWindow):
         if reason:
             context_lines.append(f"Roteamento: {reason}")
         self.orchestration_agent_task.setText("\n".join(context_lines))
-        self.orchestration_agent_task.setVisible(bool(context_lines))
+        self.orchestration_agent_task.setToolTip("\n".join(context_lines))
+        self.orchestration_agent_task.hide()
         sections: list[str] = []
         if output:
             sections.append(html.escape(output))
@@ -7940,6 +8605,10 @@ class MainWindow(QMainWindow):
             sections.append("_O agente não concluiu esta execução._")
         self._configure_message_document(self.orchestration_trace_details)
         self.orchestration_trace_details.setMarkdown("\n\n".join(sections))
+        if self._trace_detail_open:
+            self.orchestration_trace_stack.setCurrentWidget(
+                self.orchestration_trace_detail
+            )
 
     def _handle_orchestration_event(
         self,
@@ -8063,6 +8732,13 @@ class MainWindow(QMainWindow):
             for item in self._trace_plan_agents:
                 if bool(item.get("final")):
                     self._trace_agents[str(item.get("id") or "")] = "concluído"
+            self._trace_finished_at = datetime.now(
+                self._trace_started_at.tzinfo
+                if self._trace_started_at and self._trace_started_at.tzinfo
+                else None
+            )
+            self._trace_elapsed_timer.stop()
+            self._refresh_trace_elapsed()
             self.orchestration_trace_status.setText(event.text)
             if render:
                 self._render_orchestration_trace()
@@ -8070,6 +8746,13 @@ class MainWindow(QMainWindow):
             for identifier, state in tuple(self._trace_agents.items()):
                 if state == "executando":
                     self._trace_agents[identifier] = "interrompido"
+            self._trace_finished_at = datetime.now(
+                self._trace_started_at.tzinfo
+                if self._trace_started_at and self._trace_started_at.tzinfo
+                else None
+            )
+            self._trace_elapsed_timer.stop()
+            self._refresh_trace_elapsed()
             self.orchestration_trace_status.setText(event.text)
             if render:
                 self._render_orchestration_trace()

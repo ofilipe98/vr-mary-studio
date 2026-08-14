@@ -32,6 +32,10 @@ class MarySettings:
     kb_url: str = DEFAULT_KB_URL
     sync_interval_minutes: int = 120
     default_effort: str = "medium"
+    # Compatibility switch for the retired planner/worker/supervisor graph.
+    # Production keeps this disabled; focused legacy tests may enable it while
+    # the old implementation remains available for rollback and comparison.
+    legacy_vr_orchestration: bool = False
 
     @property
     def state_dir(self) -> Path:

@@ -40,6 +40,28 @@ CATEGORY_MODULE_SEGMENTS = {
     "adm financeiro estoque": ADM_MODULE,
 }
 
+# Estes segmentos identificam a área de negócio na raiz da hierarquia. Menus
+# utilitários ou nomes de funções continuam úteis quando aparecem sozinhos, mas
+# não podem contradizer um módulo pai explícito (por exemplo,
+# FISCAL > VR GERENCIADOR XML > SISTEMA).
+PRIMARY_CATEGORY_SEGMENTS = {
+    "fiscal",
+    "nota fiscal",
+    "contabilidade",
+    "ativo imobilizado",
+    "pdv",
+    "adm",
+    "administrativo",
+    "financeiro",
+    "estoque",
+    "crm",
+    "adm fin estoque",
+    "adm_fin_estoque",
+    "adm financeiro estoque",
+}
+
+TITLE_ROOT_MODULE_SEGMENTS = dict(CATEGORY_MODULE_SEGMENTS)
+
 
 KEYWORDS: dict[str, dict[str, float]] = {
     "Fiscal": {
@@ -409,6 +431,10 @@ def classify(
     if category_result is not None:
         return category_result
 
+    title_hierarchy_result = _classify_explicit_title_hierarchy(title)
+    if title_hierarchy_result is not None:
+        return title_hierarchy_result
+
     scores: dict[str, float] = defaultdict(float)
     reasons: dict[str, list[str]] = defaultdict(list)
 
@@ -507,7 +533,7 @@ def classify(
         return Classification(
             "Multimodulo",
             max(0.68, min(0.92, confidence)),
-            "approved" if confidence >= 0.85 else "pending",
+            "approved",
             combined_reasons,
         )
 
@@ -523,6 +549,32 @@ def classify(
             reasons[leader][:7],
         )
     return Classification(leader, confidence, status, reasons[leader][:7])
+
+
+def _classify_explicit_title_hierarchy(title: str) -> Classification | None:
+    phrase = product_phrase(title)
+    match = re.search(r"\bvr master\b(?P<tail>.*)", phrase)
+    if match is None:
+        return None
+    tail = match.group("tail").strip()
+    tail = re.sub(
+        r"^ferramentas(?:\s+v?\d+(?:\s+\d+)*)?\s+",
+        "",
+        tail,
+    )
+    for segment in sorted(
+        TITLE_ROOT_MODULE_SEGMENTS,
+        key=lambda value: (-len(value), value),
+    ):
+        if tail == segment or tail.startswith(f"{segment} "):
+            module = TITLE_ROOT_MODULE_SEGMENTS[segment]
+            return Classification(
+                module,
+                0.96,
+                "approved",
+                [f"modulo explicito na hierarquia do titulo: {segment} -> {module}"],
+            )
+    return None
 
 
 def explicit_module_category(segments: Iterable[str]) -> str:
@@ -545,12 +597,22 @@ def _classify_explicit_category(category: str) -> Classification | None:
     if not (category or "").strip():
         return None
 
-    explicit_modules: dict[str, list[str]] = defaultdict(list)
+    primary_modules: dict[str, list[str]] = defaultdict(list)
+    supplemental_modules: dict[str, list[str]] = defaultdict(list)
     for raw_segment in re.split(r"[/|>]+", category):
         segment = normalize_text(raw_segment)
         module = _explicit_segment_module(raw_segment)
-        if module and segment not in explicit_modules[module]:
-            explicit_modules[module].append(segment)
+        if not module:
+            continue
+        target = (
+            primary_modules
+            if segment in PRIMARY_CATEGORY_SEGMENTS
+            else supplemental_modules
+        )
+        if segment not in target[module]:
+            target[module].append(segment)
+
+    explicit_modules = primary_modules or supplemental_modules
 
     if not explicit_modules:
         return Classification(
@@ -566,9 +628,9 @@ def _classify_explicit_category(category: str) -> Classification | None:
             for module, segments in explicit_modules.items()
         )
         return Classification(
-            "Revisar",
-            0.35,
-            "pending",
+            "Multimodulo",
+            0.90,
+            "approved",
             [f"categoria com modulos conflitantes: {evidence}"],
         )
 

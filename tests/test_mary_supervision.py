@@ -30,6 +30,7 @@ from vrsoft_extractor.mary.providers import AgentProvider
 from vrsoft_extractor.mary.supervision import (
     EvidenceClaim,
     FinalDraft,
+    FinalResponseValidation,
     MergedEvidence,
     RefinementReason,
     ResponseContract,
@@ -37,6 +38,8 @@ from vrsoft_extractor.mary.supervision import (
     analyze_response_intent,
     build_controlled_failure,
     build_response_contract,
+    combine_final_validations,
+    combine_supervision,
     deterministic_supervision,
     parse_worker_report,
     render_sources,
@@ -84,6 +87,16 @@ def test_short_follow_up_inherits_training_purpose_from_conversation() -> None:
     assert intent.requested_detail == "very_high"
 
 
+def test_complete_flow_request_creates_a_step_by_step_contract() -> None:
+    request = "Crie um fluxo completo do processo de entrada de nota."
+    intent = analyze_response_intent(request, _profile(request))
+    contract = build_response_contract(intent)
+
+    assert intent.requires_step_by_step is True
+    assert contract.minimum_steps >= 3
+    assert "passo a passo" in contract.must_include
+
+
 def test_deterministic_supervisor_rejects_ungrounded_structured_fact() -> None:
     request = "Como dar entrada de nota?"
     contract = build_response_contract(
@@ -108,7 +121,7 @@ def test_deterministic_supervisor_rejects_ungrounded_structured_fact() -> None:
     assert assessment.unsupported_claims
 
 
-def test_supervisor_waits_for_all_source_lanes_to_reach_terminal_status() -> None:
+def test_supervisor_does_not_invent_an_unrouted_source_lane() -> None:
     request = "Como funciona a rotina ZX742?"
     contract = build_response_contract(
         analyze_response_intent(request, _profile(request))
@@ -125,9 +138,9 @@ def test_supervisor_waits_for_all_source_lanes_to_reach_terminal_status() -> Non
         has_retrieved_sources=True,
     )
 
-    assert assessment.verdict == "revise"
-    assert RefinementReason.MISSING_SOURCES in assessment.reasons
-    assert "Concluir a validação da trilha SCHEMA." in assessment.missing_required_topics
+    assert assessment.verdict == "approve"
+    assert assessment.reasons == ()
+    assert assessment.missing_required_topics == ()
 
 
 def test_terminal_exhausted_lanes_do_not_trigger_pointless_refinement() -> None:
@@ -153,7 +166,7 @@ def test_terminal_exhausted_lanes_do_not_trigger_pointless_refinement() -> None:
     assert assessment.reasons == ()
 
 
-def test_supervisor_checks_module_sources_and_one_global_schema_lane() -> None:
+def test_supervisor_accepts_terminal_module_sources_without_schema_lane() -> None:
     contract = ResponseContract(
         purpose="guidance",
         audience="operational_user",
@@ -176,11 +189,108 @@ def test_supervisor_checks_module_sources_and_one_global_schema_lane() -> None:
         has_retrieved_sources=True,
     )
 
-    assert assessment.verdict == "revise"
-    assert (
-        "Concluir a validação da trilha VR DBA/SCHEMA."
-        in assessment.missing_required_topics
+    assert assessment.verdict == "approve"
+    assert assessment.reasons == ()
+    assert assessment.missing_required_topics == ()
+
+
+def test_nonblocking_gaps_and_contextual_conflicts_do_not_force_refinement() -> None:
+    contract = build_response_contract(
+        analyze_response_intent("Como gerar o SPED Fiscal?", _profile("SPED Fiscal"))
     )
+    assessment = deterministic_supervision(
+        MergedEvidence(
+            claims=(
+                EvidenceClaim(
+                    "O SPED Fiscal pode ser exportado pela rotina documentada.",
+                    evidence_ids=("kb:sped:1",),
+                    confidence=0.9,
+                ),
+            ),
+            steps=("Informe o período e clique em Exportar.",),
+            gaps=("O artigo do plugin não documenta a instalação.",),
+            conflicts=("O caminho padrão e o plugin são alternativas de acesso.",),
+            source_reports=(
+                SourceSearchReport("wiki", "found", module="Fiscal"),
+                SourceSearchReport("kb", "found", module="Fiscal"),
+            ),
+        ),
+        contract,
+        has_retrieved_sources=True,
+    )
+
+    assert assessment.verdict == "approve"
+    assert assessment.reasons == ()
+
+
+def test_material_source_conflict_still_requires_refinement() -> None:
+    assessment = deterministic_supervision(
+        MergedEvidence(
+            steps=("Conferir a rotina documentada.",),
+            conflicts=(
+                "Fontes semelhantes apresentam polaridade diferente; exige validação.",
+            ),
+            source_reports=(SourceSearchReport("wiki", "found"),),
+        ),
+        ResponseContract(
+            purpose="guidance",
+            audience="operational_user",
+            technical_level="low_to_medium",
+            detail_level="normal",
+            requires_sources=False,
+        ),
+        has_retrieved_sources=True,
+    )
+
+    assert assessment.verdict == "revise"
+    assert RefinementReason.CONFLICT_UNRESOLVED in assessment.reasons
+
+
+def test_semantic_supervisor_cannot_expand_scope_beyond_the_contract() -> None:
+    deterministic = SupervisorAssessment(
+        verdict="approve",
+        summary="Há material sustentado para o procedimento principal.",
+        confidence=1.0,
+    )
+    semantic = SupervisorAssessment(
+        verdict="revise",
+        reasons=(
+            RefinementReason.INCOMPLETE,
+            RefinementReason.MISSING_SOURCES,
+        ),
+        missing_required_topics=(
+            "Integrações, XML, DANFE e eventos posteriores não pedidos.",
+        ),
+        summary="Exigiu variantes adicionais.",
+        confidence=0.9,
+    )
+
+    combined = combine_supervision(deterministic, semantic)
+
+    assert combined.verdict == "approve"
+    assert combined.reasons == ()
+    assert combined.missing_required_topics == ()
+    assert combined.summary == deterministic.summary
+
+
+def test_final_validator_cannot_invent_structural_sections() -> None:
+    deterministic = FinalResponseValidation(
+        verdict="approve",
+        summary="O contrato objetivo foi atendido.",
+    )
+    semantic = FinalResponseValidation(
+        verdict="reject",
+        reasons=(RefinementReason.INCOMPLETE,),
+        missing_sections=("Todas as modalidades de importação.",),
+        summary="Escopo ampliado indevidamente.",
+    )
+
+    combined = combine_final_validations(deterministic, semantic)
+
+    assert combined.verdict == "approve"
+    assert combined.reasons == ()
+    assert combined.missing_sections == ()
+    assert combined.summary == deterministic.summary
 
 
 def test_one_global_schema_lane_covers_all_selected_modules() -> None:
@@ -593,6 +703,7 @@ def test_rejected_draft_is_rewritten_privately_before_user_sees_it(
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "vr").resolve(),
         old_root=(tmp_path / "old").resolve(),
+        legacy_vr_orchestration=True,
     )
     settings.app_dir.mkdir(parents=True)
     settings.old_root.mkdir(parents=True)
@@ -657,12 +768,9 @@ def test_rejected_draft_is_rewritten_privately_before_user_sees_it(
         item["id"]: item for item in plan_event.payload["plan"]["agents"]
     }
     assert planned["vr_atlas"]["module"] == "ADM_FIN_ESTOQUE"
-    assert {
-        "vr_atlas__wiki",
-        "vr_atlas__kb",
-        "vr_dba",
-        "vr_dba__schema",
-    }.issubset(planned)
+    assert {"vr_atlas__wiki", "vr_atlas__kb"}.issubset(planned)
+    assert "vr_dba" not in planned
+    assert "vr_dba__schema" not in planned
     assert all(
         planned[identifier]["parent_id"] == "vr_atlas"
         for identifier in (
@@ -670,7 +778,6 @@ def test_rejected_draft_is_rewritten_privately_before_user_sees_it(
             "vr_atlas__kb",
         )
     )
-    assert planned["vr_dba__schema"]["parent_id"] == "vr_dba"
     event_positions = {
         (event.kind, str(event.payload.get("agent_id") or "")): index
         for index, event in enumerate(events)
@@ -682,9 +789,6 @@ def test_rejected_draft_is_rewritten_privately_before_user_sees_it(
             "vr_atlas__kb",
         )
     )
-    assert event_positions[("agent_started", "vr_dba")] > event_positions[
-        ("agent_completed", "vr_dba__schema")
-    ]
     assert any(event.kind == "response_rewrite_started" for event in events)
     assert any(event.kind == "final_validation_completed" for event in events)
     assert any(event.kind == "response_contract_created" for event in events)
