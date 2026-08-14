@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         "export-portable",
         help="Exporta um projeto VR sem credenciais nem vídeos completos",
     )
+    portable.add_argument(
+        "--exclude-source",
+        action="append",
+        default=[],
+        help="Fonte documental que nao deve entrar no pacote (opcao repetivel)",
+    )
     portable.add_argument("destination")
     sub.add_parser(
         "audit-portable",
@@ -157,7 +163,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     elif args.command == "export-portable":
-        result = export_portable_project(settings.root, Path(args.destination))
+        result = export_portable_project(
+            settings.root,
+            Path(args.destination),
+            exclude_sources=args.exclude_source,
+        )
         print(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str))
     elif args.command == "audit-portable":
         result = audit_portable_project(settings.root)

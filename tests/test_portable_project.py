@@ -223,6 +223,72 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     assert audit["absolute_database_paths"] == 0
 
 
+def test_export_portable_can_exclude_kb_and_wiki_content(tmp_path: Path) -> None:
+    source = tmp_path / "SourceVR"
+    destination = tmp_path / "PortableVR"
+    database = MaryDatabase(source / "indice" / "conhecimento.sqlite")
+    documents = (
+        ("kb", "1", "conhecimento/PDV/KB/pinpad.md", "assets/kb/pinpad.png"),
+        ("wiki", "2", "conhecimento/Fiscal/Wiki/nfe.md", "assets/wiki/nfe.png"),
+        ("schema", "3", "SchemaVR/schema.md", ""),
+    )
+    with database.connect() as connection:
+        for source_name, source_id, local_path, asset_path in documents:
+            document = source / local_path
+            document.parent.mkdir(parents=True, exist_ok=True)
+            document.write_text(f"conteudo {source_name}", encoding="utf-8")
+            assets = []
+            if asset_path:
+                asset = source / asset_path
+                asset.parent.mkdir(parents=True, exist_ok=True)
+                asset.write_bytes(b"asset")
+                assets.append(str(asset))
+            connection.execute(
+                """INSERT INTO documents
+                   (source,source_id,title,url,module,review_status,synced_at,
+                    content_hash,local_path,assets_json)
+                   VALUES(?,?,?,?,?,'approved','now',?,?,?)""",
+                (
+                    source_name,
+                    source_id,
+                    f"Documento {source_name}",
+                    f"https://example.test/{source_name}",
+                    "PDV",
+                    f"hash-{source_name}",
+                    str(document),
+                    json.dumps(assets),
+                ),
+            )
+
+    export_portable_project(
+        source,
+        destination,
+        exclude_sources=("KB", "Wiki"),
+    )
+
+    assert not (destination / "conhecimento" / "PDV" / "KB" / "pinpad.md").exists()
+    assert not (destination / "conhecimento" / "Fiscal" / "Wiki" / "nfe.md").exists()
+    assert not (destination / "assets" / "kb" / "pinpad.png").exists()
+    assert not (destination / "assets" / "wiki" / "nfe.png").exists()
+    assert (destination / "SchemaVR" / "schema.md").is_file()
+    portable_database = MaryDatabase(
+        destination / "indice" / "conhecimento.sqlite",
+        root=destination,
+    )
+    with portable_database.connect() as connection:
+        sources = [
+            row[0]
+            for row in connection.execute(
+                "SELECT source FROM documents ORDER BY source"
+            ).fetchall()
+        ]
+    assert sources == ["schema"]
+    catalog = (destination / "indice" / "catalogo.jsonl").read_text(encoding="utf-8")
+    assert '"source": "schema"' in catalog
+    assert '"source": "kb"' not in catalog
+    assert '"source": "wiki"' not in catalog
+
+
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")
 def test_portable_search_runs_without_python(tmp_path: Path) -> None:
     root = tmp_path / "VRProject"

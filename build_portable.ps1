@@ -3,6 +3,7 @@ param(
     [string]$VRRoot = "",
     [Alias("SkipMaryProject")]
     [switch]$SkipVRProject,
+    [switch]$IncludeKnowledgeBase,
     [ValidateSet("auto", "main", "dev")]
     [string]$BuildChannel = "auto",
     [string]$PythonPath = ""
@@ -99,6 +100,7 @@ try {
         python_included = $true
         chromium_included = $true
         ffmpeg_included = $true
+        excluded_knowledge_sources = if ($IncludeKnowledgeBase) { @() } else { @("kb", "wiki") }
         channel = $ResolvedChannel
         branch = $CurrentBranch
         revision = $Revision
@@ -134,7 +136,14 @@ try {
         if ($VRRoot) {
             $ExportArguments += @("--root", $VRRoot)
         }
-        $ExportArguments += @("export-portable", $PortableVR)
+        $ExportArguments += @("export-portable")
+        if (-not $IncludeKnowledgeBase) {
+            $ExportArguments += @(
+                "--exclude-source", "kb",
+                "--exclude-source", "wiki"
+            )
+        }
+        $ExportArguments += @($PortableVR)
         & $Python @ExportArguments
         if ($LASTEXITCODE -ne 0) {
             throw "Exportacao do projeto VR falhou com codigo $LASTEXITCODE"

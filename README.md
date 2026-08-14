@@ -285,11 +285,16 @@ gerado `VRNortePortable-dev-<versão>-<revisão>.zip`. Todo pacote inclui um
 `build-info.json` com canal, branch e commit exatos, evitando que uma build de
 teste seja confundida com a estável.
 
-O ZIP reúne `App` e `VRProject`; o pacote completo já inclui o aplicativo. Nele, use
+O ZIP reúne `App` e a estrutura do `VRProject`, incluindo agentes e Schema, mas
+não incorpora por padrão o acervo sincronizado de KB e Wiki. Essas fontes podem
+ser sincronizadas no ambiente de destino com as credenciais do usuário. Use
 `Abrir-VR-Studio.cmd` para o gerenciador ou
 `VRProject\Abrir-VR-no-Codex.cmd` para trabalhar diretamente no Codex. Se
 Inno Setup estiver instalado, compile `installer\VRNorteStudio.iss` para produzir
 o instalador Windows.
+
+Para uma exportação excepcional que inclua o acervo completo, execute
+`build_portable.ps1 -IncludeKnowledgeBase`.
 
 A distribuição portátil oficial é destinada ao Windows 10/11 x64, incorpora
 Python, Chromium e FFmpeg e deve ser totalmente extraída antes da execução. O

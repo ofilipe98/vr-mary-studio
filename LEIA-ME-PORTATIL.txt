@@ -16,6 +16,8 @@ Servicos opcionais
 - Chat: instale e autentique o CLI do provedor que pretende usar (Codex,
   Claude ou OpenCode). Nenhuma credencial pessoal acompanha o pacote.
 - Wiki, KB e Endoo: exigem internet e as credenciais do usuario.
+- O pacote nao inclui o acervo sincronizado de Wiki e KB; use as sincronizacoes
+  do aplicativo no ambiente de destino quando precisar dessas fontes.
 - OCR: pode ser instalado de forma portatil pela tela Configuracoes.
 
 Seguranca e integridade

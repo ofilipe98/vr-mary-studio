@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 from .db import MaryDatabase
 from .indexer import export_catalog
@@ -119,9 +120,19 @@ def audit_portable_project(root: Path) -> dict[str, object]:
     }
 
 
-def export_portable_project(source: Path, destination: Path) -> PortableExportResult:
+def export_portable_project(
+    source: Path,
+    destination: Path,
+    *,
+    exclude_sources: Iterable[str] = (),
+) -> PortableExportResult:
     source = source.resolve()
     destination = destination.resolve()
+    excluded_sources = {
+        str(source_name).strip().casefold()
+        for source_name in exclude_sources
+        if str(source_name).strip()
+    }
     if source == destination or source in destination.parents:
         raise ValueError("O destino portátil deve ficar fora da base de origem.")
     if destination.exists() and any(destination.iterdir()):
@@ -130,7 +141,10 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
 
     database_relative = Path("indice") / "conhecimento.sqlite"
     source_database = source / database_relative
-    allowed_knowledge, allowed_assets = _portable_content_paths(source_database)
+    allowed_knowledge, allowed_assets = _portable_content_paths(
+        source_database,
+        excluded_sources,
+    )
     files = 0
     bytes_total = 0
     excluded = 0
@@ -177,7 +191,7 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
             root=destination,
             backup_portable_migration=False,
         )
-        _sanitize_portable_database(portable_database)
+        _sanitize_portable_database(portable_database, excluded_sources)
         export_catalog(portable_database, destination / "indice")
         files += 1
         bytes_total += target_database.stat().st_size
@@ -190,6 +204,7 @@ def export_portable_project(source: Path, destination: Path) -> PortableExportRe
 
 def _portable_content_paths(
     database_path: Path,
+    excluded_sources: set[str] | None = None,
 ) -> tuple[set[str] | None, set[str] | None]:
     if not database_path.is_file():
         return None, None
@@ -197,11 +212,13 @@ def _portable_content_paths(
     assets: set[str] = set()
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
-            """SELECT local_path,assets_json FROM documents
+            """SELECT source,local_path,assets_json FROM documents
                WHERE status='active'"""
         ).fetchall()
     root = database_path.resolve().parent.parent
-    for local_path, assets_json in rows:
+    for source, local_path, assets_json in rows:
+        if str(source).casefold() in (excluded_sources or set()):
+            continue
         relative = to_portable_path(root, local_path)
         if relative:
             knowledge.add(relative)
@@ -219,33 +236,38 @@ def _portable_content_paths(
     return knowledge, assets
 
 
-def _sanitize_portable_database(database: MaryDatabase) -> None:
+def _sanitize_portable_database(
+    database: MaryDatabase,
+    excluded_sources: set[str] | None = None,
+) -> None:
     """Keep distributable knowledge while removing local user/session state."""
 
     with database.connect() as connection:
-        inactive = [
+        excluded_documents = [
             int(row[0])
             for row in connection.execute(
-                "SELECT id FROM documents WHERE status<>'active'"
+                "SELECT id,source,status FROM documents"
             ).fetchall()
+            if row[2] != "active"
+            or str(row[1]).casefold() in (excluded_sources or set())
         ]
-        if inactive:
-            placeholders = ",".join("?" for _document_id in inactive)
+        if excluded_documents:
+            placeholders = ",".join("?" for _document_id in excluded_documents)
             connection.execute(
                 f"DELETE FROM source_citations WHERE document_id IN ({placeholders})",
-                inactive,
+                excluded_documents,
             )
             connection.execute(
                 f"DELETE FROM classification_reviews WHERE document_id IN ({placeholders})",
-                inactive,
+                excluded_documents,
             )
             connection.execute(
                 f"DELETE FROM document_versions WHERE document_id IN ({placeholders})",
-                inactive,
+                excluded_documents,
             )
             connection.execute(
                 f"DELETE FROM documents WHERE id IN ({placeholders})",
-                inactive,
+                excluded_documents,
             )
         for table in (
             "source_citations",
