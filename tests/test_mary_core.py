@@ -5394,8 +5394,6 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_chat_surface_panel_exposes_requested_functions_only(self):
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
         from PySide6.QtWidgets import QApplication
 
         application = QApplication.instance() or QApplication([])
@@ -5422,13 +5420,150 @@ class MaryCoreTest(unittest.TestCase):
             )
             self.assertNotIn("Diff", labels)
             self.assertNotIn("Pull request", labels)
+            self.assertTrue(
+                all(
+                    not button.icon().isNull()
+                    for button in window.chat_surface_buttons.values()
+                )
+            )
 
-            with patch.object(
-                QDesktopServices, "openUrl", return_value=True
-            ) as open_url:
-                window.chat_surface_buttons["files"].click()
-            open_url.assert_called_once_with(
-                QUrl.fromLocalFile(str(window._surface_workspace()))
+            window.chat_surface_buttons["files"].click()
+            application.processEvents()
+            self.assertIs(
+                window.chat_surface_stack.currentWidget(),
+                window.surface_files_page,
+            )
+            self.assertIsNotNone(window.surface_file_model)
+            self.assertEqual(window.surface_title.text(), "Files")
+
+            window._show_surface_home()
+            window.chat_surface_buttons["browser"].click()
+            application.processEvents()
+            self.assertIs(
+                window.chat_surface_stack.currentWidget(),
+                window.surface_browser_page,
+            )
+            self.assertIsNone(window.surface_browser_view)
+            self.assertEqual(window.surface_title.text(), "Browser")
+        finally:
+            window.close()
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell surface requires Windows")
+    def test_chat_terminal_and_files_run_inside_surface_panel(self):
+        from PySide6.QtCore import QElapsedTimer, QProcess
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+
+            window._activate_surface("terminal")
+            self.assertNotEqual(
+                window.surface_terminal_process.state(), QProcess.NotRunning
+            )
+            marker = "__VR_EMBEDDED_TERMINAL_OK__"
+            window.surface_terminal_input.setText(
+                f'Write-Output "{marker}"'
+            )
+            window._surface_terminal_submit()
+            timer = QElapsedTimer()
+            timer.start()
+            while (
+                marker not in window.surface_terminal_output.toPlainText()
+                and timer.elapsed() < 5000
+            ):
+                application.processEvents()
+                QTest.qWait(40)
+            self.assertIn(
+                marker, window.surface_terminal_output.toPlainText()
+            )
+            self.assertIs(
+                window.chat_surface_stack.currentWidget(),
+                window.surface_terminal_page,
+            )
+
+            window._activate_surface("files")
+            target = window._surface_workspace() / "pyproject.toml"
+            target.write_text(
+                '[project]\nname = "embedded-surface-test"\n',
+                encoding="utf-8",
+            )
+            window._refresh_surface_files()
+            source_index = window.surface_file_model.index(str(target))
+            timer.restart()
+            while not source_index.isValid() and timer.elapsed() < 3000:
+                application.processEvents()
+                QTest.qWait(40)
+                source_index = window.surface_file_model.index(str(target))
+            self.assertTrue(source_index.isValid())
+            window._surface_file_activated(
+                window.surface_file_proxy.mapFromSource(source_index)
+            )
+            self.assertIn(
+                "[project]", window.surface_file_preview.toPlainText()
+            )
+            self.assertIs(
+                window.chat_surface_stack.currentWidget(),
+                window.surface_files_page,
+            )
+        finally:
+            window.close()
+
+    def test_chat_browser_loads_local_page_inside_surface_panel(self):
+        from PySide6.QtCore import QElapsedTimer
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        import vrsoft_extractor.mary.ui as mary_ui
+
+        if mary_ui.QWebEngineView is None:
+            self.skipTest("Qt WebEngine is unavailable")
+        preview = self.app / "embedded-browser.html"
+        preview.write_text(
+            "<html><head><title>VR Browser Test</title></head>"
+            "<body>Browser interno ativo</body></html>",
+            encoding="utf-8",
+        )
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window._activate_surface("browser")
+            window.surface_browser_address.setText(preview.resolve().as_uri())
+            window._surface_browser_navigate()
+
+            timer = QElapsedTimer()
+            timer.start()
+            while (
+                window.surface_browser_view.title() != "VR Browser Test"
+                and timer.elapsed() < 8000
+            ):
+                application.processEvents()
+                QTest.qWait(50)
+            self.assertEqual(
+                window.surface_browser_view.title(), "VR Browser Test"
+            )
+            self.assertIs(
+                window.surface_browser_content.currentWidget(),
+                window.surface_browser_view,
+            )
+            self.assertEqual(
+                Path(window.surface_browser_view.url().toLocalFile()).resolve(),
+                preview.resolve(),
             )
         finally:
             window.close()

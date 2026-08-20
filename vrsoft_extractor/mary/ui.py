@@ -23,6 +23,7 @@ from PySide6.QtCore import (
     QRunnable,
     QSettings,
     QSize,
+    QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
@@ -52,6 +53,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFileSystemModel,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -79,11 +81,17 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QToolButton,
+    QTreeView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+except ImportError:  # pragma: no cover - friendly fallback for minimal Qt installs
+    QWebEngineView = None
 
 from ..endoo_client import EndooAuthenticationRequired
 from ..settings import ConfigError
@@ -497,6 +505,37 @@ QPushButton#chatSurfaceCard {{
 }}
 QPushButton#chatSurfaceCard:hover, QPushButton#chatSurfaceCard:focus {{
     background: #F2F2F5; border-color: #BDBDC7;
+}}
+QToolButton#chatSurfaceBack, QToolButton#surfaceBrowserNav {{
+    min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
+    background: transparent; border: 0; border-radius: 7px;
+}}
+QToolButton#chatSurfaceBack:hover, QToolButton#surfaceBrowserNav:hover {{
+    background: #EEEEF3;
+}}
+QLineEdit#surfaceBrowserAddress, QLineEdit#surfaceTerminalInput,
+QLineEdit#surfaceFilesSearch {{
+    min-height: 34px; background: #F6F6F8; border: 1px solid #E1E1E6;
+    border-radius: 8px; padding: 0 9px;
+}}
+QLineEdit#surfaceBrowserAddress:focus, QLineEdit#surfaceTerminalInput:focus,
+QLineEdit#surfaceFilesSearch:focus {{ border-color: {ACCESSIBLE_ORANGE}; }}
+QWidget#surfaceBrowserPage, QWidget#surfaceTerminalPage,
+QWidget#surfaceFilesPage {{ background: transparent; }}
+QLabel#surfaceEmptyIcon {{ color: {TEXT_MUTED}; font-size: 28px; }}
+QLabel#surfaceEmptyTitle {{ color: {BRAND_NAVY}; font-size: 17px; font-weight: 700; }}
+QLabel#surfaceEmptyText {{ color: {TEXT_MUTED}; }}
+QPlainTextEdit#surfaceTerminalOutput, QPlainTextEdit#surfaceFilePreview {{
+    background: #FAFAFB; border: 1px solid #E1E1E6; border-radius: 8px;
+    color: {BRAND_NAVY}; font-family: "Consolas"; font-size: 12px;
+    padding: 8px;
+}}
+QTreeView#surfaceFileTree {{
+    background: transparent; border: 0; outline: 0;
+}}
+QTreeView#surfaceFileTree::item {{ min-height: 25px; padding: 2px 4px; }}
+QTreeView#surfaceFileTree::item:selected {{
+    background: #E8EEF5; color: {BRAND_NAVY}; border-radius: 5px;
 }}
 QLabel#chatStatus {{
     min-height: 24px; max-height: 24px; border-radius: 12px;
@@ -1333,6 +1372,27 @@ QPushButton#chatSurfaceCard {{
 }}
 QPushButton#chatSurfaceCard:hover, QPushButton#chatSurfaceCard:focus {{
     background: #18181B; border-color: #3F3F46;
+}}
+QToolButton#chatSurfaceBack, QToolButton#surfaceBrowserNav {{
+    color: {DARK_MUTED}; background: transparent;
+}}
+QToolButton#chatSurfaceBack:hover, QToolButton#surfaceBrowserNav:hover {{
+    background: #27272A; color: {DARK_TEXT};
+}}
+QLineEdit#surfaceBrowserAddress, QLineEdit#surfaceTerminalInput,
+QLineEdit#surfaceFilesSearch {{
+    background: #111113; border-color: #27272A; color: {DARK_TEXT};
+}}
+QLineEdit#surfaceBrowserAddress:focus, QLineEdit#surfaceTerminalInput:focus,
+QLineEdit#surfaceFilesSearch:focus {{ border-color: #52525B; }}
+QLabel#surfaceEmptyIcon, QLabel#surfaceEmptyText {{ color: {DARK_MUTED}; }}
+QLabel#surfaceEmptyTitle {{ color: {DARK_TEXT}; }}
+QPlainTextEdit#surfaceTerminalOutput, QPlainTextEdit#surfaceFilePreview {{
+    background: #09090B; border-color: #27272A; color: {DARK_TEXT};
+}}
+QTreeView#surfaceFileTree {{ background: transparent; color: {DARK_TEXT}; }}
+QTreeView#surfaceFileTree::item:selected {{
+    background: #082F49; color: {DARK_TEXT};
 }}
 QLabel#chatStatus[statusKind="info"] {{
     background: #2B2724; color: {DARK_MUTED};
@@ -3393,10 +3453,18 @@ class MainWindow(QMainWindow):
         surface_header = QFrame(objectName="chatSurfaceHeader")
         surface_header.setFixedHeight(48)
         surface_header_layout = QHBoxLayout(surface_header)
-        surface_header_layout.setContentsMargins(14, 0, 10, 0)
-        surface_header_layout.addWidget(
-            QLabel("Superfícies", objectName="chatSurfaceTitle")
+        surface_header_layout.setContentsMargins(10, 0, 10, 0)
+        self.surface_back_button = QToolButton(objectName="chatSurfaceBack")
+        self.surface_back_button.setText("‹")
+        self.surface_back_button.setAccessibleName("Voltar às superfícies")
+        self.surface_back_button.setToolTip("Voltar às superfícies")
+        self.surface_back_button.clicked.connect(self._show_surface_home)
+        self.surface_back_button.hide()
+        surface_header_layout.addWidget(self.surface_back_button)
+        self.surface_title = QLabel(
+            "Superfícies", objectName="chatSurfaceTitle"
         )
+        surface_header_layout.addWidget(self.surface_title)
         surface_header_layout.addStretch(1)
         surface_close = QToolButton(objectName="traceSidebarToggle")
         surface_close.setText("×")
@@ -3408,7 +3476,8 @@ class MainWindow(QMainWindow):
         surface_header_layout.addWidget(surface_close)
         surface_layout.addWidget(surface_header)
 
-        surface_body = QWidget()
+        self.chat_surface_stack = QStackedWidget()
+        surface_body = QWidget(objectName="surfaceHomePage")
         surface_body_layout = QVBoxLayout(surface_body)
         surface_body_layout.setContentsMargins(18, 22, 18, 18)
         surface_body_layout.setSpacing(14)
@@ -3424,21 +3493,155 @@ class MainWindow(QMainWindow):
         surface_grid.setVerticalSpacing(10)
         self.chat_surface_buttons: dict[str, QPushButton] = {}
         surface_specs = (
-            ("browser", "Browser\nAbrir navegador", self._open_surface_browser),
-            ("terminal", "Terminal\nAbrir no projeto", self._open_surface_terminal),
-            ("files", "Files\nExplorar arquivos", self._open_surface_files),
-            ("agents", "Agents\nVer subagentes", self._open_surface_agents),
+            ("browser", "Browser\nURL ou localhost"),
+            ("terminal", "Terminal\nPowerShell local"),
+            ("files", "Files\nExplorar arquivos"),
+            ("agents", "Agents\nVer subagentes"),
         )
-        for index, (key, label, callback) in enumerate(surface_specs):
+        for index, (key, label) in enumerate(surface_specs):
             button = QPushButton(label, objectName="chatSurfaceCard")
             button.setProperty("surfaceKey", key)
             button.setAccessibleName(label.replace("\n", ". "))
-            button.clicked.connect(callback)
+            button.setIcon(QIcon(str(ASSET_DIR / f"surface-{key}.svg")))
+            button.setIconSize(QSize(24, 24))
+            button.clicked.connect(
+                lambda _checked=False, selected=key: self._activate_surface(
+                    selected
+                )
+            )
             surface_grid.addWidget(button, index // 2, index % 2)
             self.chat_surface_buttons[key] = button
         surface_body_layout.addLayout(surface_grid)
         surface_body_layout.addStretch(1)
-        surface_layout.addWidget(surface_body, 1)
+        self.chat_surface_stack.addWidget(surface_body)
+        self.surface_home_page = surface_body
+
+        browser_page = QWidget(objectName="surfaceBrowserPage")
+        browser_layout = QVBoxLayout(browser_page)
+        browser_layout.setContentsMargins(10, 10, 10, 10)
+        browser_layout.setSpacing(8)
+        browser_toolbar = QHBoxLayout()
+        browser_toolbar.setContentsMargins(0, 0, 0, 0)
+        browser_toolbar.setSpacing(4)
+        self.surface_browser_back = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_back.setText("←")
+        self.surface_browser_back.setAccessibleName("Voltar no navegador")
+        self.surface_browser_back.clicked.connect(self._surface_browser_go_back)
+        browser_toolbar.addWidget(self.surface_browser_back)
+        self.surface_browser_forward = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_forward.setText("→")
+        self.surface_browser_forward.setAccessibleName("Avançar no navegador")
+        self.surface_browser_forward.clicked.connect(self._surface_browser_go_forward)
+        browser_toolbar.addWidget(self.surface_browser_forward)
+        self.surface_browser_reload = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_reload.setText("↻")
+        self.surface_browser_reload.setAccessibleName("Recarregar navegador")
+        self.surface_browser_reload.clicked.connect(self._surface_browser_reload_page)
+        browser_toolbar.addWidget(self.surface_browser_reload)
+        self.surface_browser_address = QLineEdit(
+            objectName="surfaceBrowserAddress"
+        )
+        self.surface_browser_address.setPlaceholderText("Pesquisar ou inserir URL")
+        self.surface_browser_address.setAccessibleName("Endereço do navegador")
+        self.surface_browser_address.returnPressed.connect(
+            self._surface_browser_navigate
+        )
+        browser_toolbar.addWidget(self.surface_browser_address, 1)
+        browser_layout.addLayout(browser_toolbar)
+        self.surface_browser_content = QStackedWidget()
+        browser_empty = QWidget()
+        browser_empty_layout = QVBoxLayout(browser_empty)
+        browser_empty_layout.addStretch(1)
+        browser_empty_icon = QLabel(objectName="surfaceEmptyIcon")
+        browser_empty_icon.setPixmap(
+            QIcon(str(ASSET_DIR / "surface-browser.svg")).pixmap(42, 42)
+        )
+        browser_empty_icon.setAlignment(Qt.AlignCenter)
+        browser_empty_layout.addWidget(browser_empty_icon)
+        browser_empty_title = QLabel("Nenhuma visualização", objectName="surfaceEmptyTitle")
+        browser_empty_title.setAlignment(Qt.AlignCenter)
+        browser_empty_layout.addWidget(browser_empty_title)
+        browser_empty_text = QLabel(
+            "Digite uma URL acima. Servidores localhost também podem ser abertos aqui.",
+            objectName="surfaceEmptyText",
+        )
+        browser_empty_text.setAlignment(Qt.AlignCenter)
+        browser_empty_text.setWordWrap(True)
+        browser_empty_layout.addWidget(browser_empty_text)
+        browser_empty_layout.addStretch(2)
+        self.surface_browser_content.addWidget(browser_empty)
+        self.surface_browser_empty = browser_empty
+        self.surface_browser_view = None
+        browser_layout.addWidget(self.surface_browser_content, 1)
+        self.chat_surface_stack.addWidget(browser_page)
+        self.surface_browser_page = browser_page
+
+        terminal_page = QWidget(objectName="surfaceTerminalPage")
+        terminal_layout = QVBoxLayout(terminal_page)
+        terminal_layout.setContentsMargins(10, 10, 10, 10)
+        terminal_layout.setSpacing(8)
+        self.surface_terminal_output = QPlainTextEdit(
+            objectName="surfaceTerminalOutput"
+        )
+        self.surface_terminal_output.setReadOnly(True)
+        self.surface_terminal_output.setAccessibleName("Saída do terminal")
+        terminal_layout.addWidget(self.surface_terminal_output, 1)
+        self.surface_terminal_input = QLineEdit(
+            objectName="surfaceTerminalInput"
+        )
+        self.surface_terminal_input.setPlaceholderText("Digite um comando PowerShell")
+        self.surface_terminal_input.setAccessibleName("Comando do terminal")
+        self.surface_terminal_input.returnPressed.connect(
+            self._surface_terminal_submit
+        )
+        terminal_layout.addWidget(self.surface_terminal_input)
+        self.surface_terminal_process = QProcess(self)
+        self.surface_terminal_process.setProcessChannelMode(QProcess.MergedChannels)
+        self.surface_terminal_process.readyReadStandardOutput.connect(
+            self._surface_terminal_read
+        )
+        self.surface_terminal_process.errorOccurred.connect(
+            self._surface_terminal_error
+        )
+        self.chat_surface_stack.addWidget(terminal_page)
+        self.surface_terminal_page = terminal_page
+
+        files_page = QWidget(objectName="surfaceFilesPage")
+        files_layout = QVBoxLayout(files_page)
+        files_layout.setContentsMargins(10, 10, 10, 10)
+        files_layout.setSpacing(8)
+        self.surface_files_search = QLineEdit(objectName="surfaceFilesSearch")
+        self.surface_files_search.setPlaceholderText("Pesquisar arquivos")
+        self.surface_files_search.setAccessibleName("Pesquisar arquivos")
+        self.surface_files_search.textChanged.connect(
+            self._surface_files_filter_changed
+        )
+        files_layout.addWidget(self.surface_files_search)
+        files_splitter = QSplitter(Qt.Vertical)
+        self.surface_file_tree = QTreeView(objectName="surfaceFileTree")
+        self.surface_file_tree.setHeaderHidden(True)
+        self.surface_file_tree.setAnimated(False)
+        self.surface_file_tree.setIndentation(14)
+        self.surface_file_tree.doubleClicked.connect(
+            self._surface_file_activated
+        )
+        files_splitter.addWidget(self.surface_file_tree)
+        self.surface_file_preview = QPlainTextEdit(
+            objectName="surfaceFilePreview"
+        )
+        self.surface_file_preview.setReadOnly(True)
+        self.surface_file_preview.setPlaceholderText(
+            "Clique duas vezes em um arquivo de texto para visualizar."
+        )
+        files_splitter.addWidget(self.surface_file_preview)
+        files_splitter.setSizes([460, 220])
+        files_layout.addWidget(files_splitter, 1)
+        self.surface_file_model = None
+        self.surface_file_proxy = None
+        self.chat_surface_stack.addWidget(files_page)
+        self.surface_files_page = files_page
+
+        surface_layout.addWidget(self.chat_surface_stack, 1)
         splitter.addWidget(surface)
         surface.hide()
         self.chat_splitter = splitter
@@ -8045,35 +8248,196 @@ class MainWindow(QMainWindow):
             or self.settings.app_dir
         ).resolve()
 
-    def _open_surface_browser(self) -> None:
-        if not open_safe_external_url("https://www.google.com"):
-            self.chat_status.setText("Não foi possível abrir o navegador")
+    def _activate_surface(self, key: str) -> None:
+        selected = str(key or "").strip().casefold()
+        if selected == "agents":
+            self._open_surface_agents()
+            return
+        pages = {
+            "browser": ("Browser", self.surface_browser_page),
+            "terminal": ("Terminal", self.surface_terminal_page),
+            "files": ("Files", self.surface_files_page),
+        }
+        target = pages.get(selected)
+        if target is None:
+            return
+        self._set_surface_panel_visible(True)
+        self.surface_title.setText(target[0])
+        self.surface_back_button.show()
+        self.chat_surface_stack.setCurrentWidget(target[1])
+        if selected == "browser":
+            QTimer.singleShot(0, self.surface_browser_address.setFocus)
+        elif selected == "terminal":
+            self._ensure_surface_terminal()
+            QTimer.singleShot(0, self.surface_terminal_input.setFocus)
+        elif selected == "files":
+            self._refresh_surface_files()
+            QTimer.singleShot(0, self.surface_files_search.setFocus)
 
-    def _open_surface_terminal(self) -> None:
-        workspace = self._surface_workspace()
-        executable = shutil.which("wt.exe")
-        if executable:
-            result = QProcess.startDetached(
-                executable,
-                ["-d", str(workspace)],
-                str(workspace),
-            )
-        else:
-            executable = shutil.which("powershell.exe") or "powershell.exe"
-            escaped = str(workspace).replace("'", "''")
-            result = QProcess.startDetached(
-                executable,
-                ["-NoExit", "-Command", f"Set-Location -LiteralPath '{escaped}'"],
-                str(workspace),
-            )
-        started = result[0] if isinstance(result, tuple) else bool(result)
-        if not started:
-            self.chat_status.setText("Não foi possível abrir o terminal")
+    def _show_surface_home(self) -> None:
+        self.surface_title.setText("Superfícies")
+        self.surface_back_button.hide()
+        self.chat_surface_stack.setCurrentWidget(self.surface_home_page)
 
-    def _open_surface_files(self) -> None:
+    def _ensure_surface_browser_view(self):
+        if self.surface_browser_view is not None:
+            return self.surface_browser_view
+        if QWebEngineView is None:
+            self.chat_status.setText("Qt WebEngine não está disponível nesta build")
+            return None
+        view = QWebEngineView(self.surface_browser_content)
+        view.setObjectName("surfaceBrowserView")
+        view.setAccessibleName("Visualização do navegador")
+        view.urlChanged.connect(
+            lambda url: self.surface_browser_address.setText(url.toString())
+        )
+        self.surface_browser_content.addWidget(view)
+        self.surface_browser_view = view
+        return view
+
+    def _surface_browser_navigate(self) -> None:
+        value = self.surface_browser_address.text().strip()
+        if not value:
+            return
+        normalized = value
+        if value.casefold().startswith("localhost"):
+            normalized = "http://" + value
+        elif "://" not in value and "." not in value:
+            query = bytes(QUrl.toPercentEncoding(value)).decode("ascii")
+            normalized = f"https://www.google.com/search?q={query}"
+        url = QUrl.fromUserInput(normalized)
+        if not url.isValid():
+            self.chat_status.setText("Endereço inválido")
+            return
+        view = self._ensure_surface_browser_view()
+        if view is None:
+            return
+        self.surface_browser_content.setCurrentWidget(view)
+        view.setUrl(url)
+
+    def _surface_browser_go_back(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.back()
+
+    def _surface_browser_go_forward(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.forward()
+
+    def _surface_browser_reload_page(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.reload()
+
+    def _ensure_surface_terminal(self) -> None:
+        process = self.surface_terminal_process
+        if process.state() != QProcess.NotRunning:
+            return
         workspace = self._surface_workspace()
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(workspace))):
-            self.chat_status.setText("Não foi possível abrir os arquivos")
+        executable = shutil.which("powershell.exe") or "powershell.exe"
+        process.setWorkingDirectory(str(workspace))
+        process.start(executable, ["-NoLogo", "-NoExit"])
+        if not process.waitForStarted(3000):
+            self.surface_terminal_output.appendPlainText(
+                "Não foi possível iniciar o PowerShell."
+            )
+            return
+        escaped = str(workspace).replace("'", "''")
+        bootstrap = (
+            "$OutputEncoding=[Console]::OutputEncoding="
+            "[Text.UTF8Encoding]::new(); "
+            f"Set-Location -LiteralPath '{escaped}'\r\n"
+        )
+        process.write(bootstrap.encode("utf-8"))
+
+    def _surface_terminal_submit(self) -> None:
+        command = self.surface_terminal_input.text().strip()
+        if not command:
+            return
+        self._ensure_surface_terminal()
+        if self.surface_terminal_process.state() == QProcess.NotRunning:
+            return
+        self.surface_terminal_input.clear()
+        self.surface_terminal_process.write((command + "\r\n").encode("utf-8"))
+
+    def _surface_terminal_read(self) -> None:
+        payload = bytes(self.surface_terminal_process.readAllStandardOutput())
+        if not payload:
+            return
+        try:
+            output = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            output = payload.decode("cp1252", errors="replace")
+        cursor = self.surface_terminal_output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(output)
+        self.surface_terminal_output.setTextCursor(cursor)
+        self.surface_terminal_output.ensureCursorVisible()
+
+    def _surface_terminal_error(self, _error) -> None:
+        if self.surface_terminal_process.errorString():
+            self.surface_terminal_output.appendPlainText(
+                self.surface_terminal_process.errorString()
+            )
+
+    def _refresh_surface_files(self) -> None:
+        workspace = self._surface_workspace()
+        if self.surface_file_model is None:
+            model = QFileSystemModel(self)
+            model.setReadOnly(True)
+            proxy = QSortFilterProxyModel(self)
+            proxy.setSourceModel(model)
+            proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+            proxy.setRecursiveFilteringEnabled(True)
+            proxy.setFilterKeyColumn(0)
+            self.surface_file_model = model
+            self.surface_file_proxy = proxy
+            self.surface_file_tree.setModel(proxy)
+            for column in range(1, 4):
+                self.surface_file_tree.hideColumn(column)
+        source_root = self.surface_file_model.setRootPath(str(workspace))
+        proxy_root = self.surface_file_proxy.mapFromSource(source_root)
+        self.surface_file_tree.setRootIndex(proxy_root)
+        self.surface_file_tree.expandToDepth(0)
+        self.surface_file_preview.clear()
+        self.surface_file_preview.setPlaceholderText(
+            "Clique duas vezes em um arquivo de texto para visualizar."
+        )
+
+    def _surface_files_filter_changed(self, value: str) -> None:
+        if self.surface_file_proxy is not None:
+            self.surface_file_proxy.setFilterFixedString(str(value or "").strip())
+
+    def _surface_file_activated(self, index) -> None:
+        if self.surface_file_model is None or self.surface_file_proxy is None:
+            return
+        source_index = self.surface_file_proxy.mapToSource(index)
+        path = Path(self.surface_file_model.filePath(source_index))
+        if path.is_dir():
+            self.surface_file_tree.setExpanded(
+                index, not self.surface_file_tree.isExpanded(index)
+            )
+            return
+        if not path.is_file():
+            return
+        try:
+            if path.stat().st_size > 2 * 1024 * 1024:
+                self.surface_file_preview.setPlainText(
+                    "Arquivo maior que 2 MB. A visualização interna foi desativada."
+                )
+                return
+            payload = path.read_bytes()
+        except OSError as exc:
+            self.surface_file_preview.setPlainText(str(exc))
+            return
+        if b"\x00" in payload:
+            self.surface_file_preview.setPlainText(
+                "Arquivo binário. Não há visualização de texto disponível."
+            )
+            return
+        try:
+            content = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            content = payload.decode("cp1252", errors="replace")
+        self.surface_file_preview.setPlainText(content)
 
     def _open_surface_agents(self) -> None:
         if not getattr(self, "_trace_plan_agents", []):
@@ -11362,6 +11726,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._discard_pending_images()
         self.orchestrator.close()
+        terminal_process = getattr(self, "surface_terminal_process", None)
+        if (
+            terminal_process is not None
+            and terminal_process.state() != QProcess.NotRunning
+        ):
+            terminal_process.write(b"exit\r\n")
+            terminal_process.closeWriteChannel()
+            if not terminal_process.waitForFinished(1500):
+                terminal_process.terminate()
+                if not terminal_process.waitForFinished(1500):
+                    terminal_process.kill()
+                    terminal_process.waitForFinished(1000)
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
             self.video_process.terminate()
             if not self.video_process.waitForFinished(3000):
@@ -11380,6 +11756,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-project-menu", action="store_true")
     parser.add_argument("--screenshot-vr-panel", action="store_true")
     parser.add_argument("--screenshot-surfaces", action="store_true")
+    parser.add_argument(
+        "--screenshot-surface",
+        choices=("home", "browser", "terminal", "files"),
+        default="home",
+    )
     parser.add_argument("--screenshot-long-text", action="store_true")
     parser.add_argument("--screenshot-reduce-motion", action="store_true")
     parser.add_argument(
@@ -11546,6 +11927,8 @@ def main(argv: list[str] | None = None) -> int:
                 app.processEvents()
             elif args.screenshot_surfaces:
                 window._set_surface_panel_visible(True)
+                if args.screenshot_surface != "home":
+                    window._activate_surface(args.screenshot_surface)
                 app.processEvents()
             elif args.screenshot_dialog == "confirm":
                 window._screenshot_dialog = ConfirmDialog(
