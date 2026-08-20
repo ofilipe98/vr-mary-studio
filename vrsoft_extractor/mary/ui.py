@@ -299,8 +299,6 @@ STATUS_LABELS = {
 }
 CONVERSATION_RUNNING_ROLE = int(Qt.UserRole) + 1
 SLASH_COMMANDS = (
-    ("plan", "Ativar ou alternar o modo Plan"),
-    ("build", "Ativar o modo Build"),
     ("provider", "Escolher o provedor desta conversa"),
     ("model", "Escolher o modelo desta conversa"),
     ("reasoning", "Escolher o n\u00edvel de esfor\u00e7o"),
@@ -1034,11 +1032,14 @@ QToolButton#archivedDeleteButton {{
 QToolButton#archivedDeleteButton:hover,
 QToolButton#archivedDeleteButton:focus {{ background: #EEEEF2; }}
 QFrame#userMessage {{
-    background: #FFF0E4; border: 0; border-radius: 18px;
+    background: #F1F1F3; border: 1px solid #E3E3E7; border-radius: 16px;
 }}
 QFrame#assistantMessage {{ background: transparent; border: 0; }}
-QFrame#chatActivity, QFrame#chatActivityCompleted {{
+QFrame#chatActivity {{
     background: transparent; border: 0;
+}}
+QFrame#chatActivityCompleted {{
+    background: #FAFAFB; border: 1px solid #E7E7EA; border-radius: 10px;
 }}
 QLabel#chatActivityDot {{
     color: {ACCESSIBLE_ORANGE}; font-size: 10px; padding: 0;
@@ -1046,7 +1047,21 @@ QLabel#chatActivityDot {{
 QLabel#chatActivityDot[activityState="done"] {{ color: #187A42; font-weight: 700; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #A1261D; font-weight: 700; }}
 QLabel#chatActivityText {{
-    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600; padding: 3px 0;
+    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600; padding: 2px 0;
+}}
+QLabel#chatActivityCount {{ color: #71717A; font-size: 11px; padding: 2px 0; }}
+QProgressBar#chatActivityProgress {{
+    min-width: 58px; max-width: 58px; min-height: 4px; max-height: 4px;
+    background: #E4E4E7; border: 0; border-radius: 2px; text-align: center;
+}}
+QProgressBar#chatActivityProgress::chunk {{
+    background: {ACCESSIBLE_ORANGE}; border-radius: 2px;
+}}
+QProgressBar#chatActivityProgress[activityState="done"]::chunk {{
+    background: #159A66;
+}}
+QProgressBar#chatActivityProgress[activityState="error"]::chunk {{
+    background: #C24136;
 }}
 QFrame#chatActivitySteps {{ background: transparent; border: 0; }}
 QLabel#chatActivityStep {{
@@ -1665,12 +1680,15 @@ QFrame#archivedConversationRow {{ background: transparent; border: 0; }}
 QToolButton#archivedDeleteButton {{ background: transparent; border: 0; }}
 QToolButton#archivedDeleteButton:hover,
 QToolButton#archivedDeleteButton:focus {{ background: #302C29; }}
-QFrame#userMessage {{ background: #171719; }}
+QFrame#userMessage {{ background: #1B1B1E; border-color: #2A2A2E; }}
 QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivity,
 QFrame#chatActivityCompleted, QFrame#chatActivitySteps {{
     background: transparent; color: {DARK_TEXT};
 }}
 QLabel#chatActivityStep {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityCount {{ color: #71717A; }}
+QFrame#chatActivityCompleted {{ background: #0D0D0E; border-color: #242428; }}
+QProgressBar#chatActivityProgress {{ background: #2A2A2E; }}
 QLabel#chatActivityDot[activityState="done"] {{ color: {DARK_STATUS_GOOD}; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #FFAAA3; }}
 QToolButton#chatActivityToggle {{ color: {DARK_MUTED}; background: transparent; }}
@@ -2163,6 +2181,8 @@ class MainWindow(QMainWindow):
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
         self.chat_activity_dot: QLabel | None = None
+        self.chat_activity_progress: QProgressBar | None = None
+        self.chat_activity_count: QLabel | None = None
         self.chat_activity_toggle: QToolButton | None = None
         self.chat_activity_details: QFrame | None = None
         self.chat_activity_details_layout: QVBoxLayout | None = None
@@ -2306,7 +2326,6 @@ class MainWindow(QMainWindow):
             self.model_combo,
             self.effort_combo,
             self.approval_combo,
-            self.options_button,
             self.vr_flow_button,
             self.composer,
             self.send_button,
@@ -3006,9 +3025,7 @@ class MainWindow(QMainWindow):
         self.mode_combo = RoundedComboBox()
         self.mode_combo.setAccessibleName("Modo de colaboração")
         self.mode_combo.addItem("Build", "default")
-        self.mode_combo.addItem("Plan", "plan")
         self.mode_combo.currentIndexChanged.connect(self._chat_option_changed)
-        self.mode_combo.currentIndexChanged.connect(self._update_tools_label)
         self.message_scroll = QScrollArea(objectName="messageScroll")
         self.message_scroll.setWidgetResizable(True)
         self.message_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -3357,18 +3374,14 @@ class MainWindow(QMainWindow):
             self.open_orchestration_settings
         )
         self.vr_flow_button.optionsRequested.connect(self._show_vr_mode_panel)
-        self.options_button = QPushButton("Build")
+        # Compatibility handle for older integrations. Build is now the only
+        # collaboration mode and covers planning plus execution in one turn.
+        self.options_button = QPushButton("Build", composer_card)
         self.options_button.setObjectName("composerInlineControl")
-        self.options_button.setFocusPolicy(Qt.TabFocus)
-        self.options_button.setMinimumWidth(58)
-        self.options_button.setMaximumWidth(90)
+        self.options_button.setFocusPolicy(Qt.NoFocus)
         self.options_button.setIconSize(QSize(16, 16))
-        self.options_button.setAccessibleName("Alternar entre os modos Build e Plan")
-        self.options_button.clicked.connect(self.toggle_collaboration_mode)
-        separator = self._composer_separator()
-        self.composer_separators.append(separator)
-        controls.addWidget(separator)
-        controls.addWidget(self.options_button)
+        self.options_button.setAccessibleName("Modo Build")
+        self.options_button.hide()
         controls.addStretch(1)
         controls.addWidget(self.chat_status)
         controls.addWidget(self.vr_flow_button)
@@ -4632,7 +4645,7 @@ class MainWindow(QMainWindow):
         self.provider_detail_labels: dict[str, QLabel] = {}
         self.provider_enabled_checks: dict[str, QCheckBox] = {}
         provider_descriptions = {
-            "codex": "Codex App Server local · modelos, tools, Plan e Build",
+            "codex": "Codex App Server local · modelos, tools e Build integrado",
             "claude": "Claude Code local · conversas e modelos Claude",
             "opencode": "OpenCode local · modelos e sessões via CLI",
         }
@@ -5928,7 +5941,7 @@ class MainWindow(QMainWindow):
             effort or self.settings.default_effort,
             self.tier_combo.currentData() or "",
             self.approval_combo.currentData() or "auto",
-            self.mode_combo.currentData() or "default",
+            "default",
             self.draft_dynamic_tools,
             self.draft_mcp_tools,
             self.draft_orchestration,
@@ -6043,6 +6056,10 @@ class MainWindow(QMainWindow):
         row = self.database.get_conversation(conversation_id)
         if not row:
             return
+        if str(row["collaboration_mode"] or "default") != "default":
+            self.database.update_conversation(
+                conversation_id, collaboration_mode="default"
+            )
         self.current_conversation = conversation_id
         self.draft_conversation = False
         if hasattr(self, "new_chat_button"):
@@ -6082,7 +6099,7 @@ class MainWindow(QMainWindow):
         self.provider_combo.blockSignals(False)
         for combo, value in (
             (self.approval_combo, row["approval_profile"]),
-            (self.mode_combo, row["collaboration_mode"]),
+            (self.mode_combo, "default"),
         ):
             combo.blockSignals(True)
             index = combo.findData(value)
@@ -6139,6 +6156,8 @@ class MainWindow(QMainWindow):
         self.chat_activity_widget = None
         self.chat_activity_label = None
         self.chat_activity_dot = None
+        self.chat_activity_progress = None
+        self.chat_activity_count = None
         self.chat_activity_toggle = None
         self.chat_activity_details = None
         self.chat_activity_details_layout = None
@@ -6196,7 +6215,7 @@ class MainWindow(QMainWindow):
         browser.anchorClicked.connect(open_safe_external_url)
         if role == "user":
             longest_line = max((len(line) for line in content.splitlines()), default=0)
-            browser.setMinimumWidth(min(520, max(180, longest_line * 7 + 28)))
+            browser.setMinimumWidth(min(492, max(152, longest_line * 7)))
         else:
             browser.setMinimumWidth(0)
         message_header = QHBoxLayout()
@@ -6288,27 +6307,35 @@ class MainWindow(QMainWindow):
             activity = QFrame(objectName="chatActivity")
             activity.setMinimumWidth(240)
             activity.setMaximumWidth(760)
-            activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             activity.setAccessibleName("Atividade em andamento")
             layout = QVBoxLayout(activity)
-            layout.setContentsMargins(3, 3, 3, 3)
-            layout.setSpacing(5)
+            layout.setContentsMargins(9, 8, 9, 8)
+            layout.setSpacing(7)
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
-            header.setSpacing(7)
-            dot = QLabel("●", objectName="chatActivityDot")
-            dot.setAccessibleName("Em andamento")
-            header.addWidget(dot, 0, Qt.AlignTop)
-            self.chat_activity_label = QLabel(label, objectName="chatActivityText")
-            self.chat_activity_label.setWordWrap(True)
-            header.addWidget(self.chat_activity_label, 1)
+            header.setSpacing(8)
             toggle = QToolButton(objectName="chatActivityToggle")
             toggle.setText("⌄")
             toggle.setCheckable(True)
             toggle.setAccessibleName("Exibir etapas da atividade")
             toggle.setToolTip("Exibir etapas da atividade")
             toggle.hide()
-            header.addWidget(toggle, 0, Qt.AlignTop)
+            header.addWidget(toggle, 0, Qt.AlignVCenter)
+            progress = QProgressBar(objectName="chatActivityProgress")
+            progress.setTextVisible(False)
+            progress.setRange(0, 0)
+            header.addWidget(progress, 0, Qt.AlignVCenter)
+            dot = QLabel("●", objectName="chatActivityDot")
+            dot.setAccessibleName("Em andamento")
+            dot.setFixedWidth(8)
+            header.addWidget(dot, 0, Qt.AlignVCenter)
+            self.chat_activity_label = QLabel(label, objectName="chatActivityText")
+            self.chat_activity_label.setWordWrap(True)
+            header.addWidget(self.chat_activity_label, 1)
+            count = QLabel("", objectName="chatActivityCount")
+            count.hide()
+            header.addWidget(count, 0, Qt.AlignVCenter)
             layout.addLayout(header)
             details = QFrame(objectName="chatActivitySteps")
             details_layout = QVBoxLayout(details)
@@ -6316,25 +6343,32 @@ class MainWindow(QMainWindow):
             details_layout.setSpacing(3)
             details.hide()
             layout.addWidget(details)
-            toggle.toggled.connect(self._toggle_chat_activity_details)
+            toggle.toggled.connect(
+                lambda expanded, panel=details, control=toggle: (
+                    self._toggle_chat_activity_details(
+                        expanded,
+                        details=panel,
+                        toggle=control,
+                    )
+                )
+            )
             self.chat_activity_widget = activity
             self.chat_activity_dot = dot
+            self.chat_activity_progress = progress
+            self.chat_activity_count = count
             self.chat_activity_toggle = toggle
             self.chat_activity_details = details
             self.chat_activity_details_layout = details_layout
             self._chat_activity_steps = []
-            self.message_layout.insertWidget(
-                self.message_layout.count(),
-                activity,
-                0,
-                Qt.AlignLeft,
-            )
+            self.message_layout.insertWidget(self.message_layout.count(), activity)
         elif self.chat_activity_label is not None:
             previous = self.chat_activity_label.text().strip()
             if previous and self._activity_category(previous) != self._activity_category(label):
                 self._append_chat_activity_step(previous)
             self.chat_activity_label.setText(label)
             self.chat_activity_widget.show()
+        if self.chat_activity_widget is not None:
+            self.chat_activity_widget.updateGeometry()
         QTimer.singleShot(
             0,
             lambda: self.message_scroll.verticalScrollBar().setValue(
@@ -6358,13 +6392,24 @@ class MainWindow(QMainWindow):
         self.chat_activity_details_layout.addWidget(step)
         if self.chat_activity_toggle is not None:
             self.chat_activity_toggle.show()
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.setText(str(len(self._chat_activity_steps)))
 
-    def _toggle_chat_activity_details(self, expanded: bool) -> None:
-        if self.chat_activity_details is not None:
-            self.chat_activity_details.setVisible(bool(expanded))
-        if self.chat_activity_toggle is not None:
-            self.chat_activity_toggle.setText("⌃" if expanded else "⌄")
-            self.chat_activity_toggle.setToolTip(
+    def _toggle_chat_activity_details(
+        self,
+        expanded: bool,
+        *,
+        details: QFrame | None = None,
+        toggle: QToolButton | None = None,
+    ) -> None:
+        details = details or self.chat_activity_details
+        toggle = toggle or self.chat_activity_toggle
+        if details is not None:
+            details.setVisible(bool(expanded))
+            details.updateGeometry()
+        if toggle is not None:
+            toggle.setText("⌃" if expanded else "⌄")
+            toggle.setToolTip(
                 "Recolher etapas da atividade" if expanded else "Exibir etapas da atividade"
             )
 
@@ -6375,13 +6420,27 @@ class MainWindow(QMainWindow):
         if self.chat_activity_label is not None:
             self._append_chat_activity_step(self.chat_activity_label.text())
             self.chat_activity_label.setText(
-                "Execução interrompida" if failed else "Atividade concluída"
+                "Execução interrompida"
+                if failed
+                else "Planejamento e execução concluídos"
             )
         if self.chat_activity_dot is not None:
             self.chat_activity_dot.setText("!" if failed else "✓")
             self.chat_activity_dot.setProperty("activityState", "error" if failed else "done")
             self.chat_activity_dot.style().unpolish(self.chat_activity_dot)
             self.chat_activity_dot.style().polish(self.chat_activity_dot)
+        step_count = max(1, len(self._chat_activity_steps))
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.setRange(0, step_count)
+            self.chat_activity_progress.setValue(step_count)
+            self.chat_activity_progress.setProperty(
+                "activityState", "error" if failed else "done"
+            )
+            self.chat_activity_progress.style().unpolish(self.chat_activity_progress)
+            self.chat_activity_progress.style().polish(self.chat_activity_progress)
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.setText(f"{step_count}/{step_count}")
+            self.chat_activity_count.show()
         if self.chat_activity_toggle is not None:
             self.chat_activity_toggle.setChecked(failed)
         activity.setObjectName("chatActivityCompleted")
@@ -6393,6 +6452,8 @@ class MainWindow(QMainWindow):
         self.chat_activity_widget = None
         self.chat_activity_label = None
         self.chat_activity_dot = None
+        self.chat_activity_progress = None
+        self.chat_activity_count = None
         self.chat_activity_toggle = None
         self.chat_activity_details = None
         self.chat_activity_details_layout = None
@@ -6410,7 +6471,6 @@ class MainWindow(QMainWindow):
         delta = str(text or "")
         if not delta:
             return
-        self._hide_chat_activity()
         if self.assistant_widget is None:
             self.assistant_widget = self._add_message(
                 "assistant", "", response_mode=self._active_response_mode
@@ -6778,8 +6838,6 @@ class MainWindow(QMainWindow):
                 if query and query not in name.casefold() and query not in description.casefold():
                     continue
                 codex_only = name in {
-                    "plan",
-                    "build",
                     "tier",
                     "permissions",
                     "tools",
@@ -7259,12 +7317,6 @@ class MainWindow(QMainWindow):
         }
 
     def _activate_slash_command(self, command: str) -> None:
-        if command in {"plan", "build"}:
-            self._set_slash_mode(command, toggle=command == "plan")
-            self.composer.clear()
-            self.slash_palette.dismiss()
-            self.composer.setFocus()
-            return
         if command == "context":
             self._toggle_chat_context(not self.chat_context_panel.isVisible())
             self.composer.clear()
@@ -7309,19 +7361,6 @@ class MainWindow(QMainWindow):
         self.slash_palette.dismiss()
         self.chat_status.setText("Op\u00e7\u00e3o atualizada")
         self.composer.setFocus()
-
-    def _set_slash_mode(self, command: str, toggle: bool = False) -> None:
-        current = str(self.mode_combo.currentData() or "default")
-        if command == "plan":
-            target = "default" if toggle and current == "plan" else "plan"
-        else:
-            target = "default"
-        if self.current_conversation:
-            self.database.update_conversation(
-                self.current_conversation, collaboration_mode=target
-            )
-        self._set_combo_option(self.mode_combo, target)
-        self.chat_status.setText("Modo Plan ativado" if target == "plan" else "Modo Build ativado")
 
     def _toggle_slash_skill(self, skill: dict[str, Any]) -> None:
         key = str(skill.get("path") or skill.get("name") or "")
@@ -7525,12 +7564,6 @@ class MainWindow(QMainWindow):
             return text, False
         command = match.group(1).casefold()
         remainder = (match.group(2) or "").strip()
-        if command in {"plan", "build"}:
-            self._set_slash_mode(command, toggle=command == "plan" and not remainder)
-            if remainder:
-                return remainder, False
-            self.composer.clear()
-            return "", True
         if not remainder and command in {
             "provider",
             "model",
@@ -8536,14 +8569,10 @@ class MainWindow(QMainWindow):
 
     def _update_tools_label(self) -> None:
         count = self._selected_tools_count()
-        mode_value = "plan" if self.mode_combo.currentData() == "plan" else "default"
-        mode = "Plan" if mode_value == "plan" else "Build"
-        target = "Build" if mode == "Plan" else "Plan"
-        self.options_button.setText("" if self._composer_compact else mode)
-        self.options_button.setIcon(QIcon(str(MODE_ICON_PATHS[mode_value])))
+        self.options_button.setText("Build")
+        self.options_button.setIcon(QIcon(str(MODE_ICON_PATHS["default"])))
         self.options_button.setToolTip(
-            f"Modo {mode}. Clique para alternar para {target}; use / para outras opções. "
-            f"Tools ativas: {count}."
+            f"Build planeja e executa na mesma conversa. Tools ativas: {count}."
         )
 
     def _set_composer_compact(self, compact: bool) -> None:
@@ -8552,9 +8581,9 @@ class MainWindow(QMainWindow):
             return
         self._composer_compact = compact
         dimensions = (
-            (54, 54, 42, 42, 30, 30, 30, 30)
+            (54, 54, 42, 42, 30, 30)
             if compact
-            else (88, 180, 64, 110, 88, 135, 58, 90)
+            else (88, 180, 64, 110, 88, 135)
         )
         (
             model_min,
@@ -8563,8 +8592,6 @@ class MainWindow(QMainWindow):
             effort_max,
             approval_min,
             approval_max,
-            options_min,
-            options_max,
         ) = dimensions
         self.model_combo.setMinimumWidth(model_min)
         self.model_combo.setMaximumWidth(model_max)
@@ -8572,18 +8599,12 @@ class MainWindow(QMainWindow):
         self.effort_combo.setMaximumWidth(effort_max)
         self.approval_combo.setMinimumWidth(approval_min)
         self.approval_combo.setMaximumWidth(approval_max)
-        self.options_button.setMinimumWidth(options_min)
-        self.options_button.setMaximumWidth(options_max)
         self.vr_flow_button.set_compact(compact)
         self.chat_status.setMaximumWidth(90 if compact else 180)
         for separator in self.composer_separators:
             separator.setVisible(not compact)
         self._update_tools_label()
         self._update_orchestration_summary()
-
-    def toggle_collaboration_mode(self) -> None:
-        command = "build" if self.mode_combo.currentData() == "plan" else "plan"
-        self._set_slash_mode(command)
 
     def _composer_separator(self) -> QFrame:
         separator = QFrame(objectName="composerSeparator")
@@ -8795,23 +8816,11 @@ class MainWindow(QMainWindow):
         self._refresh_context_usage()
 
     def load_collaboration_modes(self) -> None:
-        selected = str(self.mode_combo.currentData() or "default")
-
-        def loaded(modes: list[dict[str, Any]]) -> None:
+        def loaded(_modes: list[dict[str, Any]]) -> None:
             self.mode_combo.blockSignals(True)
             self.mode_combo.clear()
-            for mode in modes:
-                value = str(mode.get("mode") or "")
-                if value in {"default", "plan"}:
-                    self.mode_combo.addItem(
-                        str(mode.get("name") or ("Build" if value == "default" else "Plan")),
-                        value,
-                    )
-            if not self.mode_combo.count():
-                self.mode_combo.addItem("Build", "default")
-                self.mode_combo.addItem("Plan", "plan")
-            index = self.mode_combo.findData(selected)
-            self.mode_combo.setCurrentIndex(max(0, index))
+            self.mode_combo.addItem("Build", "default")
+            self.mode_combo.setCurrentIndex(0)
             self.mode_combo.blockSignals(False)
             self._update_tools_label()
 
@@ -9054,7 +9063,7 @@ class MainWindow(QMainWindow):
                 effort=str(effort),
                 service_tier=str(self.tier_combo.currentData() or ""),
                 approval_profile=str(self.approval_combo.currentData() or "auto"),
-                collaboration_mode=str(self.mode_combo.currentData() or "default"),
+                collaboration_mode="default",
                 orchestration=orchestration,
             )
             if current and all(
@@ -9101,12 +9110,9 @@ class MainWindow(QMainWindow):
         self.send_button.setEnabled(controls_active)
         provider = self.provider_combo.currentText() or "codex"
         is_codex = provider == "codex" and controls_active
-        supports_collaboration_mode = (
-            provider in {"codex", "opencode"} and controls_active
-        )
-        self.options_button.setEnabled(supports_collaboration_mode)
+        self.options_button.setEnabled(False)
         self.tier_combo.setEnabled(is_codex)
-        self.mode_combo.setEnabled(supports_collaboration_mode)
+        self.mode_combo.setEnabled(False)
         self.approval_combo.setEnabled(
             controls_active and provider in {"codex", "opencode"}
         )
@@ -9418,9 +9424,7 @@ class MainWindow(QMainWindow):
             str(self.effort_combo.currentData() or self.settings.default_effort)
         )
         approval = self.approval_combo.currentText() or "Auto"
-        collaboration = (
-            "Plan" if self.mode_combo.currentData() == "plan" else "Build"
-        )
+        collaboration = "Build"
         vr_label = (
             "VR direto"
             if self.vr_flow_button.isChecked()

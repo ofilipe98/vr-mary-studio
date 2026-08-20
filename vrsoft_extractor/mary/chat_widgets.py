@@ -42,6 +42,7 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextOption,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -803,6 +804,9 @@ class MarkdownMessageWidget(QWidget):
         browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._configure_browser(browser)
+        text_options = browser.document().defaultTextOption()
+        text_options.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        browser.document().setDefaultTextOption(text_options)
         browser.setMarkdown(self._markdown_for_display(markdown))
         self._apply_native_markdown_style(browser)
         browser.document().documentLayout().documentSizeChanged.connect(
@@ -819,6 +823,17 @@ class MarkdownMessageWidget(QWidget):
         if browser.height() != target:
             browser.setFixedHeight(target)
             self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        """Recalculate document heights after a responsive width change."""
+        super().resizeEvent(event)
+        if event.oldSize().width() == event.size().width():
+            return
+        for browser in self.findChildren(QTextBrowser, "messageBody"):
+            QTimer.singleShot(
+                0,
+                lambda current=browser: self._resize_markdown_browser(current),
+            )
 
     def _add_markdown_segment(self, markdown: str) -> bool:
         if not markdown.strip() and self._markdown:

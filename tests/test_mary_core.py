@@ -3373,11 +3373,6 @@ class MaryCoreTest(unittest.TestCase):
                     self.assertLess(
                         window.approval_combo.mapTo(window, QPoint(0, 0)).x()
                         + window.approval_combo.width(),
-                        window.options_button.mapTo(window, QPoint(0, 0)).x(),
-                    )
-                    self.assertLess(
-                        window.options_button.mapTo(window, QPoint(0, 0)).x()
-                        + window.options_button.width(),
                         window.vr_flow_button.mapTo(window, QPoint(0, 0)).x(),
                     )
                     self.assertLess(
@@ -3390,7 +3385,6 @@ class MaryCoreTest(unittest.TestCase):
                     if width == 1120:
                         self.assertTrue(window.nav_collapsed)
                         self.assertGreaterEqual(window.composer_card.width(), 540)
-                        self.assertEqual(window.options_button.text(), "")
             self.assertTrue(window.chat_empty_state.isVisible())
             self.assertEqual(
                 window.chat_empty_state.findChild(QLabel, "chatEmptyTitle").text(),
@@ -3432,8 +3426,9 @@ class MaryCoreTest(unittest.TestCase):
             window.vr_flow_button.setChecked(True)
             self.assertEqual(window.composer_glow.mode(), "off")
             self.assertTrue(window.mode_combo.isHidden())
-            self.assertEqual(window.options_button.text(), "Build")
-            self.assertFalse(window.options_button.icon().isNull())
+            self.assertTrue(window.options_button.isHidden())
+            self.assertEqual(window.mode_combo.count(), 1)
+            self.assertEqual(window.mode_combo.currentData(), "default")
             self.assertFalse(window.send_button.icon().isNull())
             self.assertFalse(window.stop_button.icon().isNull())
             self.assertTrue(
@@ -3442,13 +3437,6 @@ class MaryCoreTest(unittest.TestCase):
                     for index in range(window.approval_combo.count())
                 )
             )
-            with patch.object(window, "_ensure_draft_conversation"):
-                window.options_button.click()
-                self.assertEqual(window.mode_combo.currentData(), "plan")
-                self.assertEqual(window.options_button.text(), "Plan")
-                window.options_button.click()
-                self.assertEqual(window.mode_combo.currentData(), "default")
-                self.assertEqual(window.options_button.text(), "Build")
             self.assertFalse(provider_icon("codex").isNull())
             self.assertFalse(provider_icon("claude").isNull())
             self.assertFalse(provider_icon("opencode").isNull())
@@ -3940,7 +3928,6 @@ class MaryCoreTest(unittest.TestCase):
                 window.model_combo,
                 window.effort_combo,
                 window.approval_combo,
-                window.options_button,
                 window.vr_flow_button,
                 window.send_button,
             ):
@@ -3968,7 +3955,6 @@ class MaryCoreTest(unittest.TestCase):
                 window.model_combo,
                 window.effort_combo,
                 window.approval_combo,
-                window.options_button,
                 window.vr_flow_button,
                 window.send_button,
             ):
@@ -4061,7 +4047,7 @@ class MaryCoreTest(unittest.TestCase):
             application.processEvents()
 
             self.assertEqual(window.approval_combo.currentData(), "auto")
-            self.assertEqual(window.options_button.text(), "Build")
+            self.assertTrue(window.options_button.isHidden())
             for control in (
                 window.model_combo,
                 window.effort_combo,
@@ -4071,7 +4057,6 @@ class MaryCoreTest(unittest.TestCase):
                 self.assertTrue(control.isEnabled())
             for control in (
                 window.approval_combo,
-                window.options_button,
                 window.tier_combo,
                 window.mode_combo,
             ):
@@ -4342,7 +4327,7 @@ class MaryCoreTest(unittest.TestCase):
             self.assertTrue(window._composer_compact)
             self.assertLess(window.composer_host.width(), 600)
             self.assertTrue(all(separator.isHidden() for separator in window.composer_separators))
-            self.assertEqual(window.options_button.text(), "")
+            self.assertTrue(window.options_button.isHidden())
 
             empty_origin = window.chat_empty_state.mapTo(
                 window.message_column,
@@ -4362,7 +4347,6 @@ class MaryCoreTest(unittest.TestCase):
                         window.model_combo,
                         window.effort_combo,
                         window.approval_combo,
-                        window.options_button,
                         window.vr_flow_button,
                         action,
                     )
@@ -5046,7 +5030,7 @@ class MaryCoreTest(unittest.TestCase):
             window.close()
 
     def test_runtime_events_use_one_compact_activity_without_raw_payloads(self):
-        from PySide6.QtWidgets import QApplication, QFrame, QLabel
+        from PySide6.QtWidgets import QApplication, QFrame, QLabel, QToolButton
 
         application = QApplication.instance() or QApplication([])
         window = MainWindow(
@@ -5113,17 +5097,11 @@ class MaryCoreTest(unittest.TestCase):
                 RuntimeEvent(conversation_id, "assistant_delta", "Resposta final")
             )
             application.processEvents()
-            self.assertIsNone(window.chat_activity_widget)
-            completed = window.message_container.findChildren(
-                QFrame, "chatActivityCompleted"
+            self.assertIs(window.chat_activity_widget, first_activity)
+            self.assertEqual(
+                len(window.message_container.findChildren(QFrame, "chatActivity")),
+                1,
             )
-            self.assertEqual(len(completed), 1)
-            completed_steps = " ".join(
-                step.text()
-                for step in completed[0].findChildren(QLabel, "chatActivityStep")
-            )
-            self.assertIn("Trabalhando", completed_steps)
-            self.assertNotIn(raw_command, completed_steps)
             self.assertIsNotNone(window.assistant_widget)
             self.assertIn("Resposta final", window.assistant_widget.toPlainText())
             self.assertNotIn(raw_command, window.assistant_widget.toPlainText())
@@ -5140,6 +5118,30 @@ class MaryCoreTest(unittest.TestCase):
             window._on_runtime_event(RuntimeEvent(conversation_id, "turn_completed"))
             application.processEvents()
             self.assertIsNone(window.chat_activity_widget)
+            completed = window.message_container.findChildren(
+                QFrame, "chatActivityCompleted"
+            )
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(
+                completed[0].findChild(QLabel, "chatActivityText").text(),
+                "Planejamento e execução concluídos",
+            )
+            self.assertEqual(
+                completed[0].findChild(QLabel, "chatActivityCount").text(),
+                "5/5",
+            )
+            details = completed[0].findChild(QFrame, "chatActivitySteps")
+            toggle = completed[0].findChild(QToolButton, "chatActivityToggle")
+            self.assertTrue(details.isHidden())
+            toggle.click()
+            application.processEvents()
+            self.assertFalse(details.isHidden())
+            completed_steps = " ".join(
+                step.text()
+                for step in completed[0].findChildren(QLabel, "chatActivityStep")
+            )
+            self.assertIn("Trabalhando", completed_steps)
+            self.assertNotIn(raw_command, completed_steps)
         finally:
             window.close()
 
@@ -5697,10 +5699,10 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_slash_palette_keyboard_plan_and_inline_plan_prompt(self):
+    def test_slash_palette_exposes_build_as_integrated_default(self):
         from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QListWidgetItem
 
         application = QApplication.instance() or QApplication([])
         window = MainWindow(
@@ -5723,33 +5725,30 @@ class MaryCoreTest(unittest.TestCase):
                     window.slash_palette.list.item(index).text().splitlines()[0]
                     for index in range(window.slash_palette.list.count())
                 ]
-                self.assertIn("/plan", commands)
+                self.assertNotIn("/plan", commands)
+                self.assertNotIn("/build", commands)
                 self.assertIn("/tools", commands)
                 self.assertIn("/provider", commands)
                 self.assertIn("/tier", commands)
                 self.assertIn("/context", commands)
-                QTest.keyClick(window.composer, Qt.Key_Return)
-                application.processEvents()
-            self.assertEqual(window.mode_combo.currentData(), "plan")
-            self.assertEqual(window.composer.toPlainText(), "")
-            self.assertFalse(window.slash_palette.isVisible())
+            self.assertEqual(window.mode_combo.currentData(), "default")
+            self.assertEqual(window.mode_combo.count(), 1)
+            self.assertTrue(window.options_button.isHidden())
 
             conversation_id = window.database.create_conversation(
-                "Inline", "codex", "gpt-test", self.settings.work_dir / "inline"
+                "Legado Plan",
+                "codex",
+                "gpt-test",
+                self.settings.work_dir / "inline",
+                collaboration_mode="plan",
             )
-            window.current_conversation = conversation_id
-            window.draft_conversation = False
-            window.mode_combo.setCurrentIndex(window.mode_combo.findData("default"))
-            with patch.object(window.pool, "start"):
-                text, handled = window._parse_slash_submission(
-                    "/plan Proponha a migra\u00e7\u00e3o"
-                )
-            self.assertFalse(handled)
-            self.assertEqual(text, "Proponha a migra\u00e7\u00e3o")
-            self.assertEqual(window.mode_combo.currentData(), "plan")
+            item = QListWidgetItem("Legado Plan")
+            item.setData(Qt.UserRole, conversation_id)
+            with patch.object(window, "load_models"):
+                window.load_conversation(item, None)
             self.assertEqual(
                 window.database.get_conversation(conversation_id)["collaboration_mode"],
-                "plan",
+                "default",
             )
         finally:
             window.close()
@@ -6223,11 +6222,9 @@ class MaryCoreTest(unittest.TestCase):
             window.provider_combo.setCurrentText("opencode")
             window.provider_combo.blockSignals(False)
             window._update_codex_controls()
-            self.assertTrue(window.options_button.isEnabled())
-            with patch.object(window, "_ensure_draft_conversation"):
-                window.options_button.click()
-            self.assertEqual(window.mode_combo.currentData(), "plan")
-            self.assertEqual(window.options_button.text(), "Plan")
+            self.assertFalse(window.options_button.isEnabled())
+            self.assertTrue(window.options_button.isHidden())
+            self.assertEqual(window.mode_combo.currentData(), "default")
         finally:
             window.close()
 
