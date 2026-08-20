@@ -13,6 +13,8 @@ from .settings import ConfigError, Settings, ensure_runtime_dirs, get_credential
 LOGGER = logging.getLogger(__name__)
 
 EMAIL_SELECTORS = [
+    "#username",
+    'input[name="username"]',
     'input[type="email"]',
     'input[name="email"]',
     'input[name*="email" i]',
@@ -71,11 +73,25 @@ def login(settings: Settings, *, headless: bool = False, force: bool = False) ->
         credentials = get_credentials(required=False)
         if credentials:
             LOGGER.info("Preenchendo formulario de login com credenciais do .env")
-            if not _fill_first(page, EMAIL_SELECTORS, credentials.email):
-                LOGGER.warning("Campo de email nao encontrado automaticamente")
-            if not _fill_first(page, PASSWORD_SELECTORS, credentials.password):
+            username_filled = _fill_first(page, EMAIL_SELECTORS, credentials.email)
+            if not username_filled:
+                LOGGER.warning("Campo de usuario nao encontrado automaticamente")
+
+            # The current Endoo login is a two-step form: only #username is
+            # visible initially and submitting it reveals #password. Keep
+            # compatibility with older single-step forms as well.
+            if username_filled and not _has_visible(page, PASSWORD_SELECTORS):
+                if _click_first(page, SUBMIT_SELECTORS):
+                    _wait_for_any_visible(page, PASSWORD_SELECTORS, timeout_ms=15_000)
+                else:
+                    LOGGER.warning("Botao para avancar no login nao encontrado")
+
+            password_filled = _fill_first(
+                page, PASSWORD_SELECTORS, credentials.password
+            )
+            if not password_filled:
                 LOGGER.warning("Campo de senha nao encontrado automaticamente")
-            if not _click_first(page, SUBMIT_SELECTORS):
+            if password_filled and not _click_first(page, SUBMIT_SELECTORS):
                 LOGGER.warning("Botao de login nao encontrado automaticamente")
             _wait_for_login_success(page, timeout_seconds=45)
 
@@ -134,6 +150,26 @@ def _click_first(page, selectors: list[str]) -> bool:
                 return True
         except Exception:
             continue
+    return False
+
+
+def _has_visible(page, selectors: list[str]) -> bool:
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if locator.count() and locator.is_visible():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_for_any_visible(page, selectors: list[str], *, timeout_ms: int) -> bool:
+    deadline = time.monotonic() + max(0, timeout_ms) / 1000
+    while time.monotonic() < deadline:
+        if _has_visible(page, selectors):
+            return True
+        page.wait_for_timeout(200)
     return False
 
 

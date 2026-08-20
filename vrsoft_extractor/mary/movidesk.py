@@ -43,6 +43,10 @@ class MovideskInteractiveLoginRequired(RuntimeError):
 
 class MovideskSync:
     LOGIN_PATH = "/Account/Login"
+    SESSION_CONFLICT_CONFIRM_SELECTOR = (
+        ".modal.md-confirm:visible "
+        ".md-confirm-action[data-value='yes']:visible"
+    )
     ARTICLE_LINK_SELECTOR = "a[href], [data-href], [data-url]"
     RESULT_LINK_SELECTOR = (
         ".search-container-items a[href], "
@@ -57,18 +61,21 @@ class MovideskSync:
         settings: MarySettings,
         database: MaryDatabase,
         progress: Callable[[str], None] | None = None,
+        *,
+        allow_session_takeover: bool = False,
     ):
         self.settings = settings
         self.database = database
         self.progress = progress or (lambda _message: None)
+        self.allow_session_takeover = allow_session_takeover
         self.ocr = OcrManager(settings.tesseract_dir)
 
     def sync(self, headed: bool = False, limit: int | None = None) -> SyncStats:
         configure_playwright_runtime()
         from playwright.sync_api import sync_playwright
 
-        run_id = self.database.start_sync("kb")
-        stats = SyncStats("kb")
+        run_id = self.database.start_sync("kb", "movidesk")
+        stats = SyncStats("kb", source_origin="movidesk")
         active_ids: set[str] = set()
         try:
             with sync_playwright() as playwright:
@@ -76,6 +83,8 @@ class MovideskSync:
                 context = self._new_context(browser)
                 page = context.new_page()
                 self.progress("KB: validando a sessão salva.")
+                self._authenticate(page, interactive=headed)
+                context.storage_state(path=str(self.settings.movidesk_state_path))
                 response = page.goto(
                     self.settings.kb_url,
                     wait_until="domcontentloaded",
@@ -83,18 +92,7 @@ class MovideskSync:
                 )
                 self._raise_for_blocked_page(page, response)
                 self._wait_for_dynamic_content(page)
-                login_was_pending = self._login_pending(page)
-                if login_was_pending:
-                    self._ensure_login(page, interactive=headed)
-                    response = page.goto(
-                        self.settings.kb_url,
-                        wait_until="domcontentloaded",
-                        timeout=90_000,
-                    )
-                    self._raise_for_blocked_page(page, response)
-                    self._wait_for_dynamic_content(page)
-                    self._ensure_login(page, interactive=headed)
-                context.storage_state(path=str(self.settings.movidesk_state_path))
+                self._ensure_login(page, interactive=headed)
                 self.progress(
                     "KB: sessão autenticada; mapeando categorias e artigos."
                 )
@@ -315,6 +313,24 @@ class MovideskSync:
                 page.wait_for_load_state("domcontentloaded", timeout=15_000)
             except Exception:
                 pass
+            self._wait_for_login_attempt_result(page)
+            if self._session_conflict_pending(page):
+                if self.allow_session_takeover:
+                    if self._confirm_session_takeover(page):
+                        self.progress(
+                            "KB: confirmação autorizada; encerrando a sessão "
+                            "anterior do Movidesk."
+                        )
+                    else:
+                        self.progress(
+                            "KB: o aviso de sessão mudou; continuando a "
+                            "validação do login."
+                        )
+                elif not interactive:
+                    raise MovideskInteractiveLoginRequired(
+                        "O Movidesk informou que existe outra sessão aberta. "
+                        "Confirme a troca de sessão no VRStudio para continuar."
+                    )
             if interactive and self._login_pending(page):
                 self.progress(
                     "KB: conclua o login, MFA ou CAPTCHA na janela aberta "
@@ -325,6 +341,60 @@ class MovideskSync:
             raise MovideskInteractiveLoginRequired(
                 "Login Movidesk requer interação (MFA/CAPTCHA). Execute sincronização com navegador visível."
             )
+
+    @classmethod
+    def _session_conflict_pending(cls, page) -> bool:
+        confirm = page.locator(cls.SESSION_CONFLICT_CONFIRM_SELECTOR).last
+        try:
+            return bool(confirm.count() and confirm.is_visible())
+        except Exception:
+            return False
+
+    @classmethod
+    def _wait_for_login_attempt_result(cls, page) -> None:
+        try:
+            page.wait_for_function(
+                r"""(loginPath) => {
+                    const path = window.location.pathname
+                        .replace(/\/$/, '')
+                        .toLowerCase();
+                    const conflictButton = Array.from(document.querySelectorAll(
+                        ".modal.md-confirm .md-confirm-action[data-value='yes']"
+                    )).find(element => element.offsetParent !== null);
+                    return path !== loginPath.toLowerCase()
+                        || Boolean(conflictButton);
+                }""",
+                arg=cls.LOGIN_PATH,
+                timeout=15_000,
+            )
+        except Exception:
+            pass
+
+    def _confirm_session_takeover(self, page) -> bool:
+        confirm = page.locator(self.SESSION_CONFLICT_CONFIRM_SELECTOR).last
+        try:
+            if not confirm.count() or not confirm.is_visible():
+                return False
+        except Exception:
+            return False
+        confirm.click()
+        try:
+            page.wait_for_function(
+                r"""(loginPath) => {
+                    const path = window.location.pathname
+                        .replace(/\/$/, '')
+                        .toLowerCase();
+                    const hasPassword = Boolean(
+                        document.querySelector('input[type=password]')
+                    );
+                    return path !== loginPath.toLowerCase() && !hasPassword;
+                }""",
+                arg=self.LOGIN_PATH,
+                timeout=30_000,
+            )
+        except Exception:
+            pass
+        return True
 
     def _authenticate(self, page, interactive: bool) -> None:
         base = urllib.parse.urlsplit(self.settings.kb_url)
@@ -759,6 +829,7 @@ class MovideskSync:
         classification = classify(title, markdown, breadcrumb)
         document = KnowledgeDocument(
             source="kb",
+            source_origin="movidesk",
             source_id=source_id,
             title=title,
             url=page.url,

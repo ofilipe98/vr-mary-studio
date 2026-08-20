@@ -140,6 +140,7 @@ def replace_asset_urls(markdown: str, replacements: dict[str, str]) -> str:
 def canonical_markdown(document: KnowledgeDocument) -> str:
     front_matter = {
         "source": document.source,
+        "source_origin": document.source_origin,
         "source_id": document.source_id,
         "title": document.title,
         "url": _strip_sensitive_query(document.url),
@@ -178,10 +179,21 @@ def canonical_markdown(document: KnowledgeDocument) -> str:
     body += (
         "\n\n## Procedência\n\n"
         f"- Fonte: {document.source.upper()}\n"
+        f"- Origem: {_source_origin_label(document.source_origin, document.source)}\n"
         f"- URL: {_strip_sensitive_query(document.url)}\n"
         f"- Sincronizado em: {document.synced_at}\n"
     )
     return "\n".join(yaml_lines) + "\n\n" + body.strip() + "\n"
+
+
+def _source_origin_label(source_origin: str, source: str) -> str:
+    origin = str(source_origin or "").strip().casefold()
+    return {
+        "vrwiki": "VRWiki pública",
+        "endoo": "Wiki Endoo",
+        "movidesk": "Movidesk KB",
+        "local": "Fonte local",
+    }.get(origin, origin or str(source or "").upper())
 
 
 def target_path(root: Path, document: KnowledgeDocument) -> Path:

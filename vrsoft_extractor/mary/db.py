@@ -45,6 +45,14 @@ REVIEW_MODULES = {
 REVIEW_ACTIONS = {"approve", "keep", "defer", "reopen"}
 
 
+def _default_source_origin(source: str) -> str:
+    return {
+        "wiki": "vrwiki",
+        "kb": "movidesk",
+        "schema": "local",
+    }.get(str(source or "").strip().casefold(), str(source or "").strip().casefold())
+
+
 def _review_reasons(raw: str) -> list[str]:
     try:
         parsed = json.loads(raw or "[]")
@@ -73,6 +81,7 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,
+    source_origin TEXT NOT NULL DEFAULT '',
     source_id TEXT NOT NULL,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
@@ -157,6 +166,7 @@ CREATE TABLE IF NOT EXISTS schema_relations (
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,
+    source_origin TEXT NOT NULL DEFAULT '',
     started_at TEXT NOT NULL,
     finished_at TEXT,
     status TEXT NOT NULL,
@@ -364,7 +374,40 @@ class MaryDatabase:
             if self.root and backup_portable_migration:
                 self._backup_before_multiagent_migration(connection)
                 self._backup_before_knowledge_router_migration(connection)
+                self._backup_before_endoo_wiki_migration(connection)
             connection.executescript(SCHEMA)
+            self._ensure_column(
+                connection,
+                "documents",
+                "source_origin",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_column(
+                connection,
+                "sync_runs",
+                "source_origin",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            connection.execute(
+                """UPDATE documents
+                      SET source_origin=CASE source
+                            WHEN 'wiki' THEN 'vrwiki'
+                            WHEN 'kb' THEN 'movidesk'
+                            WHEN 'schema' THEN 'local'
+                            ELSE source
+                          END
+                    WHERE trim(source_origin)=''"""
+            )
+            connection.execute(
+                """UPDATE sync_runs
+                      SET source_origin=CASE source
+                            WHEN 'wiki' THEN 'vrwiki'
+                            WHEN 'kb' THEN 'movidesk'
+                            WHEN 'schema' THEN 'local'
+                            ELSE source
+                          END
+                    WHERE trim(source_origin)=''"""
+            )
             self._ensure_column(
                 connection,
                 "conversations",
@@ -452,6 +495,10 @@ class MaryDatabase:
                     ON classification_reviews(updated_at);
                 CREATE INDEX IF NOT EXISTS idx_documents_review_facets
                     ON documents(source,module,product,updated_at);
+                CREATE INDEX IF NOT EXISTS idx_documents_source_origin
+                    ON documents(source,source_origin,status,module);
+                CREATE INDEX IF NOT EXISTS idx_sync_runs_source_origin
+                    ON sync_runs(source,source_origin,id);
                 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document_type
                     ON knowledge_chunks(document_id,content_type);
                 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_hash
@@ -528,6 +575,34 @@ class MaryDatabase:
             return
         backup_path = (
             root / ".state" / "backups" / "conhecimento-pre-knowledge-router.sqlite"
+        )
+        if backup_path.exists():
+            return
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(backup_path) as target:
+            connection.backup(target)
+
+    def _backup_before_endoo_wiki_migration(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        """Snapshot an existing knowledge database before adding origin metadata."""
+
+        root = self.root
+        if root is None:
+            raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
+        has_documents = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'"
+        ).fetchone()
+        if not has_documents:
+            return
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        if "source_origin" in columns:
+            return
+        backup_path = (
+            root / ".state" / "backups" / "conhecimento-pre-endoo-wiki.sqlite"
         )
         if backup_path.exists():
             return
@@ -671,6 +746,20 @@ class MaryDatabase:
                 (source, source_id),
             ).fetchone()
 
+    def active_source_origins(self, source: str) -> tuple[str, ...]:
+        """Return the active physical origins available for a logical source."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT source_origin
+                     FROM documents
+                    WHERE source=? AND status='active'
+                      AND trim(source_origin)<>''
+                    ORDER BY source_origin""",
+                (str(source or "").strip(),),
+            ).fetchall()
+        return tuple(str(row["source_origin"]) for row in rows)
+
     def upsert_document(self, document: KnowledgeDocument) -> tuple[int, str]:
         if self.root:
             document.local_path = to_portable_path(self.root, document.local_path)
@@ -700,11 +789,12 @@ class MaryDatabase:
                 )
             connection.execute(
                 """INSERT INTO documents (
-                    source,source_id,title,url,module,classification_confidence,
+                    source,source_origin,source_id,title,url,module,classification_confidence,
                     review_status,status,category,product,created_at,updated_at,
                     synced_at,revision,content_hash,markdown,ocr_text,local_path,assets_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(source,source_id) DO UPDATE SET
+                    source_origin=excluded.source_origin,
                     title=excluded.title,url=excluded.url,
                     module=CASE
                       WHEN documents.review_status='approved'
@@ -727,6 +817,7 @@ class MaryDatabase:
                     assets_json=excluded.assets_json""",
                 (
                     document.source,
+                    document.source_origin or _default_source_origin(document.source),
                     document.source_id,
                     document.title,
                     document.url,
@@ -996,6 +1087,7 @@ class MaryDatabase:
                 reviews = connection.execute(
                     f"""SELECT r.*,d.module AS current_module,
                            d.source AS document_source,
+                           d.source_origin AS document_source_origin,
                            d.source_id AS document_source_id,
                            d.title AS document_title,d.url AS document_url,
                            d.markdown AS document_markdown,
@@ -1152,6 +1244,7 @@ class MaryDatabase:
             assets = []
         return KnowledgeDocument(
             source=str(review["document_source"]),
+            source_origin=str(review["document_source_origin"]),
             source_id=str(review["document_source_id"]),
             title=str(review["document_title"]),
             url=str(review["document_url"]),
@@ -1216,6 +1309,9 @@ class MaryDatabase:
         if filters.source:
             where.append("d.source=?")
             params.append(filters.source)
+        if filters.source_origin:
+            where.append("d.source_origin=?")
+            params.append(filters.source_origin)
         if filters.current_module:
             where.append("d.module=?")
             params.append(filters.current_module)
@@ -1304,7 +1400,7 @@ class MaryDatabase:
             elif offset >= total:
                 offset = ((total - 1) // limit) * limit
             rows = connection.execute(
-                f"""SELECT r.*,d.source_id,d.title,d.source,d.url,
+                f"""SELECT r.*,d.source_id,d.title,d.source,d.source_origin,d.url,
                            d.module AS current_module,d.review_status,
                            d.category,d.product,d.created_at,d.updated_at AS document_updated_at,
                            d.synced_at,d.markdown,d.ocr_text,d.local_path,d.assets_json,
@@ -1373,6 +1469,7 @@ class MaryDatabase:
             for row in rows:
                 document = KnowledgeDocument(
                     source=str(row["source"]),
+                    source_origin=str(row["source_origin"]),
                     source_id=str(row["source_id"]),
                     title=str(row["title"]),
                     url=str(row["url"]),
@@ -1402,6 +1499,7 @@ class MaryDatabase:
         *,
         source: str = "",
         module: str = "",
+        source_origin: str = "",
         content_types: tuple[str, ...] = (),
         include_unvalidated: bool = False,
     ) -> list[dict[str, Any]]:
@@ -1420,6 +1518,9 @@ class MaryDatabase:
         if source:
             filters.append("d.source=?")
             params.append(source)
+        if source_origin:
+            filters.append("d.source_origin=?")
+            params.append(source_origin)
         if module:
             filters.append("d.module=?")
             params.append(module)
@@ -1430,7 +1531,7 @@ class MaryDatabase:
         sql = f"""
             SELECT c.id AS chunk_id,c.heading,c.content,c.content_type,
                    c.entities_json,c.content_hash AS chunk_hash,
-                   d.id AS document_id,d.source,d.source_id,d.title,d.url,
+                   d.id AS document_id,d.source,d.source_origin,d.source_id,d.title,d.url,
                    d.module,d.product,d.category,d.updated_at,d.synced_at,
                    d.local_path,d.review_status,d.classification_confidence,
                    bm25(knowledge_chunks_fts,5.0,1.0,2.0) AS rank
@@ -1500,7 +1601,7 @@ class MaryDatabase:
             rows = connection.execute(
                 """SELECT c.id AS chunk_id,c.heading,c.content,c.content_type,
                           c.entities_json,c.content_hash AS chunk_hash,
-                          d.id AS document_id,d.source,d.source_id,d.title,d.url,
+                          d.id AS document_id,d.source,d.source_origin,d.source_id,d.title,d.url,
                           d.module,d.product,d.category,d.updated_at,d.synced_at,
                           d.local_path,d.review_status,d.classification_confidence
                      FROM knowledge_chunks c
@@ -1567,6 +1668,7 @@ class MaryDatabase:
         source: str = "",
         include_unvalidated: bool = False,
         excluded_sources: tuple[str, ...] = (),
+        source_origin: str = "",
     ) -> list[dict[str, Any]]:
         filters = ["d.status='active'"]
         terms = search_terms(query)
@@ -1586,6 +1688,9 @@ class MaryDatabase:
         if source:
             filters.append("d.source=?")
             filter_params.append(source)
+        if source_origin:
+            filters.append("d.source_origin=?")
+            filter_params.append(source_origin)
         excluded_sources = tuple(
             str(item).strip() for item in excluded_sources if str(item).strip()
         )
@@ -1641,11 +1746,13 @@ class MaryDatabase:
             )
         return selected
 
-    def start_sync(self, source: str) -> int:
+    def start_sync(self, source: str, source_origin: str = "") -> int:
+        origin = source_origin or _default_source_origin(source)
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO sync_runs(source,started_at,status) VALUES(?,?,'running')",
-                (source, utc_now()),
+                """INSERT INTO sync_runs(source,source_origin,started_at,status)
+                   VALUES(?,?,?,'running')""",
+                (source, origin, utc_now()),
             )
             return _last_insert_id(cursor)
 
@@ -1664,11 +1771,18 @@ class MaryDatabase:
                 ),
             )
 
-    def mark_missing_inactive(self, source: str, active_ids: set[str]) -> int:
+    def mark_missing_inactive(
+        self,
+        source: str,
+        active_ids: set[str],
+        source_origin: str = "",
+    ) -> int:
+        origin = source_origin or _default_source_origin(source)
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT id,source_id FROM documents WHERE source=? AND status='active'",
-                (source,),
+                """SELECT id,source_id FROM documents
+                   WHERE source=? AND source_origin=? AND status='active'""",
+                (source, origin),
             ).fetchall()
             missing = [row["id"] for row in rows if row["source_id"] not in active_ids]
             if missing:

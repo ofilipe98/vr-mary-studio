@@ -295,6 +295,21 @@ def test_download_candidates_recover_missing_file_and_honor_redownload():
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_download_candidates_honor_individual_video_selection():
+    first = video(task_id="selected", title="Selecionado")
+    second = video(task_id="other", title="Outro")
+    settings = Settings(project_dir=_test_dir())
+
+    selected = _download_candidates(
+        [first, second],
+        settings,
+        redownload=False,
+        item_ids={first.id},
+    )
+
+    assert [item.id for item in selected] == [first.id]
+
+
 def test_video_storage_detects_downloads_and_missing_files():
     tmp_path = _test_dir().resolve()
     settings = Settings(project_dir=tmp_path)
@@ -479,6 +494,18 @@ def test_video_output_decoder_preserves_split_utf8_character():
         Path("VRProject"), "scan", frozen=True
     )
     assert packaged[:2] == ["--video-cli", "--project-dir"]
+
+
+def test_studio_main_routes_packaged_video_cli_without_opening_gui():
+    from vrsoft_extractor.mary import ui
+
+    with patch("vrsoft_extractor.cli.main", return_value=7) as video_main:
+        result = ui.main(["--video-cli", "--project-dir", "VRProject", "scan"])
+
+    assert result == 7
+    video_main.assert_called_once_with(
+        ["--project-dir", "VRProject", "scan"]
+    )
 
 
 def test_organize_downloads_moves_without_overwriting():

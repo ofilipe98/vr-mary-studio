@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.models import KnowledgeDocument
 from vrsoft_extractor.mary.paths import resolve_portable_path, to_portable_path
 from vrsoft_extractor.mary.portable_export import (
     audit_portable_project,
@@ -292,6 +293,47 @@ def test_export_portable_can_exclude_kb_and_wiki_content(tmp_path: Path) -> None
     assert '"source": "schema"' in catalog
     assert '"source": "kb"' not in catalog
     assert '"source": "wiki"' not in catalog
+
+
+def test_export_portable_excludes_authenticated_endoo_origin_by_default(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "SourceVR"
+    destination = tmp_path / "PortableVR"
+    database = MaryDatabase(
+        source / "indice" / "conhecimento.sqlite", root=source
+    )
+    for origin, source_id in (("vrwiki", "publica"), ("endoo", "privada")):
+        relative = Path("conhecimento") / "PDV" / "Wiki" / f"{source_id}.md"
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source_id, encoding="utf-8")
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_origin=origin,
+                source_id=source_id,
+                title=source_id,
+                url=f"https://example.test/{source_id}",
+                markdown=source_id,
+                module="PDV",
+                review_status="approved",
+                content_hash=source_id,
+                local_path=str(path),
+            )
+        )
+
+    export_portable_project(source, destination)
+
+    portable = MaryDatabase(
+        destination / "indice" / "conhecimento.sqlite", root=destination
+    )
+    assert portable.get_document("wiki", "publica") is not None
+    assert portable.get_document("wiki", "privada") is None
+    assert (destination / "conhecimento" / "PDV" / "Wiki" / "publica.md").is_file()
+    assert not (
+        destination / "conhecimento" / "PDV" / "Wiki" / "privada.md"
+    ).exists()
 
 
 @pytest.mark.skipif(shutil.which("powershell") is None, reason="PowerShell ausente")

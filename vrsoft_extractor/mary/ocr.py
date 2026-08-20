@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 import re
@@ -11,6 +13,8 @@ from pathlib import Path
 
 
 MAX_OCR_DOWNLOAD_BYTES = 100 * 1024 * 1024
+OCR_USER_AGENT = "VR-Norte-Studio/1.0 (+https://github.com/UB-Mannheim/tesseract)"
+GITHUB_RELEASE_API = "https://api.github.com/repos/UB-Mannheim/tesseract/releases/latest"
 
 
 @dataclass
@@ -95,9 +99,17 @@ class OcrManager:
         self.portable_dir.mkdir(parents=True, exist_ok=True)
         report("Consultando a distribuição Windows do Tesseract…")
         listing_url = "https://digi.bib.uni-mannheim.de/tesseract/"
-        with urllib.request.urlopen(listing_url, timeout=60) as response:
-            listing = response.read().decode("utf-8", "replace")
-        installer_url = latest_windows_installer_url(listing, listing_url)
+        try:
+            listing = _read_url(listing_url).decode("utf-8", "replace")
+            installer_url = latest_windows_installer_url(listing, listing_url)
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError, RuntimeError) as exc:
+            report(
+                "Catálogo Mannheim indisponível"
+                + (" (HTTP 403)" if getattr(exc, "code", None) == 403 else "")
+                + "; consultando o release oficial no GitHub…"
+            )
+            release = json.loads(_read_url(GITHUB_RELEASE_API).decode("utf-8"))
+            installer_url = latest_github_installer_url(release)
         installer = self.portable_dir.parent / "tesseract-setup.exe"
         report(f"Baixando {Path(urllib.parse.urlsplit(installer_url).path).name}…")
         _download_file(installer_url, installer, minimum_bytes=1_000_000)
@@ -158,7 +170,11 @@ def _download_file(
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": OCR_USER_AGENT, "Accept": "*/*"},
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
             with temporary.open("wb") as handle:
                 total = 0
                 while chunk := response.read(1024 * 1024):
@@ -176,6 +192,41 @@ def _download_file(
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _read_url(url: str) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": OCR_USER_AGENT,
+            "Accept": "application/vnd.github+json, text/html;q=0.9, */*;q=0.8",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read()
+
+
+def latest_github_installer_url(release: dict) -> str:
+    """Select the trusted Windows x64 installer from a GitHub release payload."""
+    candidates: list[tuple[str, str]] = []
+    for asset in release.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name") or "")
+        url = str(asset.get("browser_download_url") or "")
+        if re.fullmatch(r"tesseract-ocr-w64-setup-[^/]+\.exe", name, re.IGNORECASE):
+            candidates.append((name, url))
+    if not candidates:
+        raise RuntimeError("O release oficial não contém o instalador Windows x64.")
+    _name, result = max(candidates, key=lambda item: item[0].casefold())
+    parsed = urllib.parse.urlsplit(result)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or not parsed.path.startswith("/UB-Mannheim/tesseract/releases/download/")
+    ):
+        raise RuntimeError("O release OCR apontou para um instalador fora da origem confiável.")
+    return result
 
 
 def latest_windows_installer_url(listing: str, base_url: str) -> str:

@@ -43,6 +43,7 @@ def download_inventory(
     *,
     concurrency: int = 2,
     redownload: bool = False,
+    item_ids: list[str] | tuple[str, ...] | None = None,
 ) -> list[VideoItem]:
     ensure_runtime_dirs(settings)
     workers = int(concurrency)
@@ -63,7 +64,15 @@ def download_inventory(
     if settings.storage_state_path.exists():
         write_netscape_cookie_file(settings.storage_state_path, settings.cookiefile_path)
 
-    candidates = _download_candidates(items, settings, redownload=redownload)
+    selected_ids = {str(item_id) for item_id in (item_ids or []) if str(item_id)}
+    if selected_ids and not any(item.id in selected_ids for item in items):
+        raise ConfigError("Nenhum vídeo selecionado foi encontrado no inventário atual.")
+    candidates = _download_candidates(
+        items,
+        settings,
+        redownload=redownload,
+        item_ids=selected_ids or None,
+    )
     if not candidates:
         LOGGER.info("Nenhum video pendente para baixar")
         return items
@@ -103,9 +112,12 @@ def _download_candidates(
     settings: Settings,
     *,
     redownload: bool,
+    item_ids: set[str] | None = None,
 ) -> list[VideoItem]:
     candidates: list[VideoItem] = []
     for item in items:
+        if item_ids is not None and item.id not in item_ids:
+            continue
         if not item.media_url:
             continue
         if redownload:

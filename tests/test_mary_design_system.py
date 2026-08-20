@@ -52,6 +52,28 @@ class MaryDesignSystemTest(unittest.TestCase):
         self.assertEqual(button.focusPolicy(), Qt.StrongFocus)
         button.close()
 
+    def test_project_scope_popup_stays_inside_host_window(self):
+        host = QWidget()
+        host.resize(900, 600)
+        button = ProjectScopeButton(host)
+        button.move(12, 12)
+        popup = ProjectScopePopup(button, host)
+        host.show()
+        self.application.processEvents()
+        top_levels_before = set(self.application.topLevelWidgets())
+
+        popup.set_projects([], None)
+        popup.show_anchored()
+        self.application.processEvents()
+
+        self.assertFalse(popup.isWindow())
+        self.assertEqual(popup.windowType(), Qt.Widget)
+        self.assertIs(popup.parentWidget(), host)
+        self.assertEqual(set(self.application.topLevelWidgets()), top_levels_before)
+        self.assertTrue(host.rect().contains(popup.geometry()))
+        popup.close()
+        host.close()
+
     def test_project_scope_popup_exposes_only_scope_and_recent_projects(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -105,29 +127,41 @@ class MaryDesignSystemTest(unittest.TestCase):
             popup.close()
             button.close()
 
-    def test_project_rows_offer_canonical_open_and_remove_actions(self):
+    def test_project_rows_offer_in_window_open_and_remove_actions(self):
         with TemporaryDirectory() as temporary:
             project = Path(temporary).resolve()
-            button = ProjectScopeButton()
-            popup = ProjectScopePopup(button)
+            host = QWidget()
+            host.resize(900, 600)
+            button = ProjectScopeButton(host)
+            button.move(12, 12)
+            popup = ProjectScopePopup(button, host)
             opened = []
             removed = []
             popup.openProjectRequested.connect(opened.append)
             popup.removeProjectRequested.connect(removed.append)
             popup.set_projects([project], project)
+            host.show()
+            popup.show_anchored()
+            self.application.processEvents()
+            top_levels_before = set(self.application.topLevelWidgets())
 
             row = popup._rows[1]
-            self.assertIsInstance(row.action_menu, ContextActionMenu)
-            self.assertEqual(
-                [action.text() for action in row.action_menu.actions()],
-                ["Abrir pasta", "Remover da lista"],
-            )
-            row.openRequested.emit(project)
-            row.removeRequested.emit(project)
+            row.action_button.click()
+            self.application.processEvents()
+            self.assertIsNone(row.action_button.menu())
+            self.assertTrue(popup.action_overlay.isVisible())
+            self.assertFalse(popup.action_overlay.isWindow())
+            self.assertEqual(set(self.application.topLevelWidgets()), top_levels_before)
+            popup.action_overlay.open_button.click()
+
+            popup.show_anchored()
+            row = popup._rows[1]
+            row.action_button.click()
+            popup.action_overlay.remove_button.click()
             self.assertEqual(opened, [project])
             self.assertEqual(removed, [project])
             popup.close()
-            button.close()
+            host.close()
 
     def test_simple_filter_group_counts_and_resets_search_and_selectors(self):
         search = QLineEdit()

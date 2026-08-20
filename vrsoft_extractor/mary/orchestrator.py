@@ -105,7 +105,11 @@ class ChatOrchestrator:
         self.database = database
         self.database.recover_interrupted_conversations()
         self.providers = provider_registry(settings.root)
-        self.knowledge_router = KnowledgeRouter(database, settings.root)
+        self.knowledge_router = KnowledgeRouter(
+            database,
+            settings.root,
+            disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
+        )
         self._assistant_buffers: dict[str, list[str]] = {}
         self._external_callbacks: dict[str, EventCallback] = {}
         self._pending_user_messages: dict[str, int] = {}
@@ -206,6 +210,7 @@ class ChatOrchestrator:
         display_text: str = "",
         search_text: str | None = None,
         use_vr: bool = True,
+        image_paths: list[str] | None = None,
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
@@ -261,8 +266,11 @@ class ChatOrchestrator:
                 "vr" if use_vr else "native"
             )
             if conversation["title"] == "Nova conversa":
+                title_source = re.sub(
+                    r"!\[[^\]]*\]\([^)]+\)", "", stored_text
+                )
                 title = (
-                    re.sub(r"\s+", " ", stored_text).strip()[:70]
+                    re.sub(r"\s+", " ", title_source).strip()[:70]
                     or "Nova conversa"
                 )
                 self.database.update_conversation(conversation_id, title=title)
@@ -368,6 +376,7 @@ class ChatOrchestrator:
                     # compatibility switch; it must not gate normal answers.
                     if (
                         use_vr
+                        and not image_paths
                         and options.orchestration.enabled
                         and self.settings.legacy_vr_orchestration
                     ):
@@ -395,6 +404,7 @@ class ChatOrchestrator:
                             self._handle_event,
                             options,
                             skills,
+                            image_paths,
                         )
                 except OrchestrationCancelled:
                     self._handle_event(
@@ -1821,7 +1831,8 @@ class ChatOrchestrator:
             )
             sources.append(
                 f"[Fonte {index}] {linked_title}\n"
-                f"Origem: {str(item.get('source') or '').upper()} | "
+                f"Fonte: {str(item.get('source') or '').upper()} | "
+                f"Origem: {str(item.get('source_origin') or item.get('source') or '').upper()} | "
                 f"Módulo: {item.get('module') or 'não classificado'}\n"
                 f"Trecho: {excerpt or 'não disponível'}\n"
                 f"Termos encontrados: {', '.join(item.get('matched_terms') or [])} | "
@@ -2015,7 +2026,9 @@ class ChatOrchestrator:
                             if item.evidence_id in set(used_ids)
                         ]
                         if used_ids is not None
-                        else list(evidence_bundle.candidates)
+                        else self._candidates_cited_in_content(
+                            content, evidence_bundle
+                        )
                     )
                     self.database.add_source_citations(
                         event.conversation_id,
@@ -2047,6 +2060,27 @@ class ChatOrchestrator:
             callback(event)
         if event.kind == "turn_completed":
             self._external_callbacks.pop(event.conversation_id, None)
+
+    @staticmethod
+    def _candidates_cited_in_content(
+        content: str, evidence_bundle: EvidenceBundle
+    ) -> list[Any]:
+        """Persist only evidence the direct answer actually references.
+
+        The legacy supervised flow reports evidence IDs explicitly. The direct
+        flow does not, so a canonical URL (or an evidence ID) must appear in the
+        final answer before it is recorded as a citation.
+        """
+
+        normalized_content = str(content or "").replace("\\/", "/")
+        selected = []
+        for candidate in evidence_bundle.candidates:
+            url = str(candidate.url or "").strip()
+            url_used = bool(url) and url.rstrip("/") in normalized_content
+            id_used = candidate.evidence_id in normalized_content
+            if url_used or id_used:
+                selected.append(candidate)
+        return selected
 
     def interrupt(self, conversation_id: str) -> None:
         conversation = self.database.get_conversation(conversation_id)
@@ -2436,15 +2470,28 @@ class ChatOrchestrator:
     def purge(self, conversation_id: str) -> None:
         row = self._conversation(conversation_id)
         self._ensure_conversation_idle(row)
-        if not row["trashed_at"]:
-            raise ValueError("Somente conversas na lixeira podem ser excluídas definitivamente.")
+        if not row["trashed_at"] and not row["archived"]:
+            raise ValueError(
+                "Somente conversas arquivadas podem ser excluídas definitivamente."
+            )
         self._sync_codex_lifecycle(row, "delete")
         folder = self.settings.resolve_path(row["workspace"])
         trash_root = (self.settings.root / ".trash" / "conversations").resolve()
+        work_root = self.settings.work_dir.resolve()
         quarantine: Path | None = None
-        if folder.exists() and folder != trash_root and folder.is_relative_to(trash_root):
+        managed_folder = (
+            folder != trash_root
+            and folder != work_root
+            and (
+                folder.is_relative_to(trash_root)
+                or folder.is_relative_to(work_root)
+            )
+        )
+        if folder.exists() and managed_folder:
+            quarantine_root = (self.settings.root / ".state" / "purge").resolve()
+            quarantine_root.mkdir(parents=True, exist_ok=True)
             quarantine = (
-                trash_root / f".purge-{conversation_id}-{uuid.uuid4().hex}"
+                quarantine_root / f"{conversation_id}-{uuid.uuid4().hex}"
             ).resolve()
             folder.replace(quarantine)
         provider = self.providers.get(str(row["provider"]))
@@ -2468,6 +2515,12 @@ class ChatOrchestrator:
             raise
         if quarantine and quarantine.exists():
             shutil.rmtree(quarantine)
+        image_folder = (
+            self.settings.root / ".state" / "chat-images" / conversation_id
+        ).resolve()
+        image_root = (self.settings.root / ".state" / "chat-images").resolve()
+        if image_folder.is_dir() and image_folder.is_relative_to(image_root):
+            shutil.rmtree(image_folder)
 
     def _conversation_options(self, conversation_id: str) -> ConversationOptions:
         row = self._conversation(conversation_id)

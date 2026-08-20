@@ -28,6 +28,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QIcon,
+    QImageReader,
     QKeySequence,
     QLinearGradient,
     QPainter,
@@ -37,6 +38,7 @@ from PySide6.QtGui import (
     QRegion,
     QShortcut,
     QSyntaxHighlighter,
+    QTextBlockFormat,
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
@@ -148,7 +150,7 @@ def provider_icon(provider: str) -> QIcon:
 
 
 class AnimatedVrFlowButton(QToolButton):
-    """Compact split button for the local base and VR execution modes."""
+    """Compact toggle for the local base and VR execution mode."""
 
     optionsRequested = Signal()
 
@@ -156,12 +158,11 @@ class AnimatedVrFlowButton(QToolButton):
         super().__init__(parent)
         self._glow = 0.0
         self._compact = False
-        self._options_press = False
         self._reduced_motion = application_reduced_motion()
         self.setCheckable(True)
         self.setChecked(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(64, 32)
+        self.setFixedSize(56, 32)
         self.setAccessibleName("VR: base local e modos de orquestração")
 
         self._glow_animation = QPropertyAnimation(self, b"glow", self)
@@ -176,7 +177,7 @@ class AnimatedVrFlowButton(QToolButton):
 
     def set_compact(self, compact: bool) -> None:
         self._compact = bool(compact)
-        self.setFixedSize(36 if self._compact else 64, 32)
+        self.setFixedSize(36 if self._compact else 56, 32)
         self.update()
 
     def set_reduced_motion(self, enabled: bool) -> None:
@@ -193,25 +194,6 @@ class AnimatedVrFlowButton(QToolButton):
         self.update()
 
     glow = Property(float, _get_glow, _set_glow)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if (
-            event.button() == Qt.LeftButton
-            and event.position().x() >= self.width() - 20
-        ):
-            self._options_press = True
-            self.optionsRequested.emit()
-            event.accept()
-            return
-        self._options_press = False
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if self._options_press:
-            self._options_press = False
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
         if event.key() == Qt.Key_Down and event.modifiers() & Qt.AltModifier:
@@ -298,23 +280,12 @@ class AnimatedVrFlowButton(QToolButton):
                 QRectF(
                     body.left() + 21.0,
                     body.top(),
-                    body.width() - 34.0,
+                    body.width() - 27.0,
                     body.height(),
                 ),
                 Qt.AlignCenter,
                 "VR",
             )
-        arrow_center = QPointF(body.right() - 8.0, body.center().y())
-        painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(text_color, 1.4, Qt.SolidLine, Qt.RoundCap))
-        painter.drawLine(
-            QPointF(arrow_center.x() - 2.5, arrow_center.y() - 1.0),
-            QPointF(arrow_center.x(), arrow_center.y() + 1.5),
-        )
-        painter.drawLine(
-            QPointF(arrow_center.x(), arrow_center.y() + 1.5),
-            QPointF(arrow_center.x() + 2.5, arrow_center.y() - 1.0),
-        )
         if self.hasFocus():
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor("#FCBD0F"), 1.5, Qt.DotLine))
@@ -738,6 +709,11 @@ class MarkdownMessageWidget(QWidget):
         r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
         re.MULTILINE | re.DOTALL,
     )
+    _CODE_OR_URL_RE = re.compile(r"(`+.*?`+|https?://\S+)", re.DOTALL)
+    _GLUED_SENTENCE_RE = re.compile(
+        r"(?<=[a-záàâãéêíóôõúüç][.!?])"
+        r"(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ][a-záàâãéêíóôõúüç])"
+    )
 
     def __init__(
         self,
@@ -804,7 +780,10 @@ class MarkdownMessageWidget(QWidget):
             self._stream_browser = self._create_markdown_browser(self._markdown)
             self._content_layout.addWidget(self._stream_browser)
         else:
-            self._stream_browser.setMarkdown(self._markdown)
+            self._stream_browser.setMarkdown(
+                self._markdown_for_display(self._markdown)
+            )
+            self._apply_native_markdown_style(self._stream_browser)
             self._resize_markdown_browser(self._stream_browser)
         self.updateGeometry()
 
@@ -824,7 +803,8 @@ class MarkdownMessageWidget(QWidget):
         browser.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         browser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._configure_browser(browser)
-        browser.setMarkdown(markdown)
+        browser.setMarkdown(self._markdown_for_display(markdown))
+        self._apply_native_markdown_style(browser)
         browser.document().documentLayout().documentSizeChanged.connect(
             lambda _size=None, widget=browser: self._resize_markdown_browser(widget)
         )
@@ -849,8 +829,115 @@ class MarkdownMessageWidget(QWidget):
 
     def toPlainText(self) -> str:  # noqa: N802 - Qt compatibility
         document = QTextDocument()
-        document.setMarkdown(self._markdown)
+        document.setMarkdown(self._markdown_for_display(self._markdown))
         return document.toPlainText()
+
+    @classmethod
+    def _markdown_for_display(cls, markdown: str) -> str:
+        """Repair missing sentence spacing without touching code or URLs."""
+        parts = cls._CODE_OR_URL_RE.split(str(markdown or ""))
+        return "".join(
+            part
+            if index % 2
+            else cls._GLUED_SENTENCE_RE.sub(" ", part)
+            for index, part in enumerate(parts)
+        )
+
+    @staticmethod
+    def _apply_native_markdown_style(browser: QTextBrowser) -> None:
+        """Apply the T3-like rhythm that Qt's Markdown importer omits."""
+        application = QApplication.instance()
+        dark = bool(
+            application
+            and application.property("vr_theme") == "dark_orange"
+        )
+        text_color = QColor("#D4D4D8" if dark else "#27272A")
+        link_color = QColor("#58A6FF" if dark else "#075EAD")
+        code_text = QColor("#E4E4E7" if dark else "#27272A")
+        code_background = QColor("#202023" if dark else "#EEEEF2")
+        document = browser.document()
+        document.setIndentWidth(22)
+
+        block = document.firstBlock()
+        while block.isValid():
+            block_format = block.blockFormat()
+            block_format.setLineHeight(
+                155.0,
+                QTextBlockFormat.ProportionalHeight.value,
+            )
+            heading_level = block_format.headingLevel()
+            text_list = block.textList()
+            next_block = block.next()
+            if heading_level:
+                block_format.setTopMargin(0 if block == document.firstBlock() else 16)
+                block_format.setBottomMargin(8)
+            elif text_list is not None:
+                same_list_continues = (
+                    next_block.isValid() and next_block.textList() is text_list
+                )
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(6 if same_list_continues else 14)
+            else:
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(0 if not next_block.isValid() else 14)
+            block_cursor = QTextCursor(block)
+            block_cursor.setBlockFormat(block_format)
+
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                fragment_format = fragment.charFormat()
+                if fragment_format.isImageFormat():
+                    image_format = fragment_format.toImageFormat()
+                    image_url = QUrl(image_format.name())
+                    image_path = (
+                        image_url.toLocalFile()
+                        if image_url.isLocalFile()
+                        else image_format.name()
+                    )
+                    image_size = QImageReader(image_path).size()
+                    if image_size.isValid() and image_size.width() > 0:
+                        scale = min(
+                            1.0,
+                            480.0 / image_size.width(),
+                            320.0 / image_size.height(),
+                        )
+                        image_format.setWidth(image_size.width() * scale)
+                        image_format.setHeight(image_size.height() * scale)
+                    fragment_cursor = QTextCursor(document)
+                    fragment_cursor.setPosition(fragment.position())
+                    fragment_cursor.setPosition(
+                        fragment.position() + fragment.length(),
+                        QTextCursor.KeepAnchor,
+                    )
+                    fragment_cursor.mergeCharFormat(image_format)
+                    iterator += 1
+                    continue
+                fragment_format.setForeground(
+                    link_color if fragment_format.isAnchor() else text_color
+                )
+                if fragment_format.fontFixedPitch():
+                    fragment_format.setFontFamilies(["Consolas"])
+                    fragment_format.setFontPointSize(9.0)
+                    fragment_format.setForeground(code_text)
+                    fragment_format.setBackground(code_background)
+                elif heading_level:
+                    fragment_format.setFontPointSize(
+                        {1: 15.0, 2: 12.75, 3: 11.25}.get(
+                            heading_level,
+                            10.5,
+                        )
+                    )
+                    fragment_format.setFontWeight(700)
+                fragment_cursor = QTextCursor(document)
+                fragment_cursor.setPosition(fragment.position())
+                fragment_cursor.setPosition(
+                    fragment.position() + fragment.length(),
+                    QTextCursor.KeepAnchor,
+                )
+                fragment_cursor.mergeCharFormat(fragment_format)
+                iterator += 1
+            block = next_block
 
     def document(self) -> QTextDocument:
         return self._style_probe.document()
@@ -950,6 +1037,9 @@ class RoundedOverlayFrame(QFrame):
         self._anchor = anchor
         self._popup_radius = float(radius)
         self._close_notified = False
+        self.setWindowFlags(Qt.Widget)
+        self.setAttribute(Qt.WA_NativeWindow, False)
+        self.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -1508,6 +1598,7 @@ class ModelPickerCombo(RoundedComboBox):
         self._catalog_states: dict[str, str] = {}
         self._catalog_errors: dict[str, str] = {}
         self._active_provider = "codex"
+        self._enabled_providers = {"codex", "claude", "opencode"}
         self._settings = QSettings()
         self._popup_press_armed = False
         self._suppress_popup_release = False
@@ -1559,6 +1650,15 @@ class ModelPickerCombo(RoundedComboBox):
     def set_active_provider(self, provider: str) -> None:
         self._active_provider = provider
 
+    def set_enabled_providers(self, providers: list[str] | tuple[str, ...]) -> None:
+        """Limit provider choices without discarding already loaded catalogs."""
+        self._enabled_providers = {
+            str(provider).strip().casefold()
+            for provider in providers
+            if str(provider).strip()
+        }
+        self.catalogChanged.emit()
+
     def set_catalog_state(self, provider: str, state: str, error: str = "") -> None:
         self._catalog_states[provider] = state
         if error:
@@ -1583,6 +1683,8 @@ class ModelPickerCombo(RoundedComboBox):
                 )
         rows: list[tuple[bool, bool, bool, bool, int, int, str, str, str]] = []
         for provider_order, (provider_name, models) in enumerate(self._catalogs.items()):
+            if provider_name not in self._enabled_providers:
+                continue
             for model_order, model in enumerate(models):
                 model_id = str(model.get("id") or model.get("model") or "")
                 if not model_id:
@@ -1674,15 +1776,19 @@ class ModelPickerCombo(RoundedComboBox):
         provider.setIconSize(QSize(26, 26))
         provider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         provider.setAccessibleName("Filtrar modelos por provedor")
-        recommended_index = provider.addTab(
-            QIcon(str(ASSET_DIR / "model-all.svg")), "Recomendados"
+        favorites_index = provider.addTab(
+            QIcon(str(ASSET_DIR / "model-favorite-active.svg")), "Favoritos"
         )
-        provider.setTabToolTip(recommended_index, "Modelos recomendados")
-        provider.setTabData(recommended_index, "recommended")
+        provider.setTabToolTip(favorites_index, "Somente modelos favoritos")
+        provider.setTabData(favorites_index, "favorites")
         for name in ("codex", "claude", "opencode"):
+            if name not in self._enabled_providers:
+                continue
             index = provider.addTab(provider_icon(name), provider_display_name(name))
             provider.setTabToolTip(index, provider_display_name(name))
             provider.setTabData(index, name)
+            if name == self._active_provider:
+                provider.setCurrentIndex(index)
         body.addWidget(provider)
 
         content = QWidget(objectName="modelPickerContent")
@@ -1793,12 +1899,13 @@ class ModelPickerCombo(RoundedComboBox):
         def refresh() -> None:
             nonlocal legacy_expanded
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
+            favorites_only = selected_tab == "favorites"
+            selected_provider = "" if favorites_only else selected_tab
             term = search.text().strip().casefold()
             rows: list[tuple[bool, str, dict[str, Any]]] = []
             for provider_name, models in self._catalogs.items():
+                if provider_name not in self._enabled_providers:
+                    continue
                 if selected_provider and provider_name != selected_provider:
                     continue
                 for model in models:
@@ -1814,6 +1921,8 @@ class ModelPickerCombo(RoundedComboBox):
                     if term and term not in haystack:
                         continue
                     key = f"{provider_name}:{model_id}"
+                    if favorites_only and key not in favorites:
+                        continue
                     rows.append((key in favorites, provider_name, model))
             rows.sort(
                 key=lambda item: (
@@ -1827,7 +1936,7 @@ class ModelPickerCombo(RoundedComboBox):
             target_provider = self._active_provider
             target_model = str(self.currentData() or "")
             selected_item: QListWidgetItem | None = None
-            if not rows and (not term or term in default_haystack):
+            if not favorites_only and not rows and (not term or term in default_haystack):
                 default_item = add_model_row(
                     default_provider,
                     "",
@@ -1904,7 +2013,11 @@ class ModelPickerCombo(RoundedComboBox):
             state_providers = (
                 [selected_provider]
                 if selected_provider
-                else [name for name in ("codex", "claude", "opencode") if name in self._catalog_states]
+                else [
+                    name
+                    for name in ("codex", "claude", "opencode")
+                    if name in self._enabled_providers and name in self._catalog_states
+                ]
             )
             loading = [
                 name for name in state_providers if self._catalog_states.get(name) == "loading"
@@ -1921,8 +2034,14 @@ class ModelPickerCombo(RoundedComboBox):
             elif errors:
                 status.setText(errors[0])
             else:
-                status.setText("Nenhum modelo disponível neste provedor.")
-            retry.setVisible(bool(errors) or (not rows and not loading))
+                status.setText(
+                    "Nenhum modelo favorito. Marque a estrela em um provedor."
+                    if favorites_only
+                    else "Nenhum modelo disponível neste provedor."
+                )
+            retry.setVisible(
+                not favorites_only and (bool(errors) or (not rows and not loading))
+            )
 
         def choose(item: QListWidgetItem | None = None) -> None:
             nonlocal legacy_expanded
@@ -1953,17 +2072,13 @@ class ModelPickerCombo(RoundedComboBox):
 
         def retry_models() -> None:
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
+            selected_provider = "" if selected_tab == "favorites" else selected_tab
             self.retryRequested.emit(selected_provider or self._active_provider)
 
         def provider_changed() -> None:
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
-            if self._catalog_states.get(selected_provider, "idle") == "idle":
+            selected_provider = "" if selected_tab == "favorites" else selected_tab
+            if selected_provider and self._catalog_states.get(selected_provider, "idle") == "idle":
                 self.retryRequested.emit(selected_provider)
             refresh()
 

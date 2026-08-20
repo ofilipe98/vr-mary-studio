@@ -10,6 +10,9 @@ param(
     [ValidateSet('', 'wiki', 'kb')]
     [string]$Source = '',
 
+    [ValidateSet('', 'vrwiki', 'endoo', 'movidesk', 'local')]
+    [string]$Origin = '',
+
     [ValidateRange(1, 20)]
     [int]$Limit = 8,
 
@@ -142,6 +145,7 @@ if ($terms.Count -gt 0 -and (Test-Path -LiteralPath $CatalogPath)) {
         if ($item.status -and $item.status -ne 'active') { continue }
         if ($Module -and $item.module -ne $Module) { continue }
         if ($Source -and $item.source -ne $Source) { continue }
+        if ($Origin -and $item.source_origin -ne $Origin) { continue }
         if (-not $IncludeUnvalidated) {
             if ($item.module -eq 'Revisar') { continue }
             if ($item.review_status -notin @('approved', 'kept')) { continue }
@@ -185,6 +189,7 @@ if ($terms.Count -gt 0 -and (Test-Path -LiteralPath $CatalogPath)) {
         $items.Add([pscustomobject]@{
             score = [Math]::Round($score, 3)
             source = [string]$item.source
+            source_origin = [string]$item.source_origin
             source_id = [string]$item.source_id
             title = [string]$item.title
             module = [string]$item.module
@@ -235,7 +240,7 @@ $results = @(
     $items |
         Sort-Object @{Expression='score';Descending=$true}, @{Expression='title';Descending=$false} |
         Select-Object -First $Limit |
-        Select-Object score,source,source_id,title,module,product,category,review_status,status,updated_at,url,local_path,excerpt,matched_terms,coverage,confidence,resolved_from
+        Select-Object score,source,source_origin,source_id,title,module,product,category,review_status,status,updated_at,url,local_path,excerpt,matched_terms,coverage,confidence,resolved_from
 )
 $ambiguous = $false
 if ($results.Count -ge 2 -and [double]$results[0].score -gt 0) {
@@ -248,6 +253,7 @@ if ($results.Count -ge 2 -and [double]$results[0].score -gt 0) {
     inferred_module = $inferredModule
     module = $Module
     source = $Source
+    origin = $Origin
     include_unvalidated = [bool]$IncludeUnvalidated
     ambiguous = $ambiguous
     total = $items.Count

@@ -18,6 +18,7 @@ from .models import (
     EvidenceConflict,
     EvidenceGroup,
     ModuleRoutingDecision,
+    OriginSearchReport,
     QueryProfile,
     SourceSearchReport,
 )
@@ -93,12 +94,16 @@ class KnowledgeRouter:
         per_source_limit: int = 4,
         total_limit: int = 12,
         max_context_chars: int = 18_000,
+        disabled_origins: tuple[str, ...] = (),
     ) -> None:
         self.database = database
         self.root = root.resolve()
         self.per_source_limit = max(1, int(per_source_limit))
         self.total_limit = max(3, int(total_limit))
         self.max_context_chars = max(4_000, int(max_context_chars))
+        self.disabled_origins = frozenset(
+            str(item).strip().casefold() for item in disabled_origins if str(item).strip()
+        )
         self._ready = False
         self._ready_lock = threading.Lock()
 
@@ -275,6 +280,9 @@ class KnowledgeRouter:
                 )
             selected, groups, conflicts = self._deduplicate_and_group(
                 modular_candidates
+            )
+            selected = self._restore_source_coverage(
+                selected, modular_candidates
             )
 
         selected = self._expand_selected_documents(profile, selected)
@@ -453,8 +461,8 @@ class KnowledgeRouter:
                 warnings.append(f"Falha na trilha {lane_label}: {exc}")
         return lane_results, lane_queries, lane_errors, warnings
 
-    @staticmethod
     def _build_source_reports(
+        self,
         module: str,
         lane_results: dict[str, list[dict[str, Any]]],
         lane_queries: dict[str, tuple[str, ...]],
@@ -491,6 +499,59 @@ class KnowledgeRouter:
                     if rows
                     else "Nenhum resultado foi localizado após as consultas planejadas."
                 )
+            origins = {
+                str(item.get("source_origin") or source)
+                for item in rows
+                if str(item.get("source_origin") or source)
+            }
+            origins.update(
+                item.source_origin or item.source for item in source_candidates
+            )
+            if source == "wiki":
+                origins.update(self._enabled_origins(source))
+            origin_reports: list[OriginSearchReport] = []
+            for origin in sorted(origins):
+                origin_rows = [
+                    item
+                    for item in rows
+                    if str(item.get("source_origin") or source) == origin
+                ]
+                origin_selected = [
+                    item
+                    for item in source_candidates
+                    if (item.source_origin or item.source) == origin
+                ]
+                origin_status = (
+                    "found" if origin_selected else "unavailable" if error else "exhausted"
+                )
+                origin_reason = ""
+                if origin_status == "exhausted":
+                    origin_reason = (
+                        "Resultados examinados sem evidência selecionada."
+                        if origin_rows
+                        else "Nenhum resultado localizado nesta origem."
+                    )
+                origin_reports.append(
+                    OriginSearchReport(
+                        source=source,
+                        source_origin=origin,
+                        status=origin_status,
+                        queries=lane_queries.get(source, ()),
+                        candidates_examined=len(origin_rows),
+                        documents_examined=len(
+                            {
+                                int(item.get("document_id") or item.get("id") or 0)
+                                for item in origin_rows
+                                if int(item.get("document_id") or item.get("id") or 0)
+                            }
+                        ),
+                        selected_evidence_ids=tuple(
+                            item.evidence_id for item in origin_selected
+                        ),
+                        exhaustion_reason=origin_reason,
+                        error=error,
+                    )
+                )
             reports.append(
                 SourceSearchReport(
                     source=source,
@@ -510,6 +571,7 @@ class KnowledgeRouter:
                     ),
                     exhaustion_reason=exhaustion_reason,
                     error=error,
+                    origin_reports=tuple(origin_reports),
                 )
             )
         return reports
@@ -586,6 +648,37 @@ class KnowledgeRouter:
     def _search_lane(
         self, profile: QueryProfile, source: str, *, module: str = ""
     ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+        origins = self._enabled_origins(source)
+        if source == "wiki" and origins:
+            combined: dict[tuple[int, int], dict[str, Any]] = {}
+            executed_queries: tuple[str, ...] = ()
+            for origin in origins:
+                rows, executed_queries = self._search_lane_origin(
+                    profile, source, module=module, source_origin=origin
+                )
+                for item in rows:
+                    key = (
+                        int(item.get("document_id") or 0),
+                        int(item.get("chunk_id") or 0),
+                    )
+                    combined.setdefault(key, item)
+            return list(combined.values()), executed_queries
+        return self._search_lane_origin(profile, source, module=module)
+
+    def _enabled_origins(self, source: str) -> tuple[str, ...]:
+        origins = self.database.active_source_origins(source)
+        return tuple(
+            origin for origin in origins if origin.casefold() not in self.disabled_origins
+        )
+
+    def _search_lane_origin(
+        self,
+        profile: QueryProfile,
+        source: str,
+        *,
+        module: str = "",
+        source_origin: str = "",
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
         queries = _query_variants(profile, module)
         # Retrieve beyond the display limit and let the cross-source reranker
         # choose. Stopping at four FTS hits favored incidental troubleshooting
@@ -601,6 +694,7 @@ class KnowledgeRouter:
                     scan_limit,
                     source=source,
                     module=search_module,
+                    source_origin=source_origin,
                 )
                 for item in chunk_rows:
                     key = (
@@ -614,6 +708,7 @@ class KnowledgeRouter:
                         scan_limit,
                         source=source,
                         module=search_module,
+                        source_origin=source_origin,
                     ):
                         converted = self._legacy_candidate_row(item)
                         key = (
@@ -675,6 +770,7 @@ class KnowledgeRouter:
                 ensure_ascii=False,
             ),
             "source": "schema",
+            "source_origin": str(document_data.get("source_origin") or "local"),
             "source_id": str(document_data.get("source_id") or "postgresql-vr"),
             "title": str(document_data.get("title") or "Schema PostgreSQL VR"),
             "url": str(document_data.get("url") or ""),
@@ -719,10 +815,12 @@ class KnowledgeRouter:
         return {
             "profile": bundle.profile.to_dict(),
             "source_counts": bundle.source_counts,
+            "source_origin_counts": bundle.source_origin_counts,
             "selected_evidence": [
                 {
                     "evidence_id": item.evidence_id,
                     "source": item.source,
+                    "source_origin": item.source_origin,
                     "title": item.title,
                     "heading": item.heading,
                     "content_type": item.content_type,
@@ -939,6 +1037,7 @@ class KnowledgeRouter:
                     EvidenceCandidate(
                         evidence_id=f"{source}:{row.get('source_id')}:{chunk_id}",
                         source=source,
+                        source_origin=str(row.get("source_origin") or source),
                         source_id=str(row.get("source_id") or ""),
                         document_id=int(row.get("document_id") or 0),
                         chunk_id=chunk_id,
@@ -1006,8 +1105,8 @@ class KnowledgeRouter:
         balanced.sort(key=lambda item: (-item.score, item.source))
         return balanced
 
-    @staticmethod
     def _restore_source_coverage(
+        self,
         selected: list[EvidenceCandidate],
         candidates: list[EvidenceCandidate],
     ) -> list[EvidenceCandidate]:
@@ -1018,6 +1117,28 @@ class KnowledgeRouter:
                 continue
             strongest = next(
                 (item for item in candidates if item.source == source),
+                None,
+            )
+            if strongest is not None and strongest.evidence_id not in selected_ids:
+                restored.append(strongest)
+                selected_ids.add(strongest.evidence_id)
+        wiki_origins = {
+            item.source_origin
+            for item in candidates
+            if item.source == "wiki" and item.source_origin
+        }
+        for origin in sorted(wiki_origins):
+            if any(
+                item.source == "wiki" and item.source_origin == origin
+                for item in restored
+            ):
+                continue
+            strongest = next(
+                (
+                    item
+                    for item in candidates
+                    if item.source == "wiki" and item.source_origin == origin
+                ),
                 None,
             )
             if strongest is not None and strongest.evidence_id not in selected_ids:
@@ -1125,6 +1246,12 @@ class KnowledgeRouter:
                 "kb": "KB/PROCESSO",
                 "schema": "SCHEMA/ESTRUTURA",
             }.get(item.source, item.source.upper())
+            origin_label = {
+                "vrwiki": "Wiki pública VR",
+                "endoo": "Wiki autenticada Endoo",
+                "movidesk": "Base Movidesk",
+                "local": "Base local",
+            }.get(item.source_origin, item.source_origin or item.source)
             citation_title = (
                 f"[{item.title}]({item.url})"
                 if item.url.startswith(("http://", "https://"))
@@ -1132,6 +1259,7 @@ class KnowledgeRouter:
             )
             block = (
                 f"\n[E{index} | {item.evidence_id}] {source_label}\n"
+                f"Origem: {origin_label}\n"
                 f"Título: {citation_title}\nSeção: {item.heading or 'não informada'}\n"
                 f"Tipo: {item.content_type} | Módulo: {item.module or 'não classificado'}\n"
                 f"Evidência: {item.excerpt}\n"
@@ -1165,6 +1293,11 @@ class KnowledgeRouter:
             "\nUse a adequação da fonte à afirmação: Schema para estrutura física; "
             "Wiki para funcionamento; KB para procedimento. Combine informações "
             "complementares, declare conflitos e não eleve a confiança sem evidência."
+        )
+        lines.append(
+            "Ao final da resposta, cite somente as evidências efetivamente usadas, "
+            "com título e URL original exata. Não exponha IDs E1/E2, caminhos locais, "
+            "scores nem fontes apenas recuperadas e não utilizadas."
         )
         return "\n".join(lines)
 

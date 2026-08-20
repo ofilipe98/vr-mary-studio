@@ -40,8 +40,8 @@ class WikiSync:
         self.ocr = OcrManager(settings.tesseract_dir)
 
     def sync(self, limit: int | None = None) -> SyncStats:
-        run_id = self.database.start_sync("wiki")
-        stats = SyncStats("wiki")
+        run_id = self.database.start_sync("wiki", "vrwiki")
+        stats = SyncStats("wiki", source_origin="vrwiki")
         active_ids: set[str] = set()
         try:
             for index, page in enumerate(self.iter_pages(), start=1):
@@ -189,6 +189,7 @@ class WikiSync:
         classification = classify(page["title"], markdown, " / ".join(categories))
         document = KnowledgeDocument(
             source="wiki",
+            source_origin="vrwiki",
             source_id=str(page["pageid"]),
             title=page["title"],
             url=url,
