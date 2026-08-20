@@ -125,6 +125,7 @@ def export_portable_project(
     destination: Path,
     *,
     exclude_sources: Iterable[str] = (),
+    exclude_origins: Iterable[str] = ("endoo",),
 ) -> PortableExportResult:
     source = source.resolve()
     destination = destination.resolve()
@@ -132,6 +133,11 @@ def export_portable_project(
         str(source_name).strip().casefold()
         for source_name in exclude_sources
         if str(source_name).strip()
+    }
+    excluded_origins = {
+        str(origin).strip().casefold()
+        for origin in exclude_origins
+        if str(origin).strip()
     }
     if source == destination or source in destination.parents:
         raise ValueError("O destino portátil deve ficar fora da base de origem.")
@@ -144,6 +150,7 @@ def export_portable_project(
     allowed_knowledge, allowed_assets = _portable_content_paths(
         source_database,
         excluded_sources,
+        excluded_origins,
     )
     files = 0
     bytes_total = 0
@@ -191,7 +198,9 @@ def export_portable_project(
             root=destination,
             backup_portable_migration=False,
         )
-        _sanitize_portable_database(portable_database, excluded_sources)
+        _sanitize_portable_database(
+            portable_database, excluded_sources, excluded_origins
+        )
         export_catalog(portable_database, destination / "indice")
         files += 1
         bytes_total += target_database.stat().st_size
@@ -205,6 +214,7 @@ def export_portable_project(
 def _portable_content_paths(
     database_path: Path,
     excluded_sources: set[str] | None = None,
+    excluded_origins: set[str] | None = None,
 ) -> tuple[set[str] | None, set[str] | None]:
     if not database_path.is_file():
         return None, None
@@ -212,12 +222,14 @@ def _portable_content_paths(
     assets: set[str] = set()
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
-            """SELECT source,local_path,assets_json FROM documents
+            """SELECT source,source_origin,local_path,assets_json FROM documents
                WHERE status='active'"""
         ).fetchall()
     root = database_path.resolve().parent.parent
-    for source, local_path, assets_json in rows:
+    for source, source_origin, local_path, assets_json in rows:
         if str(source).casefold() in (excluded_sources or set()):
+            continue
+        if str(source_origin).casefold() in (excluded_origins or set()):
             continue
         relative = to_portable_path(root, local_path)
         if relative:
@@ -239,6 +251,7 @@ def _portable_content_paths(
 def _sanitize_portable_database(
     database: MaryDatabase,
     excluded_sources: set[str] | None = None,
+    excluded_origins: set[str] | None = None,
 ) -> None:
     """Keep distributable knowledge while removing local user/session state."""
 
@@ -246,10 +259,11 @@ def _sanitize_portable_database(
         excluded_documents = [
             int(row[0])
             for row in connection.execute(
-                "SELECT id,source,status FROM documents"
+                "SELECT id,source,source_origin,status FROM documents"
             ).fetchall()
-            if row[2] != "active"
+            if row[3] != "active"
             or str(row[1]).casefold() in (excluded_sources or set())
+            or str(row[2]).casefold() in (excluded_origins or set())
         ]
         if excluded_documents:
             placeholders = ",".join("?" for _document_id in excluded_documents)

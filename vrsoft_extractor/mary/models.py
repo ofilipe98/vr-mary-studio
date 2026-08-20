@@ -21,6 +21,7 @@ class Classification:
 class ReviewFilters:
     query: str = ""
     source: str = ""
+    source_origin: str = ""
     current_module: str = ""
     suggested_module: str = ""
     confidence_band: str = ""
@@ -48,6 +49,7 @@ class KnowledgeDocument:
     source_id: str
     title: str
     url: str
+    source_origin: str = ""
     html: str = ""
     markdown: str = ""
     module: str = "Revisar"
@@ -64,6 +66,14 @@ class KnowledgeDocument:
     assets: list[str] = field(default_factory=list)
     ocr_text: str = ""
     local_path: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.source_origin:
+            self.source_origin = {
+                "wiki": "vrwiki",
+                "kb": "movidesk",
+                "schema": "local",
+            }.get(self.source.casefold(), self.source.casefold())
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -108,6 +118,7 @@ class EvidenceCandidate:
     excerpt: str
     url: str = ""
     local_path: str = ""
+    source_origin: str = ""
     updated_at: str = ""
     score: float = 0.0
     confidence: float = 0.0
@@ -130,6 +141,7 @@ class EvidenceCandidate:
             "excerpt": self.excerpt,
             "url": self.url,
             "local_path": self.local_path,
+            "source_origin": self.source_origin,
             "updated_at": self.updated_at,
             "score": self.score,
             "confidence": self.confidence,
@@ -165,6 +177,32 @@ class EvidenceConflict:
 
 
 @dataclass(frozen=True)
+class OriginSearchReport:
+    source: str
+    source_origin: str
+    status: str
+    queries: tuple[str, ...] = ()
+    candidates_examined: int = 0
+    documents_examined: int = 0
+    selected_evidence_ids: tuple[str, ...] = ()
+    exhaustion_reason: str = ""
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "source_origin": self.source_origin,
+            "status": self.status,
+            "queries": list(self.queries),
+            "candidates_examined": self.candidates_examined,
+            "documents_examined": self.documents_examined,
+            "selected_evidence_ids": list(self.selected_evidence_ids),
+            "exhaustion_reason": self.exhaustion_reason,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
 class SourceSearchReport:
     source: str
     status: str
@@ -175,6 +213,7 @@ class SourceSearchReport:
     selected_evidence_ids: tuple[str, ...] = ()
     exhaustion_reason: str = ""
     error: str = ""
+    origin_reports: tuple[OriginSearchReport, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -187,6 +226,7 @@ class SourceSearchReport:
             "selected_evidence_ids": list(self.selected_evidence_ids),
             "exhaustion_reason": self.exhaustion_reason,
             "error": self.error,
+            "origin_reports": [item.to_dict() for item in self.origin_reports],
         }
 
 
@@ -223,6 +263,14 @@ class EvidenceBundle:
         counts = {"wiki": 0, "kb": 0, "schema": 0}
         for candidate in self.candidates:
             counts[candidate.source] = counts.get(candidate.source, 0) + 1
+        return counts
+
+    @property
+    def source_origin_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for candidate in self.candidates:
+            origin = candidate.source_origin or candidate.source
+            counts[origin] = counts.get(origin, 0) + 1
         return counts
 
     @property
@@ -270,6 +318,7 @@ class EvidenceBundle:
             "missing_sources": list(self.missing_sources),
             "warnings": list(self.warnings),
             "source_counts": self.source_counts,
+            "source_origin_counts": self.source_origin_counts,
         }
 
 
@@ -284,11 +333,14 @@ class SyncStats:
     errors: int = 0
     review: int = 0
     skipped: int = 0
+    source_origin: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         values = asdict(self)
         if not self.skipped:
             values.pop("skipped")
+        if not self.source_origin:
+            values.pop("source_origin")
         return values
 
 

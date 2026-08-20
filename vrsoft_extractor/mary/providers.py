@@ -212,6 +212,7 @@ class AgentProvider(abc.ABC):
         callback: EventCallback,
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
@@ -289,6 +290,7 @@ class CodexProvider(AgentProvider):
         self._callbacks: dict[str, EventCallback] = {}
         self._native_to_local: dict[str, str] = {}
         self._active_turns: dict[str, str] = {}
+        self._assistant_item_keys: dict[str, str] = {}
         self._write_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._start_lock = threading.RLock()
@@ -482,6 +484,7 @@ class CodexProvider(AgentProvider):
             ]
             for conversation_id, _callback in active:
                 self._active_turns.pop(conversation_id, None)
+                self._assistant_item_keys.pop(conversation_id, None)
         for conversation_id, callback in active:
             if callback is None:
                 continue
@@ -551,10 +554,29 @@ class CodexProvider(AgentProvider):
                     params,
                 )
             )
-        elif method == "item/agentMessage/delta":
-            callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
-        elif method == "item/plan/delta":
-            callback(RuntimeEvent(conversation_id, "assistant_delta", str(params.get("delta", "")), params))
+        elif method in {"item/agentMessage/delta", "item/plan/delta"}:
+            delta = str(params.get("delta", ""))
+            item_id = str(params.get("itemId") or params.get("item_id") or "")
+            item_key = f"{method}:{item_id}" if item_id else method
+            with self._state_lock:
+                previous_item_key = self._assistant_item_keys.get(
+                    conversation_id, ""
+                )
+                self._assistant_item_keys[conversation_id] = item_key
+            # Codex emits commentary/plan text and the final answer as distinct
+            # items. Joining their deltas verbatim produced strings such as
+            # ``versão.Para`` and made both blocks look like one paragraph.
+            if previous_item_key and previous_item_key != item_key and delta:
+                leading_newlines = len(delta) - len(delta.lstrip("\r\n"))
+                delta = "\n" * max(0, 2 - leading_newlines) + delta
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    delta,
+                    {"method": method, **params},
+                )
+            )
         elif method == "item/reasoning/summaryTextDelta":
             callback(
                 RuntimeEvent(
@@ -568,11 +590,13 @@ class CodexProvider(AgentProvider):
             turn = params.get("turn") or {}
             with self._state_lock:
                 self._active_turns[conversation_id] = str(turn.get("id", ""))
+                self._assistant_item_keys.pop(conversation_id, None)
             callback(RuntimeEvent(conversation_id, "turn_started", payload=params))
         elif method == "turn/completed":
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
                 self._callbacks.pop(conversation_id, None)
+                self._assistant_item_keys.pop(conversation_id, None)
             callback(RuntimeEvent(conversation_id, "turn_completed", payload=params))
         elif method in {
             "item/commandExecution/requestApproval",
@@ -862,6 +886,7 @@ class CodexProvider(AgentProvider):
         callback: EventCallback,
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None:
         process = self.process
         reconnecting = bool(
@@ -909,6 +934,7 @@ class CodexProvider(AgentProvider):
         with self._state_lock:
             self._callbacks[conversation_id] = callback
             self._native_to_local[native_id] = conversation_id
+            self._assistant_item_keys.pop(conversation_id, None)
             # Keep a pending marker so a server crash between the RPC response
             # and turn/started still terminates this caller instead of timing out.
             self._active_turns[conversation_id] = ""
@@ -939,6 +965,14 @@ class CodexProvider(AgentProvider):
                 "path": str(item["path"]),
             }
             for item in valid_skills
+        )
+        turn_input.extend(
+            {
+                "type": "localImage",
+                "path": str(Path(path).resolve()),
+            }
+            for path in (image_paths or [])
+            if Path(path).is_file()
         )
         params: dict[str, Any] = {
             "threadId": native_id,
@@ -983,6 +1017,7 @@ class CodexProvider(AgentProvider):
         except Exception:
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
+                self._assistant_item_keys.pop(conversation_id, None)
             raise
 
     def interrupt(self, conversation_id: str) -> None:
@@ -1141,6 +1176,7 @@ class CodexProvider(AgentProvider):
             with self._state_lock:
                 self._callbacks.pop(conversation_id, None)
                 self._active_turns.pop(conversation_id, None)
+                self._assistant_item_keys.pop(conversation_id, None)
                 if native_id:
                     self._native_to_local.pop(native_id, None)
 
@@ -1210,12 +1246,21 @@ class ClaudeProvider(AgentProvider):
         callback: EventCallback,
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None:
         if not self.command:
             raise ProviderError("Claude não foi encontrado no PATH.")
         options = options or ConversationOptions(model=model, effort=effort)
         preset = approval_preset(options.approval_profile)
         readable_roots = [workspace.resolve()]
+        image_roots = {
+            Path(path).resolve().parent
+            for path in (image_paths or [])
+            if Path(path).is_file()
+        }
+        for root in image_roots:
+            if root not in readable_roots:
+                readable_roots.append(root)
         if (
             options.vr_enabled
             and self.knowledge_root
@@ -1240,6 +1285,9 @@ class ClaudeProvider(AgentProvider):
             "--verbose",
             "--include-partial-messages",
         ]
+        if not options.vr_enabled:
+            for root in image_roots:
+                command.extend(["--add-dir", str(root)])
         if options.vr_enabled:
             command.extend(["--permission-mode", "dontAsk"])
             for root in readable_roots:
@@ -1522,6 +1570,7 @@ class OpenCodeProvider(AgentProvider):
         callback: EventCallback,
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None:
         if not self.command:
             raise ProviderError("OpenCode não foi encontrado no PATH.")

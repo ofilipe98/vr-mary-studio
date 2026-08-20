@@ -39,8 +39,8 @@ class SchemaSync:
         )
 
     def sync(self) -> SyncStats:
-        stats = SyncStats("schema")
-        run_id = self.database.start_sync("schema")
+        stats = SyncStats("schema", source_origin="local")
+        run_id = self.database.start_sync("schema", "local")
         try:
             path = self.schema_path
             if not path.is_file():
@@ -53,6 +53,7 @@ class SchemaSync:
             modified = path.stat().st_mtime
             document = KnowledgeDocument(
                 source="schema",
+                source_origin="local",
                 source_id="postgresql-vr",
                 title="Schema PostgreSQL VR",
                 url="",

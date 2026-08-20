@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .chat_widgets import RoundedPopupDialog
+from .chat_widgets import RoundedOverlayFrame, RoundedPopupDialog
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
@@ -894,6 +894,7 @@ class ProjectScopeButton(QFrame):
 
 class _ProjectScopeRow(QFrame):
     activated = Signal(object)
+    actionsRequested = Signal(object)
     openRequested = Signal(object)
     removeRequested = Signal(object)
 
@@ -944,17 +945,9 @@ class _ProjectScopeRow(QFrame):
         self.action_button.setToolTip(f"Ações do projeto {label}")
         self.action_button.setVisible(self.project is not None)
         if self.project is not None:
-            self.action_menu = ContextActionMenu(self.action_button)
-            self.action_menu.add_action(
-                "Abrir pasta",
-                lambda: self.openRequested.emit(self.project),
+            self.action_button.clicked.connect(
+                lambda _checked=False: self.actionsRequested.emit(self)
             )
-            self.action_menu.add_action(
-                "Remover da lista",
-                lambda: self.removeRequested.emit(self.project),
-            )
-            self.action_button.setMenu(self.action_menu)
-            self.action_button.setPopupMode(QToolButton.InstantPopup)
         layout.addWidget(self.action_button)
         self.refresh_theme()
 
@@ -997,7 +990,68 @@ class _ProjectSearchLineEdit(QLineEdit):
         super().keyPressEvent(event)
 
 
-class ProjectScopePopup(RoundedPopupDialog):
+class _ProjectActionOverlay(RoundedOverlayFrame):
+    """Project actions rendered inside the selector, never as a native window."""
+
+    openRequested = Signal(object)
+    removeRequested = Signal(object)
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent, parent, radius=9.0)
+        self.setObjectName("projectActionOverlay")
+        self.setAccessibleName("Ações do projeto")
+        self._project: Path | None = None
+        self.setFixedSize(178, 76)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(2)
+        self.open_button = QPushButton("Abrir pasta", objectName="projectActionOption")
+        self.open_button.setAccessibleName("Abrir pasta do projeto")
+        self.open_button.clicked.connect(self._emit_open)
+        layout.addWidget(self.open_button)
+        self.remove_button = QPushButton(
+            "Remover da lista", objectName="projectActionOption"
+        )
+        self.remove_button.setProperty("destructive", True)
+        self.remove_button.setAccessibleName("Remover projeto da lista")
+        self.remove_button.clicked.connect(self._emit_remove)
+        layout.addWidget(self.remove_button)
+
+    def show_for(self, anchor: QWidget, project: Path) -> None:
+        self._anchor = anchor
+        self._project = project.resolve()
+        host = self.parentWidget()
+        if host is None:
+            return
+        below = anchor.mapTo(host, QPoint(anchor.width() - self.width(), anchor.height() + 2))
+        x = max(6, min(below.x(), host.width() - self.width() - 6))
+        if below.y() + self.height() <= host.height() - 6:
+            y = below.y()
+        else:
+            above = anchor.mapTo(host, QPoint(0, -self.height() - 2)).y()
+            y = max(6, above)
+        self.move(x, y)
+        self.show()
+        self.raise_()
+        self.open_button.setFocus()
+
+    def _emit_open(self) -> None:
+        if self._project is None:
+            return
+        project = self._project
+        self.close()
+        self.openRequested.emit(project)
+
+    def _emit_remove(self) -> None:
+        if self._project is None:
+            return
+        project = self._project
+        self.close()
+        self.removeRequested.emit(project)
+
+
+class ProjectScopePopup(RoundedOverlayFrame):
     """Anchored, searchable project scope selector inspired by T3 Code."""
 
     projectSelected = Signal(object)
@@ -1005,11 +1059,9 @@ class ProjectScopePopup(RoundedPopupDialog):
     removeProjectRequested = Signal(object)
 
     def __init__(self, anchor: ProjectScopeButton, parent: QWidget | None = None):
-        super().__init__(parent, radius=12.0)
+        super().__init__(parent or anchor.window(), anchor, radius=12.0)
         self.anchor = anchor
         self.setObjectName("projectScopePopup")
-        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        self.setProperty("closeOnDeactivate", True)
         self.setAccessibleName("Lista de projetos")
         self._projects: list[Path] = []
         self._current: Path | None = None
@@ -1037,7 +1089,13 @@ class ProjectScopePopup(RoundedPopupDialog):
         self.scroll.setWidget(self.rows_host)
         layout.addWidget(self.scroll)
 
+        self.action_overlay = _ProjectActionOverlay(self)
+        self.action_overlay.openRequested.connect(self._request_open_project)
+        self.action_overlay.removeRequested.connect(self._request_remove_project)
+        self.action_overlay.hide()
+
     def set_projects(self, projects: list[Path], current: Path | None) -> None:
+        self.action_overlay.hide()
         unique: list[Path] = []
         for project in projects:
             resolved = project.resolve()
@@ -1069,15 +1127,16 @@ class ProjectScopePopup(RoundedPopupDialog):
         search_height = 40 if not self.search.isHidden() else 0
         height = min(430, 16 + search_height + row_count * 38)
         self.setFixedSize(width, height)
-        position = self.anchor.mapToGlobal(QPoint(0, self.anchor.height() + 5))
-        screen = self.anchor.screen() or QApplication.primaryScreen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            x = min(max(position.x(), available.left()), available.right() - width + 1)
-            y = position.y()
-            if y + height > available.bottom():
-                y = self.anchor.mapToGlobal(QPoint(0, -height - 5)).y()
-            position = QPoint(x, max(available.top(), y))
+        host = self.parentWidget() or self.anchor.window()
+        available = host.rect().adjusted(8, 8, -8, -8)
+        below = self.anchor.mapTo(host, QPoint(0, self.anchor.height() + 5))
+        x = max(available.left(), min(below.x(), available.right() - width + 1))
+        if below.y() + height <= available.bottom():
+            y = below.y()
+        else:
+            above = self.anchor.mapTo(host, QPoint(0, -height - 5)).y()
+            y = max(available.top(), above)
+        position = QPoint(x, y)
         self.move(position)
         self.anchor.set_expanded(True)
         self.show()
@@ -1092,11 +1151,8 @@ class ProjectScopePopup(RoundedPopupDialog):
             row.refresh_theme()
         self.update()
 
-    def done(self, result: int) -> None:
-        self.anchor.set_expanded(False)
-        super().done(result)
-
     def hideEvent(self, event) -> None:
+        self.action_overlay.hide()
         self.anchor.set_expanded(False)
         super().hideEvent(event)
 
@@ -1109,7 +1165,7 @@ class ProjectScopePopup(RoundedPopupDialog):
     def _handle_navigation_key(self, key: int) -> bool:
         if not self._rows:
             if key == Qt.Key_Escape:
-                self.reject()
+                self.close()
                 return True
             return False
         if key in {Qt.Key_Down, Qt.Key_Up}:
@@ -1120,11 +1176,12 @@ class ProjectScopePopup(RoundedPopupDialog):
             self._activate_project(self._rows[self._focused_row].project)
             return True
         if key == Qt.Key_Escape:
-            self.reject()
+            self.close()
             return True
         return False
 
     def _rebuild_rows(self, *_args) -> None:
+        self.action_overlay.hide()
         while self.rows_layout.count():
             item = self.rows_layout.takeAt(0)
             widget = item.widget()
@@ -1146,6 +1203,7 @@ class ProjectScopePopup(RoundedPopupDialog):
                 parent=self.rows_host,
             )
             row.activated.connect(self._activate_project)
+            row.actionsRequested.connect(self._show_project_actions)
             row.openRequested.connect(self._request_open_project)
             row.removeRequested.connect(self._request_remove_project)
             self.rows_layout.addWidget(row)
@@ -1168,14 +1226,22 @@ class ProjectScopePopup(RoundedPopupDialog):
 
     def _activate_project(self, project: Path | None) -> None:
         self.projectSelected.emit(project)
-        self.accept()
+        self.close()
+
+    def _show_project_actions(self, row: _ProjectScopeRow) -> None:
+        if row.project is None:
+            return
+        if self.action_overlay.isVisible() and self.action_overlay._anchor is row.action_button:
+            self.action_overlay.hide()
+            return
+        self.action_overlay.show_for(row.action_button, row.project)
 
     def _request_open_project(self, project: Path) -> None:
-        self.accept()
+        self.close()
         self.openProjectRequested.emit(project)
 
     def _request_remove_project(self, project: Path) -> None:
-        self.accept()
+        self.close()
         self.removeProjectRequested.emit(project)
 
 

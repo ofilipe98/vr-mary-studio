@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..settings import (
     ConfigError,
+    DEFAULT_BASE_URL,
     load_dotenv_file,
     update_dotenv_file,
     validated_http_url,
@@ -19,6 +20,7 @@ LEGACY_OLD_ROOT = Path(r"D:\Codex\VR")
 DEFAULT_WIKI_API = "https://wiki.vrsoft.com.br/wiki/api.php"
 DEFAULT_WIKI_BASE = "https://wiki.vrsoft.com.br/wiki/"
 DEFAULT_KB_URL = "https://vrsoftware.movidesk.com/kb"
+DEFAULT_ENDOO_API_URL = "https://api.iendo.us/api"
 VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 
@@ -30,6 +32,9 @@ class MarySettings:
     wiki_api: str = DEFAULT_WIKI_API
     wiki_base: str = DEFAULT_WIKI_BASE
     kb_url: str = DEFAULT_KB_URL
+    endoo_base_url: str = DEFAULT_BASE_URL
+    endoo_api_url: str = DEFAULT_ENDOO_API_URL
+    endoo_wiki_enabled: bool = True
     sync_interval_minutes: int = 120
     default_effort: str = "medium"
     # Compatibility switch for the retired planner/worker/supervisor graph.
@@ -83,6 +88,10 @@ class MarySettings:
     def movidesk_state_path(self) -> Path:
         return self.state_dir / "movidesk.json"
 
+    @property
+    def endoo_state_path(self) -> Path:
+        return self.state_dir / "endoo.json"
+
     def relative_path(self, value: str | Path | None) -> str:
         return to_portable_path(self.root, value)
 
@@ -93,6 +102,7 @@ class MarySettings:
         directories = [
             self.state_dir,
             self.assets_dir / "wiki",
+            self.assets_dir / "wiki" / "endoo",
             self.assets_dir / "kb",
             self.index_dir,
             self.work_dir,
@@ -165,6 +175,20 @@ def load_vr_settings(
             or os.environ.get("MARY_KB_URL", DEFAULT_KB_URL),
             "URL do KB",
         ).rstrip("/"),
+        endoo_base_url=validated_http_url(
+            os.environ.get("ENDOO_BASE_URL", DEFAULT_BASE_URL),
+            "URL base do Endoo",
+        ).rstrip("/"),
+        endoo_api_url=validated_http_url(
+            os.environ.get("ENDOO_API_URL", DEFAULT_ENDOO_API_URL),
+            "URL da API do Endoo",
+        ).rstrip("/"),
+        endoo_wiki_enabled=str(
+            os.environ.get("VR_ENDOO_WIKI_ENABLED", "1")
+        ).strip().casefold() not in {"", "0", "false", "no", "off"},
+        legacy_vr_orchestration=str(
+            os.environ.get("VR_LEGACY_ORCHESTRATION", "0")
+        ).strip().casefold() in {"1", "true", "yes", "on"},
         sync_interval_minutes=max(15, interval),
         default_effort=effort,
     )

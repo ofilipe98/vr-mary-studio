@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .classification_audit import audit_classification
 from .config import load_vr_settings
+from .endoo_wiki import EndooWikiSync
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
 from .portable_export import audit_portable_project, export_portable_project
@@ -27,6 +28,18 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_parser.add_argument("--dry-run", action="store_true")
     wiki = sub.add_parser("sync-wiki", help="Sincroniza a VRWiki")
     wiki.add_argument("--limit", type=int)
+    endoo_wiki = sub.add_parser(
+        "sync-endoo-wiki", help="Sincroniza a Wiki autenticada do Endoo"
+    )
+    endoo_wiki.add_argument("--limit", type=int)
+    endoo_wiki.add_argument(
+        "--headed", action="store_true", help="Abre o login Endoo antes de sincronizar"
+    )
+    all_wikis = sub.add_parser(
+        "sync-wikis", help="Sincroniza VRWiki e Wiki Endoo"
+    )
+    all_wikis.add_argument("--limit", type=int)
+    all_wikis.add_argument("--headed-endoo", action="store_true")
     kb = sub.add_parser("sync-kb", help="Sincroniza o Movidesk KB")
     kb.add_argument("--limit", type=int)
     kb.add_argument("--headed", action="store_true")
@@ -41,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=10)
     search.add_argument("--module", default="")
     search.add_argument("--source", default="")
+    search.add_argument("--origin", default="")
     audit = sub.add_parser(
         "audit-classification",
         help="Simula a classificação atual sem alterar documentos",
@@ -72,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Fonte documental que nao deve entrar no pacote (opcao repetivel)",
     )
+    portable.add_argument(
+        "--include-endoo",
+        action="store_true",
+        help="Inclui explicitamente o conteudo autenticado da Wiki Endoo",
+    )
     portable.add_argument("destination")
     sub.add_parser(
         "audit-portable",
@@ -100,6 +119,27 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "sync-wiki":
         stats = WikiSync(settings, database, print).sync(args.limit)
         print(json.dumps(stats.to_dict(), ensure_ascii=False))
+    elif args.command == "sync-endoo-wiki":
+        sync = EndooWikiSync(settings, database, print)
+        if args.headed:
+            sync.login()
+        stats = sync.sync(args.limit)
+        print(json.dumps(stats.to_dict(), ensure_ascii=False))
+    elif args.command == "sync-wikis":
+        public_stats = WikiSync(settings, database, print).sync(args.limit)
+        sync = EndooWikiSync(settings, database, print)
+        if args.headed_endoo:
+            sync.login()
+        endoo_stats = sync.sync(args.limit)
+        print(
+            json.dumps(
+                {
+                    "vrwiki": public_stats.to_dict(),
+                    "endoo": endoo_stats.to_dict(),
+                },
+                ensure_ascii=False,
+            )
+        )
     elif args.command == "sync-kb":
         sync = MovideskSync(settings, database, print)
         if args.headed:
@@ -114,7 +154,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "search":
         print(
             json.dumps(
-                database.search(args.query, args.limit, args.module, args.source),
+                database.search(
+                    args.query,
+                    args.limit,
+                    args.module,
+                    args.source,
+                    source_origin=args.origin,
+                ),
                 ensure_ascii=False,
                 indent=2,
             )
@@ -135,8 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status":
         with database.connect() as connection:
             counts = connection.execute(
-                """SELECT module,source,status,count(*) AS total FROM documents
-                   GROUP BY module,source,status ORDER BY module,source,status"""
+                """SELECT module,source,source_origin,status,count(*) AS total
+                   FROM documents
+                   GROUP BY module,source,source_origin,status
+                   ORDER BY module,source,source_origin,status"""
             ).fetchall()
             reviews = connection.execute(
                 "SELECT count(*) FROM classification_reviews WHERE status='pending'"
@@ -167,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             settings.root,
             Path(args.destination),
             exclude_sources=args.exclude_source,
+            exclude_origins=() if args.include_endoo else ("endoo",),
         )
         print(json.dumps(result.__dict__, ensure_ascii=False, indent=2, default=str))
     elif args.command == "audit-portable":

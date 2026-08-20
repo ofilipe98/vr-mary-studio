@@ -6,6 +6,8 @@ com Codex, Claude e OpenCode instalados localmente e operar o extrator de vídeo
 ## Recursos
 
 - Sincronização completa/incremental da VRWiki via API MediaWiki.
+- Sincronização somente leitura da Wiki autenticada do Endoo, com sessão
+  Playwright, paginação, imagens, OCR, hash e retomada segura.
 - Sincronização autenticada do Movidesk KB com Chrome/Playwright e diagnóstico de bloqueios.
 - Markdown canônico, imagens locais, OCR por+eng, hash e versionamento.
 - Classificação em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo e Revisar.
@@ -18,7 +20,7 @@ com Codex, Claude e OpenCode instalados localmente e operar o extrator de vídeo
 - Quatro perfis de aprovação, tools locais/MCP, correção ortográfica portuguesa,
   ramificações por edição e conversas com arquivo e lixeira recuperável.
 - Extrator de vídeos Endoo integrado, sem transcrição.
-- Dashboard separado para Wiki, KB e Vídeos.
+- Dashboard separado para VRWiki, Wiki Endoo, KB e Vídeos.
 - Central de Revisão com filtros combináveis, risco, paginação, histórico,
   contexto completo e ações individuais ou em lote confirmado.
 - Interface PySide6 baseada na identidade VR Soft, contraste WCAG, foco visível
@@ -52,64 +54,30 @@ link web ao final e não expõem caminhos locais ou metadados internos.
 
 ### Orquestração VR no chat
 
-O seletor de modelo do composer define o **Orquestrador**. Em **VR**, escolha
-separadamente o pool de modelos que ele pode usar nos agentes e uma estratégia:
-automática, adaptativa, paralela, especializada, sequencial, debate ou consenso.
-Agente e modelo permanecem independentes: o papel VR é estável, mas seu
-executor e seu nível de effort são escolhidos novamente a cada solicitação.
+O fluxo padrão do botão **VR** é direto. A mensagem é normalizada, perguntas
+curtas podem herdar o assunto anterior e o roteador classifica intenção e
+módulo. Em seguida ele consulta SQLite FTS/chunks nas fontes lógicas `wiki`,
+`kb` e `schema`, reranqueia, deduplica e monta um pacote de evidências para o
+modelo principal selecionado no composer.
 
-O orquestrador classifica a dificuldade de 1 a 5, valida o plano e executa apenas
-as etapas necessárias. Cada agente usa uma sessão isolada por execução; somente
-a síntese do orquestrador aparece como resposta do chat. O painel lateral segue
-o padrão de conversas do T3 Code: lista os agentes, permite selecionar cada um e
-mostra a solicitação, a tarefa roteada e a resposta completa, inclusive durante
-a execução. Os motivos operacionais são opcionais e não exibem raciocínio
-privado. A identidade dos modelos é qualificada pelo provedor, por exemplo
-`codex:sol`, `claude:opus` e `opencode:opencode/big-pickle`.
+A fonte lógica `wiki` possui duas origens físicas independentes: `vrwiki`
+(pública) e `endoo` (autenticada). Elas são pesquisadas separadamente e o
+roteador recompõe a cobertura por origem depois da deduplicação, para que uma
+origem com mais documentos não esconda a outra. O prompt identifica fonte e
+origem; a interface mostra as contagens separadas. A resposta deve citar o URL
+original, e o banco registra apenas as evidências cujo URL ou ID foi realmente
+usado no texto final.
 
-O roteamento de conhecimento é hierárquico. Uma descoberta inicial combina os
-termos da pergunta com o módulo dos documentos recuperados. Para cada módulo
-aplicável, o orquestrador cria um suborquestrador: **VR Fisco** para Fiscal,
-**VR Atlas** para ADM/Financeiro/Estoque e **VR Caixa** para PDV. Cada um recebe
-dois workers subordinados e exclusivos — Wiki e KB — executados em paralelo.
-O **VR DBA** é o especialista global em banco de dados e suborquestra uma única
-trilha de Schema, sem duplicá-la dentro dos módulos. Cada especialista só
-consolida depois que suas fontes chegam a `encontrada`, `esgotada`,
-`indisponível` ou `não aplicável`.
+O grafo proprietário de planejador, workers, supervisor e sintetizador continua
+disponível apenas para compatibilidade quando `VR_LEGACY_ORCHESTRATION=true`.
+Ele fica desligado por padrão e não bloqueia o caminho normal. Assim, **VR
+ativado** significa identidade VR + pesquisa local + resposta do provedor
+principal; **VR desativado** envia a solicitação sem consulta à base local.
 
-O modo multimódulo não é um agente separado: ele só é ativado quando o
-Orquestrador VR seleciona dois ou mais módulos para a pergunta. Nesse caso, os
-especialistas aplicáveis executam em paralelo; com um único módulo, somente o
-especialista correspondente é acionado. O Supervisor global aguarda os módulos
-selecionados e o VR DBA antes de liberar o Sintetizador final.
-
-Antes de executar os agentes, o supervisor interpreta a intenção, define o
-público, o nível de detalhe e um contrato de resposta. Os agentes recebem tarefas
-estruturadas e devolvem insumos com procedência; seus nomes, IDs e personalidades
-permanecem inalterados. O supervisor consolida e valida o material, solicita uma
-rodada limitada de refinamento quando necessário e só então cria um novo rascunho
-final. Esse rascunho é validado e, se preciso, reescrito de forma privada antes de
-ser publicado. Assim, a saída de um agente nunca é usada diretamente como resposta
-final, e apenas as fontes efetivamente utilizadas são exibidas ao usuário.
-
-Em todas as etapas, contratos específicos da personalidade **Especialista ERP
-VRMaster** exigem evidência antes de afirmações sobre o produto, separam fato de
-hipótese, orientam diagnóstico antes da solução e impedem que lacunas sejam
-preenchidas por conhecimento próprio. O sintetizador final também adapta a
-profundidade ao nível técnico demonstrado pelo usuário e sinaliza o impacto de
-ações destrutivas ou de difícil reversão.
-
-Dentro do botão **VR**, **Desligado** usa somente
-o modelo principal; **Automático** usa resposta direta no nível 1, VR padrão
-nos níveis 2–3 e Ultra nos níveis 4–5; **Ligado** mantém VR padrão sem escalar
-para Ultra; e **Ultra** força o fluxo mais intensivo, com mais paralelismo,
-comparação, validação e uma segunda rodada quando houver divergência. Ligado usa
-um contorno animado discreto. Ultra usa o mesmo componente visual com uma
-animação mais intensa. Durante o fluxo multiagente, o orquestrador decide o effort de
-cada agente e da síntese; o seletor de raciocínio continua valendo como padrão
-para respostas diretas e operações do orquestrador. Seu maior valor é
-**Máximo**. O nome
-**Ultra** fica reservado ao modo multiagente dentro do botão VR.
+Documentos recuperados são tratados como dados não confiáveis, nunca como
+instruções. Schema é priorizado para estrutura física, Wiki para funcionamento
+e KB para procedimento. Lacunas, indisponibilidade e conflitos devem aparecer
+explicitamente em vez de serem preenchidos por suposição.
 
 ## Instalação para desenvolvimento
 
@@ -126,6 +94,10 @@ Copie `.env.example` para `.env` e preencha apenas as credenciais necessárias:
 ```dotenv
 ENDOO_EMAIL=
 ENDOO_PASSWORD=
+ENDOO_BASE_URL=https://vrsoft.endoo.com.br
+ENDOO_API_URL=https://api.iendo.us/api
+VR_ENDOO_WIKI_ENABLED=true
+VR_LEGACY_ORCHESTRATION=false
 MOVIDESK_EMAIL=
 MOVIDESK_PASSWORD=
 VR_ROOT=VRProject
@@ -136,6 +108,15 @@ VR_PRODUCTS_FILE=
 ```
 
 O `.env` e as sessões em `.state` nunca entram no pacote ou nos logs.
+
+### Acesso à Wiki Endoo
+
+O sincronizador abre `/wiki` com a sessão Endoo salva, captura apenas os
+cabeçalhos necessários da API e aceita exclusivamente endpoints de leitura sob
+`/wiki`. Endpoints `/wiki/manage` são bloqueados pelo cliente. A conta precisa
+da permissão `wiki_visualizar`; sessão expirada abre o login visível na
+interface. Artigos, imagens e OCR são persistidos como origem `endoo`, enquanto
+a VRWiki pública permanece como `vrwiki`.
 
 ### Acesso completo ao Movidesk KB
 
@@ -168,14 +149,20 @@ CLI da base:
 .\.venv\Scripts\vr-norte.exe migrate --dry-run
 .\.venv\Scripts\vr-norte.exe migrate
 .\.venv\Scripts\vr-norte.exe sync-wiki
+.\.venv\Scripts\vr-norte.exe sync-endoo-wiki --headed
+.\.venv\Scripts\vr-norte.exe sync-wikis
 .\.venv\Scripts\vr-norte.exe sync-kb --headed
-.\.venv\Scripts\vr-norte.exe search "configuração PIX"
+.\.venv\Scripts\vr-norte.exe search "configuração PIX" --origin endoo
 .\.venv\Scripts\vr-norte.exe audit-classification --examples 10
 .\.venv\Scripts\vr-norte.exe audit-classification --queue-review --examples 0
 .\.venv\Scripts\vr-norte.exe status
 .\.venv\Scripts\vr-norte.exe prepare-codex
 .\.venv\Scripts\vr-norte.exe export-portable D:\Destino\VRProject
+.\.venv\Scripts\vr-norte.exe export-portable --include-endoo D:\DestinoPrivado\VRProject
 ```
+
+Por padrão, `export-portable` exclui a origem autenticada `endoo`. Use
+`--include-endoo` somente para um destino privado autorizado.
 
 Quando a categoria informa explicitamente `FISCAL`, `PDV` ou a família
 `ADM`/`FINANCEIRO`/`ESTOQUE`, esse módulo prevalece sobre título, produto e

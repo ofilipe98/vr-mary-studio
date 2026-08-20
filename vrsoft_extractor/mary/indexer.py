@@ -12,7 +12,7 @@ def export_catalog(database: MaryDatabase, index_dir: Path) -> tuple[Path, Path]
     root = index_dir.resolve().parent
     with database.connect() as connection:
         rows = connection.execute(
-            """SELECT source,source_id,title,url,module,classification_confidence,
+            """SELECT source,source_origin,source_id,title,url,module,classification_confidence,
                       review_status,status,updated_at,local_path,assets_json
                FROM documents WHERE status='active'
                ORDER BY module,source,title"""
@@ -31,7 +31,8 @@ def export_catalog(database: MaryDatabase, index_dir: Path) -> tuple[Path, Path]
     index_path = index_dir / "INDEX.md"
     counts: dict[str, int] = {}
     for row in rows:
-        key = f"{row['module']} / {row['source'].upper()}"
+        origin = str(row["source_origin"] or "").upper()
+        key = f"{row['module']} / {row['source'].upper()} / {origin}"
         counts[key] = counts.get(key, 0) + 1
     lines = [
         "# Índice da base VR",

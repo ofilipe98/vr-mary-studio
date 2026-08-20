@@ -164,6 +164,7 @@ class FakeProvider(AgentProvider):
         callback: Callable[[RuntimeEvent], None],
         options: ConversationOptions | None = None,
         skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
     ) -> None:
         with self._lock:
             self.sent.append(
@@ -569,8 +570,8 @@ def test_vr_panel_explains_four_modes_and_local_base_keeps_its_own_state(
                 window.vr_flow_button.height() // 2,
             ),
         )
-        assert arrow_requests == [True]
-        assert window.vr_flow_button.isChecked() == checked_before_arrow
+        assert arrow_requests == []
+        assert window.vr_flow_button.isChecked() != checked_before_arrow
 
         window.vr_flow_button.setChecked(True)
         for mode, visual in (
@@ -1968,7 +1969,7 @@ def test_router_groups_cross_source_duplicates_and_flags_conflicts(
 def test_vr_turn_persists_routed_evidence_as_message_citations(
     tmp_path: Path,
 ) -> None:
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, legacy_vr_orchestration=False)
     database = MaryDatabase(settings.database_path, root=settings.root)
     database.upsert_document(
         KnowledgeDocument(
@@ -1984,7 +1985,9 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
         )
     )
     orchestrator = ChatOrchestrator(settings, database)
-    provider = FakeProvider("codex")
+    provider = FakeProvider(
+        "codex", final_text="Fonte: https://wiki.example/102"
+    )
     orchestrator.providers = {"codex": provider}
     conversation_id = orchestrator.new_conversation(
         "codex", "sol", defer_provider_start=True, vr_enabled=True
@@ -2014,6 +2017,93 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
         ).fetchall()
     assert len(citations) == 1
     assert "entrada do operador" in citations[0]["excerpt"]
+
+
+def test_direct_vr_does_not_persist_candidates_not_cited_by_the_answer(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, legacy_vr_orchestration=False)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_origin="endoo",
+            source_id="endoo-102",
+            title="Função 102",
+            url="https://vrsoft.endoo.com.br/wiki/artigo/funcao-102",
+            markdown="A função 102 permite a entrada do operador no PDV.",
+            module="PDV",
+            review_status="approved",
+            content_hash="endoo-102",
+            local_path="conhecimento/PDV/Wiki/funcao-102-endoo.md",
+        )
+    )
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta sem citar documentação.")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Para que serve a função 102 no PDV?",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=True,
+    )
+
+    assert completed.wait(5)
+    assistant = database.messages(conversation_id)[-1]
+    with database.connect() as connection:
+        total = connection.execute(
+            "SELECT count(*) FROM source_citations WHERE message_id=?",
+            (assistant["id"],),
+        ).fetchone()[0]
+    assert total == 0
+
+
+def test_wiki_route_preserves_relevant_vrwiki_and_endoo_origins(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, legacy_vr_orchestration=False)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    for origin, source_id, url in (
+        ("vrwiki", "publica-102", "https://wiki.example/102"),
+        (
+            "endoo",
+            "endoo-102",
+            "https://vrsoft.endoo.com.br/wiki/artigo/funcao-102",
+        ),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_origin=origin,
+                source_id=source_id,
+                title="Função 102 no PDV",
+                url=url,
+                markdown="A função 102 permite a entrada do operador no PDV.",
+                module="PDV",
+                review_status="approved",
+                content_hash=source_id,
+                local_path=f"conhecimento/PDV/Wiki/{source_id}.md",
+            )
+        )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Para que serve a função 102 no PDV?"
+    )
+
+    assert {item.source_origin for item in bundle.candidates} >= {"vrwiki", "endoo"}
+    report = next(item for item in bundle.source_reports if item.source == "wiki")
+    assert {item.source_origin for item in report.origin_reports} >= {
+        "vrwiki",
+        "endoo",
+    }
+    prompt = KnowledgeRouter(database, settings.root).prompt(bundle)
+    assert "Wiki pública VR" in prompt
+    assert "Wiki autenticada Endoo" in prompt
 
 
 @pytest.mark.parametrize(

@@ -1514,6 +1514,32 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(params["effort"], "xhigh")
         self.assertEqual(params["approvalPolicy"], "on-request")
 
+    def test_codex_turn_includes_native_local_image_input(self):
+        image = self.root / "captura.png"
+        image.write_bytes(b"image-placeholder")
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        with (
+            patch.object(provider, "_ensure_started"),
+            patch.object(provider, "_rpc", return_value={}) as rpc,
+        ):
+            provider.send_message(
+                "local-1",
+                "native-1",
+                "gpt-test",
+                "high",
+                self.root,
+                "Analise a imagem",
+                lambda _event: None,
+                image_paths=[str(image)],
+            )
+
+        turn_input = rpc.call_args.args[1]["input"]
+        self.assertIn(
+            {"type": "localImage", "path": str(image.resolve())},
+            turn_input,
+        )
+
     def test_codex_max_is_sent_directly_without_default_collaboration_preset(self):
         provider = CodexProvider()
         provider._native_to_local["native-1"] = "local-1"
@@ -1569,6 +1595,33 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].kind, "reasoning_delta")
         self.assertEqual(events[0].text, "Consultando a base local")
+
+    def test_codex_separates_distinct_assistant_items_with_a_blank_line(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        for item_id, delta in (
+            ("commentary-1", "Vou verificar a versão."),
+            ("final-1", "Para colocar imagens, siga estes passos."),
+        ):
+            provider._handle_server_message(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "native-1",
+                        "itemId": item_id,
+                        "delta": delta,
+                    },
+                }
+            )
+
+        self.assertEqual(events[0].text, "Vou verificar a versão.")
+        self.assertEqual(
+            events[1].text,
+            "\n\nPara colocar imagens, siga estes passos.",
+        )
 
     def test_effective_thread_settings_event_is_emitted_and_persisted(self):
         provider = CodexProvider()
@@ -2461,6 +2514,62 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIsNotNone(database.get_conversation(conversation_id))
         self.assertTrue((trashed_path / "preservar.txt").is_file())
 
+    def test_archived_conversation_can_be_purged_directly_without_trash_state(self):
+        class OfflineClaude:
+            def available(self):
+                return False
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        orchestrator.providers = {"claude": OfflineClaude()}
+        conversation_id = database.create_conversation(
+            "Arquivado direto",
+            "claude",
+            "claude-test",
+            self.settings.work_dir / "pending",
+        )
+        workspace = self.settings.work_dir / conversation_id
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "remover.txt").write_text("conteúdo", encoding="utf-8")
+        database.update_conversation(
+            conversation_id,
+            workspace=str(workspace),
+            archived=1,
+        )
+        image_folder = (
+            self.settings.root / ".state" / "chat-images" / conversation_id
+        )
+        image_folder.mkdir(parents=True)
+        (image_folder / "anexo.png").write_bytes(b"imagem")
+
+        orchestrator.purge(conversation_id)
+
+        self.assertIsNone(database.get_conversation(conversation_id))
+        self.assertFalse(workspace.exists())
+        self.assertFalse(image_folder.exists())
+
+        external_workspace = self.old / "projeto-externo-preservado"
+        external_workspace.mkdir(parents=True)
+        (external_workspace / "preservar.txt").write_text(
+            "conteúdo externo",
+            encoding="utf-8",
+        )
+        external_id = database.create_conversation(
+            "Arquivado externo",
+            "claude",
+            "claude-test",
+            external_workspace,
+        )
+        database.update_conversation(external_id, archived=1)
+
+        orchestrator.purge(external_id)
+
+        self.assertIsNone(database.get_conversation(external_id))
+        self.assertTrue((external_workspace / "preservar.txt").is_file())
+
     def test_missing_codex_rollout_does_not_block_local_trash_or_purge(self):
         class MissingRolloutCodex:
             def available(self):
@@ -2994,6 +3103,140 @@ class MaryCoreTest(unittest.TestCase):
         sync.login.assert_called_once_with()
         sync.sync.assert_called_once_with(headed=False)
 
+    def test_ui_requires_confirmation_before_starting_kb_sync(self):
+        operation_runner = MagicMock()
+        kb_sync = MagicMock(return_value="authenticated")
+        window = SimpleNamespace(
+            _run_sync=operation_runner,
+            _sync_kb_with_auth_fallback=kb_sync,
+        )
+        window._confirm_kb_session_takeover = lambda: (
+            MainWindow._confirm_kb_session_takeover(window)
+        )
+
+        with patch(
+            "vrsoft_extractor.mary.ui.ConfirmDialog.ask",
+            return_value=False,
+        ) as question:
+            MainWindow.sync_kb(window)
+
+        question.assert_called_once()
+        operation_runner.assert_not_called()
+
+        with patch(
+            "vrsoft_extractor.mary.ui.ConfirmDialog.ask",
+            return_value=True,
+        ):
+            MainWindow.sync_kb(window, headed=True)
+
+        operation_runner.assert_called_once()
+        label, operation = operation_runner.call_args.args
+        self.assertEqual(label, "KB")
+        self.assertEqual(operation(), "authenticated")
+        kb_sync.assert_called_once_with(
+            headed=True,
+            allow_session_takeover=True,
+        )
+
+    def test_movidesk_only_confirms_existing_session_when_authorized(self):
+        class Field:
+            def __init__(self, count=1):
+                self._count = count
+                self.filled = ""
+                self.clicked = False
+
+            @property
+            def first(self):
+                return self
+
+            @property
+            def last(self):
+                return self
+
+            def count(self):
+                return self._count
+
+            def fill(self, value):
+                self.filled = value
+
+            def click(self):
+                self.clicked = True
+
+        class ConflictPage:
+            def __init__(self):
+                self.url = MovideskSync.LOGIN_PATH
+                self.password = Field()
+                self.user = Field()
+                self.submit = Field()
+                self.notice = Field()
+                self.confirm = Field()
+
+            def locator(self, selector):
+                if selector == "input[type=password]":
+                    return self.password
+                if "input[type=email]" in selector:
+                    return self.user
+                if selector == MovideskSync.SESSION_CONFLICT_CONFIRM_SELECTOR:
+                    self.confirm.is_visible = lambda: bool(self.confirm._count)
+                    return self.confirm
+                return self.submit
+
+            def wait_for_load_state(self, *_args, **_kwargs):
+                return None
+
+            def wait_for_function(self, *_args, **_kwargs):
+                return None
+
+            def is_closed(self):
+                return False
+
+            def finish_login_when_confirmed(self):
+                original_click = self.confirm.click
+
+                def confirm_and_finish_login():
+                    original_click()
+                    self.url = "https://vrsoftware.movidesk.com/Home"
+                    self.password._count = 0
+
+                self.confirm.click = confirm_and_finish_login
+
+        database = MaryDatabase(self.settings.database_path)
+        with patch.dict(
+            os.environ,
+            {"MOVIDESK_EMAIL": "user@example.com", "MOVIDESK_PASSWORD": "secret"},
+        ):
+            blocked_page = ConflictPage()
+            blocked_sync = MovideskSync(self.settings, database)
+            with self.assertRaisesRegex(
+                MovideskInteractiveLoginRequired,
+                "outra sessão aberta",
+            ):
+                blocked_sync._ensure_login(blocked_page)
+            self.assertFalse(blocked_page.confirm.clicked)
+
+            authorized_page = ConflictPage()
+            authorized_page.finish_login_when_confirmed()
+            authorized_sync = MovideskSync(
+                self.settings,
+                database,
+                allow_session_takeover=True,
+            )
+            authorized_sync._ensure_login(authorized_page)
+            self.assertTrue(authorized_page.confirm.clicked)
+            self.assertEqual(
+                authorized_page.url,
+                "https://vrsoftware.movidesk.com/Home",
+            )
+
+            residual_page = ConflictPage()
+            residual_page.confirm._count = 0
+            self.assertFalse(
+                authorized_sync._session_conflict_pending(residual_page)
+            )
+            self.assertFalse(
+                authorized_sync._confirm_session_takeover(residual_page)
+            )
+
     def test_movidesk_dynamic_wait_avoids_networkidle_delay(self):
         page = MagicMock()
         MovideskSync._wait_for_dynamic_content(page)
@@ -3145,9 +3388,9 @@ class MaryCoreTest(unittest.TestCase):
                     self.assertLessEqual(window.composer_card.width(), 920)
                     self.assertLessEqual(window.composer_card.height(), 156)
                     if width == 1120:
-                        self.assertFalse(window._composer_compact)
-                        self.assertGreaterEqual(window.composer_card.width(), 610)
-                        self.assertEqual(window.options_button.text(), "Build")
+                        self.assertTrue(window.nav_collapsed)
+                        self.assertGreaterEqual(window.composer_card.width(), 540)
+                        self.assertEqual(window.options_button.text(), "")
             self.assertTrue(window.chat_empty_state.isVisible())
             self.assertEqual(
                 window.chat_empty_state.findChild(QLabel, "chatEmptyTitle").text(),
@@ -3159,10 +3402,12 @@ class MaryCoreTest(unittest.TestCase):
             self.assertFalse(window.approval_combo.isHidden())
             self.assertFalse(window.vr_flow_button.isHidden())
             self.assertEqual(window.chat_header_title.text(), "Nova conversa")
-            self.assertIn("Codex", window.chat_header_meta.text())
-            self.assertIn("Build", window.chat_header_meta.text())
-            self.assertIn("VR", window.chat_header_meta.text())
-            self.assertTrue(window.chat_header.isAncestorOf(window.chat_status))
+            self.assertEqual(window.chat_header_project.text(), "Projetos")
+            self.assertTrue(window.chat_header_meta.isHidden())
+            self.assertNotIn("Todos os projetos", window.chat_header_meta.text())
+            self.assertTrue(window.composer_card.isAncestorOf(window.chat_status))
+            self.assertTrue(window.conversation_menu_button.isHidden())
+            self.assertFalse(window.surface_toggle_button.isHidden())
             window.chat_status.setText("Executando…")
             self.assertEqual(window.chat_status.property("statusKind"), "running")
             window.chat_status.setText("Falha ao executar")
@@ -3382,6 +3627,9 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("beta", labels)
 
             window._select_project_scope(second)
+            self.assertEqual(window.chat_header_project.text(), "beta")
+            self.assertEqual(window.chat_header_title.text(), "Nova conversa")
+            self.assertNotIn("Todos os projetos", window.chat_header_meta.text())
             with (
                 patch.object(
                     ProjectPickerDialog, "exec", return_value=QDialog.Accepted
@@ -3481,8 +3729,84 @@ class MaryCoreTest(unittest.TestCase):
             window.app_preferences.setValue("chat/projects", saved_projects)
             window.close()
 
+    def test_project_selector_stays_open_and_selects_a_project_after_real_click(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        project = (self.old / "projeto-selecionavel").resolve()
+        project.mkdir(parents=True)
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        saved_current = window.app_preferences.value("chat/current_project", "")
+        saved_recent = window.app_preferences.value("chat/recent_projects", "[]")
+        saved_projects = window.app_preferences.value("chat/projects", "[]")
+        saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window.project_scope_path = None
+            window.draft_project_path = None
+            with patch.object(window, "_known_project_paths", return_value=[project]):
+                QTest.mouseClick(window.project_button, Qt.LeftButton)
+                application.processEvents()
+                application.processEvents()
+
+            self.assertTrue(window.project_menu.isVisible())
+            self.assertFalse(window.project_menu.isWindow())
+            self.assertFalse(window.project_menu.testAttribute(Qt.WA_NativeWindow))
+            self.assertIs(window.project_menu.parentWidget(), window)
+            self.assertEqual(
+                [row.name_label.text() for row in window.project_menu._rows],
+                ["Todos os projetos", "projeto-selecionavel"],
+            )
+            QTest.mouseClick(window.project_menu._rows[1], Qt.LeftButton)
+            application.processEvents()
+            self.assertEqual(window.project_scope_path, project)
+            self.assertFalse(window.project_menu.isVisible())
+        finally:
+            window.project_menu.close()
+            window.app_preferences.setValue("chat/current_project", saved_current)
+            window.app_preferences.setValue("chat/recent_projects", saved_recent)
+            window.app_preferences.setValue("chat/projects", saved_projects)
+            window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
+            window.app_preferences.sync()
+            window.close()
+
+    def test_dark_chat_composer_uses_neutral_high_contrast_palette(self):
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        apply_application_theme(application, "dark_orange")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.theme_id = "dark_orange"
+            window._refresh_composer_palette()
+            palette = window.composer.palette()
+            self.assertEqual(palette.color(QPalette.Base).name(), "#141416")
+            self.assertEqual(palette.color(QPalette.Text).name(), "#e4e4e7")
+            self.assertEqual(
+                palette.color(QPalette.PlaceholderText).name(), "#a1a1aa"
+            )
+            self.assertEqual(palette.color(QPalette.Highlight).name(), "#303036")
+            self.assertTrue(application.font().family().startswith("DM Sans"))
+            self.assertEqual(application.font().weight(), 400)
+            self.assertTrue(window.composer.font().family().startswith("DM Sans"))
+        finally:
+            window.close()
+
     def test_project_folder_picker_uses_qt_dialog_instead_of_broken_native_window(self):
-        from PySide6.QtWidgets import QApplication, QFileDialog
+        from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
         application = QApplication.instance() or QApplication([])
         window = MainWindow(
@@ -4381,10 +4705,17 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn(archived, archived_ids)
             self.assertNotIn(trashed, archived_ids)
 
-            self.assertTrue(
-                window.archived_projects_list.itemWidget(
-                    window.archived_projects_list.item(0)
-                ).findChild(QToolButton, "archivedDeleteButton")
+            delete_button = window.archived_projects_list.itemWidget(
+                window.archived_projects_list.item(0)
+            ).findChild(QToolButton, "archivedDeleteButton")
+            self.assertTrue(delete_button)
+            self.assertEqual(delete_button.text(), "")
+            self.assertFalse(delete_button.icon().isNull())
+            with patch.object(window, "_run_archived_project_operation") as operation:
+                delete_button.click()
+            self.assertEqual(
+                operation.call_args.args,
+                (archived, window.orchestrator.purge),
             )
             self.assertEqual(
                 set(window.provider_status_labels),
@@ -4417,7 +4748,7 @@ class MaryCoreTest(unittest.TestCase):
                 window.app_preferences.values["appearance/theme"], "dark_orange"
             )
             self.assertIn(
-                "#b8aea7",
+                "#a1a1aa",
                 icon_colors(window.nav_buttons[1], QIcon.State.Off),
             )
         finally:
@@ -4645,7 +4976,7 @@ class MaryCoreTest(unittest.TestCase):
             window.conversation_list.setCurrentItem(running_item)
             application.processEvents()
             self.assertTrue(window.turn_running)
-            self.assertTrue(window.context_usage_button._timer.isActive())
+            self.assertFalse(window.context_usage_button._timer.isActive())
 
             with (
                 patch.object(window, "_select_project") as select_project,
@@ -4879,7 +5210,7 @@ class MaryCoreTest(unittest.TestCase):
         finally:
             window.close()
 
-    def test_assistant_header_distinguishes_native_provider_from_vr(self):
+    def test_assistant_message_uses_t3_style_without_redundant_role_header(self):
         from PySide6.QtWidgets import QApplication, QLabel
 
         application = QApplication.instance() or QApplication([])
@@ -4900,8 +5231,16 @@ class MaryCoreTest(unittest.TestCase):
 
             native_label = native.parentWidget().findChild(QLabel, "messageRole")
             vr_label = vr.parentWidget().findChild(QLabel, "messageRole")
-            self.assertEqual(native_label.text(), "Codex")
-            self.assertEqual(vr_label.text(), "VR")
+            self.assertIsNone(native_label)
+            self.assertIsNone(vr_label)
+            self.assertEqual(
+                native.parentWidget().accessibleName(),
+                "Resposta do assistente",
+            )
+            self.assertEqual(
+                vr.parentWidget().accessibleName(),
+                "Resposta do assistente",
+            )
         finally:
             window.close()
 
@@ -5047,10 +5386,50 @@ class MaryCoreTest(unittest.TestCase):
                 for widget in (
                     window.new_chat_button,
                     window.chat_sidebar_toggle_button,
-                    window.conversation_menu_button,
+                    window.surface_toggle_button,
                 )
             ]
             self.assertLessEqual(max(tops) - min(tops), 4)
+        finally:
+            window.close()
+
+    def test_chat_surface_panel_exposes_requested_functions_only(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window._set_surface_panel_visible(True)
+            application.processEvents()
+
+            self.assertTrue(window.chat_surface_panel.isVisible())
+            self.assertTrue(window.surface_toggle_button.isChecked())
+            self.assertEqual(
+                set(window.chat_surface_buttons),
+                {"browser", "terminal", "files", "agents"},
+            )
+            labels = " ".join(
+                button.text() for button in window.chat_surface_buttons.values()
+            )
+            self.assertNotIn("Diff", labels)
+            self.assertNotIn("Pull request", labels)
+
+            with patch.object(
+                QDesktopServices, "openUrl", return_value=True
+            ) as open_url:
+                window.chat_surface_buttons["files"].click()
+            open_url.assert_called_once_with(
+                QUrl.fromLocalFile(str(window._surface_workspace()))
+            )
         finally:
             window.close()
 
@@ -5071,13 +5450,17 @@ class MaryCoreTest(unittest.TestCase):
             window.new_conversation()
             application.processEvents()
 
-            empty_center = window.chat_empty_state.mapTo(
-                window,
-                window.chat_empty_state.rect().center(),
-            ).y()
+            empty_top = window.chat_empty_state.mapTo(window, QPoint(0, 0)).y()
+            composer_bottom = (
+                window.composer_host.mapTo(window, QPoint(0, 0)).y()
+                + window.composer_host.height()
+            )
+            landing_center = (empty_top + composer_bottom) // 2
             scroll_top = window.message_scroll.mapTo(window, QPoint(0, 0)).y()
             scroll_bottom = scroll_top + window.message_scroll.height()
-            self.assertLess(abs(empty_center - ((scroll_top + scroll_bottom) // 2)), 45)
+            self.assertLess(abs(landing_center - ((scroll_top + scroll_bottom) // 2)), 45)
+            self.assertTrue(window._composer_in_landing)
+            self.assertLessEqual(window.composer_card.maximumWidth(), 770)
 
             browser = window._add_message(
                 "assistant",
@@ -5090,6 +5473,63 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("blockquote", css)
             self.assertIn("Resultado", browser.toPlainText())
             self.assertIn("Ponto importante", browser.toPlainText())
+        finally:
+            window.close()
+
+    def test_markdown_repairs_glued_sentences_but_preserves_inline_code(self):
+        from PySide6.QtWidgets import QApplication, QTextBrowser
+
+        application = QApplication.instance() or QApplication([])
+        apply_application_theme(application, "dark_orange")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            widget = window._add_message(
+                "assistant",
+                "sem presumir a versão.Para continuar, use `arquivo.MD`.",
+            )
+            self.assertFalse(window._composer_in_landing)
+            self.assertIn("versão. Para continuar", widget.toPlainText())
+            self.assertIn("arquivo.MD", widget.toPlainText())
+            browser = widget.findChild(QTextBrowser, "messageBody")
+            code_backgrounds = []
+            block = browser.document().firstBlock()
+            while block.isValid():
+                iterator = block.begin()
+                while not iterator.atEnd():
+                    fragment = iterator.fragment()
+                    if fragment.charFormat().fontFixedPitch():
+                        code_backgrounds.append(
+                            fragment.charFormat().background().color().name()
+                        )
+                    iterator += 1
+                block = block.next()
+            self.assertIn("#202023", code_backgrounds)
+            self.assertEqual(browser.document().indentWidth(), 22)
+        finally:
+            window.close()
+            apply_application_theme(application, "light")
+
+    def test_chat_activity_keeps_short_status_on_one_readable_row(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.resize(1200, 800)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
+            window._show_chat_activity("Executando uma ação")
+            application.processEvents()
+            self.assertGreaterEqual(window.chat_activity_widget.minimumWidth(), 240)
+            self.assertLessEqual(window.chat_activity_label.height(), 28)
         finally:
             window.close()
 
@@ -5254,6 +5694,135 @@ class MaryCoreTest(unittest.TestCase):
             self.assertFalse(send.call_args.args[6])
             self.assertEqual(window.pending_file_mentions, [])
             window.vr_flow_button.setChecked(True)
+        finally:
+            window.close()
+
+    def test_new_chat_restores_the_last_selected_model(self):
+        from PySide6.QtWidgets import QApplication
+
+        class MemoryPreferences:
+            def __init__(self):
+                self.values = {}
+
+            def value(self, key, default=None):
+                return self.values.get(key, default)
+
+            def setValue(self, key, value):
+                self.values[key] = value
+
+            def contains(self, key):
+                return key in self.values
+
+            def sync(self):
+                pass
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            window.app_preferences = MemoryPreferences()
+            window.provider_combo.blockSignals(True)
+            window.provider_combo.setCurrentText("codex")
+            window.provider_combo.blockSignals(False)
+            models = [
+                {"id": "gpt-a", "displayName": "GPT A", "isDefault": True},
+                {"id": "gpt-b", "displayName": "GPT B"},
+            ]
+            window.model_cache["codex"] = models
+            window._apply_model_catalog("codex", models)
+            window._model_picker_selected("codex", "gpt-b")
+
+            self.assertEqual(
+                window.app_preferences.values["chat/last_provider"], "codex"
+            )
+            self.assertEqual(
+                window.app_preferences.values["chat/last_model/codex"], "gpt-b"
+            )
+            window.model_combo.blockSignals(True)
+            window.model_combo.setCurrentIndex(window.model_combo.findData("gpt-a"))
+            window.model_combo.blockSignals(False)
+            window.new_conversation()
+            application.processEvents()
+            self.assertEqual(window.model_combo.currentData(), "gpt-b")
+        finally:
+            window.close()
+
+    def test_chat_image_drop_stages_previews_sends_and_removes_images(self):
+        from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+        from PySide6.QtGui import QColor, QDropEvent, QPixmap
+        from PySide6.QtWidgets import QApplication, QPushButton
+
+        application = QApplication.instance() or QApplication([])
+        image = self.root / "captura de tela.png"
+        pixmap = QPixmap(80, 50)
+        pixmap.fill(QColor("#FF7200"))
+        self.assertTrue(pixmap.save(str(image), "PNG"))
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            conversation_id = window.database.create_conversation(
+                "Imagem", "codex", "gpt-test", self.settings.work_dir / "images"
+            )
+            window.current_conversation = conversation_id
+            window.draft_conversation = False
+            self.assertFalse(hasattr(window, "attach_image_button"))
+            mime_data = QMimeData()
+            mime_data.setUrls([QUrl.fromLocalFile(str(image))])
+            drop = QDropEvent(
+                QPointF(10, 10),
+                Qt.CopyAction,
+                mime_data,
+                Qt.LeftButton,
+                Qt.NoModifier,
+            )
+            self.assertTrue(window.eventFilter(window.composer.viewport(), drop))
+            self.assertEqual(window.pending_file_mentions[0]["kind"], "image")
+            staged = Path(window.pending_file_mentions[0]["path"])
+            self.assertTrue(staged.is_file())
+            self.assertFalse(window.composer_chips.isHidden())
+            chip = window.composer_chips.findChildren(QPushButton)[0]
+            self.assertFalse(chip.icon().isNull())
+
+            window._remove_pending_file(window.pending_file_mentions[0])
+            self.assertFalse(staged.exists())
+            self.assertEqual(window._stage_chat_images([image]), 1)
+            window.vr_flow_button.setChecked(False)
+            with patch.object(window.orchestrator, "send") as send:
+                window._send_current_message("O que aparece nesta imagem?")
+
+            image_paths = send.call_args.kwargs["image_paths"]
+            self.assertEqual(len(image_paths), 1)
+            self.assertIn(conversation_id, image_paths[0])
+            self.assertIn("![captura de tela.png]", send.call_args.args[4])
+            self.assertIn("IMAGEM @", send.call_args.args[1])
+            self.assertEqual(window.pending_file_mentions, [])
+        finally:
+            window.close()
+
+    def test_running_conversation_indicator_uses_theme_integrated_palette(self):
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            delegate = window.conversation_activity_delegate
+            light = delegate.activity_colors(False, False)
+            dark = delegate.activity_colors(True, False)
+            selected = delegate.activity_colors(True, True)
+            self.assertEqual(light[0].name(), "#eeeff3")
+            self.assertEqual(dark[0].name(), "#24201d")
+            self.assertNotEqual(dark[0].name(), selected[0].name())
+            self.assertNotEqual(dark[2].name(), dark[0].name())
         finally:
             window.close()
 
