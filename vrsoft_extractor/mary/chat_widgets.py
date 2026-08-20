@@ -1508,6 +1508,7 @@ class ModelPickerCombo(RoundedComboBox):
         self._catalog_states: dict[str, str] = {}
         self._catalog_errors: dict[str, str] = {}
         self._active_provider = "codex"
+        self._enabled_providers = {"codex", "claude", "opencode"}
         self._settings = QSettings()
         self._popup_press_armed = False
         self._suppress_popup_release = False
@@ -1559,6 +1560,15 @@ class ModelPickerCombo(RoundedComboBox):
     def set_active_provider(self, provider: str) -> None:
         self._active_provider = provider
 
+    def set_enabled_providers(self, providers: list[str] | tuple[str, ...]) -> None:
+        """Limit provider choices without discarding already loaded catalogs."""
+        self._enabled_providers = {
+            str(provider).strip().casefold()
+            for provider in providers
+            if str(provider).strip()
+        }
+        self.catalogChanged.emit()
+
     def set_catalog_state(self, provider: str, state: str, error: str = "") -> None:
         self._catalog_states[provider] = state
         if error:
@@ -1583,6 +1593,8 @@ class ModelPickerCombo(RoundedComboBox):
                 )
         rows: list[tuple[bool, bool, bool, bool, int, int, str, str, str]] = []
         for provider_order, (provider_name, models) in enumerate(self._catalogs.items()):
+            if provider_name not in self._enabled_providers:
+                continue
             for model_order, model in enumerate(models):
                 model_id = str(model.get("id") or model.get("model") or "")
                 if not model_id:
@@ -1674,15 +1686,19 @@ class ModelPickerCombo(RoundedComboBox):
         provider.setIconSize(QSize(26, 26))
         provider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         provider.setAccessibleName("Filtrar modelos por provedor")
-        recommended_index = provider.addTab(
-            QIcon(str(ASSET_DIR / "model-all.svg")), "Recomendados"
+        favorites_index = provider.addTab(
+            QIcon(str(ASSET_DIR / "model-favorite-active.svg")), "Favoritos"
         )
-        provider.setTabToolTip(recommended_index, "Modelos recomendados")
-        provider.setTabData(recommended_index, "recommended")
+        provider.setTabToolTip(favorites_index, "Somente modelos favoritos")
+        provider.setTabData(favorites_index, "favorites")
         for name in ("codex", "claude", "opencode"):
+            if name not in self._enabled_providers:
+                continue
             index = provider.addTab(provider_icon(name), provider_display_name(name))
             provider.setTabToolTip(index, provider_display_name(name))
             provider.setTabData(index, name)
+            if name == self._active_provider:
+                provider.setCurrentIndex(index)
         body.addWidget(provider)
 
         content = QWidget(objectName="modelPickerContent")
@@ -1793,12 +1809,13 @@ class ModelPickerCombo(RoundedComboBox):
         def refresh() -> None:
             nonlocal legacy_expanded
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
+            favorites_only = selected_tab == "favorites"
+            selected_provider = "" if favorites_only else selected_tab
             term = search.text().strip().casefold()
             rows: list[tuple[bool, str, dict[str, Any]]] = []
             for provider_name, models in self._catalogs.items():
+                if provider_name not in self._enabled_providers:
+                    continue
                 if selected_provider and provider_name != selected_provider:
                     continue
                 for model in models:
@@ -1814,6 +1831,8 @@ class ModelPickerCombo(RoundedComboBox):
                     if term and term not in haystack:
                         continue
                     key = f"{provider_name}:{model_id}"
+                    if favorites_only and key not in favorites:
+                        continue
                     rows.append((key in favorites, provider_name, model))
             rows.sort(
                 key=lambda item: (
@@ -1827,7 +1846,7 @@ class ModelPickerCombo(RoundedComboBox):
             target_provider = self._active_provider
             target_model = str(self.currentData() or "")
             selected_item: QListWidgetItem | None = None
-            if not rows and (not term or term in default_haystack):
+            if not favorites_only and not rows and (not term or term in default_haystack):
                 default_item = add_model_row(
                     default_provider,
                     "",
@@ -1904,7 +1923,11 @@ class ModelPickerCombo(RoundedComboBox):
             state_providers = (
                 [selected_provider]
                 if selected_provider
-                else [name for name in ("codex", "claude", "opencode") if name in self._catalog_states]
+                else [
+                    name
+                    for name in ("codex", "claude", "opencode")
+                    if name in self._enabled_providers and name in self._catalog_states
+                ]
             )
             loading = [
                 name for name in state_providers if self._catalog_states.get(name) == "loading"
@@ -1921,8 +1944,14 @@ class ModelPickerCombo(RoundedComboBox):
             elif errors:
                 status.setText(errors[0])
             else:
-                status.setText("Nenhum modelo disponível neste provedor.")
-            retry.setVisible(bool(errors) or (not rows and not loading))
+                status.setText(
+                    "Nenhum modelo favorito. Marque a estrela em um provedor."
+                    if favorites_only
+                    else "Nenhum modelo disponível neste provedor."
+                )
+            retry.setVisible(
+                not favorites_only and (bool(errors) or (not rows and not loading))
+            )
 
         def choose(item: QListWidgetItem | None = None) -> None:
             nonlocal legacy_expanded
@@ -1953,17 +1982,13 @@ class ModelPickerCombo(RoundedComboBox):
 
         def retry_models() -> None:
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
+            selected_provider = "" if selected_tab == "favorites" else selected_tab
             self.retryRequested.emit(selected_provider or self._active_provider)
 
         def provider_changed() -> None:
             selected_tab = str(provider.tabData(provider.currentIndex()) or "")
-            selected_provider = (
-                self._active_provider if selected_tab == "recommended" else selected_tab
-            )
-            if self._catalog_states.get(selected_provider, "idle") == "idle":
+            selected_provider = "" if selected_tab == "favorites" else selected_tab
+            if selected_provider and self._catalog_states.get(selected_provider, "idle") == "idle":
                 self.retryRequested.emit(selected_provider)
             refresh()
 

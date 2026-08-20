@@ -285,6 +285,7 @@ def video_process_environment() -> QProcessEnvironment:
     environment = QProcessEnvironment.systemEnvironment()
     environment.insert("PYTHONUTF8", "1")
     environment.insert("PYTHONIOENCODING", "utf-8")
+    environment.insert("ENDOO_GUI_MODE", "1")
     return environment
 
 
@@ -896,7 +897,7 @@ QToolButton#composerInlineControl:hover {{
 }}
 QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus,
 QToolButton#composerInlineControl:focus {{
-    border: 2px solid {FOCUS_DARK}; background: #F1F1F5; padding: 0 6px;
+    border: 0; background: #F1F1F5; padding: 0 8px;
 }}
 QComboBox#composerInlineControl::drop-down {{ border: 0; width: 17px; }}
 QFrame#composerSeparator {{
@@ -915,6 +916,13 @@ QToolButton#roundPrimary:focus, QToolButton#roundStop:focus {{
 }}
 QToolButton#conversationMenu {{ background: transparent; color: {TEXT_MUTED}; }}
 QToolButton#conversationMenu:hover {{ background: #EEEEF3; color: {BRAND_NAVY}; }}
+QFrame#archivedConversationRow {{ background: transparent; border: 0; }}
+QToolButton#archivedDeleteButton {{
+    min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px;
+    background: transparent; color: #A1261D; border: 0; border-radius: 9px;
+    font-size: 16px;
+}}
+QToolButton#archivedDeleteButton:hover {{ background: #FDE8E7; }}
 QFrame#userMessage {{
     background: #FFF0E4; border: 0; border-radius: 18px;
 }}
@@ -1175,7 +1183,7 @@ QToolButton#traceSidebarToggle:hover, QToolButton#knowledgeExpandToggle:hover {{
 }}
 QToolButton#navSidebarToggle:focus, QToolButton#chatSidebarToggle:focus,
 QToolButton#traceSidebarToggle:focus, QToolButton#knowledgeExpandToggle:focus {{
-    background: #2B241F; border-color: #FF9A3D;
+    background: {DARK_SURFACE_RAISED}; border-color: transparent;
 }}
 QFrame#projectSelector {{
     background: {DARK_SURFACE_RAISED}; border-color: transparent;
@@ -1466,7 +1474,7 @@ QPushButton#composerInlineControl:focus, QToolButton#composerInlineControl:focus
 QComboBox#composerInlineControl:focus, QPushButton#composerInlineControl:focus,
 QToolButton#composerInlineControl:focus,
 QToolButton#roundPrimary:focus, QToolButton#roundStop:focus {{
-    border-color: {BRAND_ORANGE};
+    border-color: transparent;
 }}
 QFrame#composerSeparator {{ background: {DARK_BORDER}; }}
 QPushButton {{
@@ -1486,6 +1494,9 @@ QPushButton#composerChip {{ background: #332820; color: {DARK_TEXT}; }}
 QPushButton#composerChip:hover {{ background: #4A2A17; }}
 QToolButton#conversationMenu {{ color: {DARK_MUTED}; }}
 QToolButton#conversationMenu:hover {{ background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT}; }}
+QFrame#archivedConversationRow {{ background: transparent; border: 0; }}
+QToolButton#archivedDeleteButton {{ background: transparent; color: #FF8F86; border: 0; }}
+QToolButton#archivedDeleteButton:hover {{ background: #482321; }}
 QFrame#userMessage {{ background: #45230E; }}
 QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivity,
 QFrame#chatActivityCompleted, QFrame#chatActivitySteps {{
@@ -1499,6 +1510,14 @@ QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
     color: {DARK_TEXT}; background: #302C29;
 }}
 QWidget#messageBodyHost {{ background: transparent; }}
+QWidget#chatCenter, QScrollArea#messageScroll,
+QScrollArea#messageScroll > QWidget > QWidget,
+QWidget#messageContainer, QWidget#composerHost,
+QFrame#chatComposerGlow, QFrame#chatComposer,
+QPlainTextEdit#chatComposerInput {{
+    background: #000000;
+}}
+QFrame#chatComposer {{ border-color: #3A3A3D; }}
 QFrame#codeBlockCard {{
     background: #111111; border-color: #1B1B1B;
 }}
@@ -1548,7 +1567,7 @@ QTextBrowser, QScrollArea, QScrollArea > QWidget > QWidget {{
 }}
 QScrollArea#messageScroll,
 QScrollArea#messageScroll > QWidget > QWidget,
-QWidget#messageContainer {{ background: {DARK_BACKGROUND}; color: {DARK_TEXT}; }}
+QWidget#messageContainer {{ background: #000000; color: {DARK_TEXT}; }}
 QTabWidget#settingsTabs::pane {{ border: 0; background: transparent; }}
 QTabBar::tab, QTabWidget#settingsTabs QTabBar::tab {{ color: {DARK_MUTED}; }}
 QTabWidget::pane {{ border-color: {DARK_BORDER}; }}
@@ -1742,6 +1761,7 @@ class ContextUsageButton(QToolButton):
         self.setToolTip("Ver uso da janela de contexto")
         self._running = False
         self._phase = 0
+        self._usage_fraction = 0.0
         self._reduce_motion = bool(reduce_motion)
         self._timer = QTimer(self)
         self._timer.setInterval(80)
@@ -1761,6 +1781,13 @@ class ContextUsageButton(QToolButton):
         self._reduce_motion = bool(reduced)
         self.set_running(self._running)
 
+    def set_usage_fraction(self, fraction: float) -> None:
+        self._usage_fraction = max(0.0, min(1.0, float(fraction or 0.0)))
+        self.setAccessibleDescription(
+            f"{self._usage_fraction * 100:.0f}% da janela de contexto em uso"
+        )
+        self.update()
+
     def _advance(self) -> None:
         self._phase = (self._phase + 30) % 360
         self.update()
@@ -1774,9 +1801,9 @@ class ContextUsageButton(QToolButton):
         track.setAlpha(115)
         painter.setPen(QPen(track, 2.4))
         painter.drawEllipse(bounds)
-        accent = QColor(BRAND_ORANGE if self._running else "#99939A")
+        accent = QColor(BRAND_ORANGE if self._running else "#FF8A2A")
         painter.setPen(QPen(accent, 2.8))
-        span = 105 if self._running else 72
+        span = 105 if self._running else max(0, round(360 * self._usage_fraction))
         painter.drawArc(bounds, int((90 - self._phase) * 16), int(span * 16))
         painter.end()
 
@@ -1952,6 +1979,7 @@ class MainWindow(QMainWindow):
         self.pending_model = ""
         self.pending_effort = ""
         self.pending_tier = ""
+        self._effort_model_key = ""
         self.draft_orchestration = self._load_default_orchestration()
         self._trace_agents: dict[str, str] = {}
         self.nav_buttons: list[QToolButton] = []
@@ -2191,6 +2219,7 @@ class MainWindow(QMainWindow):
         brand_row.addWidget(self.nav_brand_text, 1)
         self.nav_toggle_button = QToolButton(objectName="navSidebarToggle")
         self.nav_toggle_button.setFixedSize(40, 40)
+        self.nav_toggle_button.setFocusPolicy(Qt.TabFocus)
         self.nav_toggle_button.setIcon(QIcon(str(SIDEBAR_ICON_PATHS["toggle"])))
         self.nav_toggle_button.setIconSize(QSize(18, 18))
         self.nav_toggle_button.clicked.connect(
@@ -2596,6 +2625,7 @@ class MainWindow(QMainWindow):
         header.setSpacing(8)
         self.chat_sidebar_toggle_button = QToolButton(objectName="chatSidebarToggle")
         self.chat_sidebar_toggle_button.setFixedSize(40, 40)
+        self.chat_sidebar_toggle_button.setFocusPolicy(Qt.TabFocus)
         self.chat_sidebar_toggle_button.setIcon(
             QIcon(str(SIDEBAR_ICON_PATHS["toggle"]))
         )
@@ -2652,9 +2682,10 @@ class MainWindow(QMainWindow):
         self.provider_combo = RoundedComboBox()
         self.provider_combo.setAccessibleName("Provedor da conversa")
         self.provider_combo.setToolTip("Provedor local usado nesta conversa.")
-        self.provider_combo.addItems(CHAT_PROVIDERS)
+        self.provider_combo.addItems(self._enabled_provider_names() or ["codex"])
         self.provider_combo.currentTextChanged.connect(self.load_models)
         self.model_combo = ModelPickerCombo()
+        self.model_combo.set_enabled_providers(self._enabled_provider_names())
         self.model_combo.setObjectName("composerInlineControl")
         self.model_combo.setAccessibleName("Modelo orquestrador")
         self.model_combo.setToolTip(
@@ -2718,7 +2749,7 @@ class MainWindow(QMainWindow):
         message_outer_layout.setContentsMargins(20, 12, 20, 12)
         message_outer_layout.setSpacing(0)
         self.message_column = QWidget(objectName="messageColumn")
-        self.message_column.setMaximumWidth(880)
+        self.message_column.setMaximumWidth(780)
         self.message_column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.message_layout = QVBoxLayout(self.message_column)
         self.message_layout.setContentsMargins(0, 0, 0, 0)
@@ -3054,6 +3085,7 @@ class MainWindow(QMainWindow):
         self.vr_flow_button.optionsRequested.connect(self._show_vr_mode_panel)
         self.options_button = QPushButton("Build")
         self.options_button.setObjectName("composerInlineControl")
+        self.options_button.setFocusPolicy(Qt.TabFocus)
         self.options_button.setMinimumWidth(58)
         self.options_button.setMaximumWidth(90)
         self.options_button.setIconSize(QSize(16, 16))
@@ -3753,10 +3785,16 @@ class MainWindow(QMainWindow):
             ("Atualizar cursos", "courses"),
             ("Inventariar", "scan"),
             ("Classificar", "classify-videos"),
-            ("Baixar", "download"),
+            ("Baixar seleção", "download"),
         ]:
             button = QPushButton(label)
-            button.clicked.connect(lambda _checked=False, value=action: self.run_video_action(value))
+            if action == "download":
+                button.clicked.connect(self.download_selected_videos)
+                self.video_download_selection_button = button
+            else:
+                button.clicked.connect(
+                    lambda _checked=False, value=action: self.run_video_action(value)
+                )
             self.video_action_buttons.append(button)
         enroll = QPushButton("Inscrever selecionados")
         enroll.clicked.connect(self.enroll_selected_courses)
@@ -3765,7 +3803,6 @@ class MainWindow(QMainWindow):
         organize.clicked.connect(self.organize_video_downloads)
         self.video_action_buttons.append(organize)
         stop = ActionButton("Parar", variant="danger")
-        stop.setObjectName("danger")
         stop.clicked.connect(self.stop_video_action)
         stop.setEnabled(False)
         self.video_stop_button = stop
@@ -3922,9 +3959,6 @@ class MainWindow(QMainWindow):
         self.settings_tabs.tabBar().setDrawBase(False)
         self.settings_tabs.addTab(self._build_general_settings_tab(), "Geral")
         self.settings_tabs.addTab(self._build_provider_settings_tab(), "Provedores")
-        self.settings_tabs.addTab(
-            self._build_orchestration_settings_tab(), "Orquestração"
-        )
         self.settings_tabs.addTab(self._build_theme_settings_tab(), "Temas")
         self.settings_tabs.addTab(
             self._build_archived_projects_tab(), "Projetos arquivados"
@@ -4189,22 +4223,13 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(4, 16, 4, 4)
         layout.addWidget(QLabel("Projetos arquivados", objectName="sectionTitle"))
         description = QLabel(
-            "Conversas arquivadas e itens na lixeira ficam separados do Chat VR. "
-            "Clique com o botão direito para restaurar ou excluir.",
+            "Conversas arquivadas ficam separadas do Chat VR. Use o botão de "
+            "lixeira no item para excluir imediatamente.",
             objectName="muted",
         )
         description.setWordWrap(True)
         layout.addWidget(description)
         controls = QHBoxLayout()
-        self.archived_state_tabs = QTabBar(objectName="conversationTabs")
-        self.archived_state_tabs.setDocumentMode(True)
-        for label, value in (("Arquivados", "archived"), ("Lixeira", "trash")):
-            index = self.archived_state_tabs.addTab(label)
-            self.archived_state_tabs.setTabData(index, value)
-        self.archived_state_tabs.currentChanged.connect(
-            lambda _index: self.refresh_archived_projects()
-        )
-        controls.addWidget(self.archived_state_tabs)
         controls.addStretch()
         self.archived_search = QLineEdit()
         self.archived_search.setPlaceholderText("Buscar projetos")
@@ -4235,6 +4260,36 @@ class MainWindow(QMainWindow):
         if isinstance(value, bool):
             return value
         return str(value).strip().casefold() not in {"0", "false", "no", "off"}
+
+    def _model_effort_key(self) -> str:
+        provider = self.provider_combo.currentText() or "codex"
+        model = str(self.model_combo.currentData() or "__default__")
+        return f"{provider}:{model}"
+
+    def _model_effort_preferences(self) -> dict[str, str]:
+        raw = self.app_preferences.value("chat/model_efforts", "{}")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return {
+            str(key): str(value).strip().casefold()
+            for key, value in values.items()
+            if str(key).strip() and str(value).strip()
+        }
+
+    def _remember_model_effort(self, effort: str) -> None:
+        value = str(effort or "").strip().casefold()
+        if not value:
+            return
+        if value == "ultra":
+            value = "max"
+        preferences = self._model_effort_preferences()
+        preferences[self._model_effort_key()] = value
+        self.app_preferences.setValue(
+            "chat/model_efforts", json.dumps(preferences, ensure_ascii=False, sort_keys=True)
+        )
+        self.app_preferences.sync()
 
     def _preference_bool(self, key: str, default: bool) -> bool:
         value = self.app_preferences.value(key, default)
@@ -4366,6 +4421,7 @@ class MainWindow(QMainWindow):
             f"providers/{provider}/enabled", enabled
         )
         self.app_preferences.sync()
+        self._sync_enabled_providers_for_chat()
         if (
             not enabled
             and self.draft_conversation
@@ -4383,9 +4439,28 @@ class MainWindow(QMainWindow):
             if self._provider_enabled(provider)
         ]
 
+    def _sync_enabled_providers_for_chat(self) -> None:
+        enabled = self._enabled_provider_names()
+        if hasattr(self, "model_combo"):
+            self.model_combo.set_enabled_providers(enabled)
+        if not hasattr(self, "provider_combo") or not self.draft_conversation:
+            return
+        current = self.provider_combo.currentText()
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        self.provider_combo.addItems(enabled)
+        target = current if current in enabled else (enabled[0] if enabled else "")
+        if target:
+            self.provider_combo.setCurrentText(target)
+        self.provider_combo.blockSignals(False)
+        if target and target != current:
+            self.load_models(provider_override=target)
+
     def refresh_provider_settings(self, *_args: Any) -> None:
         status = self.orchestrator.provider_status()
         enabled_names = self._enabled_provider_names()
+        if hasattr(self, "model_combo"):
+            self.model_combo.set_enabled_providers(enabled_names)
         if hasattr(self, "provider_status_labels"):
             for provider in CHAT_PROVIDERS:
                 available = bool(status.get(provider))
@@ -4472,8 +4547,7 @@ class MainWindow(QMainWindow):
         )
 
     def _archived_projects_state(self) -> str:
-        index = self.archived_state_tabs.currentIndex()
-        return str(self.archived_state_tabs.tabData(index) or "archived")
+        return "archived"
 
     def refresh_archived_projects(self, *_args: Any) -> None:
         if not hasattr(self, "archived_projects_list"):
@@ -4487,24 +4561,37 @@ class MainWindow(QMainWindow):
             ).casefold()
             if term and term not in haystack:
                 continue
-            item = QListWidgetItem(
+            summary = (
                 f"{row['title']}\n{provider_display_name(str(row['provider']))} · "
                 f"{row['model'] or 'Modelo padrão'} · {self._status_label(row['status'])}"
             )
+            item = QListWidgetItem()
             item.setIcon(provider_icon(str(row["provider"])))
             item.setData(Qt.UserRole, row["id"])
-            item.setToolTip(
-                "Clique com o botão direito para restaurar"
-                + (" ou excluir definitivamente" if state == "trash" else " ou mover para a lixeira")
-            )
+            item.setToolTip("Clique com o botão direito para restaurar ou excluir")
+            item.setSizeHint(QSize(0, 62))
             self.archived_projects_list.addItem(item)
+            row_widget = QFrame(objectName="archivedConversationRow")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(10, 6, 6, 6)
+            label = QLabel(summary)
+            label.setWordWrap(True)
+            row_layout.addWidget(label, 1)
+            delete_button = QToolButton(objectName="archivedDeleteButton")
+            delete_button.setText("🗑")
+            delete_button.setAccessibleName(f"Excluir {row['title']} definitivamente")
+            delete_button.setToolTip("Excluir definitivamente, sem confirmação")
+            delete_button.clicked.connect(
+                lambda _checked=False, conversation_id=str(row["id"]):
+                self._run_archived_project_operation(
+                    conversation_id, self.orchestrator.purge
+                )
+            )
+            row_layout.addWidget(delete_button)
+            self.archived_projects_list.setItemWidget(item, row_widget)
         empty = self.archived_projects_list.count() == 0
         self.archived_projects_list.setVisible(not empty)
-        self.archived_projects_empty.setText(
-            "Nenhum projeto na lixeira."
-            if state == "trash"
-            else "Nenhum projeto arquivado."
-        )
+        self.archived_projects_empty.setText("Nenhum projeto arquivado.")
         self.archived_projects_empty.setVisible(empty)
 
     def open_archived_project_context_menu(self, position) -> None:
@@ -4514,32 +4601,19 @@ class MainWindow(QMainWindow):
         conversation_id = str(item.data(Qt.UserRole) or "")
         if not conversation_id:
             return
-        state = self._archived_projects_state()
         menu = SurfaceMenu(self)
-        if state == "archived":
-            menu.addAction(
-                "Restaurar",
-                lambda: self._run_archived_project_operation(
-                    conversation_id, self.orchestrator.unarchive
-                ),
-            )
-            menu.addAction(
-                "Mover para a lixeira",
-                lambda: self._run_archived_project_operation(
-                    conversation_id, self.orchestrator.trash
-                ),
-            )
-        else:
-            menu.addAction(
-                "Restaurar",
-                lambda: self._run_archived_project_operation(
-                    conversation_id, self.orchestrator.restore
-                ),
-            )
-            menu.addAction(
-                "Excluir definitivamente",
-                lambda: self._purge_archived_conversation(conversation_id),
-            )
+        menu.addAction(
+            "Restaurar",
+            lambda: self._run_archived_project_operation(
+                conversation_id, self.orchestrator.unarchive
+            ),
+        )
+        menu.addAction(
+            "Excluir definitivamente",
+            lambda: self._run_archived_project_operation(
+                conversation_id, self.orchestrator.purge
+            ),
+        )
         menu.exec(self.archived_projects_list.viewport().mapToGlobal(position))
 
     def _run_archived_project_operation(
@@ -4826,6 +4900,7 @@ class MainWindow(QMainWindow):
         else:
             self.context_usage_value.setText("Aguardando dados")
         self.context_usage_bar.setValue(round(percentage * 10))
+        self.context_usage_button.set_usage_fraction(percentage / 100.0)
         self.context_total_value.setText(
             f"{self._format_token_count(processed)} tokens"
         )
@@ -5050,7 +5125,9 @@ class MainWindow(QMainWindow):
             self,
             "Selecionar pasta do projeto",
             str(start),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+            QFileDialog.ShowDirsOnly
+            | QFileDialog.DontResolveSymlinks
+            | QFileDialog.DontUseNativeDialog,
         )
         if selected:
             self._select_project_scope(Path(selected))
@@ -5174,6 +5251,7 @@ class MainWindow(QMainWindow):
             self.provider_combo.setCurrentText(enabled_providers[0])
         self.current_conversation = ""
         self.draft_conversation = True
+        self._sync_enabled_providers_for_chat()
         self._conversation_creation_in_progress = False
         self._active_creation_request = 0
         self._pending_first_message = ""
@@ -5481,7 +5559,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "chat_empty_state"):
             self.chat_empty_state.hide()
         card = QFrame(objectName="userMessage" if role == "user" else "assistantMessage")
-        card.setMaximumWidth(560 if role == "user" else 880)
+        card.setMaximumWidth(540 if role == "user" else 780)
         card.setSizePolicy(
             QSizePolicy.Preferred if role == "user" else QSizePolicy.Expanding,
             QSizePolicy.Minimum,
@@ -5549,29 +5627,34 @@ class MainWindow(QMainWindow):
         code_bg = "#282421" if dark else "#F0F0F4"
         code_border = "#4A433D" if dark else "#D8D8E0"
         quote_bg = "#211E1C" if dark else "#F8F8FA"
+        chat_font = QApplication.font()
+        chat_font.setFamily("Segoe UI")
+        chat_font.setPointSizeF(10.0)
+        browser.setFont(chat_font)
+        browser.document().setDefaultFont(chat_font)
         browser.document().setDocumentMargin(0)
         browser.document().setDefaultStyleSheet(
             f"""
-            body {{ color: {text}; font-family: 'Segoe UI'; font-size: 14px; line-height: 1.55; }}
-            p {{ margin-top: 0; margin-bottom: 10px; }}
-            h1 {{ color: {text}; font-size: 20px; margin: 16px 0 9px 0; }}
-            h2 {{ color: {text}; font-size: 18px; margin: 14px 0 8px 0; }}
-            h3 {{ color: {text}; font-size: 16px; margin: 12px 0 7px 0; }}
-            ul, ol {{ margin: 5px 0 10px 22px; }}
-            li {{ margin-bottom: 4px; }}
+            body {{ color: {text}; font-family: 'Segoe UI'; font-size: 13px; line-height: 1.48; }}
+            p {{ margin-top: 0; margin-bottom: 8px; }}
+            h1 {{ color: {text}; font-size: 18px; margin: 14px 0 7px 0; }}
+            h2 {{ color: {text}; font-size: 16px; margin: 12px 0 6px 0; }}
+            h3 {{ color: {text}; font-size: 14px; margin: 10px 0 5px 0; }}
+            ul, ol {{ margin: 4px 0 8px 20px; }}
+            li {{ margin-bottom: 3px; }}
             strong {{ color: {text}; font-weight: 700; }}
             a {{ color: {link}; text-decoration: none; }}
             code {{
                 color: {text}; background-color: {code_bg};
                 border: 1px solid {code_border}; border-radius: 4px;
                 padding: 2px 5px; font-family: 'Consolas', monospace;
-                font-size: 12px;
+                font-size: 11px;
             }}
             pre {{
                 color: {text}; background-color: {code_bg};
                 border: 1px solid {code_border}; border-radius: 8px;
                 margin: 10px 0 14px 0; padding: 10px;
-                font-family: 'Consolas', monospace; font-size: 12px;
+                font-family: 'Consolas', monospace; font-size: 11px;
             }}
             blockquote {{
                 color: {muted}; background-color: {quote_bg};
@@ -5588,7 +5671,7 @@ class MainWindow(QMainWindow):
         label = str(text or "Trabalhando…").strip()
         if self.chat_activity_widget is None:
             activity = QFrame(objectName="chatActivity")
-            activity.setMaximumWidth(880)
+            activity.setMaximumWidth(780)
             activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             activity.setAccessibleName("Atividade em andamento")
             layout = QVBoxLayout(activity)
@@ -5659,7 +5742,6 @@ class MainWindow(QMainWindow):
         self.chat_activity_details_layout.addWidget(step)
         if self.chat_activity_toggle is not None:
             self.chat_activity_toggle.show()
-            self.chat_activity_toggle.setChecked(True)
 
     def _toggle_chat_activity_details(self, expanded: bool) -> None:
         if self.chat_activity_details is not None:
@@ -6197,7 +6279,7 @@ class MainWindow(QMainWindow):
         ]
         if scope == "providers":
             current_provider = self.provider_combo.currentText() or "codex"
-            for provider in CHAT_PROVIDERS:
+            for provider in self._enabled_provider_names():
                 label = provider_display_name(provider)
                 if query and query not in label.casefold():
                     continue
@@ -7638,7 +7720,7 @@ class MainWindow(QMainWindow):
         self._start_worker(worker)
 
     def _preload_other_models(self, current_provider: str) -> None:
-        for provider in CHAT_PROVIDERS:
+        for provider in self._enabled_provider_names():
             if provider == current_provider:
                 continue
             if (
@@ -7801,11 +7883,12 @@ class MainWindow(QMainWindow):
                 else ["minimal", "low", "medium", "high", "xhigh", "max"]
             )
 
-        selected_effort = (
-            self.pending_effort
-            or self.effort_combo.currentData()
-            or self.settings.default_effort
-        )
+        model_key = self._model_effort_key()
+        saved_effort = self._model_effort_preferences().get(model_key, "")
+        selected_effort = self.pending_effort or saved_effort
+        if not selected_effort and self._effort_model_key == model_key:
+            selected_effort = self.effort_combo.currentData()
+        selected_effort = selected_effort or self.settings.default_effort
         if str(selected_effort).strip().casefold() == "ultra":
             selected_effort = "max"
         self.effort_combo.blockSignals(True)
@@ -7828,12 +7911,17 @@ class MainWindow(QMainWindow):
             self.effort_combo.setCurrentIndex(index)
         self.effort_combo.blockSignals(False)
         self.pending_effort = ""
+        self._effort_model_key = model_key
         self.load_service_tiers()
         self._update_codex_controls()
         self._chat_option_changed()
 
     def _chat_option_changed(self, *_args: Any) -> None:
         self._update_chat_header_summary()
+        effort = self.effort_combo.currentData() or self.effort_combo.currentText()
+        if effort:
+            self._effort_model_key = self._model_effort_key()
+            self._remember_model_effort(str(effort))
         if (
             self.smoke_test
             or not self.current_conversation
@@ -7841,7 +7929,6 @@ class MainWindow(QMainWindow):
         ):
             return
         model = self.model_combo.currentData() or ""
-        effort = self.effort_combo.currentData() or self.effort_combo.currentText()
         if effort:
             current = self.database.get_conversation(self.current_conversation)
             orchestration = (
@@ -9917,6 +10004,7 @@ class MainWindow(QMainWindow):
                     "kind": "video",
                     "scope": "items",
                     "key": item.dedupe_key(),
+                    "item_id": item.id,
                     "reasons": item.classification_reasons,
                 },
             )
@@ -10044,6 +10132,33 @@ class MainWindow(QMainWindow):
             f"{len(selected)} item(ns) selecionado(s)"
             + (f" · {'; '.join(reasons[:2])}" if reasons else "")
         )
+
+    def download_selected_videos(self) -> None:
+        item_ids: set[str] = set()
+
+        def collect(node: QTreeWidgetItem) -> None:
+            data = node.data(0, Qt.UserRole) or {}
+            item_id = str(data.get("item_id") or "")
+            if item_id:
+                item_ids.add(item_id)
+            for index in range(node.childCount()):
+                collect(node.child(index))
+
+        for node in self.video_tree.selectedItems():
+            collect(node)
+        if not item_ids:
+            self._show_toast(
+                "Selecione um vídeo ou uma pasta que contenha vídeos.",
+                kind="warning",
+            )
+            return
+        args: list[str] = []
+        for item_id in sorted(item_ids):
+            args.extend(("--item-id", item_id))
+        self.video_selection_detail.setText(
+            f"Baixando {len(item_ids)} vídeo(s) da seleção"
+        )
+        self.run_video_action("download", args)
 
     def apply_video_module_override(self) -> None:
         targets: set[tuple[str, str]] = set()
@@ -10176,6 +10291,13 @@ class MainWindow(QMainWindow):
                 "Já existe uma ação de vídeo em execução.", kind="warning"
             )
             return
+        command_args = list(extra_args or [])
+        session_path = self.settings.root / ".state" / "endoo.json"
+        if action == "scan" and not session_path.is_file() and "--headed" not in command_args:
+            command_args.append("--headed")
+            self.video_log.appendPlainText(
+                "Sessão Endoo ausente. O navegador será aberto para concluir o login antes do inventário."
+            )
         self.video_process = QProcess(self)
         self.video_process.setProcessEnvironment(video_process_environment())
         self.video_process.setWorkingDirectory(str(self.settings.app_dir))
@@ -10187,7 +10309,7 @@ class MainWindow(QMainWindow):
         executable, args = video_process_command(
             self.settings.root,
             action,
-            extra_args,
+            command_args,
         )
         self.video_status.setText(f"Executando {action}…")
         for button in self.video_action_buttons:
@@ -10459,7 +10581,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args, _unknown = build_parser().parse_known_args(argv or sys.argv[1:])
+    raw_args = list(argv if argv is not None else sys.argv[1:])
+    if "--video-cli" in raw_args:
+        from ..cli import main as video_main
+
+        marker = raw_args.index("--video-cli")
+        return video_main(raw_args[marker + 1 :])
+    args, _unknown = build_parser().parse_known_args(raw_args)
     if args.screenshot_scale:
         os.environ["QT_SCALE_FACTOR"] = args.screenshot_scale
     QApplication.setHighDpiScaleFactorRoundingPolicy(

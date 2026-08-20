@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser = subparsers.add_parser("download", help="Baixa videos do inventario.")
     download_parser.add_argument("--concurrency", type=int, default=2, help="Downloads simultaneos.")
     download_parser.add_argument("--redownload", action="store_true", help="Baixa novamente arquivos existentes.")
+    download_parser.add_argument(
+        "--item-id",
+        action="append",
+        default=[],
+        help="Baixa somente o item selecionado; pode ser repetido.",
+    )
 
     run_parser = subparsers.add_parser("run", help="Executa login, scan e download.")
     run_parser.add_argument("--login-headless", action="store_true", help="Login sem janela.")
@@ -133,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
                 settings,
                 concurrency=args.concurrency,
                 redownload=args.redownload,
+                item_ids=args.item_id,
             )
         elif args.command == "run":
             login(settings, headless=args.login_headless)
@@ -144,8 +151,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             parser.error(f"Comando desconhecido: {args.command}")
-    except (ConfigError, RuntimeError, ValueError, OSError) as exc:
-        LOGGER.error("%s", exc)
+    except Exception as exc:
+        # Browser engines raise their own exception classes. At this process
+        # boundary every failure must reach the desktop log instead of making
+        # the clicked action appear to only flash and silently stop.
+        LOGGER.exception("Falha ao executar %s: %s", args.command, exc)
         return 1
     return 0
 

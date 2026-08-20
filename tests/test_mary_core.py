@@ -62,7 +62,11 @@ from vrsoft_extractor.mary.providers import (
     normalize_effort,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
-from vrsoft_extractor.mary.ocr import _download_file, latest_windows_installer_url
+from vrsoft_extractor.mary.ocr import (
+    _download_file,
+    latest_github_installer_url,
+    latest_windows_installer_url,
+)
 from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
 from vrsoft_extractor.mary.search import search_terms
 from vrsoft_extractor.mary.workspace import initialize_workspace
@@ -1385,6 +1389,22 @@ class MaryCoreTest(unittest.TestCase):
             "https://example.com/tesseract/tesseract-ocr-w64-setup-5.10.0.exe",
         )
 
+    def test_selects_trusted_tesseract_installer_from_github_fallback(self):
+        url = latest_github_installer_url(
+            {
+                "assets": [
+                    {
+                        "name": "tesseract-ocr-w64-setup-5.4.0.exe",
+                        "browser_download_url": (
+                            "https://github.com/UB-Mannheim/tesseract/releases/download/"
+                            "v5.4.0/tesseract-ocr-w64-setup-5.4.0.exe"
+                        ),
+                    }
+                ]
+            }
+        )
+        self.assertTrue(url.endswith("tesseract-ocr-w64-setup-5.4.0.exe"))
+
     def test_codex_send_resumes_thread_after_app_restart(self):
         provider = CodexProvider()
         callback = lambda _event: None
@@ -2031,7 +2051,7 @@ class MaryCoreTest(unittest.TestCase):
         )
         self.assertEqual(
             [provider_tabs.tabText(index) for index in range(provider_tabs.count())],
-            ["Recomendados", "Codex", "Claude", "OpenCode"],
+            ["Favoritos", "Codex", "Claude", "OpenCode"],
         )
         self.assertEqual(
             provider_tabs.accessibleName(),
@@ -3220,8 +3240,8 @@ class MaryCoreTest(unittest.TestCase):
             self.assertFalse(window.scheduled_placeholder_button.isEnabled())
             self.assertFalse(window.plugins_placeholder_button.isEnabled())
             self.assertFalse(hasattr(window, "conversation_state_tabs"))
-            self.assertEqual(window.archived_state_tabs.count(), 2)
-            self.assertEqual(window.settings_tabs.count(), 5)
+            self.assertFalse(hasattr(window, "archived_state_tabs"))
+            self.assertEqual(window.settings_tabs.count(), 4)
             self.assertEqual(
                 [
                     window.settings_tabs.tabText(index)
@@ -3230,7 +3250,6 @@ class MaryCoreTest(unittest.TestCase):
                 [
                     "Geral",
                     "Provedores",
-                    "Orquestração",
                     "Temas",
                     "Projetos arquivados",
                 ],
@@ -3270,8 +3289,8 @@ class MaryCoreTest(unittest.TestCase):
                 "seja quebrada em poucas palavras.",
             )
             application.processEvents()
-            self.assertGreaterEqual(assistant.parentWidget().width(), 800)
-            self.assertLessEqual(assistant.parentWidget().width(), 900)
+            self.assertGreaterEqual(assistant.parentWidget().width(), 740)
+            self.assertLessEqual(assistant.parentWidget().width(), 780)
 
             self.assertNotIn("VR_DEFAULT_EFFORT", window.settings_fields)
             self.assertNotIn("MARY_DEFAULT_EFFORT", window.settings_fields)
@@ -3460,6 +3479,27 @@ class MaryCoreTest(unittest.TestCase):
             window.app_preferences.setValue("chat/recent_projects", saved_recent)
             window.app_preferences.setValue("chat/hidden_projects", saved_hidden)
             window.app_preferences.setValue("chat/projects", saved_projects)
+            window.close()
+
+    def test_project_folder_picker_uses_qt_dialog_instead_of_broken_native_window(self):
+        from PySide6.QtWidgets import QApplication, QFileDialog
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            with patch.object(
+                QFileDialog, "getExistingDirectory", return_value=""
+            ) as picker:
+                window.choose_project_folder()
+
+            application.processEvents()
+            options = picker.call_args.args[3]
+            self.assertTrue(options & QFileDialog.DontUseNativeDialog)
+        finally:
             window.close()
 
     def test_new_project_action_opens_the_system_folder_picker(self):
@@ -3681,10 +3721,15 @@ class MaryCoreTest(unittest.TestCase):
             smoke_test=True,
             auto_close_smoke=False,
         )
+        saved_claude_enabled = window.app_preferences.value(
+            "providers/claude/enabled", True
+        )
         try:
             window.resize(1366, 768)
             window.show()
             window._navigate(window.pages["Chat VR"])
+            window.app_preferences.setValue("providers/claude/enabled", True)
+            window._sync_enabled_providers_for_chat()
             window.provider_combo.blockSignals(True)
             window.provider_combo.setCurrentText("claude")
             window.provider_combo.blockSignals(False)
@@ -3708,6 +3753,9 @@ class MaryCoreTest(unittest.TestCase):
             ):
                 self.assertFalse(control.isEnabled())
         finally:
+            window.app_preferences.setValue(
+                "providers/claude/enabled", saved_claude_enabled
+            )
             window.close()
 
     def test_dense_review_and_video_controls_reflow_at_minimum_width(self):
@@ -4263,7 +4311,7 @@ class MaryCoreTest(unittest.TestCase):
     def test_settings_theme_providers_and_archived_projects_are_separated_from_chat(self):
         from PySide6.QtCore import QSize, Qt
         from PySide6.QtGui import QIcon, QPalette
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QToolButton
 
         class MemoryPreferences:
             def __init__(self):
@@ -4325,7 +4373,6 @@ class MaryCoreTest(unittest.TestCase):
             self.assertNotIn(archived, active_ids)
             self.assertNotIn(trashed, active_ids)
 
-            window.archived_state_tabs.setCurrentIndex(0)
             window.refresh_archived_projects()
             archived_ids = {
                 window.archived_projects_list.item(index).data(Qt.UserRole)
@@ -4334,13 +4381,11 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn(archived, archived_ids)
             self.assertNotIn(trashed, archived_ids)
 
-            window.archived_state_tabs.setCurrentIndex(1)
-            window.refresh_archived_projects()
-            trash_ids = {
-                window.archived_projects_list.item(index).data(Qt.UserRole)
-                for index in range(window.archived_projects_list.count())
-            }
-            self.assertIn(trashed, trash_ids)
+            self.assertTrue(
+                window.archived_projects_list.itemWidget(
+                    window.archived_projects_list.item(0)
+                ).findChild(QToolButton, "archivedDeleteButton")
+            )
             self.assertEqual(
                 set(window.provider_status_labels),
                 {"codex", "claude", "opencode"},

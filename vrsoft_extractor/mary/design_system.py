@@ -1088,7 +1088,6 @@ class ProjectScopePopup(RoundedPopupDialog):
             self.setFocus()
 
     def refresh_theme(self) -> None:
-        self.add_button.setIcon(_theme_icon("project-add"))
         for row in self._rows:
             row.refresh_theme()
         self.update()
