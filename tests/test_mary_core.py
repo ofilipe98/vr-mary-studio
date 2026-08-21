@@ -3787,9 +3787,9 @@ class MaryCoreTest(unittest.TestCase):
                 palette.color(QPalette.PlaceholderText).name(), "#a1a1aa"
             )
             self.assertEqual(palette.color(QPalette.Highlight).name(), "#303036")
-            self.assertTrue(application.font().family().startswith("DM Sans"))
+            self.assertEqual(application.font().family(), "Segoe UI")
             self.assertEqual(application.font().weight(), 400)
-            self.assertTrue(window.composer.font().family().startswith("DM Sans"))
+            self.assertEqual(window.composer.font().family(), "Segoe UI")
         finally:
             window.close()
 
@@ -5000,8 +5000,14 @@ class MaryCoreTest(unittest.TestCase):
             auto_close_smoke=False,
         )
         try:
+            window.resize(1366, 768)
+            window.show()
+            window._navigate(window.pages["Chat VR"])
             conversation_id = "typing-stream-test"
-            answer = "Resposta VR com efeito de digitação. " * 40
+            answer = "\n\n".join(
+                f"## Etapa {index}\n\nResposta VR com efeito de digitação validada."
+                for index in range(24)
+            )
             window.current_conversation = conversation_id
             window._on_runtime_event(RuntimeEvent(conversation_id, "turn_started"))
             window._on_runtime_event(
@@ -5025,6 +5031,87 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIs(
                 stream_browser,
                 window.assistant_widget.findChild(QTextBrowser, "messageBody"),
+            )
+            application.processEvents()
+            self.assertGreater(stream_browser.height(), 700)
+            self.assertGreaterEqual(
+                window.assistant_widget.minimumHeight(),
+                stream_browser.height(),
+            )
+            self.assertGreaterEqual(
+                window.assistant_widget.height(),
+                stream_browser.height(),
+            )
+        finally:
+            window.close()
+
+    def test_response_plan_uses_real_steps_and_segmented_progress(self):
+        from PySide6.QtWidgets import QApplication, QFrame, QLabel
+
+        application = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            conversation_id = "response-plan-test"
+            window.current_conversation = conversation_id
+            steps = [
+                "Entender a solicitação sobre bonificação.",
+                "Cruzar VRWiki e KB no módulo ADM/Financeiro/Estoque.",
+                "Validar a seção Como fazer uma rebaixa.",
+                "Explicar funcionamento, regras e efeito operacional.",
+                "Redigir a resposta com os links selecionados.",
+            ]
+            window._on_runtime_event(
+                RuntimeEvent(
+                    conversation_id,
+                    "response_plan_created",
+                    "Plano da resposta definido.",
+                    {"steps": steps, "completed": 3},
+                )
+            )
+
+            progress = window.chat_activity_progress
+            self.assertIsNotNone(progress)
+            self.assertEqual(progress.segment_count, len(steps))
+            self.assertEqual(progress.completed_count, 3)
+            self.assertEqual(window.chat_activity_count.text(), "3/5")
+            self.assertEqual(window.chat_activity_label.text(), steps[3])
+            detail_text = " ".join(
+                label.text()
+                for label in window.chat_activity_details.findChildren(
+                    QLabel, "chatActivityStep"
+                )
+            )
+            self.assertIn("bonificação", detail_text)
+            self.assertIn("VRWiki", detail_text)
+            self.assertNotIn("Interpretando intenção", detail_text)
+
+            window._on_runtime_event(
+                RuntimeEvent(conversation_id, "assistant_delta", "Resposta final")
+            )
+            self.assertEqual(progress.completed_count, 4)
+            window._on_runtime_event(RuntimeEvent(conversation_id, "turn_completed"))
+            application.processEvents()
+
+            completed = window.message_container.findChildren(
+                QFrame, "chatActivityCompleted"
+            )
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(progress.completed_count, len(steps))
+            self.assertEqual(
+                completed[0].findChild(QLabel, "chatActivityCount").text(),
+                "5/5",
+            )
+            self.assertTrue(
+                all(
+                    marker.text() == "✓"
+                    for marker in completed[0].findChildren(
+                        QLabel, "chatActivityStepMarker"
+                    )
+                )
             )
         finally:
             window.close()
@@ -5296,6 +5383,9 @@ class MaryCoreTest(unittest.TestCase):
         saved_hidden = window.app_preferences.value("chat/hidden_projects", "[]")
         saved_projects = window.app_preferences.value("chat/projects", "[]")
         try:
+            window.provider_combo.blockSignals(True)
+            window.provider_combo.setCurrentText("codex")
+            window.provider_combo.blockSignals(False)
             project = (self.root / "projetos" / "digitacao").resolve()
             project.mkdir(parents=True)
             window._select_project_scope(project)

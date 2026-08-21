@@ -739,6 +739,7 @@ class MarkdownMessageWidget(QWidget):
     def setMarkdown(self, markdown: str) -> None:  # noqa: N802 - Qt compatibility
         self._markdown = str(markdown or "")
         self._stream_browser = None
+        self.setMinimumHeight(0)
         while self._content_layout.count():
             item = self._content_layout.takeAt(0)
             widget = item.widget()
@@ -749,7 +750,7 @@ class MarkdownMessageWidget(QWidget):
         if not matches:
             self._stream_browser = self._create_markdown_browser(self._markdown)
             self._content_layout.addWidget(self._stream_browser)
-            self.updateGeometry()
+            self._sync_content_height()
             return
 
         cursor = 0
@@ -767,7 +768,7 @@ class MarkdownMessageWidget(QWidget):
             rendered |= self._add_markdown_segment(self._markdown[cursor:])
         if not rendered:
             self._add_markdown_segment("")
-        self.updateGeometry()
+        self._sync_content_height()
 
     def setStreamingMarkdown(self, markdown: str) -> None:  # noqa: N802
         """Update a live response without rebuilding its widget tree."""
@@ -786,14 +787,16 @@ class MarkdownMessageWidget(QWidget):
             )
             self._apply_native_markdown_style(self._stream_browser)
             self._resize_markdown_browser(self._stream_browser)
-        self.updateGeometry()
+        self._sync_content_height()
 
     def finishStreaming(self) -> None:  # noqa: N802
         """Promote completed fenced code to code cards after streaming ends."""
         if self._FENCE_RE.search(self._markdown):
             self.setMarkdown(self._markdown)
         else:
-            self.updateGeometry()
+            # Propagate the final document height without replacing the live
+            # browser, preserving selections and a stable streaming widget.
+            self._sync_content_height()
 
     def _create_markdown_browser(self, markdown: str) -> QTextBrowser:
         browser = QTextBrowser(self)
@@ -822,7 +825,18 @@ class MarkdownMessageWidget(QWidget):
         target = max(30, min(16_000_000, int(browser.document().size().height()) + 8))
         if browser.height() != target:
             browser.setFixedHeight(target)
-            self.updateGeometry()
+        self._sync_content_height()
+
+    def _sync_content_height(self) -> None:
+        """Propagate child document growth through the nested message layouts."""
+        self._content_layout.activate()
+        target = max(30, self._content_layout.sizeHint().height())
+        if self.minimumHeight() != target:
+            self.setMinimumHeight(target)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.updateGeometry()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         """Recalculate document heights after a responsive width change."""

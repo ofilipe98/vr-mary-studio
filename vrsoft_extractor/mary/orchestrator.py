@@ -370,6 +370,24 @@ class ChatOrchestrator:
                                 self.knowledge_router.summary(evidence_bundle),
                             )
                         )
+                    if use_vr:
+                        visible_plan = self._display_response_plan(
+                            text,
+                            evidence_bundle,
+                            response_intent,
+                            response_contract,
+                        )
+                        self._emit_orchestration_event(
+                            conversation_id,
+                            "response_plan_created",
+                            "Plano da resposta definido.",
+                            {
+                                "steps": visible_plan,
+                                # Intent, source scope and evidence focus are
+                                # already resolved before provider execution.
+                                "completed": min(3, len(visible_plan)),
+                            },
+                        )
                     # The VR button mounts the local knowledge and identity on
                     # the provider's main session.  The former proprietary
                     # planner/worker/supervisor graph is retained only behind a
@@ -1779,6 +1797,98 @@ class ChatOrchestrator:
             if content:
                 relevant.append(f"{role}: {content[:1500]}")
         return "\n".join(relevant)[-6000:]
+
+    @staticmethod
+    def _display_response_plan(
+        request: str,
+        evidence_bundle: EvidenceBundle | None,
+        intent: ResponseIntent | None,
+        contract: ResponseContract | None,
+    ) -> list[str]:
+        """Build a concise, user-visible plan from the actual routed request."""
+
+        def compact(value: str, limit: int = 86) -> str:
+            text = " ".join(str(value or "").split()).strip(" .")
+            if len(text) <= limit:
+                return text
+            return text[: max(1, limit - 1)].rstrip() + "…"
+
+        question = compact(strip_optional_vr_prefix(request), 78) or "a pergunta enviada"
+        steps = [f"Entender a solicitação: “{question}”."]
+
+        candidates = list(evidence_bundle.candidates) if evidence_bundle else []
+        source_labels: list[str] = []
+        source_names = {
+            "vrwiki": "VRWiki",
+            "endoo": "Endoo",
+            "movidesk": "KB",
+            "wiki": "Wiki",
+            "kb": "KB",
+            "schema": "Schema",
+        }
+        for candidate in candidates:
+            source = source_names.get(
+                str(candidate.source_origin or candidate.source).casefold(),
+                str(candidate.source_origin or candidate.source).upper(),
+            )
+            if source and source not in source_labels:
+                source_labels.append(source)
+        modules = list(evidence_bundle.selected_modules) if evidence_bundle else []
+        module_labels = {
+            "ADM_FIN_ESTOQUE": "ADM/Financeiro/Estoque",
+            "Fiscal": "Fiscal",
+            "PDV": "PDV",
+        }
+        source_scope = " e ".join(source_labels[:3]) or "a documentação local"
+        module_scope = " e ".join(module_labels.get(item, item) for item in modules[:3])
+        steps.append(
+            f"Cruzar {source_scope} nos módulos {module_scope}."
+            if module_scope
+            else f"Cruzar {source_scope} para a solicitação."
+        )
+
+        focus = next(
+            (
+                compact(candidate.heading, 76)
+                for candidate in candidates
+                if compact(candidate.heading)
+                and compact(candidate.heading).casefold()
+                != compact(candidate.title).casefold()
+            ),
+            "",
+        )
+        if not focus and candidates:
+            focus = compact(candidates[0].title, 76)
+        steps.append(
+            f"Validar a seção “{focus}”."
+            if focus
+            else "Confirmar o que a base local permite afirmar."
+        )
+
+        answer_type = (
+            evidence_bundle.profile.answer_type
+            if evidence_bundle is not None
+            else ""
+        )
+        response_step = {
+            "functional": "Explicar funcionamento, regras e efeito operacional.",
+            "process": "Organizar o procedimento em passos e pontos de conferência.",
+            "technical_schema": "Relacionar campos, tabelas e dependências técnicas.",
+            "hybrid": "Combinar funcionamento e procedimento em uma explicação prática.",
+        }.get(answer_type)
+        if not response_step:
+            response_step = (
+                "Organizar a resposta no formato solicitado."
+                if intent is None
+                else "Organizar a resposta para o objetivo e o público identificados."
+            )
+        steps.append(response_step)
+        steps.append(
+            "Redigir a resposta com os links das fontes selecionadas."
+            if contract is None or contract.requires_sources
+            else "Redigir uma resposta direta no nível de detalhe solicitado."
+        )
+        return steps
 
     def _enrich_prompt(
         self,

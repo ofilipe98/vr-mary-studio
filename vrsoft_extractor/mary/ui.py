@@ -1039,7 +1039,7 @@ QFrame#chatActivity {{
     background: transparent; border: 0;
 }}
 QFrame#chatActivityCompleted {{
-    background: #FAFAFB; border: 1px solid #E7E7EA; border-radius: 10px;
+    background: transparent; border: 0; border-radius: 0;
 }}
 QLabel#chatActivityDot {{
     color: {ACCESSIBLE_ORANGE}; font-size: 10px; padding: 0;
@@ -1047,29 +1047,27 @@ QLabel#chatActivityDot {{
 QLabel#chatActivityDot[activityState="done"] {{ color: #187A42; font-weight: 700; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #A1261D; font-weight: 700; }}
 QLabel#chatActivityText {{
-    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600; padding: 2px 0;
+    color: {TEXT_MUTED}; font-size: 12px; font-weight: 400; padding: 1px 0;
 }}
-QLabel#chatActivityCount {{ color: #71717A; font-size: 11px; padding: 2px 0; }}
-QProgressBar#chatActivityProgress {{
-    min-width: 58px; max-width: 58px; min-height: 4px; max-height: 4px;
-    background: #E4E4E7; border: 0; border-radius: 2px; text-align: center;
-}}
-QProgressBar#chatActivityProgress::chunk {{
-    background: {ACCESSIBLE_ORANGE}; border-radius: 2px;
-}}
-QProgressBar#chatActivityProgress[activityState="done"]::chunk {{
-    background: #159A66;
-}}
-QProgressBar#chatActivityProgress[activityState="error"]::chunk {{
-    background: #C24136;
-}}
+QLabel#chatActivityCount {{ color: #71717A; font-size: 11px; padding: 1px 0; }}
+QWidget#chatActivityProgress {{ background: transparent; border: 0; }}
 QFrame#chatActivitySteps {{ background: transparent; border: 0; }}
 QLabel#chatActivityStep {{
+    color: {TEXT_MUTED}; background: transparent; font-size: 12px;
+    font-weight: 400; padding: 1px 0;
+}}
+QLabel#chatActivityStepMarker {{
     color: {TEXT_MUTED}; background: transparent; font-size: 11px; padding: 1px 0;
 }}
+QLabel#chatActivityStep[stepState="done"] {{ color: #4B5563; }}
+QLabel#chatActivityStep[stepState="active"] {{ color: {BRAND_NAVY}; }}
+QLabel#chatActivityStep[stepState="error"] {{ color: #A1261D; }}
+QLabel#chatActivityStepMarker[stepState="done"] {{ color: #16845A; }}
+QLabel#chatActivityStepMarker[stepState="active"] {{ color: {BRAND_NAVY}; }}
+QLabel#chatActivityStepMarker[stepState="error"] {{ color: #A1261D; }}
 QToolButton#chatActivityToggle {{
-    min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px;
-    color: {TEXT_MUTED}; background: transparent; border: 0; border-radius: 6px;
+    min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px;
+    color: {TEXT_MUTED}; background: transparent; border: 0; border-radius: 5px;
     padding: 0;
 }}
 QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
@@ -1686,9 +1684,15 @@ QFrame#chatActivityCompleted, QFrame#chatActivitySteps {{
     background: transparent; color: {DARK_TEXT};
 }}
 QLabel#chatActivityStep {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityStep[stepState="done"] {{ color: #71717A; }}
+QLabel#chatActivityStep[stepState="active"] {{ color: {DARK_TEXT}; }}
+QLabel#chatActivityStep[stepState="error"] {{ color: #FFAAA3; }}
+QLabel#chatActivityStepMarker {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityStepMarker[stepState="done"] {{ color: {DARK_STATUS_GOOD}; }}
+QLabel#chatActivityStepMarker[stepState="active"] {{ color: {DARK_TEXT}; }}
+QLabel#chatActivityStepMarker[stepState="error"] {{ color: #FFAAA3; }}
 QLabel#chatActivityCount {{ color: #71717A; }}
-QFrame#chatActivityCompleted {{ background: #0D0D0E; border-color: #242428; }}
-QProgressBar#chatActivityProgress {{ background: #2A2A2E; }}
+QFrame#chatActivityCompleted {{ background: transparent; border: 0; }}
 QLabel#chatActivityDot[activityState="done"] {{ color: {DARK_STATUS_GOOD}; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #FFAAA3; }}
 QToolButton#chatActivityToggle {{ color: {DARK_MUTED}; background: transparent; }}
@@ -1891,6 +1895,79 @@ class ChatStatusLabel(QLabel):
         style.unpolish(self)
         style.polish(self)
         self.setVisible(bool(value.strip()) and value.strip() != "Pronto")
+
+
+class SegmentedActivityProgress(QWidget):
+    """Small T3-style progress lane with one segment per visible plan step."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("chatActivityProgress")
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFixedHeight(8)
+        self._segment_count = 1
+        self._completed_count = 0
+        self._failed = False
+        self._sync_width()
+
+    @property
+    def segment_count(self) -> int:
+        return self._segment_count
+
+    @property
+    def completed_count(self) -> int:
+        return self._completed_count
+
+    def set_progress(
+        self,
+        completed: int,
+        total: int,
+        *,
+        failed: bool = False,
+    ) -> None:
+        self._segment_count = max(1, int(total))
+        self._completed_count = max(0, min(int(completed), self._segment_count))
+        self._failed = bool(failed)
+        self._sync_width()
+        self.update()
+
+    def _sync_width(self) -> None:
+        # The reference uses compact 9-12 px strokes separated by a clear gap.
+        segment_width = 12 if self._segment_count <= 5 else 9
+        self.setFixedWidth(
+            self._segment_count * segment_width
+            + max(0, self._segment_count - 1) * 3
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        gap = 3.0
+        width = (
+            self.width() - gap * max(0, self._segment_count - 1)
+        ) / self._segment_count
+        dark = bool(
+            QApplication.instance()
+            and QApplication.instance().property("vr_theme") == "dark_orange"
+        )
+        pending = QColor("#303033" if dark else "#DDDDE2")
+        completed = QColor("#13A36B" if dark else "#16845A")
+        failed = QColor("#E06B63" if dark else "#C24136")
+        for index in range(self._segment_count):
+            if index < self._completed_count:
+                color = completed
+            elif self._failed and index == self._completed_count:
+                color = failed
+            else:
+                color = pending
+            painter.setBrush(color)
+            painter.drawRoundedRect(
+                QRectF(index * (width + gap), 2.0, width, 4.0),
+                2.0,
+                2.0,
+            )
 
 
 class ConversationActivityDelegate(QStyledItemDelegate):
@@ -2181,12 +2258,16 @@ class MainWindow(QMainWindow):
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
         self.chat_activity_dot: QLabel | None = None
-        self.chat_activity_progress: QProgressBar | None = None
+        self.chat_activity_progress: SegmentedActivityProgress | None = None
         self.chat_activity_count: QLabel | None = None
         self.chat_activity_toggle: QToolButton | None = None
         self.chat_activity_details: QFrame | None = None
         self.chat_activity_details_layout: QVBoxLayout | None = None
         self._chat_activity_steps: list[str] = []
+        self._chat_activity_plan_steps: list[str] = []
+        self._chat_activity_plan_labels: list[QLabel] = []
+        self._chat_activity_plan_markers: list[QLabel] = []
+        self._chat_activity_plan_completed = 0
         self.video_process: QProcess | None = None
         self._video_decoder = new_video_output_decoder()
         self.sync_running = False
@@ -6162,6 +6243,10 @@ class MainWindow(QMainWindow):
         self.chat_activity_details = None
         self.chat_activity_details_layout = None
         self._chat_activity_steps = []
+        self._chat_activity_plan_steps = []
+        self._chat_activity_plan_labels = []
+        self._chat_activity_plan_markers = []
+        self._chat_activity_plan_completed = 0
         if hasattr(self, "orchestration_trace"):
             self._reset_orchestration_trace()
 
@@ -6310,23 +6395,23 @@ class MainWindow(QMainWindow):
             activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             activity.setAccessibleName("Atividade em andamento")
             layout = QVBoxLayout(activity)
-            layout.setContentsMargins(9, 8, 9, 8)
-            layout.setSpacing(7)
+            layout.setContentsMargins(0, 3, 0, 3)
+            layout.setSpacing(5)
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
-            header.setSpacing(8)
+            header.setSpacing(7)
             toggle = QToolButton(objectName="chatActivityToggle")
-            toggle.setText("⌄")
+            toggle.setText("v")
             toggle.setCheckable(True)
             toggle.setAccessibleName("Exibir etapas da atividade")
             toggle.setToolTip("Exibir etapas da atividade")
             toggle.hide()
             header.addWidget(toggle, 0, Qt.AlignVCenter)
-            progress = QProgressBar(objectName="chatActivityProgress")
-            progress.setTextVisible(False)
-            progress.setRange(0, 0)
+            progress = SegmentedActivityProgress(activity)
+            progress.set_progress(0, 1)
             header.addWidget(progress, 0, Qt.AlignVCenter)
             dot = QLabel("●", objectName="chatActivityDot")
+            dot.setFont(QFont("Segoe UI Symbol"))
             dot.setAccessibleName("Em andamento")
             dot.setFixedWidth(8)
             header.addWidget(dot, 0, Qt.AlignVCenter)
@@ -6339,7 +6424,7 @@ class MainWindow(QMainWindow):
             layout.addLayout(header)
             details = QFrame(objectName="chatActivitySteps")
             details_layout = QVBoxLayout(details)
-            details_layout.setContentsMargins(17, 0, 0, 2)
+            details_layout.setContentsMargins(27, 0, 0, 2)
             details_layout.setSpacing(3)
             details.hide()
             layout.addWidget(details)
@@ -6360,12 +6445,21 @@ class MainWindow(QMainWindow):
             self.chat_activity_details = details
             self.chat_activity_details_layout = details_layout
             self._chat_activity_steps = []
+            self._chat_activity_plan_steps = []
+            self._chat_activity_plan_labels = []
+            self._chat_activity_plan_markers = []
+            self._chat_activity_plan_completed = 0
             self.message_layout.insertWidget(self.message_layout.count(), activity)
         elif self.chat_activity_label is not None:
-            previous = self.chat_activity_label.text().strip()
-            if previous and self._activity_category(previous) != self._activity_category(label):
-                self._append_chat_activity_step(previous)
-            self.chat_activity_label.setText(label)
+            if not self._chat_activity_plan_steps:
+                previous = self.chat_activity_label.text().strip()
+                if (
+                    previous
+                    and self._activity_category(previous)
+                    != self._activity_category(label)
+                ):
+                    self._append_chat_activity_step(previous)
+                self.chat_activity_label.setText(label)
             self.chat_activity_widget.show()
         if self.chat_activity_widget is not None:
             self.chat_activity_widget.updateGeometry()
@@ -6376,24 +6470,128 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _set_chat_activity_plan(
+        self,
+        steps: list[str],
+        *,
+        completed: int = 0,
+    ) -> None:
+        visible_steps = list(
+            dict.fromkeys(
+                " ".join(str(step or "").split())
+                for step in steps
+                if str(step or "").strip()
+            )
+        )
+        if not visible_steps:
+            return
+        self._show_chat_activity(visible_steps[0])
+        self._chat_activity_plan_steps = visible_steps
+        self._chat_activity_steps = list(visible_steps)
+        self._chat_activity_plan_labels = []
+        self._chat_activity_plan_markers = []
+        if self.chat_activity_details_layout is not None:
+            while self.chat_activity_details_layout.count():
+                item = self.chat_activity_details_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            for step_text in visible_steps:
+                row = QWidget(self.chat_activity_details)
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(5)
+                marker = QLabel("", objectName="chatActivityStepMarker")
+                marker.setFont(QFont("Segoe UI Symbol"))
+                marker.setFixedWidth(12)
+                marker.setAlignment(Qt.AlignCenter | Qt.AlignTop)
+                step = QLabel(step_text, objectName="chatActivityStep")
+                step.setWordWrap(True)
+                step.setAccessibleName(step_text)
+                row_layout.addWidget(marker, 0, Qt.AlignTop)
+                row_layout.addWidget(step, 1)
+                self.chat_activity_details_layout.addWidget(row)
+                self._chat_activity_plan_markers.append(marker)
+                self._chat_activity_plan_labels.append(step)
+        if self.chat_activity_toggle is not None:
+            self.chat_activity_toggle.show()
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.show()
+        self._update_chat_activity_plan_progress(completed)
+
+    def _update_chat_activity_plan_progress(
+        self,
+        completed: int,
+        *,
+        failed: bool = False,
+    ) -> None:
+        if not self._chat_activity_plan_steps:
+            return
+        total = len(self._chat_activity_plan_steps)
+        completed = max(0, min(int(completed), total))
+        self._chat_activity_plan_completed = completed
+        active_index = completed if completed < total else -1
+        for index, (step_text, marker_label, label) in enumerate(
+            zip(
+                self._chat_activity_plan_steps,
+                self._chat_activity_plan_markers,
+                self._chat_activity_plan_labels,
+            )
+        ):
+            if index < completed:
+                state, marker = "done", "✓"
+            elif failed and index == active_index:
+                state, marker = "error", "!"
+            elif index == active_index:
+                state, marker = "active", "›"
+            else:
+                state, marker = "pending", "○"
+            marker_label.setText(marker)
+            marker_label.setProperty("stepState", state)
+            marker_label.style().unpolish(marker_label)
+            marker_label.style().polish(marker_label)
+            label.setText(step_text)
+            label.setProperty("stepState", state)
+            label.style().unpolish(label)
+            label.style().polish(label)
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.set_progress(
+                completed,
+                total,
+                failed=failed,
+            )
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.setText(f"{completed}/{total}")
+        if self.chat_activity_label is not None and active_index >= 0:
+            self.chat_activity_label.setText(
+                self._chat_activity_plan_steps[active_index]
+            )
+
     @staticmethod
     def _activity_category(label: str) -> str:
         return re.split(r"[…\.·:]", str(label or ""), maxsplit=1)[0].strip().casefold()
 
     def _append_chat_activity_step(self, label: str) -> None:
+        if self._chat_activity_plan_steps:
+            return
         value = " ".join(str(label or "").split())
         if not value or value in self._chat_activity_steps:
             return
         self._chat_activity_steps.append(value)
         if self.chat_activity_details_layout is None:
             return
-        step = QLabel(f"✓  {value}", objectName="chatActivityStep")
+        step = QLabel(f"-  {value}", objectName="chatActivityStep")
         step.setWordWrap(True)
         self.chat_activity_details_layout.addWidget(step)
         if self.chat_activity_toggle is not None:
             self.chat_activity_toggle.show()
         if self.chat_activity_count is not None:
             self.chat_activity_count.setText(str(len(self._chat_activity_steps)))
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.set_progress(
+                len(self._chat_activity_steps),
+                len(self._chat_activity_steps) + 1,
+            )
 
     def _toggle_chat_activity_details(
         self,
@@ -6408,7 +6606,7 @@ class MainWindow(QMainWindow):
             details.setVisible(bool(expanded))
             details.updateGeometry()
         if toggle is not None:
-            toggle.setText("⌃" if expanded else "⌄")
+            toggle.setText("^" if expanded else "v")
             toggle.setToolTip(
                 "Recolher etapas da atividade" if expanded else "Exibir etapas da atividade"
             )
@@ -6417,8 +6615,16 @@ class MainWindow(QMainWindow):
         if self.chat_activity_widget is None:
             return
         activity = self.chat_activity_widget
-        if self.chat_activity_label is not None:
+        if self._chat_activity_plan_steps:
+            self._update_chat_activity_plan_progress(
+                self._chat_activity_plan_completed
+                if failed
+                else len(self._chat_activity_plan_steps),
+                failed=failed,
+            )
+        elif self.chat_activity_label is not None:
             self._append_chat_activity_step(self.chat_activity_label.text())
+        if self.chat_activity_label is not None:
             self.chat_activity_label.setText(
                 "Execução interrompida"
                 if failed
@@ -6430,16 +6636,19 @@ class MainWindow(QMainWindow):
             self.chat_activity_dot.style().unpolish(self.chat_activity_dot)
             self.chat_activity_dot.style().polish(self.chat_activity_dot)
         step_count = max(1, len(self._chat_activity_steps))
-        if self.chat_activity_progress is not None:
-            self.chat_activity_progress.setRange(0, step_count)
-            self.chat_activity_progress.setValue(step_count)
-            self.chat_activity_progress.setProperty(
-                "activityState", "error" if failed else "done"
+        if self.chat_activity_progress is not None and not self._chat_activity_plan_steps:
+            self.chat_activity_progress.set_progress(
+                step_count if not failed else max(0, step_count - 1),
+                step_count,
+                failed=failed,
             )
-            self.chat_activity_progress.style().unpolish(self.chat_activity_progress)
-            self.chat_activity_progress.style().polish(self.chat_activity_progress)
         if self.chat_activity_count is not None:
-            self.chat_activity_count.setText(f"{step_count}/{step_count}")
+            visible_completed = (
+                self._chat_activity_plan_completed
+                if self._chat_activity_plan_steps
+                else step_count if not failed else max(0, step_count - 1)
+            )
+            self.chat_activity_count.setText(f"{visible_completed}/{step_count}")
             self.chat_activity_count.show()
         if self.chat_activity_toggle is not None:
             self.chat_activity_toggle.setChecked(failed)
@@ -6458,6 +6667,10 @@ class MainWindow(QMainWindow):
         self.chat_activity_details = None
         self.chat_activity_details_layout = None
         self._chat_activity_steps = []
+        self._chat_activity_plan_steps = []
+        self._chat_activity_plan_labels = []
+        self._chat_activity_plan_markers = []
+        self._chat_activity_plan_completed = 0
 
     def _reset_assistant_stream(self) -> None:
         if hasattr(self, "_assistant_typing_timer"):
@@ -7706,6 +7919,13 @@ class MainWindow(QMainWindow):
             return
         if event.kind == "assistant_delta":
             self._queue_assistant_delta(event.text)
+            if self._chat_activity_plan_steps:
+                self._update_chat_activity_plan_progress(
+                    max(
+                        self._chat_activity_plan_completed,
+                        len(self._chat_activity_plan_steps) - 1,
+                    )
+                )
             final_agent = next(
                 (
                     item
@@ -7722,6 +7942,18 @@ class MainWindow(QMainWindow):
                     )
                     if self._trace_selected_agent == final_id:
                         self._render_selected_agent_chat()
+        elif event.kind == "response_plan_created":
+            plan_steps = [
+                str(item or "")
+                for item in event.payload.get("steps") or []
+                if str(item or "").strip()
+            ]
+            self._set_chat_activity_plan(
+                plan_steps,
+                completed=int(event.payload.get("completed") or 0),
+            )
+            if self.chat_activity_label is not None:
+                self.chat_status.setText(self.chat_activity_label.text())
         elif event.kind == "reasoning_delta":
             self._reasoning_summary += event.text
             summary = " ".join(self._reasoning_summary.split())
@@ -12103,20 +12335,22 @@ def apply_application_theme(app: QApplication, theme_id: str = "light") -> None:
 
 
 def _load_application_font() -> str:
-    # T3 Code defines DM Sans Variable as its global UI family.
-    candidates = [
-        ASSET_DIR / "dm-sans-variable.ttf",
-        Path(r"C:\Windows\Fonts\segoeui.ttf"),
-    ]
-    for candidate in candidates:
-        if not candidate.exists():
-            continue
-        font_id = QFontDatabase.addApplicationFont(str(candidate))
-        if font_id >= 0:
-            families = QFontDatabase.applicationFontFamilies(font_id)
-            if families:
-                return families[0]
-    return "Segoe UI"
+    # T3 Code's installed stylesheet uses the Windows system stack and resolves
+    # to Segoe UI here. Bundling DM Sans made glyph widths and vertical rhythm
+    # visibly different even when point sizes matched.
+    if sys.platform == "win32":
+        # Register the Windows files explicitly so headless screenshots and the
+        # packaged runtime resolve the same metrics as an interactive session.
+        for candidate in (
+            Path(r"C:\Windows\Fonts\segoeui.ttf"),
+            Path(r"C:\Windows\Fonts\segoeuib.ttf"),
+            Path(r"C:\Windows\Fonts\seguisym.ttf"),
+        ):
+            if candidate.exists():
+                QFontDatabase.addApplicationFont(str(candidate))
+        return "Segoe UI"
+    application = QApplication.instance()
+    return application.font().family() if application is not None else "sans-serif"
 
 
 if __name__ == "__main__":
