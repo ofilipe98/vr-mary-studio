@@ -5079,6 +5079,15 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(progress.completed_count, 3)
             self.assertEqual(window.chat_activity_count.text(), "3/5")
             self.assertEqual(window.chat_activity_label.text(), steps[3])
+            self.assertEqual(window.chat_activity_toggle.text(), "Tasks")
+            self.assertEqual(
+                len(window.message_container.findChildren(QFrame, "chatActivity")),
+                0,
+            )
+            self.assertEqual(
+                len(window.chat_task_host.findChildren(QFrame, "chatActivity")),
+                1,
+            )
             detail_text = " ".join(
                 label.text()
                 for label in window.chat_activity_details.findChildren(
@@ -5088,6 +5097,16 @@ class MaryCoreTest(unittest.TestCase):
             self.assertIn("bonificação", detail_text)
             self.assertIn("VRWiki", detail_text)
             self.assertNotIn("Interpretando intenção", detail_text)
+            window.chat_activity_toggle.click()
+            application.processEvents()
+            self.assertFalse(window.chat_activity_details.isHidden())
+            self.assertTrue(window.chat_activity_label.isHidden())
+            self.assertTrue(progress.isHidden())
+            self.assertFalse(window.chat_activity_expanded_count.isHidden())
+            window.chat_activity_toggle.click()
+            application.processEvents()
+            self.assertTrue(window.chat_activity_details.isHidden())
+            self.assertFalse(progress.isHidden())
 
             window._on_runtime_event(
                 RuntimeEvent(conversation_id, "assistant_delta", "Resposta final")
@@ -5096,7 +5115,7 @@ class MaryCoreTest(unittest.TestCase):
             window._on_runtime_event(RuntimeEvent(conversation_id, "turn_completed"))
             application.processEvents()
 
-            completed = window.message_container.findChildren(
+            completed = window.chat_task_host.findChildren(
                 QFrame, "chatActivityCompleted"
             )
             self.assertEqual(len(completed), 1)
@@ -5149,8 +5168,12 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(window.chat_activity_label.text(), "Executando uma ação…")
             self.assertNotIn("powershell", window.chat_activity_label.text().casefold())
             self.assertEqual(
-                len(window.message_container.findChildren(QFrame, "chatActivity")),
+                len(window.chat_task_host.findChildren(QFrame, "chatActivity")),
                 1,
+            )
+            self.assertEqual(
+                len(window.message_container.findChildren(QFrame, "chatActivity")),
+                0,
             )
 
             window._on_runtime_event(
@@ -5186,7 +5209,7 @@ class MaryCoreTest(unittest.TestCase):
             application.processEvents()
             self.assertIs(window.chat_activity_widget, first_activity)
             self.assertEqual(
-                len(window.message_container.findChildren(QFrame, "chatActivity")),
+                len(window.chat_task_host.findChildren(QFrame, "chatActivity")),
                 1,
             )
             self.assertIsNotNone(window.assistant_widget)
@@ -5204,8 +5227,8 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(window.chat_activity_label.text(), "Preparando a resposta…")
             window._on_runtime_event(RuntimeEvent(conversation_id, "turn_completed"))
             application.processEvents()
-            self.assertIsNone(window.chat_activity_widget)
-            completed = window.message_container.findChildren(
+            self.assertIs(window.chat_activity_widget, first_activity)
+            completed = window.chat_task_host.findChildren(
                 QFrame, "chatActivityCompleted"
             )
             self.assertEqual(len(completed), 1)
@@ -5229,6 +5252,17 @@ class MaryCoreTest(unittest.TestCase):
             )
             self.assertIn("Trabalhando", completed_steps)
             self.assertNotIn(raw_command, completed_steps)
+            close = completed[0].findChild(QToolButton, "chatActivityClose")
+            close.click()
+            application.processEvents()
+            self.assertIsNone(window.chat_activity_widget)
+            self.assertTrue(window.chat_task_host.isHidden())
+            window._show_chat_activity("Não deve reabrir nesta execução")
+            self.assertIsNone(window.chat_activity_widget)
+            window._begin_chat_activity_turn()
+            window._show_chat_activity("Nova execução")
+            self.assertIsNotNone(window.chat_activity_widget)
+            self.assertFalse(window.chat_task_host.isHidden())
         finally:
             window.close()
 

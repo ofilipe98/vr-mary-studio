@@ -1,3 +1,3 @@
 """VRSoft/Endoo authenticated video extractor."""
 
-__version__ = "0.3.16b2"
+__version__ = "0.3.17.dev0"
