@@ -158,14 +158,19 @@ try {
         $ChecksumPath = Join-Path $ReleaseRoot "SHA256SUMS.txt"
         $ChecksumLine = "$ArchiveHash  $([IO.Path]::GetFileName($PortableArchive))"
         $ExistingChecksums = if (Test-Path -LiteralPath $ChecksumPath) {
-            @(Get-Content -LiteralPath $ChecksumPath | Where-Object {
+            $ChecksumContent = Get-Content -LiteralPath $ChecksumPath -Raw
+            @([regex]::Matches(
+                $ChecksumContent,
+                '(?i)[0-9a-f]{64}\s{2}\S+?\.zip'
+            ) | ForEach-Object { $_.Value } | Where-Object {
                 $_ -and $_ -notmatch "\s+$([regex]::Escape([IO.Path]::GetFileName($PortableArchive)))$"
             })
         }
         else {
             @()
         }
-        @($ExistingChecksums + $ChecksumLine) | Set-Content -LiteralPath $ChecksumPath -Encoding ASCII
+        @(@($ExistingChecksums) + @($ChecksumLine)) |
+            Set-Content -LiteralPath $ChecksumPath -Encoding ASCII
         Write-Output $PortableArchive
         Write-Output "SHA256: $ArchiveHash"
     }

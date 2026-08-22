@@ -2009,6 +2009,18 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
 
     assert completed.wait(5)
     assert any(event.kind == "knowledge_routed" for event in events)
+    response_plans = [
+        event for event in events if event.kind == "response_plan_created"
+    ]
+    assert len(response_plans) == 1
+    assert response_plans[0].payload["completed"] == 3
+    assert len(response_plans[0].payload["steps"]) == 5
+    assert "função 102" in response_plans[0].payload["steps"][0].casefold()
+    assert any("PDV" in step for step in response_plans[0].payload["steps"])
+    assert not any(
+        "interpretando intenção" in step.casefold()
+        for step in response_plans[0].payload["steps"]
+    )
     assistant = database.messages(conversation_id)[-1]
     with database.connect() as connection:
         citations = connection.execute(

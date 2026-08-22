@@ -11,6 +11,7 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any, Callable
 
 from PySide6.QtCore import (
@@ -23,6 +24,7 @@ from PySide6.QtCore import (
     QRunnable,
     QSettings,
     QSize,
+    QSortFilterProxyModel,
     Qt,
     QThreadPool,
     QTimer,
@@ -52,6 +54,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFileSystemModel,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -79,11 +82,17 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QToolButton,
+    QTreeView,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+except ImportError:  # pragma: no cover - friendly fallback for minimal Qt installs
+    QWebEngineView = None
 
 from ..endoo_client import EndooAuthenticationRequired
 from ..settings import ConfigError
@@ -291,8 +300,6 @@ STATUS_LABELS = {
 }
 CONVERSATION_RUNNING_ROLE = int(Qt.UserRole) + 1
 SLASH_COMMANDS = (
-    ("plan", "Ativar ou alternar o modo Plan"),
-    ("build", "Ativar o modo Build"),
     ("provider", "Escolher o provedor desta conversa"),
     ("model", "Escolher o modelo desta conversa"),
     ("reasoning", "Escolher o n\u00edvel de esfor\u00e7o"),
@@ -497,6 +504,37 @@ QPushButton#chatSurfaceCard {{
 }}
 QPushButton#chatSurfaceCard:hover, QPushButton#chatSurfaceCard:focus {{
     background: #F2F2F5; border-color: #BDBDC7;
+}}
+QToolButton#chatSurfaceBack, QToolButton#surfaceBrowserNav {{
+    min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
+    background: transparent; border: 0; border-radius: 7px;
+}}
+QToolButton#chatSurfaceBack:hover, QToolButton#surfaceBrowserNav:hover {{
+    background: #EEEEF3;
+}}
+QLineEdit#surfaceBrowserAddress, QLineEdit#surfaceTerminalInput,
+QLineEdit#surfaceFilesSearch {{
+    min-height: 34px; background: #F6F6F8; border: 1px solid #E1E1E6;
+    border-radius: 8px; padding: 0 9px;
+}}
+QLineEdit#surfaceBrowserAddress:focus, QLineEdit#surfaceTerminalInput:focus,
+QLineEdit#surfaceFilesSearch:focus {{ border-color: {ACCESSIBLE_ORANGE}; }}
+QWidget#surfaceBrowserPage, QWidget#surfaceTerminalPage,
+QWidget#surfaceFilesPage {{ background: transparent; }}
+QLabel#surfaceEmptyIcon {{ color: {TEXT_MUTED}; font-size: 28px; }}
+QLabel#surfaceEmptyTitle {{ color: {BRAND_NAVY}; font-size: 17px; font-weight: 700; }}
+QLabel#surfaceEmptyText {{ color: {TEXT_MUTED}; }}
+QPlainTextEdit#surfaceTerminalOutput, QPlainTextEdit#surfaceFilePreview {{
+    background: #FAFAFB; border: 1px solid #E1E1E6; border-radius: 8px;
+    color: {BRAND_NAVY}; font-family: "Consolas"; font-size: 12px;
+    padding: 8px;
+}}
+QTreeView#surfaceFileTree {{
+    background: transparent; border: 0; outline: 0;
+}}
+QTreeView#surfaceFileTree::item {{ min-height: 25px; padding: 2px 4px; }}
+QTreeView#surfaceFileTree::item:selected {{
+    background: #E8EEF5; color: {BRAND_NAVY}; border-radius: 5px;
 }}
 QLabel#chatStatus {{
     min-height: 24px; max-height: 24px; border-radius: 12px;
@@ -995,11 +1033,12 @@ QToolButton#archivedDeleteButton {{
 QToolButton#archivedDeleteButton:hover,
 QToolButton#archivedDeleteButton:focus {{ background: #EEEEF2; }}
 QFrame#userMessage {{
-    background: #FFF0E4; border: 0; border-radius: 18px;
+    background: #F1F1F3; border: 1px solid #E3E3E7; border-radius: 16px;
 }}
 QFrame#assistantMessage {{ background: transparent; border: 0; }}
+QWidget#chatTaskHost {{ background: transparent; border: 0; }}
 QFrame#chatActivity, QFrame#chatActivityCompleted {{
-    background: transparent; border: 0;
+    background: #FAFAFB; border: 1px solid #E4E4E7; border-radius: 14px;
 }}
 QLabel#chatActivityDot {{
     color: {ACCESSIBLE_ORANGE}; font-size: 10px; padding: 0;
@@ -1007,18 +1046,42 @@ QLabel#chatActivityDot {{
 QLabel#chatActivityDot[activityState="done"] {{ color: #187A42; font-weight: 700; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #A1261D; font-weight: 700; }}
 QLabel#chatActivityText {{
-    color: {TEXT_MUTED}; font-size: 12px; font-weight: 600; padding: 3px 0;
+    color: {BRAND_NAVY}; font-size: 12px; font-weight: 600; padding: 1px 0;
 }}
+QLabel#chatActivityCount, QLabel#chatActivityExpandedCount {{
+    color: #71717A; font-size: 11px; font-weight: 400; padding: 1px 0;
+}}
+QWidget#chatActivityProgress {{ background: transparent; border: 0; }}
 QFrame#chatActivitySteps {{ background: transparent; border: 0; }}
 QLabel#chatActivityStep {{
+    color: {TEXT_MUTED}; background: transparent; font-size: 12px;
+    font-weight: 400; padding: 1px 0;
+}}
+QLabel#chatActivityStepMarker {{
     color: {TEXT_MUTED}; background: transparent; font-size: 11px; padding: 1px 0;
 }}
+QLabel#chatActivityStepMeta {{
+    color: #8A8A91; background: transparent; font-size: 10px; padding: 1px 0;
+}}
+QLabel#chatActivityStep[stepState="done"] {{ color: #71717A; }}
+QLabel#chatActivityStep[stepState="active"] {{ color: {BRAND_NAVY}; }}
+QLabel#chatActivityStep[stepState="error"] {{ color: #A1261D; }}
+QLabel#chatActivityStepMarker[stepState="done"] {{ color: #16845A; }}
+QLabel#chatActivityStepMarker[stepState="active"] {{ color: #3B82F6; }}
+QLabel#chatActivityStepMarker[stepState="error"] {{ color: #A1261D; }}
 QToolButton#chatActivityToggle {{
-    min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px;
-    color: {TEXT_MUTED}; background: transparent; border: 0; border-radius: 6px;
-    padding: 0;
+    min-height: 24px; color: {BRAND_NAVY}; background: transparent; border: 0;
+    border-radius: 6px; padding: 1px 4px; font-size: 12px; font-weight: 600;
 }}
 QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
+    color: {BRAND_NAVY}; background: #EEEEF2;
+}}
+QToolButton#chatActivityClose {{
+    min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px;
+    color: #8A8A91; background: transparent; border: 0; border-radius: 6px;
+    padding: 0; font-size: 15px;
+}}
+QToolButton#chatActivityClose:hover, QToolButton#chatActivityClose:focus {{
     color: {BRAND_NAVY}; background: #EEEEF2;
 }}
 QLabel#messageRole {{
@@ -1334,6 +1397,27 @@ QPushButton#chatSurfaceCard {{
 QPushButton#chatSurfaceCard:hover, QPushButton#chatSurfaceCard:focus {{
     background: #18181B; border-color: #3F3F46;
 }}
+QToolButton#chatSurfaceBack, QToolButton#surfaceBrowserNav {{
+    color: {DARK_MUTED}; background: transparent;
+}}
+QToolButton#chatSurfaceBack:hover, QToolButton#surfaceBrowserNav:hover {{
+    background: #27272A; color: {DARK_TEXT};
+}}
+QLineEdit#surfaceBrowserAddress, QLineEdit#surfaceTerminalInput,
+QLineEdit#surfaceFilesSearch {{
+    background: #111113; border-color: #27272A; color: {DARK_TEXT};
+}}
+QLineEdit#surfaceBrowserAddress:focus, QLineEdit#surfaceTerminalInput:focus,
+QLineEdit#surfaceFilesSearch:focus {{ border-color: #52525B; }}
+QLabel#surfaceEmptyIcon, QLabel#surfaceEmptyText {{ color: {DARK_MUTED}; }}
+QLabel#surfaceEmptyTitle {{ color: {DARK_TEXT}; }}
+QPlainTextEdit#surfaceTerminalOutput, QPlainTextEdit#surfaceFilePreview {{
+    background: #09090B; border-color: #27272A; color: {DARK_TEXT};
+}}
+QTreeView#surfaceFileTree {{ background: transparent; color: {DARK_TEXT}; }}
+QTreeView#surfaceFileTree::item:selected {{
+    background: #082F49; color: {DARK_TEXT};
+}}
 QLabel#chatStatus[statusKind="info"] {{
     background: #2B2724; color: {DARK_MUTED};
 }}
@@ -1605,16 +1689,32 @@ QFrame#archivedConversationRow {{ background: transparent; border: 0; }}
 QToolButton#archivedDeleteButton {{ background: transparent; border: 0; }}
 QToolButton#archivedDeleteButton:hover,
 QToolButton#archivedDeleteButton:focus {{ background: #302C29; }}
-QFrame#userMessage {{ background: #171719; }}
-QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivity,
-QFrame#chatActivityCompleted, QFrame#chatActivitySteps {{
+QFrame#userMessage {{ background: #1B1B1E; border-color: #2A2A2E; }}
+QTextBrowser#messageBody, QFrame#assistantMessage, QFrame#chatActivitySteps {{
     background: transparent; color: {DARK_TEXT};
 }}
+QFrame#chatActivity, QFrame#chatActivityCompleted {{
+    background: #111112; border: 1px solid #262629;
+}}
 QLabel#chatActivityStep {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityStep[stepState="done"] {{ color: #71717A; }}
+QLabel#chatActivityStep[stepState="active"] {{ color: {DARK_TEXT}; }}
+QLabel#chatActivityStep[stepState="error"] {{ color: #FFAAA3; }}
+QLabel#chatActivityStepMeta {{ color: #66666D; }}
+QLabel#chatActivityStepMarker {{ color: {DARK_MUTED}; }}
+QLabel#chatActivityStepMarker[stepState="done"] {{ color: {DARK_STATUS_GOOD}; }}
+QLabel#chatActivityStepMarker[stepState="active"] {{ color: #4C7DFF; }}
+QLabel#chatActivityStepMarker[stepState="error"] {{ color: #FFAAA3; }}
+QLabel#chatActivityCount, QLabel#chatActivityExpandedCount {{ color: #71717A; }}
+QLabel#chatActivityText {{ color: {DARK_TEXT}; }}
 QLabel#chatActivityDot[activityState="done"] {{ color: {DARK_STATUS_GOOD}; }}
 QLabel#chatActivityDot[activityState="error"] {{ color: #FFAAA3; }}
-QToolButton#chatActivityToggle {{ color: {DARK_MUTED}; background: transparent; }}
+QToolButton#chatActivityToggle {{ color: {DARK_TEXT}; background: transparent; }}
 QToolButton#chatActivityToggle:hover, QToolButton#chatActivityToggle:focus {{
+    color: {DARK_TEXT}; background: #302C29;
+}}
+QToolButton#chatActivityClose {{ color: #71717A; background: transparent; }}
+QToolButton#chatActivityClose:hover, QToolButton#chatActivityClose:focus {{
     color: {DARK_TEXT}; background: #302C29;
 }}
 QWidget#messageBodyHost {{ background: transparent; }}
@@ -1813,6 +1913,82 @@ class ChatStatusLabel(QLabel):
         style.unpolish(self)
         style.polish(self)
         self.setVisible(bool(value.strip()) and value.strip() != "Pronto")
+
+
+class SegmentedActivityProgress(QWidget):
+    """Small T3-style progress lane with one segment per visible plan step."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("chatActivityProgress")
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFixedHeight(8)
+        self._segment_count = 1
+        self._completed_count = 0
+        self._failed = False
+        self._sync_width()
+
+    @property
+    def segment_count(self) -> int:
+        return self._segment_count
+
+    @property
+    def completed_count(self) -> int:
+        return self._completed_count
+
+    def set_progress(
+        self,
+        completed: int,
+        total: int,
+        *,
+        failed: bool = False,
+    ) -> None:
+        self._segment_count = max(1, int(total))
+        self._completed_count = max(0, min(int(completed), self._segment_count))
+        self._failed = bool(failed)
+        self._sync_width()
+        self.update()
+
+    def _sync_width(self) -> None:
+        # The reference uses compact 9-12 px strokes separated by a clear gap.
+        segment_width = 12 if self._segment_count <= 5 else 9
+        self.setFixedWidth(
+            self._segment_count * segment_width
+            + max(0, self._segment_count - 1) * 3
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        gap = 3.0
+        width = (
+            self.width() - gap * max(0, self._segment_count - 1)
+        ) / self._segment_count
+        dark = bool(
+            QApplication.instance()
+            and QApplication.instance().property("vr_theme") == "dark_orange"
+        )
+        pending = QColor("#303033" if dark else "#DDDDE2")
+        completed = QColor("#13A36B" if dark else "#16845A")
+        active = QColor("#4C7DFF" if dark else "#3B82F6")
+        failed = QColor("#E06B63" if dark else "#C24136")
+        for index in range(self._segment_count):
+            if index < self._completed_count:
+                color = completed
+            elif self._failed and index == self._completed_count:
+                color = failed
+            elif index == self._completed_count:
+                color = active
+            else:
+                color = pending
+            painter.setBrush(color)
+            painter.drawRoundedRect(
+                QRectF(index * (width + gap), 2.0, width, 4.0),
+                2.0,
+                2.0,
+            )
 
 
 class ConversationActivityDelegate(QStyledItemDelegate):
@@ -2103,10 +2279,23 @@ class MainWindow(QMainWindow):
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
         self.chat_activity_dot: QLabel | None = None
+        self.chat_activity_progress: SegmentedActivityProgress | None = None
+        self.chat_activity_count: QLabel | None = None
+        self.chat_activity_expanded_count: QLabel | None = None
         self.chat_activity_toggle: QToolButton | None = None
+        self.chat_activity_close: QToolButton | None = None
         self.chat_activity_details: QFrame | None = None
         self.chat_activity_details_layout: QVBoxLayout | None = None
         self._chat_activity_steps: list[str] = []
+        self._chat_activity_plan_steps: list[str] = []
+        self._chat_activity_plan_labels: list[QLabel] = []
+        self._chat_activity_plan_markers: list[QLabel] = []
+        self._chat_activity_plan_meta_labels: list[QLabel] = []
+        self._chat_activity_plan_started_at: list[float | None] = []
+        self._chat_activity_plan_elapsed: list[float | None] = []
+        self._chat_activity_plan_completed = 0
+        self._chat_activity_dismissed = False
+        self._chat_activity_finished = False
         self.video_process: QProcess | None = None
         self._video_decoder = new_video_output_decoder()
         self.sync_running = False
@@ -2246,7 +2435,6 @@ class MainWindow(QMainWindow):
             self.model_combo,
             self.effort_combo,
             self.approval_combo,
-            self.options_button,
             self.vr_flow_button,
             self.composer,
             self.send_button,
@@ -2946,9 +3134,7 @@ class MainWindow(QMainWindow):
         self.mode_combo = RoundedComboBox()
         self.mode_combo.setAccessibleName("Modo de colaboração")
         self.mode_combo.addItem("Build", "default")
-        self.mode_combo.addItem("Plan", "plan")
         self.mode_combo.currentIndexChanged.connect(self._chat_option_changed)
-        self.mode_combo.currentIndexChanged.connect(self._update_tools_label)
         self.message_scroll = QScrollArea(objectName="messageScroll")
         self.message_scroll.setWidgetResizable(True)
         self.message_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -2971,6 +3157,18 @@ class MainWindow(QMainWindow):
         message_outer_layout.addStretch(1)
         self.message_scroll.setWidget(self.message_container)
         center_layout.addWidget(self.message_scroll, 1)
+        self.chat_task_host = QWidget(objectName="chatTaskHost")
+        self.chat_task_host.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Preferred,
+        )
+        self.chat_task_layout = QHBoxLayout(self.chat_task_host)
+        self.chat_task_layout.setContentsMargins(0, 0, 0, 0)
+        self.chat_task_layout.setSpacing(0)
+        self.chat_task_layout.addStretch(1)
+        self.chat_task_layout.addStretch(1)
+        self.chat_task_host.hide()
+        center_layout.addWidget(self.chat_task_host, 0)
         self.orchestration_trace = QFrame(objectName="orchestrationTrace")
         self.orchestration_trace.setMinimumWidth(340)
         self.orchestration_trace.setMaximumWidth(520)
@@ -3297,18 +3495,14 @@ class MainWindow(QMainWindow):
             self.open_orchestration_settings
         )
         self.vr_flow_button.optionsRequested.connect(self._show_vr_mode_panel)
-        self.options_button = QPushButton("Build")
+        # Compatibility handle for older integrations. Build is now the only
+        # collaboration mode and covers planning plus execution in one turn.
+        self.options_button = QPushButton("Build", composer_card)
         self.options_button.setObjectName("composerInlineControl")
-        self.options_button.setFocusPolicy(Qt.TabFocus)
-        self.options_button.setMinimumWidth(58)
-        self.options_button.setMaximumWidth(90)
+        self.options_button.setFocusPolicy(Qt.NoFocus)
         self.options_button.setIconSize(QSize(16, 16))
-        self.options_button.setAccessibleName("Alternar entre os modos Build e Plan")
-        self.options_button.clicked.connect(self.toggle_collaboration_mode)
-        separator = self._composer_separator()
-        self.composer_separators.append(separator)
-        controls.addWidget(separator)
-        controls.addWidget(self.options_button)
+        self.options_button.setAccessibleName("Modo Build")
+        self.options_button.hide()
         controls.addStretch(1)
         controls.addWidget(self.chat_status)
         controls.addWidget(self.vr_flow_button)
@@ -3393,10 +3587,18 @@ class MainWindow(QMainWindow):
         surface_header = QFrame(objectName="chatSurfaceHeader")
         surface_header.setFixedHeight(48)
         surface_header_layout = QHBoxLayout(surface_header)
-        surface_header_layout.setContentsMargins(14, 0, 10, 0)
-        surface_header_layout.addWidget(
-            QLabel("Superfícies", objectName="chatSurfaceTitle")
+        surface_header_layout.setContentsMargins(10, 0, 10, 0)
+        self.surface_back_button = QToolButton(objectName="chatSurfaceBack")
+        self.surface_back_button.setText("‹")
+        self.surface_back_button.setAccessibleName("Voltar às superfícies")
+        self.surface_back_button.setToolTip("Voltar às superfícies")
+        self.surface_back_button.clicked.connect(self._show_surface_home)
+        self.surface_back_button.hide()
+        surface_header_layout.addWidget(self.surface_back_button)
+        self.surface_title = QLabel(
+            "Superfícies", objectName="chatSurfaceTitle"
         )
+        surface_header_layout.addWidget(self.surface_title)
         surface_header_layout.addStretch(1)
         surface_close = QToolButton(objectName="traceSidebarToggle")
         surface_close.setText("×")
@@ -3408,7 +3610,8 @@ class MainWindow(QMainWindow):
         surface_header_layout.addWidget(surface_close)
         surface_layout.addWidget(surface_header)
 
-        surface_body = QWidget()
+        self.chat_surface_stack = QStackedWidget()
+        surface_body = QWidget(objectName="surfaceHomePage")
         surface_body_layout = QVBoxLayout(surface_body)
         surface_body_layout.setContentsMargins(18, 22, 18, 18)
         surface_body_layout.setSpacing(14)
@@ -3424,21 +3627,155 @@ class MainWindow(QMainWindow):
         surface_grid.setVerticalSpacing(10)
         self.chat_surface_buttons: dict[str, QPushButton] = {}
         surface_specs = (
-            ("browser", "Browser\nAbrir navegador", self._open_surface_browser),
-            ("terminal", "Terminal\nAbrir no projeto", self._open_surface_terminal),
-            ("files", "Files\nExplorar arquivos", self._open_surface_files),
-            ("agents", "Agents\nVer subagentes", self._open_surface_agents),
+            ("browser", "Browser\nURL ou localhost"),
+            ("terminal", "Terminal\nPowerShell local"),
+            ("files", "Files\nExplorar arquivos"),
+            ("agents", "Agents\nVer subagentes"),
         )
-        for index, (key, label, callback) in enumerate(surface_specs):
+        for index, (key, label) in enumerate(surface_specs):
             button = QPushButton(label, objectName="chatSurfaceCard")
             button.setProperty("surfaceKey", key)
             button.setAccessibleName(label.replace("\n", ". "))
-            button.clicked.connect(callback)
+            button.setIcon(QIcon(str(ASSET_DIR / f"surface-{key}.svg")))
+            button.setIconSize(QSize(24, 24))
+            button.clicked.connect(
+                lambda _checked=False, selected=key: self._activate_surface(
+                    selected
+                )
+            )
             surface_grid.addWidget(button, index // 2, index % 2)
             self.chat_surface_buttons[key] = button
         surface_body_layout.addLayout(surface_grid)
         surface_body_layout.addStretch(1)
-        surface_layout.addWidget(surface_body, 1)
+        self.chat_surface_stack.addWidget(surface_body)
+        self.surface_home_page = surface_body
+
+        browser_page = QWidget(objectName="surfaceBrowserPage")
+        browser_layout = QVBoxLayout(browser_page)
+        browser_layout.setContentsMargins(10, 10, 10, 10)
+        browser_layout.setSpacing(8)
+        browser_toolbar = QHBoxLayout()
+        browser_toolbar.setContentsMargins(0, 0, 0, 0)
+        browser_toolbar.setSpacing(4)
+        self.surface_browser_back = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_back.setText("←")
+        self.surface_browser_back.setAccessibleName("Voltar no navegador")
+        self.surface_browser_back.clicked.connect(self._surface_browser_go_back)
+        browser_toolbar.addWidget(self.surface_browser_back)
+        self.surface_browser_forward = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_forward.setText("→")
+        self.surface_browser_forward.setAccessibleName("Avançar no navegador")
+        self.surface_browser_forward.clicked.connect(self._surface_browser_go_forward)
+        browser_toolbar.addWidget(self.surface_browser_forward)
+        self.surface_browser_reload = QToolButton(objectName="surfaceBrowserNav")
+        self.surface_browser_reload.setText("↻")
+        self.surface_browser_reload.setAccessibleName("Recarregar navegador")
+        self.surface_browser_reload.clicked.connect(self._surface_browser_reload_page)
+        browser_toolbar.addWidget(self.surface_browser_reload)
+        self.surface_browser_address = QLineEdit(
+            objectName="surfaceBrowserAddress"
+        )
+        self.surface_browser_address.setPlaceholderText("Pesquisar ou inserir URL")
+        self.surface_browser_address.setAccessibleName("Endereço do navegador")
+        self.surface_browser_address.returnPressed.connect(
+            self._surface_browser_navigate
+        )
+        browser_toolbar.addWidget(self.surface_browser_address, 1)
+        browser_layout.addLayout(browser_toolbar)
+        self.surface_browser_content = QStackedWidget()
+        browser_empty = QWidget()
+        browser_empty_layout = QVBoxLayout(browser_empty)
+        browser_empty_layout.addStretch(1)
+        browser_empty_icon = QLabel(objectName="surfaceEmptyIcon")
+        browser_empty_icon.setPixmap(
+            QIcon(str(ASSET_DIR / "surface-browser.svg")).pixmap(42, 42)
+        )
+        browser_empty_icon.setAlignment(Qt.AlignCenter)
+        browser_empty_layout.addWidget(browser_empty_icon)
+        browser_empty_title = QLabel("Nenhuma visualização", objectName="surfaceEmptyTitle")
+        browser_empty_title.setAlignment(Qt.AlignCenter)
+        browser_empty_layout.addWidget(browser_empty_title)
+        browser_empty_text = QLabel(
+            "Digite uma URL acima. Servidores localhost também podem ser abertos aqui.",
+            objectName="surfaceEmptyText",
+        )
+        browser_empty_text.setAlignment(Qt.AlignCenter)
+        browser_empty_text.setWordWrap(True)
+        browser_empty_layout.addWidget(browser_empty_text)
+        browser_empty_layout.addStretch(2)
+        self.surface_browser_content.addWidget(browser_empty)
+        self.surface_browser_empty = browser_empty
+        self.surface_browser_view = None
+        browser_layout.addWidget(self.surface_browser_content, 1)
+        self.chat_surface_stack.addWidget(browser_page)
+        self.surface_browser_page = browser_page
+
+        terminal_page = QWidget(objectName="surfaceTerminalPage")
+        terminal_layout = QVBoxLayout(terminal_page)
+        terminal_layout.setContentsMargins(10, 10, 10, 10)
+        terminal_layout.setSpacing(8)
+        self.surface_terminal_output = QPlainTextEdit(
+            objectName="surfaceTerminalOutput"
+        )
+        self.surface_terminal_output.setReadOnly(True)
+        self.surface_terminal_output.setAccessibleName("Saída do terminal")
+        terminal_layout.addWidget(self.surface_terminal_output, 1)
+        self.surface_terminal_input = QLineEdit(
+            objectName="surfaceTerminalInput"
+        )
+        self.surface_terminal_input.setPlaceholderText("Digite um comando PowerShell")
+        self.surface_terminal_input.setAccessibleName("Comando do terminal")
+        self.surface_terminal_input.returnPressed.connect(
+            self._surface_terminal_submit
+        )
+        terminal_layout.addWidget(self.surface_terminal_input)
+        self.surface_terminal_process = QProcess(self)
+        self.surface_terminal_process.setProcessChannelMode(QProcess.MergedChannels)
+        self.surface_terminal_process.readyReadStandardOutput.connect(
+            self._surface_terminal_read
+        )
+        self.surface_terminal_process.errorOccurred.connect(
+            self._surface_terminal_error
+        )
+        self.chat_surface_stack.addWidget(terminal_page)
+        self.surface_terminal_page = terminal_page
+
+        files_page = QWidget(objectName="surfaceFilesPage")
+        files_layout = QVBoxLayout(files_page)
+        files_layout.setContentsMargins(10, 10, 10, 10)
+        files_layout.setSpacing(8)
+        self.surface_files_search = QLineEdit(objectName="surfaceFilesSearch")
+        self.surface_files_search.setPlaceholderText("Pesquisar arquivos")
+        self.surface_files_search.setAccessibleName("Pesquisar arquivos")
+        self.surface_files_search.textChanged.connect(
+            self._surface_files_filter_changed
+        )
+        files_layout.addWidget(self.surface_files_search)
+        files_splitter = QSplitter(Qt.Vertical)
+        self.surface_file_tree = QTreeView(objectName="surfaceFileTree")
+        self.surface_file_tree.setHeaderHidden(True)
+        self.surface_file_tree.setAnimated(False)
+        self.surface_file_tree.setIndentation(14)
+        self.surface_file_tree.doubleClicked.connect(
+            self._surface_file_activated
+        )
+        files_splitter.addWidget(self.surface_file_tree)
+        self.surface_file_preview = QPlainTextEdit(
+            objectName="surfaceFilePreview"
+        )
+        self.surface_file_preview.setReadOnly(True)
+        self.surface_file_preview.setPlaceholderText(
+            "Clique duas vezes em um arquivo de texto para visualizar."
+        )
+        files_splitter.addWidget(self.surface_file_preview)
+        files_splitter.setSizes([460, 220])
+        files_layout.addWidget(files_splitter, 1)
+        self.surface_file_model = None
+        self.surface_file_proxy = None
+        self.chat_surface_stack.addWidget(files_page)
+        self.surface_files_page = files_page
+
+        surface_layout.addWidget(self.chat_surface_stack, 1)
         splitter.addWidget(surface)
         surface.hide()
         self.chat_splitter = splitter
@@ -4429,7 +4766,7 @@ class MainWindow(QMainWindow):
         self.provider_detail_labels: dict[str, QLabel] = {}
         self.provider_enabled_checks: dict[str, QCheckBox] = {}
         provider_descriptions = {
-            "codex": "Codex App Server local · modelos, tools, Plan e Build",
+            "codex": "Codex App Server local · modelos, tools e Build integrado",
             "claude": "Claude Code local · conversas e modelos Claude",
             "opencode": "OpenCode local · modelos e sessões via CLI",
         }
@@ -5725,7 +6062,7 @@ class MainWindow(QMainWindow):
             effort or self.settings.default_effort,
             self.tier_combo.currentData() or "",
             self.approval_combo.currentData() or "auto",
-            self.mode_combo.currentData() or "default",
+            "default",
             self.draft_dynamic_tools,
             self.draft_mcp_tools,
             self.draft_orchestration,
@@ -5840,6 +6177,10 @@ class MainWindow(QMainWindow):
         row = self.database.get_conversation(conversation_id)
         if not row:
             return
+        if str(row["collaboration_mode"] or "default") != "default":
+            self.database.update_conversation(
+                conversation_id, collaboration_mode="default"
+            )
         self.current_conversation = conversation_id
         self.draft_conversation = False
         if hasattr(self, "new_chat_button"):
@@ -5879,7 +6220,7 @@ class MainWindow(QMainWindow):
         self.provider_combo.blockSignals(False)
         for combo, value in (
             (self.approval_combo, row["approval_profile"]),
-            (self.mode_combo, row["collaboration_mode"]),
+            (self.mode_combo, "default"),
         ):
             combo.blockSignals(True)
             index = combo.findData(value)
@@ -5921,6 +6262,7 @@ class MainWindow(QMainWindow):
 
     def _clear_messages(self) -> None:
         self._reset_assistant_stream()
+        self._reset_chat_activity_state(remove_widget=True, dismissed=False)
         self._set_chat_landing(False)
         if hasattr(self, "context_usage_panel"):
             self.context_usage_panel.hide()
@@ -5933,13 +6275,6 @@ class MainWindow(QMainWindow):
         self._add_chat_empty_state()
         self.assistant_widget = None
         self.assistant_markdown = ""
-        self.chat_activity_widget = None
-        self.chat_activity_label = None
-        self.chat_activity_dot = None
-        self.chat_activity_toggle = None
-        self.chat_activity_details = None
-        self.chat_activity_details_layout = None
-        self._chat_activity_steps = []
         if hasattr(self, "orchestration_trace"):
             self._reset_orchestration_trace()
 
@@ -5993,7 +6328,7 @@ class MainWindow(QMainWindow):
         browser.anchorClicked.connect(open_safe_external_url)
         if role == "user":
             longest_line = max((len(line) for line in content.splitlines()), default=0)
-            browser.setMinimumWidth(min(520, max(180, longest_line * 7 + 28)))
+            browser.setMinimumWidth(min(492, max(152, longest_line * 7)))
         else:
             browser.setMinimumWidth(0)
         message_header = QHBoxLayout()
@@ -6081,119 +6416,433 @@ class MainWindow(QMainWindow):
 
     def _show_chat_activity(self, text: str) -> None:
         label = str(text or "Trabalhando…").strip()
+        if self._chat_activity_dismissed or self._chat_activity_finished:
+            return
         if self.chat_activity_widget is None:
             activity = QFrame(objectName="chatActivity")
-            activity.setMinimumWidth(240)
-            activity.setMaximumWidth(760)
-            activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            activity.setAccessibleName("Atividade em andamento")
+            activity.setMinimumWidth(360)
+            activity.setMaximumWidth(770)
+            activity.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            activity.setAccessibleName("Tasks da execução")
             layout = QVBoxLayout(activity)
-            layout.setContentsMargins(3, 3, 3, 3)
-            layout.setSpacing(5)
+            layout.setContentsMargins(10, 6, 8, 7)
+            layout.setSpacing(4)
             header = QHBoxLayout()
             header.setContentsMargins(0, 0, 0, 0)
-            header.setSpacing(7)
-            dot = QLabel("●", objectName="chatActivityDot")
-            dot.setAccessibleName("Em andamento")
-            header.addWidget(dot, 0, Qt.AlignTop)
-            self.chat_activity_label = QLabel(label, objectName="chatActivityText")
-            self.chat_activity_label.setWordWrap(True)
-            header.addWidget(self.chat_activity_label, 1)
+            header.setSpacing(6)
             toggle = QToolButton(objectName="chatActivityToggle")
-            toggle.setText("⌄")
+            toggle.setText("Tasks")
+            toggle.setIcon(QIcon(str(MODE_ICON_PATHS["plan"])))
+            toggle.setIconSize(QSize(14, 14))
+            toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             toggle.setCheckable(True)
-            toggle.setAccessibleName("Exibir etapas da atividade")
-            toggle.setToolTip("Exibir etapas da atividade")
-            toggle.hide()
-            header.addWidget(toggle, 0, Qt.AlignTop)
+            toggle.setAccessibleName("Expandir Tasks")
+            toggle.setToolTip("Expandir Tasks")
+            toggle.setEnabled(False)
+            header.addWidget(toggle, 0, Qt.AlignVCenter)
+            expanded_count = QLabel("", objectName="chatActivityExpandedCount")
+            expanded_count.hide()
+            header.addWidget(expanded_count, 0, Qt.AlignVCenter)
+            self.chat_activity_label = QLabel(label, objectName="chatActivityText")
+            self.chat_activity_label.setWordWrap(False)
+            self.chat_activity_label.setMinimumWidth(0)
+            self.chat_activity_label.setSizePolicy(
+                QSizePolicy.Ignored,
+                QSizePolicy.Preferred,
+            )
+            header.addWidget(self.chat_activity_label, 1)
+            count = QLabel("", objectName="chatActivityCount")
+            count.hide()
+            header.addWidget(count, 0, Qt.AlignVCenter)
+            progress = SegmentedActivityProgress(activity)
+            progress.set_progress(0, 1)
+            progress.hide()
+            header.addWidget(progress, 0, Qt.AlignVCenter)
+            close = QToolButton(objectName="chatActivityClose")
+            close.setText("×")
+            close.setAccessibleName("Fechar Tasks")
+            close.setToolTip("Fechar Tasks")
+            header.addWidget(close, 0, Qt.AlignVCenter)
             layout.addLayout(header)
             details = QFrame(objectName="chatActivitySteps")
             details_layout = QVBoxLayout(details)
-            details_layout.setContentsMargins(17, 0, 0, 2)
-            details_layout.setSpacing(3)
+            details_layout.setContentsMargins(5, 1, 7, 3)
+            details_layout.setSpacing(2)
             details.hide()
             layout.addWidget(details)
-            toggle.toggled.connect(self._toggle_chat_activity_details)
+            toggle.toggled.connect(
+                lambda expanded, panel=details, control=toggle,
+                current_label=self.chat_activity_label,
+                lane=progress, compact_count=count,
+                open_count=expanded_count, card=activity: (
+                    self._toggle_chat_activity_details(
+                        expanded,
+                        details=panel,
+                        toggle=control,
+                        label=current_label,
+                        progress=lane,
+                        count=compact_count,
+                        expanded_count=open_count,
+                        activity=card,
+                    )
+                )
+            )
+            close.clicked.connect(
+                lambda _checked=False, card=activity: self._dismiss_chat_activity(card)
+            )
             self.chat_activity_widget = activity
-            self.chat_activity_dot = dot
+            self.chat_activity_dot = None
+            self.chat_activity_progress = progress
+            self.chat_activity_count = count
+            self.chat_activity_expanded_count = expanded_count
             self.chat_activity_toggle = toggle
+            self.chat_activity_close = close
             self.chat_activity_details = details
             self.chat_activity_details_layout = details_layout
             self._chat_activity_steps = []
-            self.message_layout.insertWidget(
-                self.message_layout.count(),
-                activity,
-                0,
-                Qt.AlignLeft,
-            )
+            self._chat_activity_plan_steps = []
+            self._chat_activity_plan_labels = []
+            self._chat_activity_plan_markers = []
+            self._chat_activity_plan_meta_labels = []
+            self._chat_activity_plan_started_at = []
+            self._chat_activity_plan_elapsed = []
+            self._chat_activity_plan_completed = 0
+            self.chat_task_layout.insertWidget(1, activity, 100)
+            self.chat_task_host.show()
         elif self.chat_activity_label is not None:
-            previous = self.chat_activity_label.text().strip()
-            if previous and self._activity_category(previous) != self._activity_category(label):
-                self._append_chat_activity_step(previous)
-            self.chat_activity_label.setText(label)
+            if not self._chat_activity_plan_steps:
+                previous = self.chat_activity_label.text().strip()
+                if (
+                    previous
+                    and self._activity_category(previous)
+                    != self._activity_category(label)
+                ):
+                    self._append_chat_activity_step(previous)
+                self.chat_activity_label.setText(label)
             self.chat_activity_widget.show()
-        QTimer.singleShot(
-            0,
-            lambda: self.message_scroll.verticalScrollBar().setValue(
-                self.message_scroll.verticalScrollBar().maximum()
-            ),
+            self.chat_task_host.show()
+        if self.chat_activity_widget is not None:
+            self.chat_activity_widget.updateGeometry()
+
+    def _reset_chat_activity_state(
+        self,
+        *,
+        remove_widget: bool,
+        dismissed: bool = False,
+    ) -> None:
+        activity = self.chat_activity_widget
+        if remove_widget and activity is not None:
+            self.chat_task_layout.removeWidget(activity)
+            activity.hide()
+            activity.deleteLater()
+        self.chat_activity_widget = None
+        self.chat_activity_label = None
+        self.chat_activity_dot = None
+        self.chat_activity_progress = None
+        self.chat_activity_count = None
+        self.chat_activity_expanded_count = None
+        self.chat_activity_toggle = None
+        self.chat_activity_close = None
+        self.chat_activity_details = None
+        self.chat_activity_details_layout = None
+        self._chat_activity_steps = []
+        self._chat_activity_plan_steps = []
+        self._chat_activity_plan_labels = []
+        self._chat_activity_plan_markers = []
+        self._chat_activity_plan_meta_labels = []
+        self._chat_activity_plan_started_at = []
+        self._chat_activity_plan_elapsed = []
+        self._chat_activity_plan_completed = 0
+        self._chat_activity_dismissed = dismissed
+        self._chat_activity_finished = False
+        if hasattr(self, "chat_task_host"):
+            self.chat_task_host.hide()
+
+    def _begin_chat_activity_turn(self) -> None:
+        self._reset_chat_activity_state(remove_widget=True, dismissed=False)
+
+    def _dismiss_chat_activity(self, activity: QFrame | None = None) -> None:
+        if activity is not None and activity is not self.chat_activity_widget:
+            self.chat_task_layout.removeWidget(activity)
+            activity.hide()
+            activity.deleteLater()
+            if self.chat_task_layout.count() <= 2:
+                self.chat_task_host.hide()
+            return
+        self._reset_chat_activity_state(remove_widget=True, dismissed=True)
+
+    def _set_chat_activity_plan(
+        self,
+        steps: list[str],
+        *,
+        completed: int = 0,
+    ) -> None:
+        visible_steps = list(
+            dict.fromkeys(
+                " ".join(str(step or "").split())
+                for step in steps
+                if str(step or "").strip()
+            )
         )
+        if not visible_steps:
+            return
+        self._show_chat_activity(visible_steps[0])
+        if self.chat_activity_widget is None:
+            return
+        self._chat_activity_plan_steps = visible_steps
+        self._chat_activity_steps = list(visible_steps)
+        self._chat_activity_plan_labels = []
+        self._chat_activity_plan_markers = []
+        self._chat_activity_plan_meta_labels = []
+        self._chat_activity_plan_started_at = [None] * len(visible_steps)
+        self._chat_activity_plan_elapsed = [None] * len(visible_steps)
+        if self.chat_activity_details_layout is not None:
+            while self.chat_activity_details_layout.count():
+                item = self.chat_activity_details_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            for step_text in visible_steps:
+                row = QWidget(self.chat_activity_details)
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(5)
+                marker = QLabel("", objectName="chatActivityStepMarker")
+                marker.setFont(QFont("Segoe UI Symbol"))
+                marker.setFixedWidth(12)
+                marker.setAlignment(Qt.AlignCenter | Qt.AlignTop)
+                step = QLabel(step_text, objectName="chatActivityStep")
+                step.setWordWrap(True)
+                step.setAccessibleName(step_text)
+                meta = QLabel("", objectName="chatActivityStepMeta")
+                meta.setAlignment(Qt.AlignRight | Qt.AlignTop)
+                meta.setMinimumWidth(48)
+                row_layout.addWidget(marker, 0, Qt.AlignTop)
+                row_layout.addWidget(step, 1)
+                row_layout.addWidget(meta, 0, Qt.AlignTop)
+                self.chat_activity_details_layout.addWidget(row)
+                self._chat_activity_plan_markers.append(marker)
+                self._chat_activity_plan_labels.append(step)
+                self._chat_activity_plan_meta_labels.append(meta)
+        if self.chat_activity_toggle is not None:
+            self.chat_activity_toggle.setEnabled(True)
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.show()
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.show()
+        initial_completed = max(0, min(int(completed), len(visible_steps)))
+        self._chat_activity_plan_completed = initial_completed
+        if initial_completed < len(visible_steps):
+            self._chat_activity_plan_started_at[initial_completed] = monotonic()
+        self._render_chat_activity_plan_progress()
+
+    @staticmethod
+    def _chat_task_elapsed_label(value: float | None) -> str:
+        if value is None:
+            return "concluída"
+        seconds = max(0, int(round(value)))
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, remaining = divmod(seconds, 60)
+        return f"{minutes}m {remaining:02d}s"
+
+    def _render_chat_activity_plan_progress(self, *, failed: bool = False) -> None:
+        total = len(self._chat_activity_plan_steps)
+        if not total:
+            return
+        completed = self._chat_activity_plan_completed
+        active_index = completed if completed < total else -1
+        for index, (step_text, marker_label, label, meta) in enumerate(
+            zip(
+                self._chat_activity_plan_steps,
+                self._chat_activity_plan_markers,
+                self._chat_activity_plan_labels,
+                self._chat_activity_plan_meta_labels,
+            )
+        ):
+            if index < completed:
+                state, marker = "done", "✓"
+                meta_text = self._chat_task_elapsed_label(
+                    self._chat_activity_plan_elapsed[index]
+                )
+            elif failed and index == active_index:
+                state, marker, meta_text = "error", "!", "interrompida"
+            elif index == active_index:
+                state, marker, meta_text = "active", "●", "agora"
+            else:
+                state, marker, meta_text = "pending", "○", ""
+            marker_label.setText(marker)
+            marker_label.setProperty("stepState", state)
+            marker_label.style().unpolish(marker_label)
+            marker_label.style().polish(marker_label)
+            label.setText(step_text)
+            label.setProperty("stepState", state)
+            label.style().unpolish(label)
+            label.style().polish(label)
+            meta.setText(meta_text)
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.set_progress(completed, total, failed=failed)
+        count_text = f"{completed}/{total}"
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.setText(count_text)
+        if self.chat_activity_expanded_count is not None:
+            self.chat_activity_expanded_count.setText(count_text)
+        if self.chat_activity_label is not None:
+            self.chat_activity_label.setText(
+                self._chat_activity_plan_steps[active_index]
+                if active_index >= 0
+                else "Planejamento e execução concluídos"
+            )
+
+    def _update_chat_activity_plan_progress(
+        self,
+        completed: int,
+        *,
+        failed: bool = False,
+    ) -> None:
+        if not self._chat_activity_plan_steps:
+            return
+        total = len(self._chat_activity_plan_steps)
+        completed = max(0, min(int(completed), total))
+        previous = self._chat_activity_plan_completed
+        now = monotonic()
+        if completed > previous:
+            for index in range(previous, completed):
+                started_at = self._chat_activity_plan_started_at[index]
+                if started_at is not None:
+                    self._chat_activity_plan_elapsed[index] = now - started_at
+        self._chat_activity_plan_completed = completed
+        if completed < total and self._chat_activity_plan_started_at[completed] is None:
+            self._chat_activity_plan_started_at[completed] = now
+        self._render_chat_activity_plan_progress(failed=failed)
 
     @staticmethod
     def _activity_category(label: str) -> str:
         return re.split(r"[…\.·:]", str(label or ""), maxsplit=1)[0].strip().casefold()
 
     def _append_chat_activity_step(self, label: str) -> None:
+        if self._chat_activity_plan_steps:
+            return
         value = " ".join(str(label or "").split())
         if not value or value in self._chat_activity_steps:
             return
         self._chat_activity_steps.append(value)
         if self.chat_activity_details_layout is None:
             return
-        step = QLabel(f"✓  {value}", objectName="chatActivityStep")
+        step = QLabel(f"-  {value}", objectName="chatActivityStep")
         step.setWordWrap(True)
         self.chat_activity_details_layout.addWidget(step)
         if self.chat_activity_toggle is not None:
-            self.chat_activity_toggle.show()
+            self.chat_activity_toggle.setEnabled(True)
+        if self.chat_activity_count is not None:
+            self.chat_activity_count.setText(
+                f"{len(self._chat_activity_steps)}/{len(self._chat_activity_steps) + 1}"
+            )
+            self.chat_activity_count.show()
+        if self.chat_activity_expanded_count is not None:
+            self.chat_activity_expanded_count.setText(
+                f"{len(self._chat_activity_steps)}/{len(self._chat_activity_steps) + 1}"
+            )
+        if self.chat_activity_progress is not None:
+            self.chat_activity_progress.set_progress(
+                len(self._chat_activity_steps),
+                len(self._chat_activity_steps) + 1,
+            )
+            if self.chat_activity_toggle is None or not self.chat_activity_toggle.isChecked():
+                self.chat_activity_progress.show()
 
-    def _toggle_chat_activity_details(self, expanded: bool) -> None:
-        if self.chat_activity_details is not None:
-            self.chat_activity_details.setVisible(bool(expanded))
-        if self.chat_activity_toggle is not None:
-            self.chat_activity_toggle.setText("⌃" if expanded else "⌄")
-            self.chat_activity_toggle.setToolTip(
-                "Recolher etapas da atividade" if expanded else "Exibir etapas da atividade"
+    def _toggle_chat_activity_details(
+        self,
+        expanded: bool,
+        *,
+        details: QFrame | None = None,
+        toggle: QToolButton | None = None,
+        label: QLabel | None = None,
+        progress: SegmentedActivityProgress | None = None,
+        count: QLabel | None = None,
+        expanded_count: QLabel | None = None,
+        activity: QFrame | None = None,
+    ) -> None:
+        details = details or self.chat_activity_details
+        toggle = toggle or self.chat_activity_toggle
+        label = label or self.chat_activity_label
+        progress = progress or self.chat_activity_progress
+        count = count or self.chat_activity_count
+        expanded_count = expanded_count or self.chat_activity_expanded_count
+        activity = activity or self.chat_activity_widget
+        if details is not None:
+            details.setVisible(bool(expanded))
+            details.updateGeometry()
+        if label is not None:
+            label.setVisible(not expanded)
+        if progress is not None:
+            progress.setVisible(not expanded and bool(self._chat_activity_steps))
+        if count is not None:
+            count.setVisible(not expanded and bool(self._chat_activity_steps))
+        if expanded_count is not None:
+            expanded_count.setVisible(expanded and bool(self._chat_activity_steps))
+        if activity is not None:
+            activity.setProperty("expanded", bool(expanded))
+            activity.style().unpolish(activity)
+            activity.style().polish(activity)
+        if toggle is not None:
+            toggle.setAccessibleName("Recolher Tasks" if expanded else "Expandir Tasks")
+            toggle.setToolTip(
+                "Recolher Tasks" if expanded else "Expandir Tasks"
             )
 
     def _hide_chat_activity(self, *, failed: bool = False) -> None:
-        if self.chat_activity_widget is None:
+        if self.chat_activity_widget is None or self._chat_activity_finished:
             return
         activity = self.chat_activity_widget
-        if self.chat_activity_label is not None:
+        if self._chat_activity_plan_steps:
+            self._update_chat_activity_plan_progress(
+                self._chat_activity_plan_completed
+                if failed
+                else len(self._chat_activity_plan_steps),
+                failed=failed,
+            )
+        elif self.chat_activity_label is not None:
             self._append_chat_activity_step(self.chat_activity_label.text())
+        if self.chat_activity_label is not None:
             self.chat_activity_label.setText(
-                "Execução interrompida" if failed else "Atividade concluída"
+                "Execução interrompida"
+                if failed
+                else "Planejamento e execução concluídos"
             )
         if self.chat_activity_dot is not None:
             self.chat_activity_dot.setText("!" if failed else "✓")
             self.chat_activity_dot.setProperty("activityState", "error" if failed else "done")
             self.chat_activity_dot.style().unpolish(self.chat_activity_dot)
             self.chat_activity_dot.style().polish(self.chat_activity_dot)
+        step_count = max(1, len(self._chat_activity_steps))
+        if self.chat_activity_progress is not None and not self._chat_activity_plan_steps:
+            self.chat_activity_progress.set_progress(
+                step_count if not failed else max(0, step_count - 1),
+                step_count,
+                failed=failed,
+            )
+        if self.chat_activity_count is not None:
+            visible_completed = (
+                self._chat_activity_plan_completed
+                if self._chat_activity_plan_steps
+                else step_count if not failed else max(0, step_count - 1)
+            )
+            self.chat_activity_count.setText(f"{visible_completed}/{step_count}")
+            self.chat_activity_count.show()
+            if self.chat_activity_expanded_count is not None:
+                self.chat_activity_expanded_count.setText(
+                    f"{visible_completed}/{step_count}"
+                )
         if self.chat_activity_toggle is not None:
-            self.chat_activity_toggle.setChecked(failed)
+            self.chat_activity_toggle.setChecked(False)
         activity.setObjectName("chatActivityCompleted")
         activity.setAccessibleName(
             "Atividade interrompida" if failed else "Atividade concluída"
         )
         activity.style().unpolish(activity)
         activity.style().polish(activity)
-        self.chat_activity_widget = None
-        self.chat_activity_label = None
-        self.chat_activity_dot = None
-        self.chat_activity_toggle = None
-        self.chat_activity_details = None
-        self.chat_activity_details_layout = None
-        self._chat_activity_steps = []
+        self._chat_activity_finished = True
 
     def _reset_assistant_stream(self) -> None:
         if hasattr(self, "_assistant_typing_timer"):
@@ -6207,7 +6856,6 @@ class MainWindow(QMainWindow):
         delta = str(text or "")
         if not delta:
             return
-        self._hide_chat_activity()
         if self.assistant_widget is None:
             self.assistant_widget = self._add_message(
                 "assistant", "", response_mode=self._active_response_mode
@@ -6575,8 +7223,6 @@ class MainWindow(QMainWindow):
                 if query and query not in name.casefold() and query not in description.casefold():
                     continue
                 codex_only = name in {
-                    "plan",
-                    "build",
                     "tier",
                     "permissions",
                     "tools",
@@ -7056,12 +7702,6 @@ class MainWindow(QMainWindow):
         }
 
     def _activate_slash_command(self, command: str) -> None:
-        if command in {"plan", "build"}:
-            self._set_slash_mode(command, toggle=command == "plan")
-            self.composer.clear()
-            self.slash_palette.dismiss()
-            self.composer.setFocus()
-            return
         if command == "context":
             self._toggle_chat_context(not self.chat_context_panel.isVisible())
             self.composer.clear()
@@ -7106,19 +7746,6 @@ class MainWindow(QMainWindow):
         self.slash_palette.dismiss()
         self.chat_status.setText("Op\u00e7\u00e3o atualizada")
         self.composer.setFocus()
-
-    def _set_slash_mode(self, command: str, toggle: bool = False) -> None:
-        current = str(self.mode_combo.currentData() or "default")
-        if command == "plan":
-            target = "default" if toggle and current == "plan" else "plan"
-        else:
-            target = "default"
-        if self.current_conversation:
-            self.database.update_conversation(
-                self.current_conversation, collaboration_mode=target
-            )
-        self._set_combo_option(self.mode_combo, target)
-        self.chat_status.setText("Modo Plan ativado" if target == "plan" else "Modo Build ativado")
 
     def _toggle_slash_skill(self, skill: dict[str, Any]) -> None:
         key = str(skill.get("path") or skill.get("name") or "")
@@ -7322,12 +7949,6 @@ class MainWindow(QMainWindow):
             return text, False
         command = match.group(1).casefold()
         remainder = (match.group(2) or "").strip()
-        if command in {"plan", "build"}:
-            self._set_slash_mode(command, toggle=command == "plan" and not remainder)
-            if remainder:
-                return remainder, False
-            self.composer.clear()
-            return "", True
         if not remainder and command in {
             "provider",
             "model",
@@ -7414,6 +8035,7 @@ class MainWindow(QMainWindow):
         self.pending_file_mentions = []
         self.composer.clear()
         self._refresh_composer_chips()
+        self._begin_chat_activity_turn()
         self._add_message("user", display_text)
         self._reset_assistant_stream()
         self.assistant_markdown = ""
@@ -7470,6 +8092,13 @@ class MainWindow(QMainWindow):
             return
         if event.kind == "assistant_delta":
             self._queue_assistant_delta(event.text)
+            if self._chat_activity_plan_steps:
+                self._update_chat_activity_plan_progress(
+                    max(
+                        self._chat_activity_plan_completed,
+                        len(self._chat_activity_plan_steps) - 1,
+                    )
+                )
             final_agent = next(
                 (
                     item
@@ -7486,6 +8115,18 @@ class MainWindow(QMainWindow):
                     )
                     if self._trace_selected_agent == final_id:
                         self._render_selected_agent_chat()
+        elif event.kind == "response_plan_created":
+            plan_steps = [
+                str(item or "")
+                for item in event.payload.get("steps") or []
+                if str(item or "").strip()
+            ]
+            self._set_chat_activity_plan(
+                plan_steps,
+                completed=int(event.payload.get("completed") or 0),
+            )
+            if self.chat_activity_label is not None:
+                self.chat_status.setText(self.chat_activity_label.text())
         elif event.kind == "reasoning_delta":
             self._reasoning_summary += event.text
             summary = " ".join(self._reasoning_summary.split())
@@ -8045,35 +8686,196 @@ class MainWindow(QMainWindow):
             or self.settings.app_dir
         ).resolve()
 
-    def _open_surface_browser(self) -> None:
-        if not open_safe_external_url("https://www.google.com"):
-            self.chat_status.setText("Não foi possível abrir o navegador")
+    def _activate_surface(self, key: str) -> None:
+        selected = str(key or "").strip().casefold()
+        if selected == "agents":
+            self._open_surface_agents()
+            return
+        pages = {
+            "browser": ("Browser", self.surface_browser_page),
+            "terminal": ("Terminal", self.surface_terminal_page),
+            "files": ("Files", self.surface_files_page),
+        }
+        target = pages.get(selected)
+        if target is None:
+            return
+        self._set_surface_panel_visible(True)
+        self.surface_title.setText(target[0])
+        self.surface_back_button.show()
+        self.chat_surface_stack.setCurrentWidget(target[1])
+        if selected == "browser":
+            QTimer.singleShot(0, self.surface_browser_address.setFocus)
+        elif selected == "terminal":
+            self._ensure_surface_terminal()
+            QTimer.singleShot(0, self.surface_terminal_input.setFocus)
+        elif selected == "files":
+            self._refresh_surface_files()
+            QTimer.singleShot(0, self.surface_files_search.setFocus)
 
-    def _open_surface_terminal(self) -> None:
-        workspace = self._surface_workspace()
-        executable = shutil.which("wt.exe")
-        if executable:
-            result = QProcess.startDetached(
-                executable,
-                ["-d", str(workspace)],
-                str(workspace),
-            )
-        else:
-            executable = shutil.which("powershell.exe") or "powershell.exe"
-            escaped = str(workspace).replace("'", "''")
-            result = QProcess.startDetached(
-                executable,
-                ["-NoExit", "-Command", f"Set-Location -LiteralPath '{escaped}'"],
-                str(workspace),
-            )
-        started = result[0] if isinstance(result, tuple) else bool(result)
-        if not started:
-            self.chat_status.setText("Não foi possível abrir o terminal")
+    def _show_surface_home(self) -> None:
+        self.surface_title.setText("Superfícies")
+        self.surface_back_button.hide()
+        self.chat_surface_stack.setCurrentWidget(self.surface_home_page)
 
-    def _open_surface_files(self) -> None:
+    def _ensure_surface_browser_view(self):
+        if self.surface_browser_view is not None:
+            return self.surface_browser_view
+        if QWebEngineView is None:
+            self.chat_status.setText("Qt WebEngine não está disponível nesta build")
+            return None
+        view = QWebEngineView(self.surface_browser_content)
+        view.setObjectName("surfaceBrowserView")
+        view.setAccessibleName("Visualização do navegador")
+        view.urlChanged.connect(
+            lambda url: self.surface_browser_address.setText(url.toString())
+        )
+        self.surface_browser_content.addWidget(view)
+        self.surface_browser_view = view
+        return view
+
+    def _surface_browser_navigate(self) -> None:
+        value = self.surface_browser_address.text().strip()
+        if not value:
+            return
+        normalized = value
+        if value.casefold().startswith("localhost"):
+            normalized = "http://" + value
+        elif "://" not in value and "." not in value:
+            query = bytes(QUrl.toPercentEncoding(value)).decode("ascii")
+            normalized = f"https://www.google.com/search?q={query}"
+        url = QUrl.fromUserInput(normalized)
+        if not url.isValid():
+            self.chat_status.setText("Endereço inválido")
+            return
+        view = self._ensure_surface_browser_view()
+        if view is None:
+            return
+        self.surface_browser_content.setCurrentWidget(view)
+        view.setUrl(url)
+
+    def _surface_browser_go_back(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.back()
+
+    def _surface_browser_go_forward(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.forward()
+
+    def _surface_browser_reload_page(self) -> None:
+        if self.surface_browser_view is not None:
+            self.surface_browser_view.reload()
+
+    def _ensure_surface_terminal(self) -> None:
+        process = self.surface_terminal_process
+        if process.state() != QProcess.NotRunning:
+            return
         workspace = self._surface_workspace()
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(workspace))):
-            self.chat_status.setText("Não foi possível abrir os arquivos")
+        executable = shutil.which("powershell.exe") or "powershell.exe"
+        process.setWorkingDirectory(str(workspace))
+        process.start(executable, ["-NoLogo", "-NoExit"])
+        if not process.waitForStarted(3000):
+            self.surface_terminal_output.appendPlainText(
+                "Não foi possível iniciar o PowerShell."
+            )
+            return
+        escaped = str(workspace).replace("'", "''")
+        bootstrap = (
+            "$OutputEncoding=[Console]::OutputEncoding="
+            "[Text.UTF8Encoding]::new(); "
+            f"Set-Location -LiteralPath '{escaped}'\r\n"
+        )
+        process.write(bootstrap.encode("utf-8"))
+
+    def _surface_terminal_submit(self) -> None:
+        command = self.surface_terminal_input.text().strip()
+        if not command:
+            return
+        self._ensure_surface_terminal()
+        if self.surface_terminal_process.state() == QProcess.NotRunning:
+            return
+        self.surface_terminal_input.clear()
+        self.surface_terminal_process.write((command + "\r\n").encode("utf-8"))
+
+    def _surface_terminal_read(self) -> None:
+        payload = bytes(self.surface_terminal_process.readAllStandardOutput())
+        if not payload:
+            return
+        try:
+            output = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            output = payload.decode("cp1252", errors="replace")
+        cursor = self.surface_terminal_output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(output)
+        self.surface_terminal_output.setTextCursor(cursor)
+        self.surface_terminal_output.ensureCursorVisible()
+
+    def _surface_terminal_error(self, _error) -> None:
+        if self.surface_terminal_process.errorString():
+            self.surface_terminal_output.appendPlainText(
+                self.surface_terminal_process.errorString()
+            )
+
+    def _refresh_surface_files(self) -> None:
+        workspace = self._surface_workspace()
+        if self.surface_file_model is None:
+            model = QFileSystemModel(self)
+            model.setReadOnly(True)
+            proxy = QSortFilterProxyModel(self)
+            proxy.setSourceModel(model)
+            proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+            proxy.setRecursiveFilteringEnabled(True)
+            proxy.setFilterKeyColumn(0)
+            self.surface_file_model = model
+            self.surface_file_proxy = proxy
+            self.surface_file_tree.setModel(proxy)
+            for column in range(1, 4):
+                self.surface_file_tree.hideColumn(column)
+        source_root = self.surface_file_model.setRootPath(str(workspace))
+        proxy_root = self.surface_file_proxy.mapFromSource(source_root)
+        self.surface_file_tree.setRootIndex(proxy_root)
+        self.surface_file_tree.expandToDepth(0)
+        self.surface_file_preview.clear()
+        self.surface_file_preview.setPlaceholderText(
+            "Clique duas vezes em um arquivo de texto para visualizar."
+        )
+
+    def _surface_files_filter_changed(self, value: str) -> None:
+        if self.surface_file_proxy is not None:
+            self.surface_file_proxy.setFilterFixedString(str(value or "").strip())
+
+    def _surface_file_activated(self, index) -> None:
+        if self.surface_file_model is None or self.surface_file_proxy is None:
+            return
+        source_index = self.surface_file_proxy.mapToSource(index)
+        path = Path(self.surface_file_model.filePath(source_index))
+        if path.is_dir():
+            self.surface_file_tree.setExpanded(
+                index, not self.surface_file_tree.isExpanded(index)
+            )
+            return
+        if not path.is_file():
+            return
+        try:
+            if path.stat().st_size > 2 * 1024 * 1024:
+                self.surface_file_preview.setPlainText(
+                    "Arquivo maior que 2 MB. A visualização interna foi desativada."
+                )
+                return
+            payload = path.read_bytes()
+        except OSError as exc:
+            self.surface_file_preview.setPlainText(str(exc))
+            return
+        if b"\x00" in payload:
+            self.surface_file_preview.setPlainText(
+                "Arquivo binário. Não há visualização de texto disponível."
+            )
+            return
+        try:
+            content = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            content = payload.decode("cp1252", errors="replace")
+        self.surface_file_preview.setPlainText(content)
 
     def _open_surface_agents(self) -> None:
         if not getattr(self, "_trace_plan_agents", []):
@@ -8172,14 +8974,10 @@ class MainWindow(QMainWindow):
 
     def _update_tools_label(self) -> None:
         count = self._selected_tools_count()
-        mode_value = "plan" if self.mode_combo.currentData() == "plan" else "default"
-        mode = "Plan" if mode_value == "plan" else "Build"
-        target = "Build" if mode == "Plan" else "Plan"
-        self.options_button.setText("" if self._composer_compact else mode)
-        self.options_button.setIcon(QIcon(str(MODE_ICON_PATHS[mode_value])))
+        self.options_button.setText("Build")
+        self.options_button.setIcon(QIcon(str(MODE_ICON_PATHS["default"])))
         self.options_button.setToolTip(
-            f"Modo {mode}. Clique para alternar para {target}; use / para outras opções. "
-            f"Tools ativas: {count}."
+            f"Build planeja e executa na mesma conversa. Tools ativas: {count}."
         )
 
     def _set_composer_compact(self, compact: bool) -> None:
@@ -8188,9 +8986,9 @@ class MainWindow(QMainWindow):
             return
         self._composer_compact = compact
         dimensions = (
-            (54, 54, 42, 42, 30, 30, 30, 30)
+            (54, 54, 42, 42, 30, 30)
             if compact
-            else (88, 180, 64, 110, 88, 135, 58, 90)
+            else (88, 180, 64, 110, 88, 135)
         )
         (
             model_min,
@@ -8199,8 +8997,6 @@ class MainWindow(QMainWindow):
             effort_max,
             approval_min,
             approval_max,
-            options_min,
-            options_max,
         ) = dimensions
         self.model_combo.setMinimumWidth(model_min)
         self.model_combo.setMaximumWidth(model_max)
@@ -8208,18 +9004,12 @@ class MainWindow(QMainWindow):
         self.effort_combo.setMaximumWidth(effort_max)
         self.approval_combo.setMinimumWidth(approval_min)
         self.approval_combo.setMaximumWidth(approval_max)
-        self.options_button.setMinimumWidth(options_min)
-        self.options_button.setMaximumWidth(options_max)
         self.vr_flow_button.set_compact(compact)
         self.chat_status.setMaximumWidth(90 if compact else 180)
         for separator in self.composer_separators:
             separator.setVisible(not compact)
         self._update_tools_label()
         self._update_orchestration_summary()
-
-    def toggle_collaboration_mode(self) -> None:
-        command = "build" if self.mode_combo.currentData() == "plan" else "plan"
-        self._set_slash_mode(command)
 
     def _composer_separator(self) -> QFrame:
         separator = QFrame(objectName="composerSeparator")
@@ -8431,23 +9221,11 @@ class MainWindow(QMainWindow):
         self._refresh_context_usage()
 
     def load_collaboration_modes(self) -> None:
-        selected = str(self.mode_combo.currentData() or "default")
-
-        def loaded(modes: list[dict[str, Any]]) -> None:
+        def loaded(_modes: list[dict[str, Any]]) -> None:
             self.mode_combo.blockSignals(True)
             self.mode_combo.clear()
-            for mode in modes:
-                value = str(mode.get("mode") or "")
-                if value in {"default", "plan"}:
-                    self.mode_combo.addItem(
-                        str(mode.get("name") or ("Build" if value == "default" else "Plan")),
-                        value,
-                    )
-            if not self.mode_combo.count():
-                self.mode_combo.addItem("Build", "default")
-                self.mode_combo.addItem("Plan", "plan")
-            index = self.mode_combo.findData(selected)
-            self.mode_combo.setCurrentIndex(max(0, index))
+            self.mode_combo.addItem("Build", "default")
+            self.mode_combo.setCurrentIndex(0)
             self.mode_combo.blockSignals(False)
             self._update_tools_label()
 
@@ -8690,7 +9468,7 @@ class MainWindow(QMainWindow):
                 effort=str(effort),
                 service_tier=str(self.tier_combo.currentData() or ""),
                 approval_profile=str(self.approval_combo.currentData() or "auto"),
-                collaboration_mode=str(self.mode_combo.currentData() or "default"),
+                collaboration_mode="default",
                 orchestration=orchestration,
             )
             if current and all(
@@ -8737,12 +9515,9 @@ class MainWindow(QMainWindow):
         self.send_button.setEnabled(controls_active)
         provider = self.provider_combo.currentText() or "codex"
         is_codex = provider == "codex" and controls_active
-        supports_collaboration_mode = (
-            provider in {"codex", "opencode"} and controls_active
-        )
-        self.options_button.setEnabled(supports_collaboration_mode)
+        self.options_button.setEnabled(False)
         self.tier_combo.setEnabled(is_codex)
-        self.mode_combo.setEnabled(supports_collaboration_mode)
+        self.mode_combo.setEnabled(False)
         self.approval_combo.setEnabled(
             controls_active and provider in {"codex", "opencode"}
         )
@@ -9054,9 +9829,7 @@ class MainWindow(QMainWindow):
             str(self.effort_combo.currentData() or self.settings.default_effort)
         )
         approval = self.approval_combo.currentText() or "Auto"
-        collaboration = (
-            "Plan" if self.mode_combo.currentData() == "plan" else "Build"
-        )
+        collaboration = "Build"
         vr_label = (
             "VR direto"
             if self.vr_flow_button.isChecked()
@@ -11362,6 +12135,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._discard_pending_images()
         self.orchestrator.close()
+        terminal_process = getattr(self, "surface_terminal_process", None)
+        if (
+            terminal_process is not None
+            and terminal_process.state() != QProcess.NotRunning
+        ):
+            terminal_process.write(b"exit\r\n")
+            terminal_process.closeWriteChannel()
+            if not terminal_process.waitForFinished(1500):
+                terminal_process.terminate()
+                if not terminal_process.waitForFinished(1500):
+                    terminal_process.kill()
+                    terminal_process.waitForFinished(1000)
         if self.video_process and self.video_process.state() != QProcess.NotRunning:
             self.video_process.terminate()
             if not self.video_process.waitForFinished(3000):
@@ -11380,6 +12165,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-project-menu", action="store_true")
     parser.add_argument("--screenshot-vr-panel", action="store_true")
     parser.add_argument("--screenshot-surfaces", action="store_true")
+    parser.add_argument(
+        "--screenshot-surface",
+        choices=("home", "browser", "terminal", "files"),
+        default="home",
+    )
     parser.add_argument("--screenshot-long-text", action="store_true")
     parser.add_argument("--screenshot-reduce-motion", action="store_true")
     parser.add_argument(
@@ -11406,6 +12196,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--screenshot-chat-status",
         choices=("running", "warning", "error"),
+        default="",
+    )
+    parser.add_argument(
+        "--screenshot-task-state",
+        choices=("collapsed", "expanded"),
         default="",
     )
     parser.add_argument("--screenshot-theme", choices=("light", "dark_orange"), default="")
@@ -11470,6 +12265,28 @@ def main(argv: list[str] | None = None) -> int:
         app.processEvents()
     if args.screenshot_page in window.pages:
         window._navigate(window.pages[args.screenshot_page])
+    if args.screenshot_task_state:
+        window._clear_messages()
+        window._add_message(
+            "user",
+            "Adicionar barra de Tasks para o fluxo Build/Plan.",
+        )
+        window._set_chat_activity_plan(
+            [
+                "Analisar a referência visual e o fluxo atual.",
+                "Construir a barra fixa de Tasks acima do compositor.",
+                "Integrar os estados recolhido e expandido ao plano real.",
+                "Validar interação, layout e regressões do chat.",
+                "Versionar o ciclo dev e publicar a branch.",
+            ],
+            completed=1,
+        )
+        if (
+            args.screenshot_task_state == "expanded"
+            and window.chat_activity_toggle is not None
+        ):
+            window.chat_activity_toggle.setChecked(True)
+        app.processEvents()
     if args.screenshot:
         def save_capture() -> None:
             target = Path(args.screenshot).resolve()
@@ -11546,6 +12363,8 @@ def main(argv: list[str] | None = None) -> int:
                 app.processEvents()
             elif args.screenshot_surfaces:
                 window._set_surface_panel_visible(True)
+                if args.screenshot_surface != "home":
+                    window._activate_surface(args.screenshot_surface)
                 app.processEvents()
             elif args.screenshot_dialog == "confirm":
                 window._screenshot_dialog = ConfirmDialog(
@@ -11716,20 +12535,22 @@ def apply_application_theme(app: QApplication, theme_id: str = "light") -> None:
 
 
 def _load_application_font() -> str:
-    # T3 Code defines DM Sans Variable as its global UI family.
-    candidates = [
-        ASSET_DIR / "dm-sans-variable.ttf",
-        Path(r"C:\Windows\Fonts\segoeui.ttf"),
-    ]
-    for candidate in candidates:
-        if not candidate.exists():
-            continue
-        font_id = QFontDatabase.addApplicationFont(str(candidate))
-        if font_id >= 0:
-            families = QFontDatabase.applicationFontFamilies(font_id)
-            if families:
-                return families[0]
-    return "Segoe UI"
+    # T3 Code's installed stylesheet uses the Windows system stack and resolves
+    # to Segoe UI here. Bundling DM Sans made glyph widths and vertical rhythm
+    # visibly different even when point sizes matched.
+    if sys.platform == "win32":
+        # Register the Windows files explicitly so headless screenshots and the
+        # packaged runtime resolve the same metrics as an interactive session.
+        for candidate in (
+            Path(r"C:\Windows\Fonts\segoeui.ttf"),
+            Path(r"C:\Windows\Fonts\segoeuib.ttf"),
+            Path(r"C:\Windows\Fonts\seguisym.ttf"),
+        ):
+            if candidate.exists():
+                QFontDatabase.addApplicationFont(str(candidate))
+        return "Segoe UI"
+    application = QApplication.instance()
+    return application.font().family() if application is not None else "sans-serif"
 
 
 if __name__ == "__main__":
