@@ -23,6 +23,7 @@ from PySide6.QtCore import (
     QRunnable,
     QSettings,
     QThreadPool,
+    QTimer,
     Qt,
     QUrl,
     Signal,
@@ -149,6 +150,7 @@ class StudioBridge(QObject):
         )
         self._pool = QThreadPool.globalInstance()
         self._tasks: set[_Task] = set()
+        self._loaded_pages: set[int] = set()
         self._dashboard_sources: list[dict[str, Any]] = []
         self._dashboard_metrics: dict[str, str] = {}
         self._knowledge = MappingListModel(
@@ -221,11 +223,17 @@ class StudioBridge(QObject):
         )
         self._log_lines: list[str] = []
         self._video_process: QProcess | None = None
+        self._video_loading = False
+        self._video_refresh_task: _Task | None = None
         self._terminal_process: QProcess | None = None
         self._terminal_output = ""
         self._conversation_orchestrator: Any = None
         self._video_buffer = ""
-        self.refreshAll()
+        self._video_pending_output = ""
+        self._video_output_timer = QTimer(self)
+        self._video_output_timer.setSingleShot(True)
+        self._video_output_timer.setInterval(80)
+        self._video_output_timer.timeout.connect(self._flush_video_output)
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -340,6 +348,18 @@ class StudioBridge(QObject):
         return self._video_buffer
 
     @Property(bool, notify=videosChanged)
+    def videoLoading(self) -> bool:  # noqa: N802
+        return self._video_loading
+
+    @Property("QVariantList", notify=videosChanged)
+    def videoExpandableNodeIds(self) -> list[str]:  # noqa: N802
+        return [
+            str(item.get("nodeId") or "")
+            for item in self._all_video_items
+            if item.get("expandable") and str(item.get("nodeId") or "")
+        ]
+
+    @Property(bool, notify=videosChanged)
     def videoRunning(self) -> bool:  # noqa: N802
         return bool(
             self._video_process
@@ -405,8 +425,34 @@ class StudioBridge(QObject):
     def categoryItems(self) -> list[str]:  # noqa: N802
         return list(self._category_items)
 
+    @Slot(int)
+    def activatePage(self, index: int) -> None:  # noqa: N802
+        """Load only the data needed by the page the user actually opened."""
+
+        page = int(index)
+        if page in self._loaded_pages or page == 1:
+            return
+        self._loaded_pages.add(page)
+        try:
+            if page == 0:
+                self._refresh_dashboard()
+            elif page == 2:
+                self.searchKnowledge("", "Todos", "Todas", "")
+            elif page == 4:
+                self.searchReviews("")
+            elif page == 5:
+                self.refreshVideos()
+            elif page == 7:
+                self._refresh_settings()
+                self.refreshProviders()
+                self.refreshArchived("")
+        except Exception as exc:
+            self._loaded_pages.discard(page)
+            self.toastRequested.emit(str(exc), "error")
+
     @Slot()
     def refreshAll(self) -> None:  # noqa: N802
+        self._loaded_pages.update({0, 2, 4, 5, 7})
         self._refresh_dashboard()
         self.searchKnowledge("", "Todos", "Todas", "")
         self.searchReviews("")
@@ -780,6 +826,23 @@ class StudioBridge(QObject):
 
     @Slot()
     def refreshVideos(self) -> None:  # noqa: N802
+        if self._video_loading:
+            return
+        self._video_loading = True
+        self._video_summary = "Carregando inventário…"
+        self.videosChanged.emit()
+        task = _Task(self._build_video_snapshot)
+        self._video_refresh_task = task
+        self._tasks.add(task)
+        task.signals.finished.connect(
+            lambda result, task=task: self._video_snapshot_ready(task, result)
+        )
+        task.signals.failed.connect(
+            lambda error, task=task: self._video_snapshot_failed(task, error)
+        )
+        self._pool.start(task)
+
+    def _build_video_snapshot(self) -> tuple[list[dict[str, Any]], str]:
         try:
             from ...courses import load_course_catalog
             from ...inventory import load_inventory
@@ -1007,11 +1070,32 @@ class StudioBridge(QObject):
             flatten("root:library")
             downloaded = sum(info.downloaded for info in storage.values())
             total_size = sum(info.size_bytes for info in storage.values() if info.downloaded)
-            self._video_summary = f"{len(rows)} vídeos · {len(courses)} cursos no catálogo · {downloaded}/{len(rows)} baixados · {format_byte_size(total_size)}"
+            summary = f"{len(rows)} vídeos · {len(courses)} cursos no catálogo · {downloaded}/{len(rows)} baixados · {format_byte_size(total_size)}"
         except Exception as exc:
             items = []
-            self._video_summary = f"Inventário indisponível · {exc}"
+            summary = f"Inventário indisponível · {exc}"
+        return items, summary
+
+    def _video_snapshot_ready(self, task: _Task, result: object) -> None:
+        self._tasks.discard(task)
+        if task is not self._video_refresh_task:
+            return
+        self._video_refresh_task = None
+        self._video_loading = False
+        items, summary = result if isinstance(result, tuple) and len(result) == 2 else ([], "Inventário indisponível")
         self._all_video_items = items
+        self._video_summary = str(summary)
+        self._apply_video_filters()
+        self.videosChanged.emit()
+
+    def _video_snapshot_failed(self, task: _Task, error: str) -> None:
+        self._tasks.discard(task)
+        if task is not self._video_refresh_task:
+            return
+        self._video_refresh_task = None
+        self._video_loading = False
+        self._all_video_items = []
+        self._video_summary = f"Inventário indisponível · {error}"
         self._apply_video_filters()
         self.videosChanged.emit()
 
@@ -1072,6 +1156,19 @@ class StudioBridge(QObject):
             [item for index, item in enumerate(self._all_video_items) if index in matching]
         )
 
+    @Slot(str, result="QVariantList")
+    def videoDescendantNodeIds(self, node_id: str) -> list[str]:  # noqa: N802
+        target = str(node_id or "")
+        if not target:
+            return []
+        return [
+            str(item.get("nodeId") or "")
+            for item in self._all_video_items
+            if item.get("expandable")
+            and target in list(item.get("ancestorIds") or [])
+            and str(item.get("nodeId") or "")
+        ]
+
     @Slot(str)
     def runVideoAction(self, action: str) -> None:  # noqa: N802
         self._start_video_process(action, [])
@@ -1093,7 +1190,9 @@ class StudioBridge(QObject):
         args = ["-m", "vrsoft_extractor", "--project-dir", str(self._settings.root), action, *extra_args]
         if action == "scan" and not self._settings.endoo_state_path.is_file():
             args.append("--headed")
+        self._video_output_timer.stop()
         self._video_buffer = ""
+        self._video_pending_output = ""
         self._video_summary = f"Executando {action}…"
         self._append_log("$ " + Path(sys.executable).name + " " + " ".join(args))
         self._video_process.start(sys.executable, args)
@@ -1179,11 +1278,21 @@ class StudioBridge(QObject):
             return
         text = bytes(self._video_process.readAllStandardOutput()).decode("utf-8", "replace")
         if text:
-            self._video_buffer += text
+            self._video_pending_output += text
             self._append_log(text.rstrip())
-            self.videosChanged.emit()
+            if not self._video_output_timer.isActive():
+                self._video_output_timer.start()
+
+    def _flush_video_output(self) -> None:
+        if not self._video_pending_output:
+            return
+        self._video_buffer += self._video_pending_output
+        self._video_pending_output = ""
+        self.videosChanged.emit()
 
     def _video_finished(self, code: int, _status: Any) -> None:
+        self._video_output_timer.stop()
+        self._flush_video_output()
         self._video_summary = "Concluído" if code == 0 else f"Falha · código {code}"
         self.refreshVideos()
         self._refresh_dashboard()

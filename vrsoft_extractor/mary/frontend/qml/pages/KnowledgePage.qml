@@ -213,6 +213,9 @@ Item {
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.bodySize
+                            onLinkActivated: link => {
+                                if (studio) studio.openExternalUrl(link)
+                            }
                         }
                     }
                 }

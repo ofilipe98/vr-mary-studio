@@ -12,13 +12,16 @@ Item {
     property int surfaceIndex: 0
     property var openSurfaceTabs: []
     property bool activityExpanded: true
-    property bool reasoningExpanded: false
+    property bool taskBarExpanded: true
+    property bool taskBarDismissed: false
+    property bool previousTurnRunning: false
+    property bool copyFeedbackVisible: false
     readonly property var surfaceTabs: [
-        { title: "Browser", kind: "browser", page: 1 },
-        { title: "Terminal", kind: "terminal", page: 2 },
-        { title: "Files", kind: "files", page: 3 },
-        { title: "Contexto", kind: "context", page: 4 },
-        { title: "Agents", kind: "agents", page: 5 }
+        { title: "Browser", kind: "browser", page: 1, description: "Abrir uma aplicação local ou URL." },
+        { title: "Terminal", kind: "terminal", page: 2, description: "Executar comandos neste projeto." },
+        { title: "Files", kind: "files", page: 3, description: "Navegar pelos arquivos do projeto." },
+        { title: "Contexto", kind: "context", page: 4, description: "Consultar arquivos e contexto local." },
+        { title: "Agents", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." }
     ]
     property var approvalPayload: ({})
     property var composerSuggestions: []
@@ -37,9 +40,24 @@ Item {
             root.approvalPayload = payload
             approvalDialog.open()
         }
+        function onStateChanged() {
+            if (chat.turnRunning && !root.previousTurnRunning) {
+                root.taskBarDismissed = false
+                root.taskBarExpanded = true
+                root.activityExpanded = true
+            }
+            root.previousTurnRunning = chat.turnRunning
+        }
+        function onMessageCopied(_content) {
+            root.copyFeedbackVisible = true
+            copyFeedbackTimer.restart()
+        }
     }
 
-    Component.onCompleted: chat.refreshModels()
+    Component.onCompleted: {
+        root.previousTurnRunning = chat.turnRunning
+        chat.refreshModels()
+    }
 
     SplitView {
         anchors.fill: parent
@@ -356,21 +374,35 @@ Item {
                         text: "Subagentes · " + chat.agentItems.length
                         variant: "ghost"
                         onClicked: {
-                            root.surfaceVisible = true
-                            root.surfaceIndex = 5
+                            root.openSurface(5)
                             if (root.selectedAgentIndex < 0)
                                 root.selectedAgentIndex = 0
                         }
+                    }
+                    VrIconButton {
+                        id: surfaceExpandButton
+                        objectName: "surfaceToggleButton"
+                        visible: !root.surfaceVisible
+                        implicitWidth: 32
+                        implicitHeight: 32
+                        iconSize: 17
+                        iconKind: "panelRight"
+                        foreground: frontend.palette.mutedText
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Expandir painel direito"
+                        Accessible.name: ToolTip.text
+                        onClicked: root.surfaceVisible = true
                     }
                 }
             }
 
             ListView {
                 id: messageList
+                property bool followTail: true
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
-                anchors.bottom: composerCard.top
+                anchors.bottom: taskBar.visible ? taskBar.top : composerCard.top
                 anchors.leftMargin: 20
                 anchors.rightMargin: 20
                 anchors.topMargin: 14
@@ -396,9 +428,10 @@ Item {
                         visible: messageItem.role === "activity"
                         width: Math.min(parent.width - 28, 760)
                         anchors.horizontalCenter: parent.horizontalCenter
-                        steps: chat.activitySteps
+                        items: chat.activityItems
                         reasoningText: chat.reasoningText
                         statusText: chat.statusText
+                        elapsedLabel: chat.activityElapsedLabel
                         running: chat.turnRunning
                         expanded: root.activityExpanded
                         onToggleRequested: root.activityExpanded = !root.activityExpanded
@@ -407,8 +440,8 @@ Item {
                     Item {
                         visible: messageItem.role !== "activity"
                         width: messageItem.role === "user"
-                            ? Math.min(parent.width - 28, 590)
-                            : Math.min(parent.width - 28, 760)
+                            ? Math.min(parent.width - 32, 620)
+                            : Math.min(parent.width - 32, 780)
                         height: parent.height
                         anchors.right: messageItem.role === "user" ? parent.right : undefined
                         anchors.rightMargin: messageItem.role === "user"
@@ -423,6 +456,7 @@ Item {
                             border.color: frontend.palette.chatBorder
                         }
                         VrIconButton {
+                            objectName: "messageCopyButton"
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.rightMargin: messageItem.role === "user" ? 5 : 0
@@ -431,10 +465,15 @@ Item {
                             implicitHeight: 27
                             iconKind: "copy"
                             iconSize: 14
-                            visible: messageHover.hovered
+                            opacity: messageHover.hovered || hovered || root.copyFeedbackVisible ? 1 : 0.52
                             ToolTip.visible: hovered
-                            ToolTip.text: "Copiar"
+                            ToolTip.text: root.copyFeedbackVisible ? "Copiado" : "Copiar"
                             onClicked: chat.copyMessage(messageItem.index)
+                            background: Rectangle {
+                                radius: height / 2
+                                color: parent.down || parent.hovered
+                                    ? frontend.palette.chatControl : "transparent"
+                            }
                         }
                         Text {
                             id: messageBody
@@ -442,24 +481,35 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.leftMargin: messageItem.role === "user" ? 14 : 0
-                            anchors.rightMargin: messageItem.role === "user" ? 38 : 30
+                            anchors.rightMargin: 38
                             anchors.topMargin: messageItem.role === "user" ? 13 : 2
                             text: messageItem.displayContent
                             textFormat: messageItem.role === "user"
                                 ? Text.PlainText : Text.MarkdownText
                             wrapMode: Text.Wrap
                             lineHeightMode: Text.ProportionalHeight
-                            lineHeight: messageItem.role === "user" ? 1.3 : 1.4
+                            lineHeight: messageItem.role === "user" ? 1.28 : 1.36
                             color: frontend.palette.text
                             linkColor: frontend.themeId === "dark_orange" ? "#7CB7FF" : "#075EAD"
                             horizontalAlignment: Text.AlignLeft
                             font.family: Theme.fontFamily
-                            font.pixelSize: messageItem.role === "user" ? 14 : 14
+                            font.pixelSize: 14
+                            onLinkActivated: link => {
+                                if (studio) studio.openExternalUrl(link)
+                            }
                         }
                         HoverHandler { id: messageHover }
                     }
                 }
-                onCountChanged: positionViewAtEnd()
+                onCountChanged: {
+                    followTail = true
+                    positionViewAtEnd()
+                }
+                onMovementEnded: followTail = atYEnd
+                onContentHeightChanged: {
+                    if (followTail)
+                        Qt.callLater(function() { messageList.positionViewAtEnd() })
+                }
             }
 
             Column {
@@ -489,6 +539,21 @@ Item {
                 }
             }
 
+            VrTaskBar {
+                id: taskBar
+                visible: chat.activitySteps.length > 0 && !root.taskBarDismissed
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: composerCard.top
+                anchors.bottomMargin: 8
+                width: Math.min(770, parent.width - 40)
+                z: 20
+                steps: chat.activitySteps
+                running: chat.turnRunning
+                expanded: root.taskBarExpanded
+                onToggleRequested: root.taskBarExpanded = !root.taskBarExpanded
+                onCloseRequested: root.taskBarDismissed = true
+            }
+
             Rectangle {
                 id: composerCard
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -504,6 +569,7 @@ Item {
 
                 VrTextArea {
                     id: composerInput
+                    objectName: "chatComposerInput"
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
@@ -515,12 +581,9 @@ Item {
                     readOnly: chat.turnRunning
                     background: Item { }
                     onTextChanged: composerAssistDelay.restart()
-                    Keys.onReturnPressed: event => {
-                        if (!(event.modifiers & Qt.ShiftModifier)) {
-                            root.submitMessage()
-                            event.accepted = true
-                        }
-                    }
+                    Keys.priority: Keys.BeforeItem
+                    Keys.onReturnPressed: event => root.handleComposerEnter(event)
+                    Keys.onEnterPressed: event => root.handleComposerEnter(event)
                 }
 
                 RowLayout {
@@ -713,6 +776,29 @@ Item {
                         }
                     }
 
+                    VrIconButton {
+                        id: surfaceCollapseButton
+                        objectName: "surfaceCollapseButton"
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.topMargin: 5
+                        anchors.rightMargin: 6
+                        implicitWidth: 32
+                        implicitHeight: 32
+                        iconSize: 17
+                        iconKind: "panelRight"
+                        foreground: frontend.palette.mutedText
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Recolher painel direito"
+                        Accessible.name: ToolTip.text
+                        onClicked: root.surfaceVisible = false
+                        background: Rectangle {
+                            radius: 8
+                            color: parent.down || parent.hovered
+                                ? frontend.palette.chatControl : "transparent"
+                        }
+                    }
+
                     Popup {
                         id: surfacePickerPopup
                         objectName: "surfacePickerPopup"
@@ -784,7 +870,64 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     currentIndex: root.surfaceIndex
-                    Item {}
+                    Item {
+                        ScrollView {
+                            id: surfaceChooser
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            clip: true
+                            contentWidth: availableWidth
+
+                            ColumnLayout {
+                                width: surfaceChooser.availableWidth
+                                spacing: 7
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Abrir uma superfície"
+                                    color: frontend.palette.text
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Escolha o que exibir no painel direito."
+                                    color: frontend.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 11
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                GridLayout {
+                                    id: surfaceChooserGrid
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: 8
+                                    columns: width >= 380 ? 2 : 1
+                                    columnSpacing: 8
+                                    rowSpacing: 8
+                                    Repeater {
+                                        model: root.surfaceTabs
+                                        delegate: VrSurfaceCard {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            Layout.preferredWidth: (
+                                                surfaceChooserGrid.width
+                                                - surfaceChooserGrid.columnSpacing
+                                                    * (surfaceChooserGrid.columns - 1)
+                                            ) / surfaceChooserGrid.columns
+                                            implicitHeight: 84
+                                            iconKind: modelData.kind
+                                            title: modelData.title
+                                            description: modelData.description
+                                            onClicked: root.openSurface(modelData.page)
+                                        }
+                                    }
+                                }
+                                Item { Layout.fillHeight: true }
+                            }
+                        }
+                    }
                     ColumnLayout {
                         spacing: 6
                         RowLayout {
@@ -1082,35 +1225,11 @@ Item {
         }
     }
 
-    VrIconButton {
-        objectName: "surfaceToggleButton"
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: 5
-        anchors.rightMargin: 6
-        z: 100
-        implicitWidth: 32
-        implicitHeight: 32
-        iconKind: "panelRight"
-        foreground: frontend.palette.mutedText
-        ToolTip.visible: hovered
-        ToolTip.text: root.surfaceVisible ? "Recolher painel direito" : "Expandir painel direito"
-        onClicked: {
-            root.surfaceVisible = !root.surfaceVisible
-        }
-        background: Rectangle {
-            radius: 8
-            color: parent.down || parent.hovered || root.surfaceVisible
-                ? frontend.palette.chatControl : "transparent"
-            border.width: parent.activeFocus ? 1 : 0
-            border.color: frontend.palette.focus
-        }
-    }
-
     Timer { id: searchDelay; interval: 180; onTriggered: chat.setSearch(conversationSearch.text) }
     Timer { id: composerAssistDelay; interval: 120; onTriggered: root.updateComposerSuggestions() }
     Timer { id: fileSearchDelay; interval: 160; onTriggered: root.surfaceFiles = chat.fileSuggestions(fileSearch.text) }
     Timer { id: contextSearchDelay; interval: 200; onTriggered: root.contextItems = chat.contextSuggestions(contextSearch.text) }
+    Timer { id: copyFeedbackTimer; interval: 1300; onTriggered: root.copyFeedbackVisible = false }
 
     Popup {
         id: composerAssistPopup
@@ -1349,11 +1468,51 @@ Item {
         }
     }
 
-    Menu {
+    Popup {
         id: conversationContextMenu
         objectName: "conversationContextMenu"
-        MenuItem { text: "Arquivar"; onTriggered: chat.archiveCurrentConversation() }
-        MenuItem { text: "Mover para lixeira"; onTriggered: trashDialog.open() }
+        width: 196
+        height: 48
+        padding: 5
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        contentItem: Rectangle {
+            radius: 7
+            color: archiveHover.hovered ? frontend.palette.chatControl : "transparent"
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 9
+                anchors.rightMargin: 9
+                spacing: 8
+                VrLineIcon {
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    kind: "archive"
+                    foreground: frontend.palette.mutedText
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Arquivar conversa"
+                    color: frontend.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+            }
+            HoverHandler { id: archiveHover }
+            TapHandler {
+                onTapped: {
+                    conversationContextMenu.close()
+                    chat.archiveCurrentConversation()
+                }
+            }
+        }
+        background: Rectangle {
+            radius: 10
+            color: frontend.palette.chatComposer
+            border.width: 1
+            border.color: frontend.palette.chatBorder
+        }
     }
 
     Dialog {
@@ -1409,17 +1568,6 @@ Item {
         background: Rectangle { color: frontend.palette.surface; border.width: 1; border.color: frontend.palette.border; radius: Theme.radiusPopup }
     }
     Dialog {
-        id: trashDialog
-        anchors.centerIn: parent
-        width: 450
-        modal: true
-        title: "Mover conversa para a lixeira?"
-        standardButtons: Dialog.Yes | Dialog.No
-        onAccepted: chat.trashCurrentConversation()
-        contentItem: Text { text: "A conversa poderá ser restaurada pelas configurações enquanto não for excluída definitivamente."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
-        background: Rectangle { color: frontend.palette.surface; border.width: 1; border.color: frontend.palette.border; radius: Theme.radiusPopup }
-    }
-    Dialog {
         id: approvalDialog
         anchors.centerIn: parent
         width: 510
@@ -1457,6 +1605,7 @@ Item {
     }
 
     function openSurface(page) {
+        root.surfaceVisible = true
         var nextTabs = root.openSurfaceTabs.slice(0)
         var alreadyOpen = false
         for (var index = 0; index < nextTabs.length; ++index) {
@@ -1545,6 +1694,15 @@ Item {
         composerInput.clear()
         composerAssistPopup.close()
         chat.sendMessage(value)
+    }
+
+    function handleComposerEnter(event) {
+        if (event.modifiers & Qt.ShiftModifier) {
+            event.accepted = false
+            return
+        }
+        event.accepted = true
+        root.submitMessage()
     }
 
     function agentDetailText() {

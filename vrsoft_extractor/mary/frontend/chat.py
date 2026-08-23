@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from PySide6.QtCore import (
     QObject,
     Property,
     QSettings,
+    QTimer,
     Qt,
     Signal,
     Slot,
@@ -188,9 +191,16 @@ class ChatBridge(QObject):
         self._turn_running = False
         self._status_text = "Pronto"
         self._streaming_text = ""
+        self._displayed_streaming_text = ""
+        self._stream_pending_text = ""
+        self._stream_terminal_kind = ""
+        self._assistant_stream_started = False
         self._approval_request: dict[str, Any] = {}
         self._activity_steps: list[dict[str, str]] = []
+        self._activity_items: list[dict[str, str]] = []
         self._reasoning_text = ""
+        self._activity_started_at = 0.0
+        self._activity_elapsed_seconds = 0
         self._agent_items: list[dict[str, Any]] = []
         enabled_providers = self._enabled_provider_names()
         saved_provider = str(self._preferences.value("chat/last_provider", "") or "")
@@ -222,6 +232,16 @@ class ChatBridge(QObject):
         self._modelsLoaded.connect(self._apply_model_catalog)
         self._extensionsLoaded.connect(self._apply_extension_catalog)
         self._runtimeEvent.connect(self._on_runtime_event)
+        self._stream_timer = QTimer(self)
+        self._stream_timer.setInterval(28)
+        self._stream_timer.timeout.connect(self._flush_stream_step)
+        self._activity_clock = QTimer(self)
+        self._activity_clock.setInterval(1000)
+        self._activity_clock.timeout.connect(self._tick_activity_clock)
+        self._state_update_timer = QTimer(self)
+        self._state_update_timer.setSingleShot(True)
+        self._state_update_timer.setInterval(32)
+        self._state_update_timer.timeout.connect(self.stateChanged.emit)
         self._reset_model_items()
         self._refresh_projects()
         self.refresh()
@@ -557,9 +577,21 @@ class ChatBridge(QObject):
     def activitySteps(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_steps]
 
+    @Property("QVariantList", notify=stateChanged)
+    def activityItems(self) -> list[dict[str, str]]:  # noqa: N802
+        return [dict(item) for item in self._activity_items]
+
     @Property(str, notify=stateChanged)
     def reasoningText(self) -> str:  # noqa: N802
         return self._reasoning_text
+
+    @Property(str, notify=stateChanged)
+    def activityElapsedLabel(self) -> str:  # noqa: N802
+        seconds = max(0, int(self._activity_elapsed_seconds))
+        minutes, seconds = divmod(seconds, 60)
+        if minutes:
+            return f"{minutes}m {seconds:02d}s"
+        return f"{seconds}s"
 
     @Property("QVariantList", notify=stateChanged)
     def agentItems(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1180,7 +1212,9 @@ class ChatBridge(QObject):
         self._orchestration = self._load_default_orchestration()
         self._attachments = []
         self._activity_steps = []
+        self._activity_items = []
         self._reasoning_text = ""
+        self._reset_stream_state()
         self._agent_items = []
         if not any(
             item.get("provider") == self._provider
@@ -1222,7 +1256,9 @@ class ChatBridge(QObject):
         self._draft = False
         if changing_conversation:
             self._activity_steps = []
+            self._activity_items = []
             self._reasoning_text = ""
+            self._activity_elapsed_seconds = 0
             self._agent_items = []
         self._selected_index = index
         self._selected = dict(selected)
@@ -1420,7 +1456,12 @@ class ChatBridge(QObject):
         self._turn_running = True
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
+        self._activity_items = []
         self._reasoning_text = ""
+        self._reset_stream_state()
+        self._activity_started_at = time.monotonic()
+        self._activity_elapsed_seconds = 0
+        self._activity_clock.start()
         self._agent_items = []
         self._messages.append(
             {
@@ -1433,7 +1474,6 @@ class ChatBridge(QObject):
             }
         )
         self._messages.append(self._activity_timeline_item())
-        self._streaming_text = ""
         self.stateChanged.emit()
         self.selectionChanged.emit()
         try:
@@ -1535,25 +1575,18 @@ class ChatBridge(QObject):
             return
         self._record_execution_event(event)
         if event.kind == "assistant_delta":
-            self._streaming_text += event.text
-            self._advance_default_activity()
-            if self._messages._items and self._messages._items[-1].get("role") == "assistant":
-                self._messages.update_last(
-                    content=self._streaming_text,
-                    displayContent=markdown_for_display(self._streaming_text),
-                )
-            else:
-                self._messages.append(
-                    {
-                        "messageId": -1,
-                        "role": "assistant",
-                        "content": self._streaming_text,
-                        "displayContent": markdown_for_display(self._streaming_text),
-                        "createdAt": "",
-                        "responseMode": "vr" if self._vr_enabled else "native",
-                    }
-                )
-            self.selectionChanged.emit()
+            delta = str(event.text or "")
+            if not delta:
+                return
+            self._streaming_text += delta
+            self._stream_pending_text += delta
+            if not self._assistant_stream_started:
+                self._assistant_stream_started = True
+                self._advance_default_activity()
+                self._schedule_state_update()
+            self._ensure_streaming_message()
+            if not self._stream_timer.isActive():
+                self._stream_timer.start()
         elif event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
             self._approval_request = dict(event.payload)
             self._approval_request["conversation_id"] = event.conversation_id
@@ -1564,7 +1597,7 @@ class ChatBridge(QObject):
         elif event.kind == "reasoning_delta":
             self._reasoning_text += str(event.text or "")
             self._status_text = "Pensando…"
-            self.stateChanged.emit()
+            self._schedule_state_update()
         elif event.kind in {"tool_event", "provider_reconnecting", "provider_reconnected"}:
             self._status_text = (
                 "Executando uma ação…"
@@ -1573,20 +1606,115 @@ class ChatBridge(QObject):
             )
             self.stateChanged.emit()
         elif event.kind in {"turn_completed", "orchestration_completed"}:
-            self._turn_running = False
-            self._status_text = "Pronto"
-            for step in self._activity_steps:
-                if step.get("state") not in {"error", "cancelled"}:
-                    step["state"] = "completed"
-            self._reload_selected_messages()
-            self.refresh()
-            self.stateChanged.emit()
+            self._queue_terminal_state(event.kind)
         elif event.kind in {"error", "orchestration_cancelled"}:
-            self._turn_running = False
-            self._status_text = "Erro" if event.kind == "error" else "Interrompido"
-            self._reload_selected_messages()
-            self.refresh()
+            self._queue_terminal_state(event.kind)
+
+    def _ensure_streaming_message(self) -> None:
+        if self._messages._items and self._messages._items[-1].get("role") == "assistant":
+            return
+        self._messages.append(
+            {
+                "messageId": -1,
+                "role": "assistant",
+                "content": self._streaming_text,
+                "displayContent": "",
+                "createdAt": "",
+                "responseMode": "vr" if self._vr_enabled else "native",
+            }
+        )
+
+    def _reset_stream_state(self) -> None:
+        if hasattr(self, "_stream_timer"):
+            self._stream_timer.stop()
+        if hasattr(self, "_activity_clock"):
+            self._activity_clock.stop()
+        self._streaming_text = ""
+        self._displayed_streaming_text = ""
+        self._stream_pending_text = ""
+        self._stream_terminal_kind = ""
+        self._assistant_stream_started = False
+        self._activity_started_at = 0.0
+        self._activity_elapsed_seconds = 0
+
+    def _schedule_state_update(self) -> None:
+        if not self._state_update_timer.isActive():
+            self._state_update_timer.start()
+
+    def _tick_activity_clock(self) -> None:
+        if not self._activity_started_at:
+            self._activity_clock.stop()
+            return
+        elapsed = max(0, int(time.monotonic() - self._activity_started_at))
+        if elapsed != self._activity_elapsed_seconds:
+            self._activity_elapsed_seconds = elapsed
+            self._schedule_state_update()
+
+    @Slot()
+    def _flush_stream_step(self) -> None:
+        if self._stream_pending_text:
+            backlog = len(self._stream_pending_text)
+            batch_size = max(2, min(96, (backlog + 55) // 56))
+            visible = self._stream_pending_text[:batch_size]
+            self._stream_pending_text = self._stream_pending_text[batch_size:]
+            self._displayed_streaming_text += visible
+            self._ensure_streaming_message()
+            self._messages.update_last(
+                content=self._streaming_text,
+                displayContent=markdown_for_display(self._displayed_streaming_text),
+            )
+            return
+        self._stream_timer.stop()
+        if self._stream_terminal_kind:
+            terminal_kind = self._stream_terminal_kind
+            self._stream_terminal_kind = ""
+            self._finalize_terminal_state(terminal_kind)
+
+    def _queue_terminal_state(self, kind: str) -> None:
+        if (
+            not self._turn_running
+            and kind in {"turn_completed", "orchestration_completed"}
+            and self._status_text in {"Erro", "Interrompido"}
+        ):
+            return
+        self._stream_terminal_kind = kind
+        if self._activity_started_at:
+            self._activity_elapsed_seconds = max(
+                self._activity_elapsed_seconds,
+                int(time.monotonic() - self._activity_started_at),
+            )
+        self._activity_clock.stop()
+        for step in self._activity_steps:
+            if step.get("state") not in {"error", "cancelled"}:
+                step["state"] = "completed"
+        terminal_state = (
+            "error"
+            if kind == "error"
+            else "cancelled" if kind == "orchestration_cancelled" else "completed"
+        )
+        for item in self._activity_items:
+            if item.get("state") == "running":
+                item["state"] = terminal_state
+        if self._stream_pending_text:
+            self._status_text = "Finalizando resposta…"
+            if not self._stream_timer.isActive():
+                self._stream_timer.start()
             self.stateChanged.emit()
+            return
+        terminal_kind = self._stream_terminal_kind
+        self._stream_terminal_kind = ""
+        self._finalize_terminal_state(terminal_kind)
+
+    def _finalize_terminal_state(self, kind: str) -> None:
+        self._turn_running = False
+        self._status_text = (
+            "Erro"
+            if kind == "error"
+            else "Interrompido" if kind == "orchestration_cancelled" else "Pronto"
+        )
+        self._reload_selected_messages()
+        self.refresh()
+        self.stateChanged.emit()
 
     @staticmethod
     def _default_activity_steps() -> list[dict[str, str]]:
@@ -1606,21 +1734,31 @@ class ChatBridge(QObject):
     def _advance_default_activity(self) -> None:
         if not self._activity_steps:
             self._activity_steps = self._default_activity_steps()
-        if len(self._activity_steps) == 1:
-            self._activity_steps[0]["state"] = "running"
-            return
-        for step in self._activity_steps[:-1]:
-            if step.get("state") not in {"error", "cancelled"}:
+        for step in self._activity_steps:
+            if step.get("state") == "running":
                 step["state"] = "completed"
-        if self._activity_steps[-1].get("state") == "pending":
-            self._activity_steps[-1]["state"] = "running"
+                break
+        for step in self._activity_steps:
+            if step.get("state") == "pending":
+                step["state"] = "running"
+                break
 
     def _restore_activity_from_history(self, conversation_id: str) -> None:
         self._activity_steps = []
+        self._activity_items = []
         self._reasoning_text = ""
+        self._activity_elapsed_seconds = 0
         rows = self._database.latest_turn_events(conversation_id)
         if not rows:
             return
+        try:
+            started_at = datetime.fromisoformat(str(rows[0]["created_at"] or ""))
+            finished_at = datetime.fromisoformat(str(rows[-1]["created_at"] or ""))
+            self._activity_elapsed_seconds = max(
+                0, int((finished_at - started_at).total_seconds())
+            )
+        except (TypeError, ValueError):
+            pass
         terminal = False
         for row in rows:
             kind = str(row["kind"] or "")
@@ -1656,6 +1794,9 @@ class ChatBridge(QObject):
             for step in self._activity_steps:
                 if step.get("state") not in {"error", "cancelled"}:
                     step["state"] = "completed"
+            for item in self._activity_items:
+                if item.get("state") == "running":
+                    item["state"] = "completed"
 
     def _record_execution_event(
         self, event: RuntimeEvent, *, emit_state: bool = True
@@ -1720,6 +1861,9 @@ class ChatBridge(QObject):
                 for index, text in enumerate(dict.fromkeys(raw_steps))
             ]
 
+        if event.kind == "tool_event":
+            self._record_tool_event(event)
+
         if event.kind == "plan_created":
             raw_plan = event.payload.get("plan") or {}
             planned = list(raw_plan.get("agents") or []) if isinstance(raw_plan, dict) else []
@@ -1762,20 +1906,118 @@ class ChatBridge(QObject):
             "tool_event",
             "turn_started",
         } and message and (
-            not self._activity_steps
-            or self._activity_steps[-1].get("text") != message
-            or self._activity_steps[-1].get("kind") != event.kind
+            not self._activity_items
+            or self._activity_items[-1].get("text") != message
+            or self._activity_items[-1].get("kind") != event.kind
         ):
-            self._activity_steps.append(
+            self._activity_items.append(
                 {
                     "kind": event.kind,
                     "text": message,
+                    "detail": "",
                     "state": self._event_state(event.kind),
                 }
             )
-            self._activity_steps = self._activity_steps[-80:]
+            self._activity_items = self._activity_items[-60:]
+        if event.kind.endswith("_completed") and any(
+            step.get("state") == "pending" for step in self._activity_steps
+        ):
+            self._advance_default_activity()
         if emit_state:
             self.stateChanged.emit()
+
+    def _record_tool_event(self, event: RuntimeEvent) -> None:
+        payload = dict(event.payload or {})
+        raw_item = payload.get("item") or payload.get("part") or {}
+        if not raw_item and any(
+            key in payload for key in ("name", "tool", "input", "command")
+        ):
+            raw_item = payload
+        item = raw_item if isinstance(raw_item, dict) else {}
+        item_type = str(item.get("type") or "")
+        identifier = str(
+            item.get("id")
+            or payload.get("itemId")
+            or payload.get("item_id")
+            or payload.get("request_id")
+            or ""
+        )
+        fallback_labels = {
+            "reasoning": "Raciocínio",
+            "commandExecution": "Comando",
+            "fileChange": "Alteração de arquivo",
+            "mcpToolCall": "Ferramenta MCP",
+            "webSearch": "Pesquisa na web",
+            "web_search": "Pesquisa na web",
+            "userMessage": "Preparação do contexto",
+            "agentMessage": "Preparação da resposta",
+        }
+        label = str(
+            item.get("name")
+            or item.get("tool")
+            or fallback_labels.get(item_type)
+            or item_type
+            or event.text
+            or "Ferramenta"
+        ).strip()
+        lifecycle = str(payload.get("lifecycle") or "")
+        state = (
+            "error"
+            if payload.get("success") is False
+            else "completed" if lifecycle.endswith("completed") or payload.get("success") is True
+            else "running"
+        )
+        detail_values: list[str] = []
+        for value in (
+            item.get("command"),
+            item.get("arguments"),
+            item.get("input"),
+            item.get("changes"),
+            item.get("aggregatedOutput"),
+            item.get("output"),
+            payload.get("arguments"),
+            payload.get("output"),
+        ):
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, str):
+                rendered = value
+            else:
+                rendered = json.dumps(value, ensure_ascii=False, indent=2)
+            rendered = rendered.strip()
+            if rendered and rendered not in detail_values:
+                detail_values.append(rendered)
+        detail = "\n\n".join(detail_values)[:4000]
+        existing = next(
+            (
+                candidate
+                for candidate in reversed(self._activity_items)
+                if identifier and candidate.get("id") == identifier
+            ),
+            None,
+        )
+        if existing is None:
+            self._activity_items.append(
+                {
+                    "id": identifier,
+                    "kind": (
+                        "reasoning"
+                        if item_type == "reasoning"
+                        else "activity"
+                        if item_type in {"userMessage", "agentMessage"}
+                        else "tool"
+                    ),
+                    "text": label,
+                    "detail": detail,
+                    "state": state,
+                }
+            )
+            self._activity_items = self._activity_items[-60:]
+            return
+        existing["text"] = label or existing.get("text", "Ferramenta")
+        existing["state"] = state
+        if detail:
+            existing["detail"] = detail
 
     def _upsert_agent(
         self,
@@ -1876,7 +2118,7 @@ class ChatBridge(QObject):
                 for row in rows
                 if str(row["role"] or "") != "system"
             ]
-        if self._activity_steps or self._reasoning_text:
+        if self._activity_steps or self._activity_items or self._reasoning_text:
             assistant_index = next(
                 (
                     index

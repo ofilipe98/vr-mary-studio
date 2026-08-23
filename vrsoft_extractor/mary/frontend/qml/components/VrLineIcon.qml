@@ -97,6 +97,8 @@ Canvas {
             line(6, 9, 12, 15); line(12, 15, 18, 9)
         } else if (kind === "chevronUp") {
             line(6, 15, 12, 9); line(12, 9, 18, 15)
+        } else if (kind === "chevronRight") {
+            line(9, 6, 15, 12); line(15, 12, 9, 18)
         } else if (kind === "task") {
             rect(4, 4, 16, 16, 2.5)
             line(7.5, 9, 9.5, 11); line(9.5, 11, 13, 7.5)
@@ -119,8 +121,13 @@ Canvas {
             }
             ctx.closePath(); ctx.stroke()
         } else if (kind === "copy") {
-            rect(8, 8, 11, 11, 2)
-            rect(5, 5, 11, 11, 2)
+            rect(8, 8, 11, 11, 2.2)
+            ctx.beginPath(); ctx.moveTo(5, 14); ctx.lineTo(5, 7)
+            ctx.quadraticCurveTo(5, 5, 7, 5); ctx.lineTo(14, 5); ctx.stroke()
+        } else if (kind === "archive") {
+            rect(4, 7, 16, 13, 2)
+            rect(3, 4, 18, 5, 1.5)
+            line(9, 13, 15, 13)
         } else if (kind === "lock") {
             rect(5, 10, 14, 10, 2)
             ctx.beginPath(); ctx.arc(12, 10, 4.5, Math.PI, 0); ctx.stroke()

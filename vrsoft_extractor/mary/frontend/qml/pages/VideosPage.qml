@@ -10,6 +10,21 @@ Item {
     property bool filtersVisible: false
     property var selectedIds: []
     property var collapsedNodeIds: []
+    property bool treeInitialized: false
+    readonly property bool filterActive: videoSearch.text.trim().length > 0
+        || sourceFilter.currentIndex > 0 || moduleFilter.currentIndex > 0
+        || statusFilter.currentIndex > 0
+
+    Connections {
+        target: studio
+        function onVideosChanged() {
+            if (studio.videoLoading) return
+            if (!root.treeInitialized && studio.videoExpandableNodeIds.length > 0) {
+                root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
+                root.treeInitialized = true
+            }
+        }
+    }
 
     function runFilter() {
         studio.filterVideos(
@@ -34,6 +49,7 @@ Item {
     }
 
     function nodeVisible(ancestorIds) {
+        if (root.filterActive) return true
         for (var i = 0; i < ancestorIds.length; ++i)
             if (nodeCollapsed(ancestorIds[i])) return false
         return true
@@ -42,8 +58,12 @@ Item {
     function toggleNode(nodeId) {
         var values = collapsedNodeIds.slice()
         var position = values.indexOf(nodeId)
-        if (position >= 0) values.splice(position, 1)
-        else values.push(nodeId)
+        if (position >= 0) {
+            values.splice(position, 1)
+            var descendants = studio.videoDescendantNodeIds(nodeId)
+            for (var index = 0; index < descendants.length; ++index)
+                if (values.indexOf(descendants[index]) < 0) values.push(descendants[index])
+        } else values.push(nodeId)
         collapsedNodeIds = values
     }
 
@@ -153,15 +173,15 @@ Item {
                 VrIconButton {
                     implicitWidth: 26
                     implicitHeight: 26
-                    symbol: "⊟"
+                    iconKind: "chevronRight"
                     ToolTip.visible: hovered
                     ToolTip.text: "Recolher todas as pastas"
-                    onClicked: root.collapsedNodeIds = ["root:courses", "root:library"]
+                    onClicked: root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
                 }
                 VrIconButton {
                     implicitWidth: 26
                     implicitHeight: 26
-                    symbol: "⊞"
+                    iconKind: "chevronDown"
                     ToolTip.visible: hovered
                     ToolTip.text: "Expandir todas as pastas"
                     onClicked: root.collapsedNodeIds = []
@@ -240,7 +260,10 @@ Item {
                                     implicitWidth: 24
                                     implicitHeight: 24
                                     visible: videoRow.expandable
-                                    symbol: root.nodeCollapsed(videoRow.nodeId) ? "▸" : "▾"
+                                    iconKind: root.nodeCollapsed(videoRow.nodeId)
+                                        ? "chevronRight" : "chevronDown"
+                                    iconSize: 14
+                                    foreground: frontend.palette.mutedText
                                     ToolTip.visible: hovered
                                     ToolTip.text: root.nodeCollapsed(videoRow.nodeId)
                                         ? "Expandir pasta" : "Recolher pasta"
@@ -282,9 +305,26 @@ Item {
                             Text { Layout.preferredWidth: 72; text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12 }
                         }
                     }
+                    Row {
+                        anchors.centerIn: parent
+                        visible: studio.videoLoading
+                        spacing: 8
+                        VrLineIcon {
+                            width: 16
+                            height: 16
+                            kind: "auto"
+                            foreground: frontend.palette.brandOrange
+                        }
+                        Text {
+                            text: "Carregando inventário…"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.bodySize
+                        }
+                    }
                     VrEmptyState {
                         anchors.centerIn: parent
-                        visible: videoList.count === 0
+                        visible: videoList.count === 0 && !studio.videoLoading
                         title: "Nenhum vídeo encontrado"
                         description: "Inventarie cursos e biblioteca para preencher esta visão."
                         actionText: "Inventariar vídeos"

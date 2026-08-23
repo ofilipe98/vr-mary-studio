@@ -9,8 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings
+from PySide6.QtCore import QObject, QSettings, Qt
 from PySide6.QtGui import QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from vrsoft_extractor.mary import brand
@@ -19,6 +20,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
 from vrsoft_extractor.mary.frontend.chat import ChatBridge, markdown_for_display
+from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.models import RuntimeEvent
 
 
@@ -57,10 +59,11 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertEqual(light["brandOrange"], "#FF7200")
         self.assertEqual(light["accessibleOrange"], "#C45100")
         self.assertEqual(light["brandNavy"], "#02021E")
-        self.assertEqual(light["navigationBackground"], "#000000")
-        self.assertEqual(light["navText"], "#E9E9F0")
-        self.assertEqual(light["navHover"], "#19191D")
+        self.assertEqual(light["navigationBackground"], "#FFFFFF")
+        self.assertEqual(light["navText"], "#02021E")
+        self.assertEqual(light["navHover"], "#F1F1F4")
         self.assertEqual(light["background"], "#F3F3F3")
+        self.assertNotEqual(light["surfaceRaised"], light["surface"])
         self.assertEqual(dark["background"], "#12100F")
         self.assertEqual(dark["surface"], "#1B1816")
 
@@ -122,7 +125,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.application.processEvents()
 
             self.assertTrue(MAIN_QML.exists())
-            self.assertEqual(len(engine.rootObjects()), 1)
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
             window = engine.rootObjects()[0]
             self.assertEqual(window.property("title"), "VR Norte Studio")
             self.assertGreaterEqual(window.property("minimumWidth"), 1120)
@@ -132,6 +139,9 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "chatPermissionPicker"))
             self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
+            composer_input = window.findChild(QObject, "chatComposerInput")
+            self.assertIsNotNone(composer_input)
+            self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
             new_chat_button = window.findChild(QObject, "newChatButton")
             self.assertIsNotNone(new_chat_button)
             sidebar_toggles = window.findChildren(QObject, "conversationSidebarToggle")
@@ -142,6 +152,8 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(surface_toggle)
             self.assertIsNotNone(surface_add)
             self.assertIsNotNone(surface_picker)
+            surface_collapse = window.findChild(QObject, "surfaceCollapseButton")
+            self.assertIsNotNone(surface_collapse)
             self.assertIsNotNone(window.findChild(QObject, "conversationSidebar"))
             self.assertIsNone(window.findChild(QObject, "navigationRail"))
             self.assertIsNotNone(window.findChild(QObject, "surfacePanel"))
@@ -157,10 +169,17 @@ class QmlFrontendTest(unittest.TestCase):
             chat_page.openSurface(1)
             chat_page.openSurface(2)
             self.application.processEvents()
+            self.assertTrue(chat_page.property("surfaceVisible"))
             self.assertEqual(
                 len(chat_page.property("openSurfaceTabs").toVariant()), 2
             )
             self.assertEqual(chat_page.property("surfaceIndex"), 2)
+            surface_collapse.click()
+            self.application.processEvents()
+            self.assertFalse(chat_page.property("surfaceVisible"))
+            surface_toggle.click()
+            self.application.processEvents()
+            self.assertTrue(chat_page.property("surfaceVisible"))
             self.assertIsNotNone(window.findChild(QObject, "terminalCommandInput"))
             terminal_background = window.findChild(
                 QObject, "terminalSurfaceBackground"
@@ -199,6 +218,15 @@ class QmlFrontendTest(unittest.TestCase):
                 terminal_background.property("color"),
                 QColor(bridge.palette["chatSidebar"]),
             )
+            composer_input.setProperty("text", "")
+            composer_input.forceActiveFocus()
+            QTest.keyClick(window, Qt.Key_Return)
+            self.application.processEvents()
+            self.assertEqual(composer_input.property("text"), "")
+            QTest.keyClick(window, Qt.Key_Return, Qt.ShiftModifier)
+            self.application.processEvents()
+            self.assertIn("\n", composer_input.property("text"))
+            composer_input.setProperty("text", "")
             chat_page.closeSurface(2)
             self.application.processEvents()
             self.assertEqual(
@@ -482,7 +510,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(len(bridge.agentItems), 1)
             self.assertEqual(bridge.agentItems[0]["status"], "concluído")
             self.assertEqual(bridge.agentItems[0]["output"], "Regra validada.")
-            self.assertEqual(len(bridge.activitySteps), 2)
+            self.assertEqual(bridge.activitySteps, [])
+            self.assertEqual(
+                [item["kind"] for item in bridge.activityItems],
+                ["plan_created", "agent_completed"],
+            )
             bridge._reasoning_text = "Validação concluída com as evidências locais."
             bridge._reload_selected_messages()
             self.assertEqual(
@@ -493,6 +525,176 @@ class QmlFrontendTest(unittest.TestCase):
                 bridge.reasoningText,
                 "Validação concluída com as evidências locais.",
             )
+
+    def test_chat_bridge_animates_streamed_text_instead_of_revealing_it_at_once(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Streaming", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(conversation_id, "user", "Explique o fluxo.")
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            response = (
+                "A resposta é apresentada progressivamente para preservar o "
+                "acompanhamento visual durante a execução."
+            )
+
+            bridge._on_runtime_event(
+                RuntimeEvent(conversation_id, "assistant_delta", response)
+            )
+
+            streaming = bridge.messages.item(bridge.messages.rowCount() - 1)
+            self.assertEqual(streaming["role"], "assistant")
+            self.assertEqual(streaming["displayContent"], "")
+            bridge._flush_stream_step()
+            first_frame = bridge.messages.item(bridge.messages.rowCount() - 1)
+            self.assertGreater(len(first_frame["displayContent"]), 0)
+            self.assertLess(len(first_frame["displayContent"]), len(response))
+            while bridge._stream_pending_text:
+                bridge._flush_stream_step()
+            final_frame = bridge.messages.item(bridge.messages.rowCount() - 1)
+            self.assertEqual(final_frame["displayContent"], response)
+            bridge._reset_stream_state()
+
+    def test_chat_bridge_exposes_tool_calls_as_one_expandable_lifecycle_item(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Ferramentas", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge._on_runtime_event(
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Executando terminal",
+                    {
+                        "lifecycle": "started",
+                        "item": {
+                            "id": "tool-1",
+                            "name": "Terminal",
+                            "command": "rg -n fonte VRProject",
+                        },
+                    },
+                )
+            )
+            bridge._on_runtime_event(
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Terminal concluído",
+                    {
+                        "lifecycle": "completed",
+                        "success": True,
+                        "output": "3 resultados",
+                        "item": {"id": "tool-1", "name": "Terminal"},
+                    },
+                )
+            )
+            bridge._on_runtime_event(
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Read",
+                    {
+                        "type": "tool_use",
+                        "id": "tool-2",
+                        "name": "Read",
+                        "input": {"path": "VRProject/manual.md"},
+                    },
+                )
+            )
+
+            self.assertEqual(len(bridge.activityItems), 2)
+            item = bridge.activityItems[0]
+            self.assertEqual(item["kind"], "tool")
+            self.assertEqual(item["state"], "completed")
+            self.assertIn("3 resultados", item["detail"])
+            self.assertIn("VRProject/manual.md", bridge.activityItems[1]["detail"])
+
+    def test_studio_bridge_loads_pages_lazily_and_tracks_video_descendants(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = StudioBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            self.assertEqual(bridge._loaded_pages, set())
+            self.assertEqual(bridge.videoModel.rowCount(), 0)
+            bridge._all_video_items = [
+                {
+                    "nodeId": "root",
+                    "ancestorIds": [],
+                    "expandable": True,
+                },
+                {
+                    "nodeId": "root:module",
+                    "ancestorIds": ["root"],
+                    "expandable": True,
+                },
+                {
+                    "nodeId": "root:module:folder",
+                    "ancestorIds": ["root", "root:module"],
+                    "expandable": True,
+                },
+                {
+                    "nodeId": "video:1",
+                    "ancestorIds": ["root", "root:module", "root:module:folder"],
+                    "expandable": False,
+                },
+            ]
+
+            self.assertEqual(
+                bridge.videoDescendantNodeIds("root"),
+                ["root:module", "root:module:folder"],
+            )
+
+    def test_qml_chat_actions_keep_archive_only_and_enable_safe_source_links(self):
+        chat_qml = (
+            MAIN_QML.parent / "pages" / "ChatPreview.qml"
+        ).read_text(encoding="utf-8")
+        knowledge_qml = (
+            MAIN_QML.parent / "pages" / "KnowledgePage.qml"
+        ).read_text(encoding="utf-8")
+        settings_qml = (
+            MAIN_QML.parent / "pages" / "SettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Arquivar conversa", chat_qml)
+        self.assertNotIn("Mover para lixeira", chat_qml)
+        self.assertIn("Keys.onReturnPressed", chat_qml)
+        self.assertIn("Keys.onEnterPressed", chat_qml)
+        self.assertIn("onLinkActivated", chat_qml)
+        self.assertIn("onLinkActivated", knowledge_qml)
+        self.assertNotIn("Digite EXCLUIR", settings_qml)
 
     def test_chat_bridge_restores_latest_persisted_task_timeline(self):
         with TemporaryDirectory() as temporary:
@@ -522,6 +724,7 @@ class QmlFrontendTest(unittest.TestCase):
                             "Preparar a resposta",
                         ]
                     },
+                    "2026-08-23T12:00:00+00:00",
                 ),
                 RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
                 RuntimeEvent(
@@ -534,7 +737,12 @@ class QmlFrontendTest(unittest.TestCase):
                     "assistant_delta",
                     "O cadastro foi revisado.",
                 ),
-                RuntimeEvent(conversation_id, "turn_completed", "Pronto"),
+                RuntimeEvent(
+                    conversation_id,
+                    "turn_completed",
+                    "Pronto",
+                    created_at="2026-08-23T12:01:05+00:00",
+                ),
             ):
                 database.add_event(event)
 
@@ -562,6 +770,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(
                 bridge.reasoningText, "Conferindo evidências locais."
             )
+            self.assertEqual(bridge.activityElapsedLabel, "1m 05s")
 
     def test_markdown_display_repairs_glued_sentences_without_touching_code(self):
         source = "Versão pronta.Próximo passo: `arquivo.MD`."

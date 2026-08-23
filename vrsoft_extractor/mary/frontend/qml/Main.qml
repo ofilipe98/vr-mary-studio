@@ -24,6 +24,17 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: frontend
+        function onCurrentPageChanged() {
+            if (studio) studio.activatePage(frontend.currentPage)
+        }
+    }
+
+    Component.onCompleted: {
+        if (studio) studio.activatePage(frontend.currentPage)
+    }
+
     Loader {
         id: pageLoader
         anchors.fill: parent

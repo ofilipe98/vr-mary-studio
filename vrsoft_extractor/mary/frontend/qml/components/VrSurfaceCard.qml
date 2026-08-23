@@ -49,10 +49,10 @@ Button {
             Text {
                 Layout.fillWidth: true
                 text: control.description
-                color: frontend.palette.text
+                color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
+                font.pixelSize: 11
+                font.weight: Font.Normal
                 wrapMode: Text.WordWrap
             }
         }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
 
@@ -6,14 +7,15 @@ Rectangle {
     id: root
     objectName: "chatActivity"
 
-    property var steps: []
+    property var items: []
     property string reasoningText: ""
     property string statusText: "Pronto"
+    property string elapsedLabel: "0s"
     property bool running: false
     property bool expanded: true
     signal toggleRequested()
 
-    implicitHeight: content.implicitHeight + 6
+    implicitHeight: content.implicitHeight + 4
     color: "transparent"
 
     ColumnLayout {
@@ -21,73 +23,51 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        spacing: 3
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: frontend.palette.chatDivider
-            opacity: 0.65
-        }
+        spacing: 5
 
         Rectangle {
             id: activityHeader
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            radius: 6
+            Layout.preferredHeight: 30
+            radius: 7
             color: activityHover.hovered ? frontend.palette.hover : "transparent"
 
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 3
-                anchors.rightMargin: 4
+                anchors.rightMargin: 5
                 spacing: 8
 
                 VrLineIcon {
-                    Layout.preferredWidth: 13
-                    Layout.preferredHeight: 13
-                    kind: root.expanded ? "chevronDown" : "chevronUp"
-                    foreground: frontend.palette.mutedText
+                    Layout.preferredWidth: 14
+                    Layout.preferredHeight: 14
+                    kind: root.running ? "auto"
+                        : root.expanded ? "chevronDown" : "chevronUp"
+                    foreground: root.running
+                        ? frontend.palette.brandOrange : frontend.palette.mutedText
                 }
-
-                Row {
-                    visible: root.steps.length > 0
-                    spacing: 3
-                    Repeater {
-                        model: Math.min(7, root.steps.length)
-                        delegate: Rectangle {
-                            required property int index
-                            width: 9
-                            height: 3
-                            radius: 2
-                            color: {
-                                var step = root.steps[index] || ({})
-                                if (step.state === "completed") return frontend.palette.success
-                                if (step.state === "error") return frontend.palette.danger
-                                if (step.state === "running") return frontend.palette.brandOrange
-                                return frontend.palette.chatBorder
-                            }
-                        }
-                    }
-                }
-
                 Text {
                     Layout.fillWidth: true
                     text: root.summaryText()
-                    color: root.running ? frontend.palette.mutedText : frontend.palette.text
+                    color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
-                    font.weight: root.running ? Font.Normal : Font.DemiBold
+                    font.weight: root.running ? Font.DemiBold : Font.Normal
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
-
                 Text {
-                    visible: root.steps.length > 0
-                    text: root.completedCount() + "/" + root.steps.length
+                    visible: root.items.length > 0
+                    text: root.completedItemCount() + "/" + root.items.length
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: 9
+                }
+                VrLineIcon {
+                    Layout.preferredWidth: 12
+                    Layout.preferredHeight: 12
+                    kind: root.expanded ? "chevronDown" : "chevronUp"
+                    foreground: frontend.palette.mutedText
                 }
             }
 
@@ -95,123 +75,151 @@ Rectangle {
             TapHandler { onTapped: root.toggleRequested() }
         }
 
-        Text {
-            visible: !root.expanded && root.reasoningText.length > 0
-            Layout.fillWidth: true
-            Layout.leftMargin: 24
-            Layout.rightMargin: 8
-            text: "Pensamento · " + root.reasoningPreview()
-            color: frontend.palette.mutedText
-            font.family: Theme.fontFamily
-            font.pixelSize: 10
-            horizontalAlignment: Text.AlignLeft
-            elide: Text.ElideRight
-        }
-
         ColumnLayout {
             visible: root.expanded
             Layout.fillWidth: true
             Layout.leftMargin: 24
             Layout.rightMargin: 8
-            spacing: 4
+            spacing: 7
 
-            Rectangle {
-                visible: root.reasoningText.length > 0
+            Text {
+                visible: root.reasoningText.trim().length > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: reasoningColumn.implicitHeight + 14
-                radius: 7
-                color: frontend.themeId === "dark_orange" ? "#111113" : "#F2F2F5"
-
-                ColumnLayout {
-                    id: reasoningColumn
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 9
-                    anchors.rightMargin: 9
-                    spacing: 3
-                    Text {
-                        Layout.fillWidth: true
-                        text: "Pensamento"
-                        color: frontend.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        font.weight: Font.DemiBold
-                        horizontalAlignment: Text.AlignLeft
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.reasoningText
-                        color: frontend.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        lineHeight: 1.35
-                        horizontalAlignment: Text.AlignLeft
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 5
-                        elide: Text.ElideRight
-                    }
-                }
+                text: root.reasoningText
+                textFormat: Text.PlainText
+                color: frontend.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                lineHeightMode: Text.ProportionalHeight
+                lineHeight: 1.35
+                horizontalAlignment: Text.AlignLeft
+                wrapMode: Text.WordWrap
             }
 
             Repeater {
-                model: root.steps.slice(Math.max(0, root.steps.length - 10))
-                delegate: RowLayout {
+                model: root.items.slice(Math.max(0, root.items.length - 30))
+                delegate: ColumnLayout {
+                    id: activityItem
                     required property var modelData
+                    property bool detailExpanded: false
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: 4
 
-                    Text {
-                        Layout.preferredWidth: 12
-                        text: modelData.state === "completed" ? "✓"
-                            : modelData.state === "error" ? "!" : "·"
-                        color: modelData.state === "completed" ? frontend.palette.success
-                            : modelData.state === "error" ? frontend.palette.danger
-                            : modelData.state === "running" ? frontend.palette.brandOrange
-                            : frontend.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                    }
-                    Text {
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: modelData.text
-                        color: modelData.state === "running"
-                            ? frontend.palette.text : frontend.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 10
-                        lineHeight: 1.3
-                        horizontalAlignment: Text.AlignLeft
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
+                        spacing: 8
+
+                        VrLineIcon {
+                            Layout.preferredWidth: 13
+                            Layout.preferredHeight: 13
+                            kind: activityItem.modelData.kind === "tool" ? "terminal" : "task"
+                            foreground: root.stateColor(activityItem.modelData.state)
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: activityItem.modelData.text || "Atividade"
+                            color: activityItem.modelData.state === "running"
+                                ? frontend.palette.text : frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 10
+                            font.weight: activityItem.modelData.state === "running"
+                                ? Font.DemiBold : Font.Normal
+                            wrapMode: Text.WordWrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: root.stateLabel(activityItem.modelData.state)
+                            color: root.stateColor(activityItem.modelData.state)
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 9
+                        }
+                        VrLineIcon {
+                            visible: String(activityItem.modelData.detail || "").length > 0
+                            Layout.preferredWidth: 11
+                            Layout.preferredHeight: 11
+                            kind: activityItem.detailExpanded ? "chevronDown" : "chevronUp"
+                            foreground: frontend.palette.mutedText
+                        }
+                        TapHandler {
+                            enabled: String(activityItem.modelData.detail || "").length > 0
+                            onTapped: activityItem.detailExpanded = !activityItem.detailExpanded
+                        }
+                    }
+
+                    Rectangle {
+                        visible: activityItem.detailExpanded
+                            && String(activityItem.modelData.detail || "").length > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: detailText.implicitHeight + 14
+                        radius: 7
+                        color: frontend.palette.surfaceRaised
+                        border.width: 1
+                        border.color: frontend.palette.chatBorder
+
+                        Text {
+                            id: detailText
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 9
+                            anchors.rightMargin: 9
+                            text: activityItem.modelData.detail || ""
+                            color: frontend.palette.mutedText
+                            font.family: "Cascadia Mono"
+                            font.pixelSize: 9
+                            wrapMode: Text.WrapAnywhere
+                        }
                     }
                 }
             }
         }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: frontend.palette.chatDivider
+            opacity: 0.65
+        }
     }
 
-    function completedCount() {
+    function completedItemCount() {
         var completed = 0
-        for (var index = 0; index < root.steps.length; ++index) {
-            if (String(root.steps[index].state || "") === "completed") completed += 1
+        for (var index = 0; index < root.items.length; ++index) {
+            var state = String(root.items[index].state || "")
+            if (state === "completed") completed += 1
         }
         return completed
     }
 
     function summaryText() {
-        if (root.statusText === "Erro") return "Execução interrompida"
-        if (!root.running) return "Planejamento e execução concluídos"
-        for (var index = 0; index < root.steps.length; ++index) {
-            if (String(root.steps[index].state || "") === "running")
-                return String(root.steps[index].text || root.statusText)
+        if (root.running) {
+            for (var index = root.items.length - 1; index >= 0; --index) {
+                if (String(root.items[index].state || "") === "running")
+                    return root.items[index].kind === "tool"
+                        ? "Executando " + String(root.items[index].text || "ferramenta")
+                        : String(root.items[index].text || "Pensando…")
+            }
+            return root.reasoningText.length ? "Pensando…"
+                : root.statusText === "Pronto" ? "Trabalhando…" : root.statusText
         }
-        return root.statusText === "Pronto" ? "Trabalhando…" : root.statusText
+        if (root.statusText === "Erro") return "Execução interrompida"
+        if (root.statusText === "Interrompido") return "Execução interrompida pelo usuário"
+        return "Trabalhou por " + root.elapsedLabel
     }
 
-    function reasoningPreview() {
-        var value = String(root.reasoningText || "").replace(/\s+/g, " ").trim()
-        if (value.length > 180) return "…" + value.substring(value.length - 179)
-        return value
+    function stateColor(state) {
+        if (state === "completed") return frontend.palette.success
+        if (state === "error" || state === "cancelled") return frontend.palette.danger
+        if (state === "running") return frontend.palette.brandOrange
+        return frontend.palette.mutedText
+    }
+
+    function stateLabel(state) {
+        if (state === "completed") return "concluído"
+        if (state === "error") return "falhou"
+        if (state === "cancelled") return "interrompido"
+        if (state === "running") return "agora"
+        return ""
     }
 }

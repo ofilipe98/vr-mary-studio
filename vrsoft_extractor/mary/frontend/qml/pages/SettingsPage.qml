@@ -203,7 +203,7 @@ Item {
                     anchors.margins: 4
                     spacing: 10
                     Text { text: "Projetos arquivados"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
-                    Text { Layout.fillWidth: true; text: "Conversas arquivadas ficam separadas do Chat VR. Use o botão de excluir no item para removê-las imediatamente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "Conversas arquivadas ficam separadas do Chat VR. Use o botão de excluir no item para removê-las definitivamente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
                     RowLayout {
                         Layout.fillWidth: true
                         Item { Layout.fillWidth: true }
@@ -258,7 +258,6 @@ Item {
         contentItem: ColumnLayout {
             spacing: 10
             Text { Layout.fillWidth: true; text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
-            VrTextField { id: deleteConfirmation; Layout.fillWidth: true; placeholderText: "Digite EXCLUIR para confirmar" }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Cancelar"; onClicked: deleteDialog.close() }
@@ -266,8 +265,11 @@ Item {
                 VrButton {
                     text: "Excluir definitivamente"
                     variant: "primary"
-                    enabled: deleteConfirmation.text === "EXCLUIR"
-                    onClicked: { studio.purgeArchived(root.pendingDeleteId); deleteConfirmation.clear(); deleteDialog.close() }
+                    onClicked: {
+                        studio.purgeArchived(root.pendingDeleteId)
+                        root.pendingDeleteId = ""
+                        deleteDialog.close()
+                    }
                 }
             }
         }

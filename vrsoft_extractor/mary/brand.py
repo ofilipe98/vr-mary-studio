@@ -52,10 +52,10 @@ def brand_palette(theme_id: str) -> dict[str, str]:
         "accessibleOrange": ACCESSIBLE_ORANGE,
         "brandYellow": BRAND_YELLOW,
         "brandNavy": BRAND_NAVY,
-        "navigationBackground": "#000000",
+        "navigationBackground": "#000000" if dark else "#FFFFFF",
         "background": DARK_BACKGROUND if dark else BACKGROUND,
         "surface": DARK_SURFACE if dark else "#FFFFFF",
-        "surfaceRaised": DARK_SURFACE_RAISED if dark else "#FFFFFF",
+        "surfaceRaised": DARK_SURFACE_RAISED if dark else "#F7F7FA",
         # Chat VR intentionally uses a more immersive, neutral-black stack
         # than the data pages in Dark & Orange. These values mirror the
         # existing Qt Widgets screen instead of inheriting the generic theme.
@@ -74,8 +74,8 @@ def brand_palette(theme_id: str) -> dict[str, str]:
         "success": DARK_STATUS_GOOD if dark else STATUS_GOOD,
         "warning": DARK_STATUS_WARN if dark else STATUS_WARN,
         "danger": "#FF7B72" if dark else "#B42318",
-        "navText": "#E9E9F0",
-        "navMuted": "#B8B8C8",
-        "navHover": "#19191D",
-        "navDivider": "#25252A",
+        "navText": "#E9E9F0" if dark else BRAND_NAVY,
+        "navMuted": "#B8B8C8" if dark else TEXT_MUTED,
+        "navHover": "#19191D" if dark else "#F1F1F4",
+        "navDivider": "#25252A" if dark else "#D7D7DF",
     }

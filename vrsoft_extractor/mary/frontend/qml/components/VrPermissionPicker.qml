@@ -17,7 +17,7 @@ Button {
         var key = String(value || "auto")
         if (key === "supervised") return "lock"
         if (key === "auto_edits") return "edit"
-        if (key === "full_access") return "unlock"
+        if (key === "full_access") return "lock"
         return "auto"
     }
 
@@ -105,7 +105,8 @@ Button {
                             Layout.alignment: Qt.AlignTop
                             Layout.topMargin: 5
                             kind: control.permissionIconKind(modelData.value)
-                            foreground: frontend.palette.mutedText
+                            foreground: control.currentIndex === index
+                                ? frontend.palette.text : frontend.palette.mutedText
                         }
                         ColumnLayout {
                             Layout.fillWidth: true

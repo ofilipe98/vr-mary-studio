@@ -616,20 +616,7 @@ class MaryDatabase:
         root = self.root
         if root is None:
             raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
-        absolute_pattern = "%:\\%"
-        checks = (
-            ("documents", "local_path LIKE ? OR assets_json LIKE ?"),
-            ("conversations", "workspace LIKE ? OR original_workspace LIKE ?"),
-            ("artifacts", "path LIKE ? OR path LIKE ?"),
-        )
-        has_absolute_paths = any(
-            connection.execute(
-                f"SELECT 1 FROM {table} WHERE {where} LIMIT 1",
-                (absolute_pattern, "%:/%"),
-            ).fetchone()
-            for table, where in checks
-        )
-        if not has_absolute_paths:
+        if not self._has_nonportable_paths(connection):
             return
         backup_path = (
             root / ".state" / "backups" / "conhecimento-pre-portable.sqlite"
@@ -640,12 +627,41 @@ class MaryDatabase:
         with sqlite3.connect(backup_path) as target:
             connection.backup(target)
 
+    @staticmethod
+    def _has_nonportable_paths(connection: sqlite3.Connection) -> bool:
+        checks = (
+            ("documents", ("local_path", "assets_json")),
+            ("conversations", ("workspace", "original_workspace")),
+            ("artifacts", ("path",)),
+        )
+        for table, columns in checks:
+            where, parameters = MaryDatabase._nonportable_path_filter(columns)
+            if connection.execute(
+                f"SELECT 1 FROM {table} WHERE {where} LIMIT 1", parameters
+            ).fetchone():
+                return True
+        return False
+
+    @staticmethod
+    def _nonportable_path_filter(columns: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+        patterns = ("%:\\%", "%:/%")
+        where = " OR ".join(
+            f"({column} LIKE ? OR {column} LIKE ?)" for column in columns
+        )
+        return where, tuple(pattern for _column in columns for pattern in patterns)
+
     def _migrate_portable_paths(self, connection: sqlite3.Connection) -> None:
         root = self.root
         if root is None:
             raise RuntimeError("A raiz da base é obrigatória para migrar caminhos.")
+        if not self._has_nonportable_paths(connection):
+            return
+        document_where, document_parameters = self._nonportable_path_filter(
+            ("local_path", "assets_json")
+        )
         rows = connection.execute(
-            "SELECT id,local_path,assets_json FROM documents"
+            f"SELECT id,local_path,assets_json FROM documents WHERE {document_where}",
+            document_parameters,
         ).fetchall()
         for row in rows:
             try:
@@ -668,7 +684,10 @@ class MaryDatabase:
                 else ("path",)
             )
             selected = ",".join(("id", *columns))
-            for row in connection.execute(f"SELECT {selected} FROM {table}").fetchall():
+            where, parameters = self._nonportable_path_filter(columns)
+            for row in connection.execute(
+                f"SELECT {selected} FROM {table} WHERE {where}", parameters
+            ).fetchall():
                 values = {column: to_portable_path(root, row[column]) for column in columns}
                 if any(values[column] != row[column] for column in columns):
                     assignments = ",".join(f"{column}=?" for column in columns)
