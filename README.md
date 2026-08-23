@@ -142,6 +142,14 @@ Abra `Start-VRStudio.bat` ou execute:
 .\.venv\Scripts\vr-norte-studio.exe --project-dir .
 ```
 
+A interface Qt Quick/QML aprovada é aberta por padrão. Durante o ciclo de
+estabilização da versão de desenvolvimento, a interface Qt Widgets anterior
+continua disponível apenas como rollback explícito:
+
+```powershell
+.\.venv\Scripts\vr-norte-studio.exe --legacy-frontend --project-dir .
+```
+
 CLI da base:
 
 ```powershell

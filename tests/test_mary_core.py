@@ -1596,6 +1596,30 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(events[0].kind, "reasoning_delta")
         self.assertEqual(events[0].text, "Consultando a base local")
 
+    def test_codex_plan_delta_stays_out_of_the_assistant_answer(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        provider._handle_server_message(
+            {
+                "method": "item/plan/delta",
+                "params": {
+                    "threadId": "native-1",
+                    "itemId": "plan-1",
+                    "delta": "Inspecionar a base e preparar a resposta",
+                },
+            }
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "reasoning_delta")
+        self.assertNotEqual(events[0].kind, "assistant_delta")
+        self.assertEqual(
+            events[0].text, "Inspecionar a base e preparar a resposta"
+        )
+
     def test_codex_separates_distinct_assistant_items_with_a_blank_line(self):
         provider = CodexProvider()
         provider._native_to_local["native-1"] = "local-1"

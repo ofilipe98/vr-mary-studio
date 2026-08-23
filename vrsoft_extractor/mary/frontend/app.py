@@ -1,0 +1,161 @@
+"""Production entrypoint for the VR Norte Studio Qt Quick frontend."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickItem, QQuickWindow  # noqa: F401 - registers QML converters
+from PySide6.QtWidgets import QApplication
+
+from ...settings import ConfigError
+from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
+from ..config import load_vr_settings
+from ..workspace import initialize_workspace
+from .bridge import FrontendBridge
+from .chat import ChatBridge
+from .studio import StudioBridge
+
+
+QML_DIR = Path(__file__).resolve().parent / "qml"
+MAIN_QML = QML_DIR / "Main.qml"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--project-dir", default=None)
+    parser.add_argument("--vr-root", "--mary-root", dest="vr_root", default=None)
+    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--screenshot", default="")
+    parser.add_argument("--screenshot-page", default="Chat VR")
+    parser.add_argument("--screenshot-theme", choices=("light", "dark_orange"), default="")
+    parser.add_argument("--screenshot-width", type=int, default=1480)
+    parser.add_argument("--screenshot-height", type=int, default=900)
+    parser.add_argument("--screenshot-scale", default="")
+    return parser
+
+
+def create_engine(
+    bridge: FrontendBridge,
+    chat_bridge: ChatBridge,
+    studio_bridge: StudioBridge | None = None,
+) -> QQmlApplicationEngine:
+    engine = QQmlApplicationEngine()
+    qml_warnings: list[object] = []
+    engine.warnings.connect(qml_warnings.extend)
+    engine.addImportPath(str(QML_DIR))
+    engine.rootContext().setContextProperty("frontend", bridge)
+    engine.rootContext().setContextProperty("chat", chat_bridge)
+    engine.rootContext().setContextProperty("studio", studio_bridge)
+    engine.load(QUrl.fromLocalFile(str(MAIN_QML)))
+    engine._qml_warnings = qml_warnings  # type: ignore[attr-defined]
+    return engine
+
+
+def _apply_application_font(app: QApplication) -> None:
+    """Match the current Studio typography and stabilize headless rendering."""
+
+    if sys.platform == "win32":
+        for candidate in (
+            Path(r"C:\Windows\Fonts\segoeui.ttf"),
+            Path(r"C:\Windows\Fonts\segoeuib.ttf"),
+            Path(r"C:\Windows\Fonts\seguisym.ttf"),
+        ):
+            if candidate.exists():
+                QFontDatabase.addApplicationFont(str(candidate))
+        app.setFont(QFont("Segoe UI"))
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_args = list(argv if argv is not None else sys.argv[1:])
+    args, _unknown = build_parser().parse_known_args(raw_args)
+    if args.screenshot_scale:
+        os.environ["QT_SCALE_FACTOR"] = args.screenshot_scale
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+    if args.screenshot or args.smoke_test:
+        os.environ.setdefault("QSG_RHI_BACKEND", "software")
+
+    # The browser surface is loaded lazily, but Qt WebEngine must register its
+    # QML types before QApplication exists. Builds without WebEngine keep the
+    # rest of the frontend available and show the browser fallback state.
+    try:
+        from PySide6.QtWebEngineQuick import QtWebEngineQuick
+
+        QtWebEngineQuick.initialize()
+    except ImportError:  # pragma: no cover - optional Qt module in minimal builds
+        pass
+
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName(APP_TITLE)
+    app.setApplicationDisplayName(APP_TITLE)
+    app.setOrganizationName(ORGANIZATION_NAME)
+    _apply_application_font(app)
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+
+    app_dir = args.project_dir or (
+        str(Path(sys.executable).resolve().parent) if getattr(sys, "frozen", False) else "."
+    )
+    try:
+        settings = load_vr_settings(app_dir, args.vr_root)
+    except ConfigError as exc:
+        print(f"Configuração inválida: {exc}", file=sys.stderr)
+        return 1
+
+    preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
+    bridge = FrontendBridge(
+        settings,
+        preferences,
+        theme_override=args.screenshot_theme,
+        initial_page=args.screenshot_page,
+        navigation_override=False if args.screenshot else None,
+    )
+    database = initialize_workspace(settings)
+    chat_bridge = ChatBridge(settings, database, preferences)
+    studio_bridge = StudioBridge(settings, database, preferences)
+    engine = create_engine(bridge, chat_bridge, studio_bridge)
+    if not engine.rootObjects():
+        for warning in getattr(engine, "_qml_warnings", []):
+            print(warning.toString(), file=sys.stderr)
+        print(f"Não foi possível carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
+        return 1
+
+    window = engine.rootObjects()[0]
+    if args.screenshot:
+        window.setProperty("width", max(1120, args.screenshot_width))
+        window.setProperty("height", max(700, args.screenshot_height))
+
+        def save_capture() -> None:
+            target = Path(args.screenshot).resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # QQuickWindow renders into its own scene graph.  Capturing that
+            # buffer avoids Windows returning pixels from an overlapping app.
+            content_item = window.property("contentItem")
+            quick_window = content_item.window() if content_item is not None else None
+            capture = quick_window.grabWindow() if quick_window is not None else None
+            if capture is None or capture.isNull() or not capture.save(str(target), "PNG"):
+                app.exit(2)
+                return
+            app.quit()
+
+        QTimer.singleShot(1000, save_capture)
+    elif args.smoke_test:
+        QTimer.singleShot(600, app.quit)
+
+    # Keep Python-owned QObjects alive for the entire QML engine lifetime.
+    engine._frontend_bridge = bridge  # type: ignore[attr-defined]
+    engine._chat_bridge = chat_bridge  # type: ignore[attr-defined]
+    engine._studio_bridge = studio_bridge  # type: ignore[attr-defined]
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

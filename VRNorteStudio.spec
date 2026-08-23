@@ -15,6 +15,7 @@ a = Analysis(
         ("vrsoft_extractor/mary/data/vr-search.ps1", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/data/Abrir-VR-no-Codex.cmd", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/assets", "vrsoft_extractor/mary/assets"),
+        ("vrsoft_extractor/mary/frontend/qml", "vrsoft_extractor/mary/frontend/qml"),
     ],
     hiddenimports=playwright_hidden + spellchecker_hidden + [
         "pytesseract",

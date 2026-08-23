@@ -554,7 +554,7 @@ class CodexProvider(AgentProvider):
                     params,
                 )
             )
-        elif method in {"item/agentMessage/delta", "item/plan/delta"}:
+        elif method == "item/agentMessage/delta":
             delta = str(params.get("delta", ""))
             item_id = str(params.get("itemId") or params.get("item_id") or "")
             item_key = f"{method}:{item_id}" if item_id else method
@@ -563,9 +563,8 @@ class CodexProvider(AgentProvider):
                     conversation_id, ""
                 )
                 self._assistant_item_keys[conversation_id] = item_key
-            # Codex emits commentary/plan text and the final answer as distinct
-            # items. Joining their deltas verbatim produced strings such as
-            # ``versão.Para`` and made both blocks look like one paragraph.
+            # Codex can emit commentary and the final answer as distinct
+            # agent-message items. Keep a readable boundary between them.
             if previous_item_key and previous_item_key != item_key and delta:
                 leading_newlines = len(delta) - len(delta.lstrip("\r\n"))
                 delta = "\n" * max(0, 2 - leading_newlines) + delta
@@ -574,6 +573,15 @@ class CodexProvider(AgentProvider):
                     conversation_id,
                     "assistant_delta",
                     delta,
+                    {"method": method, **params},
+                )
+            )
+        elif method == "item/plan/delta":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    str(params.get("delta", "")),
                     {"method": method, **params},
                 )
             )

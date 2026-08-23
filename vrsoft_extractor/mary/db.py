@@ -2338,6 +2338,39 @@ class MaryDatabase:
                 (conversation_id, int(event_id), *kinds),
             ).fetchall()
 
+    def latest_turn_events(self, conversation_id: str) -> list[sqlite3.Row]:
+        """Return the persisted events that belong to the latest chat turn.
+
+        Response planning can be emitted before the provider's ``turn_started``
+        event, so the previous terminal event is the reliable boundary.
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM runtime_events
+                   WHERE conversation_id=? ORDER BY id DESC LIMIT 1000""",
+                (conversation_id,),
+            ).fetchall()
+        ordered = list(reversed(rows))
+        if not ordered:
+            return []
+        terminal_indexes = [
+            index
+            for index, row in enumerate(ordered)
+            if str(row["kind"] or "")
+            in {"turn_completed", "orchestration_cancelled", "turn_recovered"}
+        ]
+        if not terminal_indexes:
+            return ordered
+        latest_terminal = terminal_indexes[-1]
+        has_events_after_latest = latest_terminal < len(ordered) - 1
+        boundary_index = (
+            latest_terminal
+            if has_events_after_latest
+            else (terminal_indexes[-2] if len(terminal_indexes) > 1 else -1)
+        )
+        return ordered[boundary_index + 1 :]
+
     def purge_conversation(self, conversation_id: str) -> None:
         with self.connect() as connection:
             for table in (

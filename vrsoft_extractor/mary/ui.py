@@ -96,6 +96,38 @@ except ImportError:  # pragma: no cover - friendly fallback for minimal Qt insta
 
 from ..endoo_client import EndooAuthenticationRequired
 from ..settings import ConfigError
+from .brand import (
+    ACCESSIBLE_ORANGE,
+    APP_ICON_PATH,
+    APP_TITLE,
+    ASSET_DIR,
+    BACKGROUND,
+    BRAND_NAVY,
+    BRAND_ORANGE,
+    BRAND_SYMBOL_PATH,
+    BRAND_YELLOW,
+    DARK_BACKGROUND,
+    DARK_BORDER,
+    DARK_MUTED,
+    DARK_SCROLLBAR_HANDLE,
+    DARK_STATUS_GOOD,
+    DARK_STATUS_WARN,
+    DARK_SURFACE,
+    DARK_SURFACE_RAISED,
+    DARK_TEXT,
+    DISABLED_BACKGROUND,
+    DISABLED_TEXT,
+    FOCUS_DARK,
+    LEGACY_SETTINGS_APP_NAME,
+    LINK_VISITED,
+    ORGANIZATION_NAME,
+    SCROLLBAR_HANDLE,
+    SCROLLBAR_TRACK,
+    SETTINGS_APP_NAME,
+    STATUS_GOOD,
+    STATUS_WARN,
+    TEXT_MUTED,
+)
 from .chat_widgets import (
     AnimatedVrFlowButton,
     ApprovalDialog,
@@ -149,14 +181,7 @@ from .spellcheck import LocalSpellChecker
 from .wiki import WikiSync
 from .workspace import initialize_workspace, is_managed_conversation_workspace
 
-APP_TITLE = "VR Norte Studio"
-SETTINGS_APP_NAME = APP_TITLE
-LEGACY_SETTINGS_APP_NAME = "VR Mary Studio"
-ORGANIZATION_NAME = "VRNorte"
 CHAT_PROVIDERS = ("codex", "claude", "opencode")
-ASSET_DIR = Path(__file__).resolve().parent / "assets"
-APP_ICON_PATH = ASSET_DIR / "vrnorte-app.ico"
-BRAND_SYMBOL_PATH = ASSET_DIR / "vrnorte-symbol.png"
 APPROVAL_ICON_PATHS = {
     "supervised": ASSET_DIR / "permission-supervised.svg",
     "auto_edits": ASSET_DIR / "permission-auto-edits.svg",
@@ -206,20 +231,6 @@ def _app_preferences() -> QSettings:
 
 COMBO_ARROW_PATH = (ASSET_DIR / "dropdown-chevron.svg").as_posix()
 COMBO_ARROW_DARK_PATH = (ASSET_DIR / "dropdown-chevron-dark.svg").as_posix()
-BRAND_ORANGE = "#FF7200"
-ACCESSIBLE_ORANGE = "#C45100"
-BRAND_YELLOW = "#FCBD0F"
-BRAND_NAVY = "#02021E"
-TEXT_MUTED = "#4E4E62"
-BACKGROUND = "#F3F3F3"
-FOCUS_DARK = "#7A3500"
-LINK_VISITED = "#5A2600"
-DISABLED_TEXT = "#5F5F70"
-DISABLED_BACKGROUND = "#ECECF1"
-STATUS_GOOD = "#176B3A"
-STATUS_WARN = "#8A5500"
-
-
 def open_safe_external_url(value: QUrl | str) -> bool:
     """Open only ordinary web links; local and executable schemes stay blocked."""
     url = QUrl(value) if isinstance(value, str) else QUrl(value)
@@ -230,19 +241,6 @@ def open_safe_external_url(value: QUrl | str) -> bool:
     ):
         return False
     return bool(QDesktopServices.openUrl(url))
-SCROLLBAR_HANDLE = "#848493"
-SCROLLBAR_TRACK = "#F0F0F4"
-DARK_BACKGROUND = "#12100F"
-DARK_SURFACE = "#1B1816"
-DARK_SURFACE_RAISED = "#24201D"
-DARK_TEXT = "#E4E4E7"
-DARK_MUTED = "#A1A1AA"
-DARK_BORDER = "#756A63"
-DARK_STATUS_GOOD = "#56D18B"
-DARK_STATUS_WARN = "#FFB55C"
-DARK_SCROLLBAR_HANDLE = "#8C8077"
-
-
 def _tinted_icon_pixmap(path: Path, color: str, size: int = 36) -> QPixmap:
     source = QIcon(str(path)).pixmap(QSize(size, size))
     result = QPixmap(source.size())
@@ -12157,6 +12155,16 @@ class MainWindow(QMainWindow):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--qml-preview",
+        action="store_true",
+        help="Alias de compatibilidade para a interface Qt Quick padrão.",
+    )
+    parser.add_argument(
+        "--legacy-frontend",
+        action="store_true",
+        help="Abrir temporariamente a interface Qt Widgets anterior.",
+    )
     parser.add_argument("--project-dir", default=None)
     parser.add_argument("--vr-root", "--mary-root", dest="vr_root", default=None)
     parser.add_argument("--smoke-test", action="store_true")
@@ -12217,6 +12225,16 @@ def main(argv: list[str] | None = None) -> int:
         marker = raw_args.index("--video-cli")
         return video_main(raw_args[marker + 1 :])
     args, _unknown = build_parser().parse_known_args(raw_args)
+    if not args.legacy_frontend:
+        from .frontend.app import main as qml_main
+
+        return qml_main(
+            [
+                arg
+                for arg in raw_args
+                if arg not in {"--qml-preview", "--legacy-frontend"}
+            ]
+        )
     if args.screenshot_scale:
         os.environ["QT_SCALE_FACTOR"] = args.screenshot_scale
     QApplication.setHighDpiScaleFactorRoundingPolicy(

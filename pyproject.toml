@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.3.18.dev0"
+version = "0.3.18.dev1"
 description = "VR Norte Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,10 @@ include = ["vrsoft_extractor*"]
 "vrsoft_extractor.mary" = [
     "assets/*",
     "data/*.md",
-  "data/*.ps1",
-  "data/*.cmd",
+    "data/*.ps1",
+    "data/*.cmd",
+    "frontend/qml/*.qml",
+    "frontend/qml/components/*.qml",
+    "frontend/qml/pages/*.qml",
+    "frontend/qml/theme/*",
 ]
