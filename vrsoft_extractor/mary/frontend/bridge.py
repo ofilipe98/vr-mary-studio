@@ -14,6 +14,7 @@ from ..brand import (
     SETTINGS_APP_NAME,
     brand_palette,
 )
+from ..chat_widgets import CodeSyntaxHighlighter, apply_message_document_style
 from ..config import MarySettings
 
 
@@ -83,6 +84,7 @@ class FrontendBridge(QObject):
             self._current_page = page_names.index(initial_page)
         except ValueError:
             self._current_page = 0
+        self._styling_document = False
 
     @Property(str, constant=True)
     def appName(self) -> str:  # noqa: N802 - QML property naming
@@ -152,6 +154,41 @@ class FrontendBridge(QObject):
     @Slot()
     def toggleTheme(self) -> None:  # noqa: N802
         self.setTheme("light" if self._theme_id == "dark_orange" else "dark_orange")
+
+    @Slot(QObject, str)
+    def styleMessageDocument(self, quick_document, markdown: str) -> None:
+        """Restyle a QML TextEdit markdown document with the T3-like rhythm."""
+        if self._styling_document or quick_document is None:
+            return
+        text_document_factory = getattr(quick_document, "textDocument", None)
+        if text_document_factory is None:
+            return
+        document = text_document_factory()
+        if document is None:
+            return
+        self._styling_document = True
+        try:
+            apply_message_document_style(
+                document,
+                str(markdown or ""),
+                dark=self._theme_id == "dark_orange",
+            )
+        finally:
+            self._styling_document = False
+
+    @Slot(QObject, str)
+    def highlightCodeDocument(self, quick_document, language: str) -> None:
+        """Attach the shared syntax highlighter to a QML code card document."""
+        if quick_document is None:
+            return
+        text_document_factory = getattr(quick_document, "textDocument", None)
+        if text_document_factory is None:
+            return
+        document = text_document_factory()
+        if document is None:
+            return
+        highlighter = CodeSyntaxHighlighter(document, str(language or ""))
+        highlighter.setParent(document)
 
     @Slot(int)
     def setCurrentPage(self, index: int) -> None:  # noqa: N802

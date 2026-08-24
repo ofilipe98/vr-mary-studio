@@ -203,6 +203,7 @@ Item {
                         Layout.fillHeight: true
                         clip: true
                         TextEdit {
+                            id: knowledgePreviewBody
                             width: parent.width
                             padding: 16
                             text: studio.knowledgePreview
@@ -216,6 +217,10 @@ Item {
                             onLinkActivated: link => {
                                 if (studio) studio.openExternalUrl(link)
                             }
+                            onTextChanged: frontend.styleMessageDocument(
+                                knowledgePreviewBody.textDocument,
+                                studio.knowledgePreview
+                            )
                         }
                     }
                 }

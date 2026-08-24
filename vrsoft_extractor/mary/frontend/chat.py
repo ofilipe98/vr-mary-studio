@@ -25,6 +25,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
+from ..chat_widgets import FENCE_RE, code_language_badge
 from ..config import MarySettings
 from ..db import MaryDatabase
 from ..models import ModelRef, OrchestrationOptions, RuntimeEvent
@@ -47,6 +48,7 @@ STATUS_LABELS = {
 }
 
 EFFORT_LABELS = {
+    "auto": "Auto",
     "none": "None",
     "minimal": "Minimal",
     "low": "Low",
@@ -147,9 +149,43 @@ class MessageListModel(_MappingListModel):
         "role",
         "content",
         "displayContent",
+        "segments",
         "createdAt",
         "responseMode",
     )
+
+
+def segments_for_display(markdown: str) -> list[dict[str, str]]:
+    """Split a markdown answer into text and fenced-code card segments."""
+    text = str(markdown or "")
+    matches = list(FENCE_RE.finditer(text))
+    if not matches:
+        return []
+    segments: list[dict[str, str]] = []
+
+    def append_text(part: str) -> None:
+        if str(part).strip():
+            segments.append(
+                {"kind": "text", "content": markdown_for_display(part)}
+            )
+
+    cursor = 0
+    for match in matches:
+        if match.start() > cursor:
+            append_text(text[cursor:match.start()])
+        language = str(match.group(1) or "").strip().casefold() or "text"
+        segments.append(
+            {
+                "kind": "code",
+                "content": str(match.group(2) or ""),
+                "language": language,
+                "badge": code_language_badge(language),
+            }
+        )
+        cursor = match.end()
+    if cursor < len(text):
+        append_text(text[cursor:])
+    return segments
 
 
 class ChatBridge(QObject):
@@ -661,11 +697,11 @@ class ChatBridge(QObject):
             if normalized in EFFORT_LABELS and normalized not in efforts:
                 efforts.append(normalized)
         if efforts:
-            return efforts
+            return ["auto", *efforts]
         return (
-            ["low", "medium", "high", "xhigh", "max"]
+            ["auto", "low", "medium", "high", "xhigh", "max"]
             if self._provider == "claude"
-            else ["minimal", "low", "medium", "high", "xhigh", "max"]
+            else ["auto", "minimal", "low", "medium", "high", "xhigh", "max"]
         )
 
     def _model_effort_preferences(self) -> dict[str, str]:
@@ -706,7 +742,10 @@ class ChatBridge(QObject):
         if preferred == "ultra":
             preferred = "max"
         if preferred not in supported:
-            preferred = "medium" if "medium" in supported else supported[0]
+            concrete = [value for value in supported if value != "auto"]
+            preferred = (
+                "medium" if "medium" in concrete else (concrete or supported)[0]
+            )
         self._effort = preferred
 
     def _reset_model_items(self) -> None:
@@ -1469,6 +1508,7 @@ class ChatBridge(QObject):
                 "role": "user",
                 "content": content,
                 "displayContent": content,
+                "segments": [],
                 "createdAt": "",
                 "responseMode": "vr" if self._vr_enabled else "native",
             }
@@ -1619,6 +1659,7 @@ class ChatBridge(QObject):
                 "role": "assistant",
                 "content": self._streaming_text,
                 "displayContent": "",
+                "segments": [],
                 "createdAt": "",
                 "responseMode": "vr" if self._vr_enabled else "native",
             }
@@ -2112,6 +2153,9 @@ class ChatBridge(QObject):
                     "role": str(row["role"] or "assistant"),
                     "content": str(row["content"] or ""),
                     "displayContent": markdown_for_display(str(row["content"] or "")),
+                    "segments": segments_for_display(str(row["content"] or ""))
+                    if str(row["role"] or "") == "assistant"
+                    else [],
                     "createdAt": str(row["created_at"] or ""),
                     "responseMode": str(row["response_mode"] or ""),
                 }
@@ -2138,6 +2182,7 @@ class ChatBridge(QObject):
             "role": "activity",
             "content": "",
             "displayContent": "",
+            "segments": [],
             "createdAt": "",
             "responseMode": "activity",
         }

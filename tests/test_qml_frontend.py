@@ -257,6 +257,207 @@ class QmlFrontendTest(unittest.TestCase):
             engine.deleteLater()
             self.application.processEvents()
 
+    def test_assistant_markdown_message_gets_t3_styling(self):
+        from PySide6.QtGui import QTextFormat, QTextFrameFormat, QTextLength, QTextTable
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page="Chat VR", theme="dark_orange")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Conversa de tabela",
+                "codex",
+                "gpt-5.6",
+                settings.root / "Cliente",
+            )
+            markdown = (
+                "| Titulo | Caminho |\n"
+                "|---|---|\n"
+                "| Verba | conhecimento/verba.md |\n\n"
+                "> Observação validada.\n\n"
+                "---\n\n"
+                "Parágrafo final com `codigo`.\n\n"
+                "```python\n"
+                "def exemplo():\n"
+                "    return 1\n"
+                "```\n"
+            )
+            database.add_message(conversation_id, "assistant", markdown)
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            try:
+                self.assertEqual(
+                    len(engine.rootObjects()),
+                    1,
+                    [warning.toString() for warning in engine._qml_warnings],
+                )
+                window = engine.rootObjects()[0]
+                window.show()
+                QTest.qWait(300)
+                self.application.processEvents()
+                chat_bridge.selectConversation(0)
+
+                def find_qml_item(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_qml_item(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                def find_qml_items(item, name, acc):
+                    if item.objectName() == name:
+                        acc.append(item)
+                    for child in item.childItems():
+                        find_qml_items(child, name, acc)
+                    return acc
+
+                message_body = None
+                segment_bodies = []
+                code_card = None
+                content_item = window.property("contentItem")
+                for _attempt in range(30):
+                    self.application.processEvents()
+                    if content_item is not None:
+                        message_body = find_qml_item(content_item, "messageBody")
+                        segment_bodies = find_qml_items(
+                            content_item, "messageSegment", []
+                        )
+                        code_cards = find_qml_items(content_item, "codeBlockCard", [])
+                        code_card = code_cards[0] if code_cards else None
+                    if (
+                        message_body is not None
+                        and segment_bodies
+                        and code_card is not None
+                    ):
+                        break
+                    QTest.qWait(100)
+                self.assertEqual(chat_bridge.messages.rowCount(), 1)
+                self.assertIsNotNone(message_body)
+                self.assertEqual(len(segment_bodies), 1)
+                self.assertIsNotNone(code_card)
+                self.assertEqual(
+                    code_card.property("code"), "def exemplo():\n    return 1"
+                )
+                self.assertEqual(code_card.property("language"), "python")
+                self.assertEqual(code_card.property("badge"), "Py")
+                segments = chat_bridge.messages.item(0)["segments"]
+                self.assertEqual(
+                    [segment["kind"] for segment in segments],
+                    ["text", "code"],
+                )
+                quick_document = segment_bodies[0].property("textDocument")
+                self.assertIsNotNone(quick_document)
+                document = quick_document.textDocument()
+
+                tables = []
+                stack = [document.rootFrame()]
+                while stack:
+                    frame = stack.pop()
+                    for child in frame.childFrames():
+                        if isinstance(child, QTextTable):
+                            tables.append(child)
+                        stack.append(child)
+                self.assertEqual(len(tables), 1)
+                table_format = tables[0].format()
+                self.assertEqual(table_format.border(), 1)
+                self.assertEqual(
+                    table_format.borderBrush().color().name(), "#3f3f46"
+                )
+                self.assertEqual(
+                    table_format.borderStyle(),
+                    QTextFrameFormat.BorderStyle_Solid,
+                )
+                self.assertEqual(
+                    table_format.width().type(), QTextLength.PercentageLength
+                )
+                header_cell = tables[0].cellAt(0, 0).format().toTableCellFormat()
+                self.assertEqual(header_cell.background().color().name(), "#26262b")
+
+                quote_blocks = []
+                rule_blocks = []
+                code_blocks = []
+                code_backgrounds = []
+                block = document.firstBlock()
+                while block.isValid():
+                    block_format = block.blockFormat()
+                    if block_format.hasProperty(int(QTextFormat.BlockQuoteLevel)):
+                        quote_blocks.append(block_format)
+                    elif block_format.hasProperty(
+                        int(QTextFormat.BlockCodeLanguage)
+                    ):
+                        code_blocks.append(block_format)
+                    elif not block.text() and block_format.hasProperty(
+                        int(QTextFormat.BackgroundBrush)
+                    ):
+                        rule_blocks.append(block_format)
+                    iterator = block.begin()
+                    while not iterator.atEnd():
+                        fragment = iterator.fragment()
+                        char_format = fragment.charFormat()
+                        if char_format.fontFixedPitch():
+                            code_backgrounds.append(
+                                char_format.background().color().name()
+                            )
+                        iterator += 1
+                    block = block.next()
+                self.assertEqual(len(quote_blocks), 1)
+                self.assertEqual(
+                    quote_blocks[0].background().color().name(), "#232327"
+                )
+                self.assertEqual(len(rule_blocks), 1)
+                self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
+                self.assertIn("#26262b", code_backgrounds)
+                self.assertEqual(len(code_blocks), 0)
+
+                def find_text_edit(item):
+                    if "TextEdit" in item.metaObject().className():
+                        return item
+                    for child in item.childItems():
+                        found = find_text_edit(child)
+                        if found is not None:
+                            return found
+                    return None
+
+                card_body = find_text_edit(code_card)
+                self.assertIsNotNone(card_body)
+                self.assertTrue(code_card.property("wrapEnabled"))
+                wrap_buttons = find_qml_items(content_item, "codeBlockWrap", [])
+                self.assertEqual(len(wrap_buttons), 1)
+                wrap_buttons[0].setProperty("checked", False)
+                self.application.processEvents()
+                self.assertFalse(code_card.property("wrapEnabled"))
+                QTest.qWait(120)
+                self.application.processEvents()
+
+                card_quick_document = card_body.property("textDocument")
+                self.assertIsNotNone(card_quick_document)
+                card_document = card_quick_document.textDocument()
+                keyword_colors = []
+                card_block = card_document.firstBlock()
+                while card_block.isValid():
+                    for card_range in card_block.layout().formats():
+                        keyword_colors.append(
+                            card_range.format.foreground().color().name()
+                        )
+                    card_block = card_block.next()
+                self.assertIn("#ff7ab2", keyword_colors)
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
     def test_chat_bridge_reads_and_filters_existing_conversations(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -447,11 +648,11 @@ class QmlFrontendTest(unittest.TestCase):
 
             self.assertEqual(
                 [item["value"] for item in bridge.effortItems],
-                ["low", "high", "max"],
+                ["auto", "low", "high", "max"],
             )
             self.assertEqual(bridge.effortItems[bridge.effortIndex]["value"], "low")
             self.assertEqual(bridge.serviceTierItems, [])
-            bridge.setEffort(1)
+            bridge.setEffort(2)
             saved = json.loads(str(preferences.value("chat/model_efforts")))
             self.assertEqual(saved["opencode:opencode/ox-alpha"], "high")
 
@@ -779,6 +980,23 @@ class QmlFrontendTest(unittest.TestCase):
             markdown_for_display(source),
             "Versão pronta. Próximo passo: `arquivo.MD`.",
         )
+
+    def test_segments_for_display_splits_fenced_code_cards(self):
+        from vrsoft_extractor.mary.frontend.chat import segments_for_display
+
+        segments = segments_for_display(
+            "Intro com `codigo`.\n\n```python\nprint(1)\n```\n\nFim."
+        )
+        self.assertEqual(
+            [segment["kind"] for segment in segments],
+            ["text", "code", "text"],
+        )
+        self.assertEqual(segments[1]["language"], "python")
+        self.assertEqual(segments[1]["badge"], "Py")
+        self.assertEqual(segments[1]["content"], "print(1)")
+        self.assertIn("Fim.", segments[2]["content"])
+        self.assertEqual(segments_for_display("Resposta sem fence."), [])
+        self.assertEqual(segments_for_display(""), [])
 
     def test_chat_file_surface_previews_only_project_text_files(self):
         with TemporaryDirectory() as temporary:

@@ -310,7 +310,7 @@ Item {
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        TextEdit { width: parent.width; text: studio.reviewPreview; textFormat: TextEdit.MarkdownText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+                        TextEdit { id: reviewPreviewBody; width: parent.width; text: studio.reviewPreview; textFormat: TextEdit.MarkdownText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; onTextChanged: frontend.styleMessageDocument(reviewPreviewBody.textDocument, studio.reviewPreview) }
                     }
                     RowLayout {
                         Layout.fillWidth: true

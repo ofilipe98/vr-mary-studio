@@ -42,7 +42,12 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFormat,
+    QTextFrameFormat,
+    QTextLength,
     QTextOption,
+    QTextTable,
+    QTextTableCellFormat,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -662,24 +667,7 @@ class CodeBlockWidget(QFrame):
         self.setFixedHeight(editor_height + 40)
 
     def _language_badge(self) -> str:
-        return {
-            "python": "Py",
-            "py": "Py",
-            "sql": "DB",
-            "postgres": "DB",
-            "postgresql": "DB",
-            "json": "{}",
-            "javascript": "JS",
-            "js": "JS",
-            "typescript": "TS",
-            "ts": "TS",
-            "powershell": ">_",
-            "shell": ">_",
-            "bash": ">_",
-        }.get(
-            self.language,
-            "<>" if self.language == "text" else self.language[:3].upper(),
-        )
+        return code_language_badge(self.language)
 
     def _set_line_wrap(self, enabled: bool) -> None:
         self.editor.setLineWrapMode(
@@ -702,14 +690,250 @@ class CodeBlockWidget(QFrame):
         self.copy_button.setToolTip("Copiar código")
 
 
+FENCE_RE = re.compile(
+    r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+_LANGUAGE_BADGES = {
+    "python": "Py",
+    "py": "Py",
+    "sql": "DB",
+    "postgres": "DB",
+    "postgresql": "DB",
+    "json": "{}",
+    "javascript": "JS",
+    "js": "JS",
+    "typescript": "TS",
+    "ts": "TS",
+    "powershell": ">_",
+    "shell": ">_",
+    "bash": ">_",
+}
+
+
+def code_language_badge(language: str) -> str:
+    normalized = str(language or "text").strip().casefold() or "text"
+    return _LANGUAGE_BADGES.get(
+        normalized,
+        "<>" if normalized == "text" else normalized[:3].upper(),
+    )
+
+
+_THEMATIC_BREAK_RE = re.compile(
+    r"(?:^|\n)[ \t]*\n[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)"
+    r"|^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)"
+)
+
+
+def _count_horizontal_rules(markdown: str) -> int:
+    return len(_THEMATIC_BREAK_RE.findall(str(markdown or "")))
+
+
+def _style_document_tables(
+    document: QTextDocument,
+    dark: bool,
+    ranges: list[tuple[int, int]],
+) -> None:
+    """Give imported tables the bordered T3 look and record their extents."""
+    border = QColor("#3F3F46" if dark else "#D8D8E0")
+    header_background = QColor("#26262B" if dark else "#F0F0F4")
+
+    def visit(frame) -> None:
+        for child in frame.childFrames():
+            if isinstance(child, QTextTable):
+                table_format = child.format()
+                table_format.setBorder(1)
+                table_format.setBorderBrush(border)
+                table_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
+                table_format.setBorderCollapse(True)
+                table_format.setCellPadding(6)
+                table_format.setCellSpacing(0)
+                table_format.setWidth(QTextLength(QTextLength.PercentageLength, 100))
+                child.setFormat(table_format)
+                ranges.append((child.firstPosition(), child.lastPosition() + 1))
+                for row in range(child.rows()):
+                    for column in range(child.columns()):
+                        cell = child.cellAt(row, column)
+                        if not cell.isValid():
+                            continue
+                        cell_format = QTextTableCellFormat(cell.format())
+                        cell_format.setLeftBorder(1)
+                        cell_format.setRightBorder(1)
+                        cell_format.setTopBorder(1)
+                        cell_format.setBottomBorder(1)
+                        cell_format.setBorderBrush(border)
+                        cell_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
+                        if row == 0:
+                            cell_format.setBackground(header_background)
+                        cell.setFormat(cell_format)
+            visit(child)
+
+    visit(document.rootFrame())
+
+
+def apply_message_document_style(
+    document: QTextDocument,
+    markdown: str = "",
+    dark: bool | None = None,
+) -> None:
+    """Apply the T3-like rhythm that Qt's Markdown importer omits."""
+    if dark is None:
+        application = QApplication.instance()
+        dark = bool(
+            application
+            and application.property("vr_theme") == "dark_orange"
+        )
+    text_color = QColor("#D4D4D8" if dark else "#27272A")
+    heading_color = QColor("#FAFAFA" if dark else "#18181B")
+    muted_color = QColor("#A1A1AA" if dark else "#52525B")
+    link_color = QColor("#58A6FF" if dark else "#075EAD")
+    code_text = QColor("#E4E4E7" if dark else "#27272A")
+    code_background = QColor("#26262B" if dark else "#ECECF1")
+    quote_background = QColor("#232327" if dark else "#F4F4F7")
+    rule_color = QColor("#3F3F46" if dark else "#C9C9D3")
+    document.setIndentWidth(18)
+
+    table_ranges: list[tuple[int, int]] = []
+    _style_document_tables(document, dark, table_ranges)
+    rule_budget = _count_horizontal_rules(markdown)
+
+    def inside_table(position: int) -> bool:
+        return any(start <= position < end for start, end in table_ranges)
+
+    def quote_level_of(block_format: QTextBlockFormat) -> int:
+        key = int(QTextFormat.BlockQuoteLevel)
+        if not block_format.hasProperty(key):
+            return 0
+        return int(block_format.property(key))
+
+    def is_code_block(block_format: QTextBlockFormat) -> bool:
+        return block_format.hasProperty(int(QTextFormat.BlockCodeLanguage))
+
+    block = document.firstBlock()
+    previous_quote = False
+    previous_code = False
+    while block.isValid():
+        block_format = block.blockFormat()
+        block_format.setLineHeight(
+            155.0,
+            QTextBlockFormat.ProportionalHeight.value,
+        )
+        heading_level = block_format.headingLevel()
+        text_list = block.textList()
+        quote_level = quote_level_of(block_format)
+        code_flag = is_code_block(block_format)
+        in_table = inside_table(block.position())
+        next_block = block.next()
+        if not in_table:
+            if heading_level:
+                block_format.setTopMargin(0 if block == document.firstBlock() else 20)
+                block_format.setBottomMargin(9)
+            elif text_list is not None:
+                same_list_continues = (
+                    next_block.isValid() and next_block.textList() is text_list
+                )
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(7 if same_list_continues else 14)
+            elif quote_level:
+                quote_continues = next_block.isValid() and bool(
+                    quote_level_of(next_block.blockFormat())
+                )
+                block_format.setTopMargin(0 if previous_quote else 12)
+                block_format.setBottomMargin(0 if quote_continues else 14)
+                block_format.setLeftMargin(10)
+                block_format.setRightMargin(6)
+                block_format.setBackground(QBrush(quote_background))
+            elif code_flag:
+                code_continues = next_block.isValid() and is_code_block(
+                    next_block.blockFormat()
+                )
+                block_format.setTopMargin(0 if previous_code else 12)
+                block_format.setBottomMargin(0 if code_continues else 12)
+                block_format.setLeftMargin(10)
+                block_format.setRightMargin(10)
+                block_format.setBackground(QBrush(code_background))
+            elif not block.text() and rule_budget > 0:
+                rule_budget -= 1
+                block_format.setLineHeight(2.0, QTextBlockFormat.FixedHeight.value)
+                block_format.setBackground(QBrush(rule_color))
+                block_format.setTopMargin(10)
+                block_format.setBottomMargin(12)
+            else:
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(0 if not next_block.isValid() else 16)
+            previous_quote = bool(quote_level)
+            previous_code = code_flag
+            block_cursor = QTextCursor(block)
+            block_cursor.setBlockFormat(block_format)
+
+        in_quote = bool(quote_level)
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            fragment_format = fragment.charFormat()
+            if fragment_format.isImageFormat():
+                image_format = fragment_format.toImageFormat()
+                image_url = QUrl(image_format.name())
+                image_path = (
+                    image_url.toLocalFile()
+                    if image_url.isLocalFile()
+                    else image_format.name()
+                )
+                image_size = QImageReader(image_path).size()
+                if image_size.isValid() and image_size.width() > 0:
+                    scale = min(
+                        1.0,
+                        480.0 / image_size.width(),
+                        320.0 / image_size.height(),
+                    )
+                    image_format.setWidth(image_size.width() * scale)
+                    image_format.setHeight(image_size.height() * scale)
+                fragment_cursor = QTextCursor(document)
+                fragment_cursor.setPosition(fragment.position())
+                fragment_cursor.setPosition(
+                    fragment.position() + fragment.length(),
+                    QTextCursor.KeepAnchor,
+                )
+                fragment_cursor.mergeCharFormat(image_format)
+                iterator += 1
+                continue
+            if fragment_format.fontFixedPitch():
+                fragment_format.setFontFamilies(["Consolas"])
+                fragment_format.setFontPointSize(9.5)
+                fragment_format.setForeground(code_text)
+                fragment_format.setBackground(code_background)
+            elif heading_level:
+                fragment_format.setFontPointSize(
+                    {1: 15.0, 2: 12.75, 3: 11.25}.get(
+                        heading_level,
+                        10.5,
+                    )
+                )
+                fragment_format.setFontWeight(700)
+                fragment_format.setForeground(heading_color)
+            elif fragment_format.isAnchor():
+                fragment_format.setForeground(link_color)
+            elif in_quote:
+                fragment_format.setForeground(muted_color)
+            else:
+                fragment_format.setForeground(text_color)
+            fragment_cursor = QTextCursor(document)
+            fragment_cursor.setPosition(fragment.position())
+            fragment_cursor.setPosition(
+                fragment.position() + fragment.length(),
+                QTextCursor.KeepAnchor,
+            )
+            fragment_cursor.mergeCharFormat(fragment_format)
+            iterator += 1
+        block = next_block
+
+
 class MarkdownMessageWidget(QWidget):
     """Markdown message split into native text and polished code cards."""
 
     anchorClicked = Signal(QUrl)
-    _FENCE_RE = re.compile(
-        r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
-        re.MULTILINE | re.DOTALL,
-    )
+    _FENCE_RE = FENCE_RE
     _CODE_OR_URL_RE = re.compile(r"(`+.*?`+|https?://\S+)", re.DOTALL)
     _GLUED_SENTENCE_RE = re.compile(
         r"(?<=[a-záàâãéêíóôõúüç][.!?])"
@@ -730,7 +954,7 @@ class MarkdownMessageWidget(QWidget):
         self._configure_browser = configure_browser
         self._content_layout = QVBoxLayout(self)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(10)
+        self._content_layout.setSpacing(12)
         self._style_probe = QTextBrowser(self)
         self._style_probe.hide()
         self._configure_browser(self._style_probe)
@@ -785,7 +1009,7 @@ class MarkdownMessageWidget(QWidget):
             self._stream_browser.setMarkdown(
                 self._markdown_for_display(self._markdown)
             )
-            self._apply_native_markdown_style(self._stream_browser)
+            self._apply_native_markdown_style(self._stream_browser, self._markdown)
             self._resize_markdown_browser(self._stream_browser)
         self._sync_content_height()
 
@@ -811,7 +1035,7 @@ class MarkdownMessageWidget(QWidget):
         text_options.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         browser.document().setDefaultTextOption(text_options)
         browser.setMarkdown(self._markdown_for_display(markdown))
-        self._apply_native_markdown_style(browser)
+        self._apply_native_markdown_style(browser, markdown)
         browser.document().documentLayout().documentSizeChanged.connect(
             lambda _size=None, widget=browser: self._resize_markdown_browser(widget)
         )
@@ -873,100 +1097,11 @@ class MarkdownMessageWidget(QWidget):
         )
 
     @staticmethod
-    def _apply_native_markdown_style(browser: QTextBrowser) -> None:
-        """Apply the T3-like rhythm that Qt's Markdown importer omits."""
-        application = QApplication.instance()
-        dark = bool(
-            application
-            and application.property("vr_theme") == "dark_orange"
-        )
-        text_color = QColor("#D4D4D8" if dark else "#27272A")
-        link_color = QColor("#58A6FF" if dark else "#075EAD")
-        code_text = QColor("#E4E4E7" if dark else "#27272A")
-        code_background = QColor("#202023" if dark else "#EEEEF2")
-        document = browser.document()
-        document.setIndentWidth(22)
-
-        block = document.firstBlock()
-        while block.isValid():
-            block_format = block.blockFormat()
-            block_format.setLineHeight(
-                155.0,
-                QTextBlockFormat.ProportionalHeight.value,
-            )
-            heading_level = block_format.headingLevel()
-            text_list = block.textList()
-            next_block = block.next()
-            if heading_level:
-                block_format.setTopMargin(0 if block == document.firstBlock() else 16)
-                block_format.setBottomMargin(8)
-            elif text_list is not None:
-                same_list_continues = (
-                    next_block.isValid() and next_block.textList() is text_list
-                )
-                block_format.setTopMargin(0)
-                block_format.setBottomMargin(6 if same_list_continues else 14)
-            else:
-                block_format.setTopMargin(0)
-                block_format.setBottomMargin(0 if not next_block.isValid() else 14)
-            block_cursor = QTextCursor(block)
-            block_cursor.setBlockFormat(block_format)
-
-            iterator = block.begin()
-            while not iterator.atEnd():
-                fragment = iterator.fragment()
-                fragment_format = fragment.charFormat()
-                if fragment_format.isImageFormat():
-                    image_format = fragment_format.toImageFormat()
-                    image_url = QUrl(image_format.name())
-                    image_path = (
-                        image_url.toLocalFile()
-                        if image_url.isLocalFile()
-                        else image_format.name()
-                    )
-                    image_size = QImageReader(image_path).size()
-                    if image_size.isValid() and image_size.width() > 0:
-                        scale = min(
-                            1.0,
-                            480.0 / image_size.width(),
-                            320.0 / image_size.height(),
-                        )
-                        image_format.setWidth(image_size.width() * scale)
-                        image_format.setHeight(image_size.height() * scale)
-                    fragment_cursor = QTextCursor(document)
-                    fragment_cursor.setPosition(fragment.position())
-                    fragment_cursor.setPosition(
-                        fragment.position() + fragment.length(),
-                        QTextCursor.KeepAnchor,
-                    )
-                    fragment_cursor.mergeCharFormat(image_format)
-                    iterator += 1
-                    continue
-                fragment_format.setForeground(
-                    link_color if fragment_format.isAnchor() else text_color
-                )
-                if fragment_format.fontFixedPitch():
-                    fragment_format.setFontFamilies(["Consolas"])
-                    fragment_format.setFontPointSize(9.0)
-                    fragment_format.setForeground(code_text)
-                    fragment_format.setBackground(code_background)
-                elif heading_level:
-                    fragment_format.setFontPointSize(
-                        {1: 15.0, 2: 12.75, 3: 11.25}.get(
-                            heading_level,
-                            10.5,
-                        )
-                    )
-                    fragment_format.setFontWeight(700)
-                fragment_cursor = QTextCursor(document)
-                fragment_cursor.setPosition(fragment.position())
-                fragment_cursor.setPosition(
-                    fragment.position() + fragment.length(),
-                    QTextCursor.KeepAnchor,
-                )
-                fragment_cursor.mergeCharFormat(fragment_format)
-                iterator += 1
-            block = next_block
+    def _apply_native_markdown_style(
+        browser: QTextBrowser,
+        markdown: str = "",
+    ) -> None:
+        apply_message_document_style(browser.document(), markdown)
 
     def document(self) -> QTextDocument:
         return self._style_probe.document()

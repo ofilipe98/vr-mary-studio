@@ -5792,8 +5792,8 @@ class MaryCoreTest(unittest.TestCase):
                         )
                     iterator += 1
                 block = block.next()
-            self.assertIn("#202023", code_backgrounds)
-            self.assertEqual(browser.document().indentWidth(), 22)
+            self.assertIn("#26262b", code_backgrounds)
+            self.assertEqual(browser.document().indentWidth(), 18)
         finally:
             window.close()
             apply_application_theme(application, "light")
@@ -5846,6 +5846,105 @@ class MaryCoreTest(unittest.TestCase):
             )
         finally:
             window.close()
+
+    def test_markdown_tables_quotes_and_rules_get_t3_styling(self):
+        from PySide6.QtGui import (
+            QFont,
+            QTextFormat,
+            QTextFrameFormat,
+            QTextLength,
+            QTextTable,
+        )
+        from PySide6.QtWidgets import QApplication, QTextBrowser
+
+        application = QApplication.instance() or QApplication([])
+        apply_application_theme(application, "dark_orange")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            widget = window._add_message(
+                "assistant",
+                "| Titulo | Caminho |\n"
+                "|---|---|\n"
+                "| Verba | conhecimento/verba.md |\n\n"
+                "> Observação validada.\n\n"
+                "---\n\n"
+                "Parágrafo final com `codigo`.",
+            )
+            browser = widget.findChild(QTextBrowser, "messageBody")
+            document = browser.document()
+
+            def collect_tables(frame):
+                found = []
+                for child in frame.childFrames():
+                    if isinstance(child, QTextTable):
+                        found.append(child)
+                    found.extend(collect_tables(child))
+                return found
+
+            tables = collect_tables(document.rootFrame())
+            self.assertEqual(len(tables), 1)
+            table_format = tables[0].format()
+            self.assertEqual(table_format.border(), 1)
+            self.assertEqual(table_format.borderBrush().color().name(), "#3f3f46")
+            self.assertEqual(table_format.borderStyle(), QTextFrameFormat.BorderStyle_Solid)
+            self.assertTrue(table_format.borderCollapse())
+            self.assertEqual(table_format.cellPadding(), 6.0)
+            self.assertEqual(table_format.width().type(), QTextLength.PercentageLength)
+            header_cell = tables[0].cellAt(0, 0).format().toTableCellFormat()
+            self.assertEqual(header_cell.background().color().name(), "#26262b")
+            self.assertEqual(header_cell.topBorder(), 1.0)
+            self.assertEqual(header_cell.fontWeight(), QFont.Bold)
+            body_cell = tables[0].cellAt(1, 0).format()
+            self.assertFalse(
+                body_cell.hasProperty(int(QTextFormat.BackgroundBrush))
+            )
+
+            quote_blocks = []
+            rule_blocks = []
+            block = document.firstBlock()
+            while block.isValid():
+                block_format = block.blockFormat()
+                if block_format.hasProperty(int(QTextFormat.BlockQuoteLevel)):
+                    quote_blocks.append(block_format)
+                elif not block.text() and block_format.hasProperty(
+                    int(QTextFormat.BackgroundBrush)
+                ):
+                    rule_blocks.append(block_format)
+                block = block.next()
+            self.assertEqual(len(quote_blocks), 1)
+            self.assertEqual(
+                quote_blocks[0].background().color().name(), "#232327"
+            )
+            self.assertEqual(quote_blocks[0].leftMargin(), 10)
+            self.assertEqual(len(rule_blocks), 1)
+            self.assertEqual(
+                rule_blocks[0].background().color().name(), "#3f3f46"
+            )
+            self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
+
+            plain = browser.toPlainText()
+            self.assertIn("Parágrafo final", plain)
+            self.assertIn("codigo", plain)
+            code_fragments = []
+            block = document.firstBlock()
+            while block.isValid():
+                iterator = block.begin()
+                while not iterator.atEnd():
+                    fragment = iterator.fragment()
+                    if fragment.charFormat().fontFixedPitch():
+                        code_fragments.append(
+                            fragment.charFormat().background().color().name()
+                        )
+                    iterator += 1
+                block = block.next()
+            self.assertIn("#26262b", code_fragments)
+        finally:
+            window.close()
+            apply_application_theme(application, "light")
 
     def test_slash_palette_exposes_build_as_integrated_default(self):
         from PySide6.QtCore import Qt

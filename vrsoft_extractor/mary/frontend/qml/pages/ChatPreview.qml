@@ -417,10 +417,12 @@ Item {
                     required property string role
                     required property string content
                     required property string displayContent
+                    required property var segments
                     width: messageList.width
                     height: messageItem.role === "activity"
                         ? timelineActivity.implicitHeight + 2
-                        : messageBody.paintedHeight + (messageItem.role === "user" ? 30 : 12)
+                        : (segmentColumn.visible ? segmentColumn.height : messageBody.paintedHeight)
+                          + (messageItem.role === "user" ? 30 : 12)
 
                     VrChatActivity {
                         id: timelineActivity
@@ -475,8 +477,70 @@ Item {
                                     ? frontend.palette.chatControl : "transparent"
                             }
                         }
-                        Text {
+                        Column {
+                            id: segmentColumn
+                            visible: messageItem.role === "assistant"
+                                && messageItem.segments.length > 0
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            spacing: 12
+
+                            Repeater {
+                                model: messageItem.segments
+
+                                Loader {
+                                    id: segmentLoader
+                                    required property var modelData
+                                    width: segmentColumn.width
+                                    sourceComponent: modelData.kind === "code"
+                                        ? codeCardComponent
+                                        : textSegmentComponent
+                                }
+                            }
+                        }
+
+                        Component {
+                            id: textSegmentComponent
+
+                            TextEdit {
+                                id: segmentBody
+                                objectName: "messageSegment"
+                                width: parent.width
+                                text: modelData.content
+                                textFormat: TextEdit.MarkdownText
+                                readOnly: true
+                                activeFocusOnPress: false
+                                wrapMode: TextEdit.Wrap
+                                color: frontend.palette.text
+                                horizontalAlignment: Text.AlignLeft
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 14
+                                onLinkActivated: link => {
+                                    if (studio) studio.openExternalUrl(link)
+                                }
+                                onTextChanged: frontend.styleMessageDocument(
+                                    textDocument,
+                                    modelData.content
+                                )
+                            }
+                        }
+
+                        Component {
+                            id: codeCardComponent
+
+                            VrCodeBlock {
+                                width: parent.width
+                                code: modelData.content
+                                language: modelData.language
+                                badge: modelData.badge
+                            }
+                        }
+
+                        TextEdit {
                             id: messageBody
+                            objectName: "messageBody"
+                            visible: !segmentColumn.visible
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.top: parent.top
@@ -485,17 +549,23 @@ Item {
                             anchors.topMargin: messageItem.role === "user" ? 13 : 2
                             text: messageItem.displayContent
                             textFormat: messageItem.role === "user"
-                                ? Text.PlainText : Text.MarkdownText
-                            wrapMode: Text.Wrap
-                            lineHeightMode: Text.ProportionalHeight
-                            lineHeight: messageItem.role === "user" ? 1.28 : 1.36
+                                ? TextEdit.PlainText : TextEdit.MarkdownText
+                            readOnly: true
+                            activeFocusOnPress: false
+                            wrapMode: TextEdit.Wrap
                             color: frontend.palette.text
-                            linkColor: frontend.themeId === "dark_orange" ? "#7CB7FF" : "#075EAD"
                             horizontalAlignment: Text.AlignLeft
                             font.family: Theme.fontFamily
                             font.pixelSize: 14
                             onLinkActivated: link => {
                                 if (studio) studio.openExternalUrl(link)
+                            }
+                            onTextChanged: {
+                                if (visible && messageItem.role !== "user")
+                                    frontend.styleMessageDocument(
+                                        messageBody.textDocument,
+                                        messageItem.displayContent
+                                    )
                             }
                         }
                         HoverHandler { id: messageHover }
