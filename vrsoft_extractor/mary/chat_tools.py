@@ -219,3 +219,67 @@ def mcp_thread_config(
         config["enabled_tools"] = tools
         servers[server] = config
     return {"mcp_servers": servers} if servers else {}
+
+
+VR_SEARCH_TOOL_NAME = "vr_search"
+VR_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": (
+                "Consulta em português com os termos técnicos do VR "
+                "(rotina, procedimento, tabela ou campo)."
+            ),
+        },
+        "source": {
+            "type": "string",
+            "enum": ["wiki", "kb", "schema"],
+            "description": (
+                "Fonte opcional: wiki (funcionamento), kb (processos e casos) "
+                "ou schema (tabelas e relacionamentos). Omita para buscar em todas."
+            ),
+        },
+        "module": {
+            "type": "string",
+            "enum": ["Fiscal", "ADM_FIN_ESTOQUE", "PDV"],
+            "description": "Módulo opcional do ERP para restringir a busca.",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Quantidade máxima de resultados (1-10, padrão 6).",
+        },
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+
+def vr_search_tool_spec() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "name": VR_SEARCH_TOOL_NAME,
+        "description": (
+            "Busca evidências validadas na base de conhecimento local do VR "
+            "(Wiki de funcionamento, KB de processos e Schema de banco). "
+            "Use sempre que faltar detalhe confiável sobre procedimentos, "
+            "funcionamento ou estrutura de dados antes de responder."
+        ),
+        "inputSchema": VR_SEARCH_INPUT_SCHEMA,
+    }
+
+
+def run_vr_search(arguments: dict[str, Any], router: Any) -> ToolExecutionResult:
+    validate_tool_arguments(arguments, VR_SEARCH_INPUT_SCHEMA)
+    try:
+        limit = int(arguments.get("limit") or 6)
+    except (TypeError, ValueError):
+        limit = 6
+    payload = router.search(
+        str(arguments.get("query") or "").strip(),
+        source=str(arguments.get("source") or ""),
+        module=str(arguments.get("module") or ""),
+        limit=limit,
+    )
+    text = json.dumps(payload, ensure_ascii=False)
+    return ToolExecutionResult(text=text, parsed=payload)

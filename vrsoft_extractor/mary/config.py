@@ -37,6 +37,12 @@ class MarySettings:
     endoo_wiki_enabled: bool = True
     sync_interval_minutes: int = 120
     default_effort: str = "medium"
+    # Adaptive effort raises the reasoning effort per turn when the request
+    # profile demands it; it never lowers the user's chosen level.
+    vr_adaptive_effort: bool = True
+    # Module fan-out research: parallel per-module readers for multi-module or
+    # deeply detailed questions. Kill switch: VR_RESEARCH_FANOUT=0.
+    vr_research_fanout: bool = True
     # Compatibility switch for the retired planner/worker/supervisor graph.
     # Production keeps this disabled; focused legacy tests may enable it while
     # the old implementation remains available for rollback and comparison.
@@ -189,6 +195,12 @@ def load_vr_settings(
         legacy_vr_orchestration=str(
             os.environ.get("VR_LEGACY_ORCHESTRATION", "0")
         ).strip().casefold() in {"1", "true", "yes", "on"},
+        vr_adaptive_effort=str(
+            os.environ.get("VR_ADAPTIVE_EFFORT", "1")
+        ).strip().casefold() not in {"", "0", "false", "no", "off"},
+        vr_research_fanout=str(
+            os.environ.get("VR_RESEARCH_FANOUT", "1")
+        ).strip().casefold() not in {"", "0", "false", "no", "off"},
         sync_interval_minutes=max(15, interval),
         default_effort=effort,
     )

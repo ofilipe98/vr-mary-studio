@@ -12,6 +12,178 @@ from .models import EvidenceBundle, QueryProfile, SourceSearchReport
 
 MAX_REFINEMENT_ROUNDS = 2
 
+EFFORT_ORDER = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
+
+
+@dataclass(frozen=True)
+class AdaptiveEffortDecision:
+    effort: str
+    base: str
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def changed(self) -> bool:
+        reference = "medium" if self.base == "auto" else self.base
+        return bool(self.effort) and self.effort != reference
+
+
+@dataclass(frozen=True)
+class ResponseViolation:
+    code: str
+    detail: str = ""
+    fix_instruction: str = ""
+
+
+_LEAK_PATTERNS = (
+    r"\bE\d+\b",
+    r"\b(?:wiki|kb|schema):[^\s`]+:-?\d+\b",
+    r"</?evidence_context>",
+    r"\b[A-Za-z]:\\(?:Users|Documents and Settings|ProgramData|Windows|Temp)\\",
+    r"/(?:home|Users|tmp)/[^\s`]+",
+)
+
+
+def validate_normal_response(
+    answer: str,
+    contract: ResponseContract,
+    bundle: EvidenceBundle | None = None,
+    *,
+    user_message: str = "",
+) -> tuple[ResponseViolation, ...]:
+    """Deterministic post-response checks for the direct (non-agent) flow."""
+    violations: list[ResponseViolation] = []
+    for leak in _internal_leaks(answer, user_message)[:3]:
+        violations.append(
+            ResponseViolation(
+                code="internal_leak",
+                detail=leak,
+                fix_instruction=(
+                    "Remova a referência interna indicada e reescreva o trecho "
+                    "em linguagem natural, sem metadados de recuperação."
+                ),
+            )
+        )
+    candidates = list(bundle.candidates) if bundle else []
+    if contract.requires_sources and candidates:
+        normalized = str(answer or "").replace("\\/", "/")
+        cited = any(
+            item.evidence_id in normalized
+            or (item.url and item.url.rstrip("/") in normalized)
+            for item in candidates
+        )
+        if not cited:
+            violations.append(
+                ResponseViolation(
+                    code="missing_sources",
+                    detail="nenhuma evidência recuperada foi citada",
+                    fix_instruction=(
+                        "Cite ao menos uma das fontes fornecidas (título e URL "
+                        "original); se nenhuma sustentar a resposta, declare "
+                        "explicitamente essa lacuna."
+                    ),
+                )
+            )
+    if contract.minimum_steps > 0 and _numbered_step_count(answer) < contract.minimum_steps:
+        violations.append(
+            ResponseViolation(
+                code="missing_steps",
+                detail=f"contrato pede {contract.minimum_steps} passos numerados",
+                fix_instruction=(
+                    "Apresente o procedimento como lista numerada de passos."
+                ),
+            )
+        )
+    missing_sections = _missing_contract_sections(answer, contract)
+    if missing_sections:
+        violations.append(
+            ResponseViolation(
+                code="missing_sections",
+                detail="; ".join(missing_sections[:4]),
+                fix_instruction=(
+                    "Inclua as seções exigidas pelo pedido: "
+                    + "; ".join(missing_sections[:4])
+                    + "."
+                ),
+            )
+        )
+    if contract.minimum_words > 0 and len(answer.split()) < contract.minimum_words:
+        violations.append(
+            ResponseViolation(
+                code="too_short",
+                detail=f"mínimo de {contract.minimum_words} palavras",
+                fix_instruction="Desenvolva a resposta até cobrir o pedido.",
+            )
+        )
+    return tuple(violations)
+
+
+def strip_internal_leaks(content: str) -> str:
+    """Drop whole lines that deterministically leak internal metadata."""
+    kept: list[str] = []
+    dropped_any = False
+    for line in str(content or "").splitlines(keepends=True):
+        if any(re.search(pattern, line, re.IGNORECASE | re.UNICODE) for pattern in _LEAK_PATTERNS):
+            dropped_any = True
+            continue
+        kept.append(line)
+    return "".join(kept) if dropped_any else str(content or "")
+
+
+def decide_adaptive_effort(
+    intent: ResponseIntent,
+    evidence_bundle: EvidenceBundle | None,
+    base_effort: str,
+    *,
+    allow_max: bool = False,
+) -> AdaptiveEffortDecision:
+    """Scale reasoning effort up (never down) from the user's chosen level.
+
+    The special base ``auto`` lets the decision pick the whole range from
+    ``medium`` upward without a user-pinned floor.
+    """
+    requested = str(base_effort or "medium").strip().casefold()
+    auto = requested == "auto"
+    base = requested if auto else (
+        requested if requested in EFFORT_ORDER else "medium"
+    )
+    floor_base = "medium" if auto else base
+    target = 1  # medium
+    reasons: list[str] = []
+    if intent.purpose in {"troubleshooting", "training_manual"}:
+        target = max(target, 2)
+        reasons.append(f"propósito {intent.purpose}")
+    elif intent.purpose == "technical_explanation":
+        target = max(target, 2)
+        reasons.append("explicação técnica")
+    if intent.requires_step_by_step:
+        target = max(target, 2)
+        reasons.append("procedimento passo a passo")
+    if intent.requested_detail == "very_high":
+        target += 1
+        reasons.append("detalhamento muito alto pedido")
+    conflicts = list(evidence_bundle.conflicts) if evidence_bundle else []
+    missing = list(evidence_bundle.missing_sources) if evidence_bundle else []
+    thin_evidence = bool(evidence_bundle and not evidence_bundle.candidates)
+    if conflicts:
+        target += 1
+        reasons.append(f"{len(conflicts)} conflito(s) entre fontes")
+    if missing or thin_evidence:
+        target += 1
+        reasons.append(
+            "fontes ausentes no roteamento" if missing else "evidência insuficiente"
+        )
+    cap = 4 if allow_max else 3
+    if floor_base == "low" and target < 3:
+        # An explicit low budget only rises with strong signals.
+        return AdaptiveEffortDecision(effort="low", base=base, reasons=())
+    target = min(max(target, EFFORT_ORDER[floor_base]), cap)
+    effort = next(level for level, value in EFFORT_ORDER.items() if value == target)
+    return AdaptiveEffortDecision(
+        effort=effort,
+        base=base,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
+
 
 class RefinementReason(str, Enum):
     INCOMPLETE = "incomplete"

@@ -950,7 +950,7 @@ class CodexProvider(AgentProvider):
         sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
         if preset.sandbox_policy_type == "workspaceWrite":
             sandbox_policy.update(
-                {"writableRoots": [str(workspace)], "networkAccess": False}
+                {"writableRoots": [str(workspace)], "networkAccess": True}
             )
         selected_model = options.model or model
         turn_input: list[dict[str, Any]] = []
@@ -1099,7 +1099,7 @@ class CodexProvider(AgentProvider):
         sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
         if preset.sandbox_policy_type == "workspaceWrite":
             sandbox_policy.update(
-                {"writableRoots": [str(workspace)], "networkAccess": False}
+                {"writableRoots": [str(workspace)], "networkAccess": True}
             )
         selected_model = options.model
         params: dict[str, Any] = {
@@ -1305,7 +1305,7 @@ class ClaudeProvider(AgentProvider):
                     "--allowedTools",
                     ",".join(allowed_tools),
                     "--disallowedTools",
-                    "Bash,WebFetch,WebSearch",
+                    "Bash",
                 ]
             )
         if model and model != "default":
@@ -1946,6 +1946,7 @@ def _opencode_environment(
         if preset.sandbox != "read-only":
             permission["edit"] = "allow"
             permission["bash"] = "allow"
+        permission["webfetch"] = "allow"
         if knowledge_root:
             resolved_root = str(knowledge_root.resolve()).replace("\\", "/")
             knowledge_pattern = resolved_root.rstrip("/") + "/**"
@@ -1958,6 +1959,7 @@ def _opencode_environment(
                     f"*{resolved_root}*": "deny",
                     f"*{search_script}*": "allow",
                 }
+            permission["webfetch"] = "allow"
     config["permission"] = permission
     environment["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
     return environment
