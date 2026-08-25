@@ -362,9 +362,29 @@ Item {
                 Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: frontend.palette.chatDivider }
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: root.conversationSidebarVisible ? 16 : 48
+                    anchors.leftMargin: 10
                     anchors.rightMargin: 10
                     spacing: 8
+                    VrIconButton {
+                        id: conversationSidebarToggle
+                        objectName: "conversationSidebarToggle"
+                        implicitWidth: 34
+                        implicitHeight: 34
+                        iconKind: "panelLeft"
+                        foreground: frontend.palette.mutedText
+                        ToolTip.visible: hovered
+                        ToolTip.text: root.conversationSidebarVisible
+                            ? "Recolher barra lateral" : "Mostrar conversas"
+                        Accessible.name: ToolTip.text
+                        onClicked: root.conversationSidebarVisible = !root.conversationSidebarVisible
+                        background: Rectangle {
+                            radius: 8
+                            color: parent.down || parent.hovered
+                                ? frontend.palette.chatControl : "transparent"
+                            border.width: parent.activeFocus ? 1 : 0
+                            border.color: frontend.palette.focus
+                        }
+                    }
                     Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
                     Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
                     Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
@@ -495,7 +515,9 @@ Item {
                                     width: segmentColumn.width
                                     sourceComponent: modelData.kind === "code"
                                         ? codeCardComponent
-                                        : textSegmentComponent
+                                        : modelData.kind === "tools"
+                                            ? toolSummaryComponent
+                                            : textSegmentComponent
                                 }
                             }
                         }
@@ -534,6 +556,37 @@ Item {
                                 code: modelData.content
                                 language: modelData.language
                                 badge: modelData.badge
+                            }
+                        }
+
+                        Component {
+                            id: toolSummaryComponent
+
+                            Item {
+                                implicitHeight: toolSummaryRow.implicitHeight
+                                Row {
+                                    id: toolSummaryRow
+                                    spacing: 7
+                                    VrLineIcon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 13
+                                        height: 13
+                                        kind: "terminal"
+                                        foreground: frontend.palette.mutedText
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: Math.min(
+                                            implicitWidth,
+                                            toolSummaryRow.width - 20
+                                        )
+                                        text: modelData.label || ""
+                                        color: frontend.palette.mutedText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                    }
+                                }
                             }
                         }
 
@@ -625,6 +678,53 @@ Item {
             }
 
             Rectangle {
+                id: scrollToEndPill
+                objectName: "scrollToEndPill"
+                visible: messageList.visible
+                    && messageList.count > 0
+                    && !messageList.atYEnd
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: composerCard.top
+                anchors.bottomMargin: taskBar.visible ? taskBar.height + 16 : 10
+                z: 25
+                radius: height / 2
+                width: pillRow.implicitWidth + 26
+                height: 30
+                color: frontend.palette.chatComposer
+                border.width: 1
+                border.color: pillHover.hovered
+                    ? frontend.palette.focus : frontend.palette.chatBorder
+
+                Row {
+                    id: pillRow
+                    anchors.centerIn: parent
+                    spacing: 6
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Ir para o fim"
+                        color: frontend.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                    }
+                    VrLineIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 12
+                        height: 12
+                        kind: "chevronDown"
+                        foreground: frontend.palette.mutedText
+                    }
+                }
+
+                HoverHandler { id: pillHover }
+                TapHandler {
+                    onTapped: {
+                        messageList.followTail = true
+                        messageList.positionViewAtEnd()
+                    }
+                }
+            }
+
+            Rectangle {
                 id: composerCard
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: messageList.count === 0
@@ -647,7 +747,7 @@ Item {
                     anchors.rightMargin: 14
                     anchors.topMargin: 8
                     height: 50
-                    placeholderText: "Digite uma mensagem..."
+                    placeholderText: "Pergunte algo, @mencione arquivos/pastas ou use / para comandos"
                     readOnly: chat.turnRunning
                     background: Item { }
                     onTextChanged: composerAssistDelay.restart()
@@ -696,21 +796,32 @@ Item {
                     }
                     Item { Layout.fillWidth: true }
                     VrButton {
-                        implicitWidth: 58; implicitHeight: 32
+                        id: vrModeButton
+                        implicitWidth: chat.vrMode === "ultra" ? 104 : 58
+                        implicitHeight: 32
                         leftPadding: 7; rightPadding: 7
-                        text: "✦ VR"
-                        variant: chat.vrEnabled ? "secondary" : "ghost"
+                        text: chat.vrMode === "ultra" ? "✦ VR Ultra" : "✦ VR"
+                        variant: chat.vrMode === "ultra" ? "primary" : chat.vrMode === "vr" ? "secondary" : "ghost"
                         background: Rectangle {
                             radius: 10
-                            color: chat.vrEnabled
-                                ? (parent.down ? "#6B310A" : "#4A260F")
-                                : parent.hovered ? frontend.palette.chatControl : "transparent"
-                            border.width: chat.vrEnabled || parent.activeFocus ? 1 : 0
-                            border.color: parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
+                            color: chat.vrMode === "ultra"
+                                ? (parent.down ? "#E06500" : frontend.palette.brandOrange)
+                                : chat.vrMode === "vr"
+                                    ? (parent.down ? "#6B310A" : "#4A260F")
+                                    : parent.hovered ? frontend.palette.chatControl : "transparent"
+                            border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
+                            border.color: chat.vrMode === "ultra"
+                                ? "#FFC896"
+                                : parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
                         }
-                        onClicked: chat.toggleVr()
+                        onClicked: chat.cycleVrMode()
                         ToolTip.visible: hovered
-                        ToolTip.text: chat.vrEnabled ? "Base local ativa" : "Base local desativada"
+                        ToolTip.delay: 400
+                        ToolTip.text: chat.vrMode === "ultra"
+                            ? "VR Ultra: pesquisa multiagente ativa — use /pesquisa para forçar (clique para desligar)"
+                            : chat.vrMode === "vr"
+                                ? "Base local ativa (clique para VR Ultra)"
+                                : "Base local desativada (clique para ativar VR)"
                     }
                     VrContextButton {
                         id: contextUsageButton
@@ -727,9 +838,85 @@ Item {
                             ? "../../../assets/chat-stop.svg"
                             : "../../../assets/chat-send.svg")
                         foreground: "#FFFFFF"
-                        background: Rectangle { radius: height / 2; color: parent.down ? frontend.palette.brandOrange : frontend.palette.accessibleOrange }
+                        background: Rectangle {
+                            radius: height / 2
+                            color: chat.turnRunning
+                                ? (parent.down
+                                    ? Qt.darker(frontend.palette.danger, 1.18)
+                                    : frontend.palette.danger)
+                                : (parent.down
+                                    ? frontend.palette.brandOrange
+                                    : frontend.palette.accessibleOrange)
+                        }
                         onClicked: chat.turnRunning ? chat.stopTurn() : root.submitMessage()
                     }
+                }
+            }
+
+            // VR Ultra: arco "rainbow laranja" girando ao redor do composer.
+            QtObject {
+                id: ultraHue
+                property real value: 0.06
+            }
+            Rectangle {
+                id: ultraGlowOuter
+                visible: chat.vrMode === "ultra"
+                anchors.centerIn: composerCard
+                width: composerCard.width + 26
+                height: composerCard.height + 26
+                radius: 34
+                color: "transparent"
+                border.width: 8
+                border.color: Qt.hsla(0.07, 0.9, 0.6, 0.16)
+            }
+            Canvas {
+                id: ultraArc
+                visible: chat.vrMode === "ultra"
+                anchors.centerIn: composerCard
+                width: composerCard.width + 12
+                height: composerCard.height + 12
+                property real sweep: 0
+                onSweepChanged: requestPaint()
+                onVisibleChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                function traceRoundRect(ctx, w, h, r) {
+                    ctx.beginPath()
+                    ctx.moveTo(r, 2)
+                    ctx.lineTo(w - r, 2)
+                    ctx.arc(w - r - 2, r, r - 2, -Math.PI / 2, 0, false)
+                    ctx.lineTo(w - 2, h - r - 2)
+                    ctx.arc(w - r - 2, h - r - 2, r - 2, 0, Math.PI / 2, false)
+                    ctx.lineTo(r + 2, h - 2)
+                    ctx.arc(r + 2, h - r - 2, r - 2, Math.PI / 2, Math.PI, false)
+                    ctx.lineTo(2, r)
+                    ctx.arc(r + 2, r + 2, r - 2, Math.PI, 3 * Math.PI / 2, false)
+                    ctx.closePath()
+                }
+
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.reset()
+                    ctx.lineWidth = 3.5
+                    ctx.lineCap = "round"
+                    var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
+                    traceRoundRect(ctx, width, height, 28)
+                    ctx.strokeStyle = Qt.hsla(ultraHue.value, 0.97, 0.58, 1)
+                    ctx.setLineDash([perimeter * 0.66, perimeter])
+                    ctx.lineDashOffset = -sweep * perimeter
+                    ctx.stroke()
+                    traceRoundRect(ctx, width, height, 28)
+                    ctx.strokeStyle = Qt.hsla(0.02, 0.95, 0.5, 0.9)
+                    ctx.setLineDash([perimeter * 0.16, perimeter])
+                    ctx.lineDashOffset = -(sweep + 0.72) * perimeter
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                }
+                SequentialAnimation on sweep {
+                    running: ultraArc.visible && !frontend.reduceMotion
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0; to: 1; duration: 3200 }
                 }
             }
         }
@@ -1080,10 +1267,7 @@ Item {
                                 readOnly: true
                                 selectByMouse: true
                                 wrapMode: TextArea.WrapAnywhere
-                                text: studio.terminalOutput.length
-                                    ? (Qt.platform.os === "windows" ? "PS " : "")
-                                        + frontend.projectPath + studio.terminalOutput
-                                    : ""
+                                text: studio.terminalOutput
                                 color: frontend.palette.text
                                 background: Rectangle {
                                     objectName: "terminalOutputBackground"
@@ -1268,38 +1452,31 @@ Item {
         }
     }
 
-    VrIconButton {
-        id: conversationSidebarToggle
-        objectName: "conversationSidebarToggle"
-        x: root.conversationSidebarVisible
-            ? Math.max(8, conversationSidebar.x + conversationSidebar.width - width - 12)
-            : 8
-        anchors.top: parent.top
-        anchors.topMargin: 15
-        z: 110
-        implicitWidth: 32
-        implicitHeight: 32
-        iconKind: "panelLeft"
-        foreground: frontend.palette.mutedText
-        ToolTip.visible: hovered
-        ToolTip.text: root.conversationSidebarVisible
-            ? "Recolher barra lateral" : "Mostrar conversas"
-        Accessible.name: ToolTip.text
-        onClicked: root.conversationSidebarVisible = !root.conversationSidebarVisible
-        background: Rectangle {
-            radius: 8
-            color: parent.down || parent.hovered
-                ? frontend.palette.chatControl : "transparent"
-            border.width: parent.activeFocus ? 1 : 0
-            border.color: frontend.palette.focus
-        }
-    }
-
     Timer { id: searchDelay; interval: 180; onTriggered: chat.setSearch(conversationSearch.text) }
     Timer { id: composerAssistDelay; interval: 120; onTriggered: root.updateComposerSuggestions() }
     Timer { id: fileSearchDelay; interval: 160; onTriggered: root.surfaceFiles = chat.fileSuggestions(fileSearch.text) }
     Timer { id: contextSearchDelay; interval: 200; onTriggered: root.contextItems = chat.contextSuggestions(contextSearch.text) }
     Timer { id: copyFeedbackTimer; interval: 1300; onTriggered: root.copyFeedbackVisible = false }
+
+    Connections {
+        target: chat
+        function onFileSuggestionsChanged() {
+            if (composerAssistPopup.visible && composerSuggestions.length
+                    && composerSuggestions[0].action === "reference") {
+                root.updateComposerSuggestions()
+            }
+        }
+    }
+
+    Shortcut { sequence: "Ctrl+1"; onActivated: root.activateModelShortcut(0) }
+    Shortcut { sequence: "Ctrl+2"; onActivated: root.activateModelShortcut(1) }
+    Shortcut { sequence: "Ctrl+3"; onActivated: root.activateModelShortcut(2) }
+    Shortcut { sequence: "Ctrl+4"; onActivated: root.activateModelShortcut(3) }
+    Shortcut { sequence: "Ctrl+5"; onActivated: root.activateModelShortcut(4) }
+    Shortcut { sequence: "Ctrl+6"; onActivated: root.activateModelShortcut(5) }
+    Shortcut { sequence: "Ctrl+7"; onActivated: root.activateModelShortcut(6) }
+    Shortcut { sequence: "Ctrl+8"; onActivated: root.activateModelShortcut(7) }
+    Shortcut { sequence: "Ctrl+9"; onActivated: root.activateModelShortcut(8) }
 
     Popup {
         id: composerAssistPopup
@@ -1642,6 +1819,7 @@ Item {
         anchors.centerIn: parent
         width: 510
         modal: true
+        closePolicy: Popup.NoAutoClose
         title: "Aprovação necessária"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
@@ -1663,6 +1841,12 @@ Item {
             if (root.surfaceTabs[index].page === page) return root.surfaceTabs[index]
         }
         return { title: "Superfície", kind: "browser", page: page }
+    }
+
+    function activateModelShortcut(index) {
+        if (newChatProjectPopup.opened || approvalDialog.opened) return
+        if (chat.turnRunning || index >= chat.modelItems.length) return
+        chat.setModel(index)
     }
 
     function openConversationMenu(index, positionX, positionY) {
@@ -1799,7 +1983,8 @@ Item {
             {label:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
             {label:"/skills",description:"Ver skills disponíveis",action:"skills"},
             {label:"/tools",description:"Ver tools e MCP",action:"tools"},
-            {label:"/vr",description:"Ativar ou desativar a base local",action:"vr"}
+            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"},
+            {label:"/pesquisa",description:"Pesquisa multiagente: /pesquisa <pergunta>",action:"pesquisa"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
@@ -1831,7 +2016,11 @@ Item {
         if (item.action === "model") modelSelector.openPicker()
         else if (item.action === "effort") effortSelector.openPicker()
         else if (item.action === "permissions") approvalSelector.openPicker()
-        else if (item.action === "vr") chat.toggleVr()
+        else if (item.action === "vr") chat.cycleVrMode()
+        else if (item.action === "pesquisa") {
+            composerInput.text = "/pesquisa "
+            composerInput.forceActiveFocus()
+        }
         else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
         else if (item.action === "reference") {
             var before = composerInput.text.substring(0, item.start)

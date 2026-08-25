@@ -9,6 +9,7 @@ Rectangle {
     property int contentSpacing: Theme.spaceMd
 
     implicitHeight: Math.max(120, contentColumn.implicitHeight + Theme.space2Xl)
+    clip: true
     color: frontend.palette.surface
     radius: Theme.radiusCard
     border.width: 1

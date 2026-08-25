@@ -15,6 +15,23 @@ Item {
         { title: "Logs", page: 6, icon: "nav-logs.svg" }
     ]
 
+    // Visited pages stay alive: recreating heavy pages (Vídeos, Conhecimento)
+    // on every switch added measurable tab-change latency.
+    property var visitedPages: []
+
+    function markVisited() {
+        var pages = visitedPages.slice()
+        pages[frontend.currentPage] = true
+        visitedPages = pages
+    }
+
+    Connections {
+        target: frontend
+        function onCurrentPageChanged() { root.markVisited() }
+    }
+
+    Component.onCompleted: root.markVisited()
+
     Rectangle { anchors.fill: parent; color: frontend.palette.background }
 
     SplitView {
@@ -96,20 +113,53 @@ Item {
             }
         }
 
-        Loader {
+        Item {
             SplitView.minimumWidth: 720
             SplitView.fillWidth: true
-            sourceComponent: {
-                switch (frontend.currentPage) {
-                case 0: return dashboardComponent
-                case 2: return knowledgeComponent
-                case 3: return syncComponent
-                case 4: return reviewComponent
-                case 5: return videosComponent
-                case 6: return logsComponent
-                case 7: return settingsComponent
-                }
-                return settingsComponent
+
+            // Explicit Loaders (not a Repeater): Repeater delegates get no
+            // QObject parent, which disconnects them from window.findChild.
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[0] === true
+                visible: frontend.currentPage === 0
+                sourceComponent: dashboardComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[2] === true
+                visible: frontend.currentPage === 2
+                sourceComponent: knowledgeComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[3] === true
+                visible: frontend.currentPage === 3
+                sourceComponent: syncComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[4] === true
+                visible: frontend.currentPage === 4
+                sourceComponent: reviewComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[5] === true
+                visible: frontend.currentPage === 5
+                sourceComponent: videosComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[6] === true
+                visible: frontend.currentPage === 6
+                sourceComponent: logsComponent
+            }
+            Loader {
+                anchors.fill: parent
+                active: root.visitedPages[7] === true
+                visible: frontend.currentPage === 7
+                sourceComponent: settingsComponent
             }
         }
     }

@@ -17,7 +17,8 @@ Button {
     contentItem: Text {
         text: control.text
         color: !control.enabled ? frontend.palette.mutedText
-            : control.variant === "primary" ? "#FFFFFF" : frontend.palette.text
+            : control.variant === "primary" || control.variant === "danger"
+                ? "#FFFFFF" : frontend.palette.text
         font.family: Theme.fontFamily
         font.pixelSize: Theme.bodySize
         font.weight: Font.DemiBold
@@ -33,12 +34,17 @@ Button {
                 return control.variant === "ghost" ? "transparent" : frontend.palette.surface
             if (control.variant === "primary")
                 return control.down ? frontend.palette.brandOrange : frontend.palette.accessibleOrange
+            if (control.variant === "danger")
+                return control.down
+                    ? Qt.darker(frontend.palette.danger, 1.2) : frontend.palette.danger
             if (control.down || control.hovered)
                 return frontend.palette.hover
             return control.variant === "ghost" ? "transparent" : frontend.palette.surface
         }
         border.width: control.activeFocus ? 2 : (control.variant === "ghost" ? 0 : 1)
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.border
+        border.color: control.activeFocus ? frontend.palette.focus
+            : control.variant === "danger" ? frontend.palette.danger
+            : frontend.palette.border
 
         Behavior on color {
             ColorAnimation { duration: Theme.fastDuration }

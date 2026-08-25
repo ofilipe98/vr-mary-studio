@@ -29,6 +29,7 @@ QtObject {
 
     readonly property int bodySize: 14
     readonly property int captionSize: 12
+    readonly property int subtitleSize: 16
     readonly property int titleSize: 26
     readonly property int headingSize: 18
 

@@ -7,10 +7,10 @@ import shutil
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .config import MarySettings
 from .db import MaryDatabase
@@ -60,7 +60,10 @@ from .providers import (
 from .research_fanout import (
     GLOBAL_MODULE_LABEL,
     MAX_PARALLEL_RESEARCHERS,
+    RESEARCH_ATTEMPTS,
     RESEARCH_EFFORT,
+    RESEARCH_RETRY_BACKOFF_SECONDS,
+    RESEARCH_STAGGER_SECONDS,
     ROLE_BY_FANOUT_MODULE,
     SCHEMA_MODULE_LABEL,
     ModuleResearch,
@@ -85,6 +88,7 @@ from .supervision import (
     RefinementTask,
     ResponseContract,
     ResponseIntent,
+    ResponseViolation,
     SupervisorAssessment,
     analyze_response_intent,
     build_agent_task,
@@ -122,6 +126,27 @@ class OrchestrationCancelled(RuntimeError):
     pass
 
 
+def provider_display_name(provider: str) -> str:
+    return {
+        "codex": "Codex",
+        "claude": "Claude",
+        "opencode": "OpenCode",
+    }.get(str(provider).casefold(), str(provider).title())
+
+
+def vr_sessions_note(native_id: Any, native_id_vr: Any) -> str:
+    """Tooltip note describing which per-mode native threads exist."""
+    has_native = bool(str(native_id or "").strip())
+    has_vr_thread = bool(str(native_id_vr or "").strip())
+    if has_native and has_vr_thread:
+        return "Threads nativo e VR ativos nesta conversa."
+    if has_vr_thread:
+        return "Somente o thread VR foi criado nesta conversa."
+    if has_native:
+        return "Somente o thread nativo foi criado nesta conversa."
+    return ""
+
+
 class ChatOrchestrator:
     def __init__(self, settings: MarySettings, database: MaryDatabase):
         self.settings = settings
@@ -140,6 +165,9 @@ class ChatOrchestrator:
         self._pending_evidence_bundles: dict[str, EvidenceBundle] = {}
         self._pending_used_evidence_ids: dict[str, tuple[str, ...]] = {}
         self._pending_response_contracts: dict[str, ResponseContract] = {}
+        self._research_pool: tuple[ModelRef, ...] = ()
+        self._research_trigger: str = "auto"
+        self._research_max_parallel: int = MAX_PARALLEL_RESEARCHERS
         self._pending_dynamic_tools: dict[str, tuple[RuntimeEvent, dict]] = {}
         self._active_agent_runs: dict[
             str, dict[str, tuple[AgentProvider, str]]
@@ -149,6 +177,20 @@ class ChatOrchestrator:
         self._terminal_turn_states: dict[str, str] = {}
         self._finalized_turns: set[str] = set()
         self._agent_run_lock = threading.RLock()
+        self._turn_finalizer_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="mary-turn-finalize",
+        )
+        self._pending_finalizers: dict[str, set[Future]] = {}
+        self._finalizers_lock = threading.Lock()
+        # Opt-in: native turns may expose vr_search so the provider pulls local
+        # evidence on demand instead of receiving the upfront VR pipeline.
+        self.native_vr_search_enabled = bool(
+            getattr(settings, "native_vr_search_enabled", False)
+        )
+
+    def set_native_vr_search(self, enabled: bool) -> None:
+        self.native_vr_search_enabled = bool(enabled)
 
     def provider_status(self) -> dict[str, bool]:
         return {name: provider.available() for name, provider in self.providers.items()}
@@ -182,8 +224,13 @@ class ChatOrchestrator:
         orchestration: OrchestrationOptions | None = None,
         workspace: Path | None = None,
         vr_enabled: bool = False,
+        vr_mode: str = "",
     ) -> str:
         provider = self._provider(provider_name)
+        resolved_mode = str(vr_mode or "").strip().casefold()
+        if resolved_mode not in ConversationOptions.VALID_VR_MODES:
+            resolved_mode = "vr" if vr_enabled else "off"
+        vr_enabled = resolved_mode != "off"
         temporary_id = "pending"
         selected_workspace = (
             prepare_conversation_workspace(self.settings, workspace)
@@ -201,6 +248,7 @@ class ChatOrchestrator:
             collaboration_mode=collaboration_mode,
             orchestration=orchestration,
             vr_enabled=vr_enabled,
+            vr_mode=resolved_mode,
         )
         workspace = selected_workspace or conversation_workspace(
             self.settings, conversation_id
@@ -222,7 +270,10 @@ class ChatOrchestrator:
                 workspace,
                 options,
             )
-            self.database.update_conversation(conversation_id, native_id=native_id)
+            self.database.update_conversation(
+                conversation_id,
+                **{self._native_column(bool(vr_enabled)): native_id},
+            )
         return conversation_id
 
     def send(
@@ -235,6 +286,8 @@ class ChatOrchestrator:
         search_text: str | None = None,
         use_vr: bool = True,
         image_paths: list[str] | None = None,
+        vr_mode: str = "",
+        force_research: bool = False,
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
@@ -244,11 +297,23 @@ class ChatOrchestrator:
         workspace = prepare_conversation_workspace(self.settings, workspace)
         existing_messages = self.database.messages(conversation_id)
         stored_text = display_text.strip() or text
+        resolved_vr_mode = str(vr_mode or "").strip().casefold()
+        if resolved_vr_mode not in ConversationOptions.VALID_VR_MODES:
+            row_mode = str(conversation["vr_mode"] or "").strip().casefold()
+            resolved_vr_mode = (
+                row_mode
+                if row_mode in ConversationOptions.VALID_VR_MODES
+                else ("vr" if use_vr else "off")
+            )
+        if not use_vr:
+            resolved_vr_mode = "off"
         options = replace(
-            self._conversation_options(conversation_id), vr_enabled=bool(use_vr)
+            self._conversation_options(conversation_id, use_vr=use_vr),
+            vr_mode=resolved_vr_mode,
         )
         message_id = self.database.begin_user_turn(conversation_id, stored_text)
-        native_id = str(conversation["native_id"])
+        native_column = self._native_column(use_vr)
+        native_id = str(conversation[native_column] or "")
         starts_new_native_session = not native_id
         try:
             if not native_id:
@@ -260,7 +325,7 @@ class ChatOrchestrator:
                     options,
                 )
                 self.database.update_conversation(
-                    conversation_id, native_id=native_id
+                    conversation_id, **{native_column: native_id}
                 )
             local_query = (
                 self._local_search_query(
@@ -271,13 +336,19 @@ class ChatOrchestrator:
                 else ""
             )
             cloned_context = ""
+            cloned_history_count = 0
             if starts_new_native_session and any(
                 row["role"] == "user" for row in existing_messages
             ):
-                cloned_context = "\n\n".join(
-                    f"{row['role'].upper()}: {row['content']}"
+                history_rows = [
+                    row
                     for row in existing_messages[-30:]
                     if row["role"] in {"user", "assistant"}
+                ]
+                cloned_history_count = len(history_rows)
+                cloned_context = "\n\n".join(
+                    f"{row['role'].upper()}: {row['content']}"
+                    for row in history_rows
                 )
             elif not any(row["role"] == "user" for row in existing_messages):
                 cloned_context = "\n\n".join(
@@ -285,10 +356,16 @@ class ChatOrchestrator:
                     for row in existing_messages
                     if row["role"] == "system"
                 )
-            self._pending_user_messages[conversation_id] = message_id
-            self._pending_response_modes[conversation_id] = (
-                "vr" if use_vr else "native"
-            )
+            with self._agent_run_lock:
+                self._cancelled_conversations.discard(conversation_id)
+                self._terminal_turn_states.pop(conversation_id, None)
+                self._finalized_turns.discard(conversation_id)
+                self._assistant_buffers[conversation_id] = []
+                self._external_callbacks[conversation_id] = callback
+                self._pending_user_messages[conversation_id] = message_id
+                self._pending_response_modes[conversation_id] = (
+                    "vr" if use_vr else "native"
+                )
             if conversation["title"] == "Nova conversa":
                 title_source = re.sub(
                     r"!\[[^\]]*\]\([^)]+\)", "", stored_text
@@ -298,12 +375,20 @@ class ChatOrchestrator:
                     or "Nova conversa"
                 )
                 self.database.update_conversation(conversation_id, title=title)
-            with self._agent_run_lock:
-                self._cancelled_conversations.discard(conversation_id)
-                self._terminal_turn_states.pop(conversation_id, None)
-                self._finalized_turns.discard(conversation_id)
-            self._assistant_buffers[conversation_id] = []
-            self._external_callbacks[conversation_id] = callback
+            if cloned_history_count:
+                self._emit_orchestration_event(
+                    conversation_id,
+                    "context_transferred",
+                    (
+                        "Contexto de "
+                        f"{cloned_history_count} mensagens transferido para "
+                        f"{provider_display_name(str(conversation['provider']))}."
+                    ),
+                    {
+                        "provider": str(conversation["provider"]),
+                        "messages": cloned_history_count,
+                    },
+                )
             orchestration_request = text
             history_prefix = ""
             if cloned_context:
@@ -447,6 +532,10 @@ class ChatOrchestrator:
                         response_intent,
                         evidence_bundle,
                     )
+                    fanout_allowed = force_research or (
+                        resolved_vr_mode == "ultra"
+                        and self._research_trigger == "auto"
+                    )
                     fanout_modules = (
                         self._fanout_modules(
                             evidence_bundle,
@@ -455,6 +544,7 @@ class ChatOrchestrator:
                         )
                         if (
                             use_vr
+                            and fanout_allowed
                             and getattr(self.settings, "vr_research_fanout", False)
                             # Explicit legacy orchestration keeps priority;
                             # fan-out enhances the direct flow only.
@@ -510,11 +600,19 @@ class ChatOrchestrator:
                             image_paths,
                         )
                 except OrchestrationCancelled:
+                    cancelled_in_vr = (
+                        self._pending_response_modes.get(conversation_id, "vr")
+                        == "vr"
+                    )
                     self._handle_event(
                         RuntimeEvent(
                             conversation_id,
                             "orchestration_cancelled",
-                            "Execução VR interrompida.",
+                            (
+                                "Execução VR interrompida."
+                                if cancelled_in_vr
+                                else "Execução interrompida."
+                            ),
                         )
                     )
                     self._handle_event(
@@ -1785,8 +1883,114 @@ class ChatOrchestrator:
                 "orchestrator": main_model.to_dict(),
             },
         )
+        synthesis_effort = decide_adaptive_effort(
+            intent,
+            bundle,
+            options.effort,
+            allow_max=str(options.orchestration.mode) == "ultra",
+        ).effort
+        # VR Ultra pool: the dedicated research configuration wins; the legacy
+        # orchestration pool remains as fallback for older setups.
+        available_providers = {
+            name
+            for name, candidate in self.providers.items()
+            if candidate.available()
+        }
+        model_pool = self._research_pool or eligible_model_pool(
+            options.orchestration, main_model, available_providers
+        )
+        model_pool = tuple(
+            item
+            for item in model_pool
+            if item.provider in available_providers
+        ) or (main_model,)
+        max_parallel = max(1, min(MAX_PARALLEL_RESEARCHERS, self._research_max_parallel))
 
-        def research_one(module: str) -> ModuleResearch:
+        def model_for_researcher(index: int) -> ModelRef:
+            return model_pool[index % len(model_pool)]
+
+        runtime_stages = [
+            {
+                "id": f"fanout_{module.casefold()}",
+                "agent_id": f"fanout_{module.casefold()}",
+                "agent": f"vr_fanout_{module.casefold()}",
+                "label": f"Pesquisador {module}",
+                "role": "module_research",
+                "module": "" if module in {SCHEMA_MODULE_LABEL, GLOBAL_MODULE_LABEL} else module,
+                "source": "schema" if module == SCHEMA_MODULE_LABEL else "wiki,kb",
+                "task": (
+                    f"Pesquisar e validar evidências do módulo {module} "
+                    "para a solicitação, sem sair do escopo."
+                ),
+                "reason": "Especialista do módulo executando em paralelo.",
+                "model": model_for_researcher(index).to_dict(),
+                "effort": RESEARCH_EFFORT,
+                "final": False,
+                "required": True,
+                "priority": 90,
+                "parent_id": "vr_fanout",
+                "worker_id": f"fanout_{module.casefold()}",
+                "worker_name": f"Pesquisador {module}",
+            }
+            for index, module in enumerate(modules)
+        ]
+        runtime_stages.append(
+            {
+                "id": "fanout_synthesis",
+                "agent_id": "fanout_synthesis",
+                "agent": "vr_fanout_synthesis",
+                "label": "Síntese final",
+                "role": "final_synthesis",
+                "module": "",
+                "source": "",
+                "task": (
+                    "Consolidar os achados dos pesquisadores na resposta final "
+                    "com fontes."
+                ),
+                "reason": "Consolidação única das frentes paralelas.",
+                "model": main_model.to_dict(),
+                "effort": synthesis_effort,
+                "final": True,
+                "required": True,
+                "priority": 100,
+                "parent_id": "vr_fanout",
+                "worker_id": "fanout_synthesis",
+                "worker_name": "Síntese final",
+            }
+        )
+        self._emit_orchestration_event(
+            conversation_id,
+            "plan_created",
+            f"Plano modular: {len(modules)} pesquisadores + síntese.",
+            {
+                "run_id": run_id,
+                "runtime_stages": runtime_stages,
+                "plan": {"agents": []},
+            },
+        )
+
+        fanout_start_monotonic = time.monotonic()
+
+        def research_one(module: str, index: int) -> ModuleResearch:
+            stagger_delay = RESEARCH_STAGGER_SECONDS * index
+            if stagger_delay > 0:
+                remaining = (
+                    fanout_start_monotonic + stagger_delay - time.monotonic()
+                )
+                if remaining > 0:
+                    threading.Event().wait(min(remaining, stagger_delay))
+            worker_id = f"fanout_{module.casefold()}"
+            stage = next(
+                item for item in runtime_stages if item["id"] == worker_id
+            )
+            researcher_model = ModelRef.from_mapping(stage["model"])
+            self._emit_orchestration_event(
+                conversation_id,
+                "agent_started",
+                f"Pesquisador {module} iniciado.",
+                dict(stage),
+                persist=False,
+            )
             sources = ("schema",) if module == SCHEMA_MODULE_LABEL else ("wiki", "kb")
             evidence_context = self.knowledge_router.prompt_for_role(
                 bundle,
@@ -1798,50 +2002,101 @@ class ChatOrchestrator:
                 ),
             )
             prompt = build_researcher_prompt(module, sources, request, evidence_context)
-            worker_id = f"fanout_{module.casefold()}"
-            try:
-                raw = self._run_ephemeral_turn(
-                    conversation_id,
-                    run_id,
-                    f"vr_fanout_{module.casefold()}",
-                    main_model,
-                    prompt,
-                    workspace,
-                    RESEARCH_EFFORT,
-                    timeout_seconds=150,
+            outcome: ModuleResearch | None = None
+            for attempt in range(RESEARCH_ATTEMPTS):
+                try:
+                    raw = self._run_ephemeral_turn(
+                        conversation_id,
+                        run_id,
+                        f"vr_fanout_{module.casefold()}",
+                        researcher_model,
+                        prompt,
+                        workspace,
+                        RESEARCH_EFFORT,
+                        timeout_seconds=150 if attempt == 0 else 90,
+                    )
+                except OrchestrationCancelled:
+                    raise
+                except Exception as exc:
+                    outcome = ModuleResearch(module=module, raw_error=str(exc))
+                    LOGGER.warning(
+                        "Pesquisador %s falhou (tentativa %s/%s): %s",
+                        module,
+                        attempt + 1,
+                        RESEARCH_ATTEMPTS,
+                        exc,
+                    )
+                else:
+                    result = parse_researcher_output(
+                        raw,
+                        worker_id=worker_id,
+                        worker_name=f"Pesquisador {module}",
+                        module=module,
+                        allowed_evidence_ids=allowed_ids,
+                    )
+                    if result.succeeded and result.report is not None:
+                        claims = [
+                            claim.text for claim in result.report.findings
+                        ]
+                        output_preview = (
+                            f"{len(claims)} achados. "
+                            + " ".join(claims)
+                        )[:600]
+                        self._emit_orchestration_event(
+                            conversation_id,
+                            "agent_completed",
+                            f"Pesquisador {module} concluído.",
+                            {**stage, "output": output_preview},
+                            persist=False,
+                        )
+                        return result
+                    outcome = result
+                    LOGGER.warning(
+                        "Pesquisador %s retornou saída inválida "
+                        "(tentativa %s/%s): %s",
+                        module,
+                        attempt + 1,
+                        RESEARCH_ATTEMPTS,
+                        result.raw_error,
+                    )
+                if attempt + 1 < RESEARCH_ATTEMPTS:
+                    threading.Event().wait(
+                        RESEARCH_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                    )
+            if outcome is None:
+                raise RuntimeError(
+                    f"Pesquisador {module} terminou sem resultado."
                 )
-                return parse_researcher_output(
-                    raw,
-                    worker_id=worker_id,
-                    worker_name=f"Pesquisador {module}",
-                    module=module,
-                    allowed_evidence_ids=allowed_ids,
-                )
-            except OrchestrationCancelled:
-                raise
-            except Exception as exc:
-                LOGGER.warning("Pesquisador %s falhou: %s", module, exc)
-                return ModuleResearch(module=module, raw_error=str(exc))
+            self._emit_orchestration_event(
+                conversation_id,
+                "agent_failed",
+                f"Pesquisador {module} falhou após {RESEARCH_ATTEMPTS} tentativas.",
+                {**stage, "error": outcome.raw_error[:300]},
+                persist=False,
+            )
+            return outcome
 
         reports: list[ModuleResearch] = []
         try:
             with ThreadPoolExecutor(
-                max_workers=min(MAX_PARALLEL_RESEARCHERS, len(modules))
+                max_workers=min(max_parallel, len(modules))
             ) as executor:
-                futures = {
-                    executor.submit(research_one, module): module
-                    for module in modules
-                }
+                futures = {}
+                for index, module in enumerate(modules):
+                    futures[executor.submit(research_one, module, index)] = module
                 for future in as_completed(futures):
                     reports.append(future.result())
             ordered = [next(item for item in reports if item.module == m) for m in modules]
+            if not any(item.succeeded for item in ordered):
+                # Blind synthesis over an empty evidence set would produce a
+                # confident guess; fall back to the direct flow instead.
+                raise ProviderError(
+                    "todos os pesquisadores falharam: "
+                    + "; ".join(
+                        f"{item.module}: {item.raw_error[:120]}" for item in ordered
+                    )
+                )
             merged = merge_module_research(ordered)
-            synthesis_effort = decide_adaptive_effort(
-                intent,
-                bundle,
-                options.effort,
-                allow_max=str(options.orchestration.mode) == "ultra",
-            ).effort
             self._emit_orchestration_event(
                 conversation_id,
                 "research_completed",
@@ -1849,6 +2104,11 @@ class ChatOrchestrator:
                 {
                     "run_id": run_id,
                     **fanout_payload(ordered),
+                    "errors": {
+                        item.module: item.raw_error[:200]
+                        for item in ordered
+                        if not item.succeeded
+                    },
                     "claims": len(merged.claims),
                     "conflicts": len(merged.conflicts),
                     "gaps": len(merged.gaps),
@@ -1875,9 +2135,23 @@ class ChatOrchestrator:
                 skills,
             )
             draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
+            envelope_like = self._looks_like_final_envelope(draft.answer_markdown)
             violations = validate_normal_response(
                 draft.answer_markdown, contract, bundle
             )
+            if envelope_like and not any(
+                item.code == "internal_leak" for item in violations
+            ):
+                violations = violations + (
+                    ResponseViolation(
+                        code="internal_leak",
+                        detail="resposta retornou o envelope JSON bruto",
+                        fix_instruction=(
+                            "Entregue apenas o Markdown da resposta, sem JSON, "
+                            "sem cercas de código e sem chaves de metadados."
+                        ),
+                    ),
+                )
             final_text = ""
             if violations:
                 rewrite_prompt = build_rewrite_prompt(
@@ -1914,6 +2188,16 @@ class ChatOrchestrator:
                 remaining = validate_normal_response(
                     draft.answer_markdown, contract, bundle
                 )
+                if self._looks_like_final_envelope(draft.answer_markdown):
+                    remaining = remaining + (
+                        ResponseViolation(
+                            code="internal_leak",
+                            detail="reescrita retornou o envelope JSON bruto",
+                            fix_instruction=(
+                                "Entregue apenas o Markdown da resposta."
+                            ),
+                        ),
+                    )
                 violations = [
                     item
                     for item in remaining
@@ -2373,13 +2657,6 @@ class ChatOrchestrator:
                 "descrição do problema real. As evidências locais não foram pré-"
                 f"carregadas; se precisar de contexto da base, {follow_up}."
             )
-        middle_parts: list[str] = []
-        if has_images:
-            middle_parts.append(
-                "ANEXO VISUAL: esta mensagem inclui imagem(ns). Priorize-a como "
-                "descrição do problema real. As evidências locais não foram pré-"
-                "carregadas; se precisar de contexto da base, use `vr_search`."
-            )
         elif evidence_bundle is not None:
             middle_parts.append(self.knowledge_router.prompt(evidence_bundle))
         else:
@@ -2455,7 +2732,6 @@ class ChatOrchestrator:
         )
 
     def _handle_event(self, event: RuntimeEvent) -> None:
-        derived_events: list[RuntimeEvent] = []
         if event.kind in {
             "assistant_delta",
             "turn_started",
@@ -2569,9 +2845,23 @@ class ChatOrchestrator:
                     )
         elif event.kind == "native_session_started":
             native_id = str(event.payload.get("native_id") or "")
-            if native_id and self.database.get_conversation(event.conversation_id):
+            row = (
+                self.database.get_conversation(event.conversation_id)
+                if native_id
+                else None
+            )
+            if row is not None:
+                pending_mode = self._pending_response_modes.get(
+                    event.conversation_id
+                )
+                use_vr = (
+                    pending_mode == "vr"
+                    if pending_mode is not None
+                    else bool(row["vr_enabled"])
+                )
                 self.database.update_conversation(
-                    event.conversation_id, native_id=native_id
+                    event.conversation_id,
+                    **{self._native_column(use_vr): native_id},
                 )
         elif event.kind == "dynamic_tool_requested":
             self._handle_dynamic_tool(event)
@@ -2597,6 +2887,112 @@ class ChatOrchestrator:
                 self._cancelled_conversations.discard(event.conversation_id)
                 self._finalized_turns.add(event.conversation_id)
             content = "".join(self._assistant_buffers.pop(event.conversation_id, []))
+            self._submit_turn_finalization(
+                event,
+                content,
+                had_orchestration_run=had_orchestration_run,
+                terminal_state=terminal_state,
+                run_id=run_id,
+            )
+        elif event.kind == "error":
+            self.database.update_conversation(event.conversation_id, status="error")
+        if event.kind == "turn_completed":
+            # Persistence and callback delivery happen in the finalizer task;
+            # emitting here would duplicate the terminal event.
+            return
+        callback = self._external_callbacks.get(event.conversation_id)
+        if callback:
+            callback(event)
+
+    def _submit_turn_finalization(
+        self,
+        event: RuntimeEvent,
+        content: str,
+        *,
+        had_orchestration_run: bool,
+        terminal_state: str,
+        run_id: str,
+    ) -> None:
+        try:
+            future = self._turn_finalizer_executor.submit(
+                self._finalize_turn_completed,
+                event,
+                content,
+                had_orchestration_run,
+                terminal_state,
+                run_id,
+            )
+        except RuntimeError:
+            self._finalize_turn_completed(
+                event,
+                content,
+                had_orchestration_run,
+                terminal_state,
+                run_id,
+            )
+            return
+        with self._finalizers_lock:
+            self._pending_finalizers.setdefault(event.conversation_id, set()).add(
+                future
+            )
+        future.add_done_callback(
+            lambda done, conv=event.conversation_id: self._discard_finalizer(conv, done)
+        )
+
+    def _discard_finalizer(self, conversation_id: str, future: Future) -> None:
+        with self._finalizers_lock:
+            pending = self._pending_finalizers.get(conversation_id)
+            if pending is not None:
+                pending.discard(future)
+                if not pending:
+                    self._pending_finalizers.pop(conversation_id, None)
+
+    def drain_turn_finalizations(self, timeout: float = 15.0) -> None:
+        """Await pending turn finalizations (determinism for tests/shutdown)."""
+
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            with self._finalizers_lock:
+                futures = [
+                    item
+                    for pending in self._pending_finalizers.values()
+                    for item in pending
+                ]
+            if not futures or time.monotonic() >= deadline:
+                return
+            for future in futures:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                try:
+                    future.result(timeout=remaining)
+                except Exception:
+                    return
+
+    def _cancel_conversation_finalizers(self, conversation_id: str) -> None:
+        with self._finalizers_lock:
+            pending = self._pending_finalizers.pop(conversation_id, None)
+        for future in pending or ():
+            future.cancel()
+
+    def _finalize_turn_completed(
+        self,
+        event: RuntimeEvent,
+        content: str,
+        had_orchestration_run: bool,
+        terminal_state: str,
+        run_id: str,
+    ) -> None:
+        try:
+            derived_events: list[RuntimeEvent] = []
+            if self.database.get_conversation(event.conversation_id) is None:
+                with self._agent_run_lock:
+                    self._pending_user_messages.pop(event.conversation_id, None)
+                    self._pending_response_modes.pop(event.conversation_id, None)
+                    self._pending_evidence_bundles.pop(event.conversation_id, None)
+                    self._pending_used_evidence_ids.pop(event.conversation_id, None)
+                    self._pending_response_contracts.pop(event.conversation_id, None)
+                return
             turn = event.payload.get("turn") or {}
             turn_id = str(turn.get("id") or "")
             if not terminal_state and content.strip():
@@ -2640,6 +3036,19 @@ class ChatOrchestrator:
                         assistant_message_id,
                         [item.to_dict() for item in candidates],
                     )
+            elif not terminal_state:
+                empty_warning = RuntimeEvent(
+                    event.conversation_id,
+                    "response_empty",
+                    "O provedor concluiu sem retornar conteúdo.",
+                    {
+                        "response_mode": self._pending_response_modes.get(
+                            event.conversation_id, "vr"
+                        )
+                    },
+                )
+                self.database.add_event(empty_warning)
+                derived_events.append(empty_warning)
             self._pending_user_messages.pop(event.conversation_id, None)
             self._pending_response_modes.pop(event.conversation_id, None)
             self._pending_evidence_bundles.pop(event.conversation_id, None)
@@ -2657,15 +3066,34 @@ class ChatOrchestrator:
                 )
                 self.database.add_event(completion)
                 derived_events.append(completion)
-        elif event.kind == "error":
-            self.database.update_conversation(event.conversation_id, status="error")
-        callback = self._external_callbacks.get(event.conversation_id)
+            callback = self._external_callbacks.get(event.conversation_id)
+            if callback:
+                for derived in derived_events:
+                    callback(derived)
+                callback(event)
+        except Exception as exc:
+            LOGGER.exception(
+                "Falha ao finalizar o turno da conversa %s",
+                event.conversation_id,
+            )
+            self._emit_terminal_error(event.conversation_id, str(exc))
+
+    def _emit_terminal_error(self, conversation_id: str, text: str) -> None:
+        event = RuntimeEvent(conversation_id, "error", text[:400])
+        with self._agent_run_lock:
+            if conversation_id in self._cancelled_conversations:
+                return
+            self._terminal_turn_states[conversation_id] = "error"
+        self.database.add_event(event)
+        self.database.update_conversation(conversation_id, status="error")
+        callback = self._external_callbacks.get(conversation_id)
         if callback:
-            for derived in derived_events:
-                callback(derived)
             callback(event)
-        if event.kind == "turn_completed":
-            self._external_callbacks.pop(event.conversation_id, None)
+
+    @staticmethod
+    def _looks_like_final_envelope(text: str) -> bool:
+        stripped = str(text or "").lstrip()
+        return stripped.startswith("```") or '"answer_markdown"' in stripped
 
     @staticmethod
     def _candidates_cited_in_content(
@@ -2756,7 +3184,7 @@ class ChatOrchestrator:
             provider_options = replace(options, effort="medium")
         self._provider(conversation["provider"]).update_settings(
             conversation_id,
-            str(conversation["native_id"]),
+            str(conversation[self._native_column(bool(conversation["vr_enabled"]))]),
             self.settings.resolve_path(conversation["workspace"]),
             provider_options,
         )
@@ -2821,6 +3249,7 @@ class ChatOrchestrator:
             model=model,
             effort=effort or self.settings.default_effort,
             native_id="",
+            native_id_vr="",
             status="idle",
             service_tier="",
             approval_profile="auto",
@@ -2841,7 +3270,10 @@ class ChatOrchestrator:
         has_user_message = any(
             row["role"] == "user" for row in self.database.messages(conversation_id)
         )
-        if not has_user_message and not str(conversation["native_id"] or ""):
+        active_native = str(
+            conversation[self._native_column(bool(conversation["vr_enabled"]))] or ""
+        )
+        if not has_user_message and not active_native:
             self.database.set_conversation_tools(
                 conversation_id, dynamic_tool_ids, mcp_tools
             )
@@ -2887,6 +3319,7 @@ class ChatOrchestrator:
             orchestration=source_options.orchestration,
             workspace=project_workspace,
             vr_enabled=bool(source["vr_enabled"]),
+            vr_mode=source_options.vr_mode,
         )
         messages = self.database.messages(conversation_id)
         transcript = "\n\n".join(
@@ -2932,6 +3365,7 @@ class ChatOrchestrator:
             collaboration_mode=options.collaboration_mode,
             orchestration=options.orchestration,
             vr_enabled=bool(source["vr_enabled"]),
+            vr_mode=options.vr_mode,
         )
         if managed_workspace:
             workspace = conversation_workspace(self.settings, new_id)
@@ -2943,8 +3377,9 @@ class ChatOrchestrator:
             if row["turn_id"]:
                 last_turn_id = str(row["turn_id"])
                 break
+        source_column = self._native_column(bool(source["vr_enabled"]))
         native_id = provider.fork_thread(
-            new_id, str(source["native_id"]), last_turn_id, workspace, options
+            new_id, str(source[source_column]), last_turn_id, workspace, options
         )
         if native_id:
             for row in previous:
@@ -2969,7 +3404,7 @@ class ChatOrchestrator:
                     "system",
                     "Contexto anterior à mensagem editada:\n\n" + transcript,
                 )
-        self.database.update_conversation(new_id, native_id=native_id)
+        self.database.update_conversation(new_id, **{source_column: native_id})
         self.database.add_message(
             new_id, "system", f"Mensagem original editada: {target['content']}"
         )
@@ -3089,6 +3524,7 @@ class ChatOrchestrator:
                 "Somente conversas arquivadas podem ser excluídas definitivamente."
             )
         self._sync_codex_lifecycle(row, "delete")
+        self._cancel_conversation_finalizers(conversation_id)
         folder = self.settings.resolve_path(row["workspace"])
         trash_root = (self.settings.root / ".trash" / "conversations").resolve()
         work_root = self.settings.work_dir.resolve()
@@ -3113,20 +3549,33 @@ class ChatOrchestrator:
             provider, "release_conversation", None
         )
         if callable(release):
-            try:
-                release(conversation_id, str(row["native_id"] or ""))
-            except Exception as exc:
-                LOGGER.warning(
-                    "Falha ao liberar recursos locais da conversa %s: %s",
-                    conversation_id,
-                    exc,
-                )
+            for column in ("native_id", "native_id_vr"):
+                try:
+                    release(conversation_id, str(row[column] or ""))
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Falha ao liberar recursos locais da conversa %s: %s",
+                        conversation_id,
+                        exc,
+                    )
         try:
             self.database.purge_conversation(conversation_id)
         except Exception:
             if quarantine and quarantine.exists() and not folder.exists():
                 quarantine.replace(folder)
             raise
+        stale_tool_requests = [
+            request_id
+            for request_id, (pending_event, _tool) in self._pending_dynamic_tools.items()
+            if pending_event.conversation_id == conversation_id
+        ]
+        for request_id in stale_tool_requests:
+            self._pending_dynamic_tools.pop(request_id, None)
+        with self._agent_run_lock:
+            self._external_callbacks.pop(conversation_id, None)
+            self._terminal_turn_states.pop(conversation_id, None)
+        self._assistant_buffers.pop(conversation_id, None)
+        self._finalized_turns.discard(conversation_id)
         if quarantine and quarantine.exists():
             shutil.rmtree(quarantine)
         image_folder = (
@@ -3136,7 +3585,9 @@ class ChatOrchestrator:
         if image_folder.is_dir() and image_folder.is_relative_to(image_root):
             shutil.rmtree(image_folder)
 
-    def _conversation_options(self, conversation_id: str) -> ConversationOptions:
+    def _conversation_options(
+        self, conversation_id: str, *, use_vr: bool | None = None
+    ) -> ConversationOptions:
         row = self._conversation(conversation_id)
         selected = self.database.conversation_tools(conversation_id)
         definitions = {
@@ -3147,13 +3598,23 @@ class ChatOrchestrator:
             for tool_id in selected["dynamic"]
             if tool_id in definitions
         )
-        if bool(row["vr_enabled"]):
+        effective_vr = (
+            bool(row["vr_enabled"]) if use_vr is None else bool(use_vr)
+        )
+        if effective_vr:
             # The native evidence tool must be registered at thread start;
             # Codex only reads dynamicTools on thread/start.
+            dynamic = (*dynamic, vr_search_tool_spec())
+        elif self.native_vr_search_enabled:
             dynamic = (*dynamic, vr_search_tool_spec())
         base = ConversationOptions.from_mapping(
             row, tuple(self.database.conversation_model_pool(conversation_id))
         )
+        row_mode = str(row["vr_mode"] or "").strip().casefold()
+        if row_mode not in ConversationOptions.VALID_VR_MODES:
+            row_mode = "vr" if base.vr_enabled else "off"
+        if use_vr is False:
+            row_mode = "off"
         return ConversationOptions(
             model=base.model,
             effort=base.effort,
@@ -3163,7 +3624,7 @@ class ChatOrchestrator:
             dynamic_tools=dynamic,
             mcp_tools=tuple(selected["mcp"]),
             orchestration=base.orchestration,
-            vr_enabled=base.vr_enabled,
+            vr_mode=row_mode,
         )
 
     def _resolve_auto_effort(self, value: str) -> str:
@@ -3231,26 +3692,52 @@ class ChatOrchestrator:
             options, effort=decision.effort if decision.changed else "medium"
         )
 
-    def update_vr_mode(self, conversation_id: str, enabled: bool) -> None:
-        """Persist VR state and isolate the next turn from the previous mode."""
+    def update_vr_mode(self, conversation_id: str, mode: str | bool) -> None:
+        """Persist the VR mode (off | vr | ultra); each mode keeps its session."""
         row = self._conversation(conversation_id)
         self._ensure_conversation_idle(row)
-        enabled = bool(enabled)
-        if bool(row["vr_enabled"]) == enabled:
+        if isinstance(mode, bool):
+            resolved = "vr" if mode else "off"
+        else:
+            resolved = str(mode or "").strip().casefold()
+        if resolved not in ConversationOptions.VALID_VR_MODES:
+            resolved = "off"
+        current = str(row["vr_mode"] or "").strip().casefold()
+        if current not in ConversationOptions.VALID_VR_MODES:
+            current = "vr" if bool(row["vr_enabled"]) else "off"
+        if current == resolved:
             return
-        native_id = str(row["native_id"] or "")
-        if native_id:
-            provider = self._provider(str(row["provider"]))
-            provider.release_conversation(
-                conversation_id,
-                native_id,
-                delete_native=False,
-            )
         self.database.update_conversation(
             conversation_id,
-            vr_enabled=int(enabled),
-            native_id="",
+            vr_mode=resolved,
+            vr_enabled=int(resolved != "off"),
         )
+
+    def set_research_config(
+        self,
+        pool: Iterable[ModelRef] = (),
+        trigger: str = "auto",
+        max_parallel: int = MAX_PARALLEL_RESEARCHERS,
+    ) -> None:
+        """Apply the global VR Ultra research configuration (UI-owned)."""
+        unique: dict[tuple[str, str], ModelRef] = {}
+        for item in pool:
+            ref = item if isinstance(item, ModelRef) else ModelRef.from_mapping(item)
+            if ref.provider:
+                unique[(ref.provider, ref.model)] = ref
+        self._research_pool = tuple(unique.values())
+        self._research_trigger = (
+            "manual" if str(trigger or "").casefold() == "manual" else "auto"
+        )
+        try:
+            parallel = int(max_parallel)
+        except (TypeError, ValueError):
+            parallel = MAX_PARALLEL_RESEARCHERS
+        self._research_max_parallel = max(1, min(MAX_PARALLEL_RESEARCHERS, parallel))
+
+    @staticmethod
+    def _native_column(use_vr: bool) -> str:
+        return "native_id_vr" if use_vr else "native_id"
 
     def _conversation(self, conversation_id: str):
         row = self.database.get_conversation(conversation_id)
@@ -3267,10 +3754,12 @@ class ChatOrchestrator:
 
     def _sync_codex_lifecycle(self, row, operation: str) -> bool:
         provider_name = str(row["provider"])
-        if (
-            provider_name not in {"codex", "opencode"}
-            or not str(row["native_id"] or "")
-        ):
+        threads = [
+            thread
+            for column in ("native_id", "native_id_vr")
+            if (thread := str(row[column] or ""))
+        ]
+        if provider_name not in {"codex", "opencode"} or not threads:
             return True
         try:
             provider = self._provider(provider_name)
@@ -3279,7 +3768,8 @@ class ChatOrchestrator:
                 "unarchive": "unarchive_thread",
                 "delete": "delete_thread",
             }[operation]
-            getattr(provider, action_name)(str(row["native_id"]))
+            for native_id in threads:
+                getattr(provider, action_name)(native_id)
         except Exception as exc:
             missing_rollout = any(
                 marker in str(exc).casefold()
@@ -3291,7 +3781,9 @@ class ChatOrchestrator:
                 )
             )
             if missing_rollout:
-                self.database.update_conversation(str(row["id"]), native_id="")
+                self.database.update_conversation(
+                    str(row["id"]), native_id="", native_id_vr=""
+                )
                 return False
             raise ProviderError(
                 f"Não foi possível sincronizar a conversa com {provider_name}: {exc}"
@@ -3382,6 +3874,11 @@ class ChatOrchestrator:
                     True,
                     [{"type": "inputText", "text": result.text}],
                 )
+            except KeyError:
+                LOGGER.warning(
+                    "Conversa %s removida antes da resposta da tool vr_search.",
+                    event.conversation_id,
+                )
             except (ToolExecutionError, ValueError, json.JSONDecodeError) as exc:
                 self._respond_dynamic_tool(event, str(exc), False)
 
@@ -3401,6 +3898,12 @@ class ChatOrchestrator:
                     ),
                 )
                 self._respond_dynamic_tool(event, result.text, True, result.content_items())
+            except KeyError:
+                LOGGER.warning(
+                    "Conversa %s removida antes da resposta da tool %s.",
+                    event.conversation_id,
+                    tool.get("name"),
+                )
             except (ToolExecutionError, ValueError, json.JSONDecodeError) as exc:
                 self._respond_dynamic_tool(event, str(exc), False)
 
@@ -3437,6 +3940,8 @@ class ChatOrchestrator:
             self._finalized_turns.update(active)
         for provider in self.providers.values():
             provider.close()
+        self.drain_turn_finalizations(timeout=5.0)
+        self._turn_finalizer_executor.shutdown(wait=False, cancel_futures=True)
         for conversation_id in active:
             row = self.database.get_conversation(conversation_id)
             if row and str(row["status"] or "") == "running":

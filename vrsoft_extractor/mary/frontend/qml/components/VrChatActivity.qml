@@ -13,6 +13,9 @@ Rectangle {
     property string elapsedLabel: "0s"
     property bool running: false
     property bool expanded: true
+    property int recentCount: 6
+    property bool logExpanded: false
+    readonly property int hiddenCount: Math.max(0, items.length - recentCount)
     signal toggleRequested()
 
     implicitHeight: content.implicitHeight + 4
@@ -48,7 +51,7 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: root.summaryText()
+                    text: root.headerText()
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: 11
@@ -75,6 +78,13 @@ Rectangle {
             TapHandler { onTapped: root.toggleRequested() }
         }
 
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: frontend.palette.chatDivider
+            opacity: 0.65
+        }
+
         ColumnLayout {
             visible: root.expanded
             Layout.fillWidth: true
@@ -96,12 +106,52 @@ Rectangle {
                 wrapMode: Text.WordWrap
             }
 
+            Rectangle {
+                visible: root.hiddenCount > 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: 24
+                radius: 7
+                color: logToggleHover.hovered ? frontend.palette.hover : "transparent"
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    spacing: 6
+
+                    VrLineIcon {
+                        Layout.preferredWidth: 11
+                        Layout.preferredHeight: 11
+                        kind: root.logExpanded ? "chevronUp" : "chevronRight"
+                        foreground: frontend.palette.mutedText
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "+" + root.hiddenCount + " entradas anteriores de log"
+                        color: frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                    }
+                }
+
+                HoverHandler { id: logToggleHover }
+                TapHandler { onTapped: root.logExpanded = !root.logExpanded }
+            }
+
             Repeater {
-                model: root.items.slice(Math.max(0, root.items.length - 30))
+                model: root.visibleItems()
                 delegate: ColumnLayout {
                     id: activityItem
                     required property var modelData
                     property bool detailExpanded: false
+                    readonly property bool isCommand:
+                        String(modelData.itemType || "") === "commandExecution"
+                    readonly property string commandLine: {
+                        if (!isCommand) return ""
+                        var detail = String(modelData.detail || "")
+                        var line = detail.length ? detail.split("\n")[0].trim() : ""
+                        return line.length > 1 ? line : ""
+                    }
                     Layout.fillWidth: true
                     spacing: 4
 
@@ -112,17 +162,21 @@ Rectangle {
                         VrLineIcon {
                             Layout.preferredWidth: 13
                             Layout.preferredHeight: 13
-                            kind: activityItem.modelData.kind === "tool" ? "terminal" : "task"
+                            kind: root.itemIcon(activityItem.modelData)
                             foreground: root.stateColor(activityItem.modelData.state)
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: activityItem.modelData.text || "Atividade"
+                            text: activityItem.commandLine.length > 0
+                                ? "> " + activityItem.commandLine
+                                : (activityItem.modelData.text || "Atividade")
                             color: activityItem.modelData.state === "running"
                                 ? frontend.palette.text : frontend.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.family: activityItem.commandLine.length > 0
+                                ? "Cascadia Mono" : Theme.fontFamily
+                            font.pixelSize: activityItem.commandLine.length > 0 ? 9 : 10
                             font.weight: activityItem.modelData.state === "running"
+                                && activityItem.commandLine.length === 0
                                 ? Font.DemiBold : Font.Normal
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2
@@ -174,13 +228,6 @@ Rectangle {
                 }
             }
         }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: frontend.palette.chatDivider
-            opacity: 0.65
-        }
     }
 
     function completedItemCount() {
@@ -192,20 +239,28 @@ Rectangle {
         return completed
     }
 
-    function summaryText() {
-        if (root.running) {
-            for (var index = root.items.length - 1; index >= 0; --index) {
-                if (String(root.items[index].state || "") === "running")
-                    return root.items[index].kind === "tool"
-                        ? "Executando " + String(root.items[index].text || "ferramenta")
-                        : String(root.items[index].text || "Pensando…")
-            }
-            return root.reasoningText.length ? "Pensando…"
-                : root.statusText === "Pronto" ? "Trabalhando…" : root.statusText
-        }
-        if (root.statusText === "Erro") return "Execução interrompida"
-        if (root.statusText === "Interrompido") return "Execução interrompida pelo usuário"
+    function headerText() {
+        if (root.running) return "Trabalhando por " + root.elapsedLabel
+        if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
+        if (root.statusText === "Interrompido")
+            return "Interrompido após " + root.elapsedLabel
         return "Trabalhou por " + root.elapsedLabel
+    }
+
+    function itemIcon(item) {
+        var itemType = String(item.itemType || "")
+        if (itemType === "fileChange") return "edit"
+        if (itemType === "commandExecution") return "terminal"
+        if (itemType === "webSearch" || itemType === "web_search") return "search"
+        if (itemType === "reasoning") return "auto"
+        if (String(item.kind || "") === "tool") return "terminal"
+        return "task"
+    }
+
+    function visibleItems() {
+        if (root.logExpanded || root.items.length <= root.recentCount)
+            return root.items
+        return root.items.slice(root.items.length - root.recentCount)
     }
 
     function stateColor(state) {

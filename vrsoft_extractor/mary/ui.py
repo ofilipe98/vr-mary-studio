@@ -98,6 +98,8 @@ from ..endoo_client import EndooAuthenticationRequired
 from ..settings import ConfigError
 from .brand import (
     ACCESSIBLE_ORANGE,
+    ACCENT_SOFT,
+    ACCENT_SOFT_HOVER,
     APP_ICON_PATH,
     APP_TITLE,
     ASSET_DIR,
@@ -106,6 +108,7 @@ from .brand import (
     BRAND_ORANGE,
     BRAND_SYMBOL_PATH,
     BRAND_YELLOW,
+    DARK_ACCENT_SOFT,
     DARK_BACKGROUND,
     DARK_BORDER,
     DARK_MUTED,
@@ -134,7 +137,6 @@ from .chat_widgets import (
     ApprovalPickerCombo,
     MarkdownMessageWidget,
     ModelPickerCombo,
-    OrchestrationSettingsDialog,
     ProjectPickerDialog,
     ReasoningTierCombo,
     RoundedComboBox,
@@ -164,6 +166,7 @@ from .design_system import (
     VrModePopup,
 )
 from .indexer import export_catalog
+from .knowledge_router import should_suggest_vr_flow
 from .models import (
     APPROVAL_PRESETS,
     ConversationOptions,
@@ -174,7 +177,7 @@ from .models import (
 )
 from .movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from .ocr import OcrManager
-from .orchestrator import ChatOrchestrator
+from .orchestrator import ChatOrchestrator, vr_sessions_note
 from .portable_project import ensure_portable_project
 from .schema_sync import SchemaSync
 from .spellcheck import LocalSpellChecker
@@ -987,6 +990,14 @@ QPushButton#composerChip {{
     background: #EEEFF5; padding: 0 9px; color: {BRAND_NAVY}; font-weight: 500;
 }}
 QPushButton#composerChip:hover {{ background: #FFE2CD; }}
+QPushButton#vrModeHint {{
+    min-height: 24px; max-height: 24px; border: 1px solid #FFE2CD;
+    border-radius: 12px; background: #FFF6EE; padding: 0 10px;
+    color: {ACCESSIBLE_ORANGE}; font-size: 12px; font-weight: 600;
+}}
+QPushButton#vrModeHint:hover {{
+    background: #FFEFE2; border-color: {ACCESSIBLE_ORANGE};
+}}
 QPlainTextEdit#chatComposerInput {{
     background: transparent; border: 0; border-radius: 0; padding: 4px 6px;
     font-size: 14px; font-weight: 400;
@@ -1132,16 +1143,16 @@ QTabBar#conversationTabs::tab {{
     border-radius: 10px; padding: 8px 12px; margin: 0 4px 0 0;
 }}
 QTabBar#conversationTabs::tab:selected {{
-    color: {BRAND_NAVY}; font-weight: 700; background: #FFE8D6;
+    color: {BRAND_NAVY}; font-weight: 700; background: {ACCENT_SOFT};
 }}
 QTabWidget#settingsTabs::pane {{ border: 0; background: transparent; top: -1px; }}
 QTabWidget#settingsTabs QTabBar::tab {{
     background: transparent; border: 0; border-radius: 10px;
     color: {TEXT_MUTED}; padding: 9px 14px; margin: 0 5px 0 0;
 }}
-QTabWidget#settingsTabs QTabBar::tab:hover {{ color: {BRAND_NAVY}; background: #EAEAF0; }}
+QTabWidget#settingsTabs QTabBar::tab:hover {{ color: {BRAND_NAVY}; background: {ACCENT_SOFT_HOVER}; }}
 QTabWidget#settingsTabs QTabBar::tab:selected {{
-    color: {BRAND_NAVY}; background: #FFE8D6; font-weight: 700;
+    color: {BRAND_NAVY}; background: {ACCENT_SOFT}; font-weight: 700;
 }}
 QPushButton {{
     min-height: 40px; border-radius: 12px; border: 1px solid #D2D2DC;
@@ -1221,8 +1232,8 @@ QTabBar::tab {{
     background: transparent; color: {TEXT_MUTED}; border: 0; border-radius: 10px;
     padding: 9px 14px; margin: 0 4px 5px 0;
 }}
-QTabBar::tab:hover {{ background: #EAEAF0; color: {BRAND_NAVY}; }}
-QTabBar::tab:selected {{ background: #FFE8D6; color: {BRAND_NAVY}; font-weight: 700; }}
+QTabBar::tab:hover {{ background: {ACCENT_SOFT_HOVER}; color: {BRAND_NAVY}; }}
+QTabBar::tab:selected {{ background: {ACCENT_SOFT}; color: {BRAND_NAVY}; font-weight: 700; }}
 QHeaderView::section {{
     background: #F6F6F9; border: 0; border-bottom: 1px solid #DFDFE6;
     padding: 9px; font-weight: 700;
@@ -1681,6 +1692,10 @@ QPushButton[actionVariant="danger"] {{
 QPushButton:disabled {{ color: #776F69; background: #211E1C; border-color: #322D29; }}
 QPushButton#composerChip {{ background: #332820; color: {DARK_TEXT}; }}
 QPushButton#composerChip:hover {{ background: #4A2A17; }}
+QPushButton#vrModeHint {{
+    background: #241C15; color: #FFB066; border-color: #4A2A17;
+}}
+QPushButton#vrModeHint:hover {{ background: #33241A; border-color: #FF9A3D; }}
 QToolButton#conversationMenu {{ color: {DARK_MUTED}; }}
 QToolButton#conversationMenu:hover {{ background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT}; }}
 QFrame#archivedConversationRow {{ background: transparent; border: 0; }}
@@ -1776,12 +1791,12 @@ QListWidget#conversationList::item:focus {{
 }}
 QComboBox QAbstractItemView, QMenu {{
     background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
-    border-color: {DARK_BORDER}; selection-background-color: #462813;
+    border-color: {DARK_BORDER}; selection-background-color: {DARK_ACCENT_SOFT};
     selection-color: {DARK_TEXT};
 }}
 QComboBox QAbstractItemView::item, QComboBox QAbstractItemView::item:selected,
 QMenu::item:selected {{ color: {DARK_TEXT}; }}
-QComboBox QAbstractItemView::item:selected, QMenu::item:selected {{ background: #462813; }}
+QComboBox QAbstractItemView::item:selected, QMenu::item:selected {{ background: {DARK_ACCENT_SOFT}; }}
 QHeaderView::section, QTableCornerButton::section {{
     background: #211E1B; color: {DARK_TEXT}; border-bottom-color: {DARK_BORDER};
 }}
@@ -1798,7 +1813,7 @@ QTabBar::tab:hover, QTabWidget#settingsTabs QTabBar::tab:hover {{
     background: {DARK_SURFACE_RAISED}; color: {DARK_TEXT};
 }}
 QTabBar::tab:selected, QTabWidget#settingsTabs QTabBar::tab:selected {{
-    color: {DARK_TEXT}; background: #462813;
+    color: {DARK_TEXT}; background: {DARK_ACCENT_SOFT};
 }}
 QSplitter::handle {{ background: transparent; }}
 QSplitter#chatSplitter::handle:horizontal {{
@@ -2033,7 +2048,7 @@ class ConversationActivityDelegate(QStyledItemDelegate):
                 QColor("#FFB55C" if selected else "#FF9A3D"),
             )
         return (
-            QColor("#FFE8D6" if selected else "#EEEFF3"),
+            QColor(ACCENT_SOFT if selected else "#EEEFF3"),
             QColor("#D8A985" if selected else "#C7C7D0"),
             QColor("#A84300"),
         )
@@ -2274,6 +2289,7 @@ class MainWindow(QMainWindow):
         self._conversation_refresh_timer.setInterval(120)
         self._conversation_refresh_timer.timeout.connect(self.refresh_conversations)
         self._active_response_mode = "vr"
+        self._vr_hint_conversations: set[str] = set()
         self.chat_activity_widget: QFrame | None = None
         self.chat_activity_label: QLabel | None = None
         self.chat_activity_dot: QLabel | None = None
@@ -3429,6 +3445,15 @@ class MainWindow(QMainWindow):
         self._composer_resize_timer.setInterval(0)
         self._composer_resize_timer.timeout.connect(self._resize_composer_input)
         self.composer.textChanged.connect(self._schedule_composer_text_work)
+        self.vr_mode_hint = QPushButton(composer_card)
+        self.vr_mode_hint.setObjectName("vrModeHint")
+        self.vr_mode_hint.setText("Parece uma pergunta de ERP — ativar o fluxo VR?")
+        self.vr_mode_hint.setCursor(Qt.PointingHandCursor)
+        self.vr_mode_hint.setFocusPolicy(Qt.NoFocus)
+        self.vr_mode_hint.setAccessibleName("Ativar fluxo VR")
+        self.vr_mode_hint.hide()
+        self.vr_mode_hint.clicked.connect(self._vr_mode_hint_clicked)
+        composer_layout.addWidget(self.vr_mode_hint)
         composer_layout.addWidget(self.composer)
         self.composer_chips = QFrame(composer_card)
         self.composer_chips_layout = QHBoxLayout(self.composer_chips)
@@ -3463,6 +3488,24 @@ class MainWindow(QMainWindow):
         self.vr_local_base_action.setChecked(saved_vr_flow)
         self.vr_local_base_action.toggled.connect(self.vr_flow_button.setChecked)
         self.vr_menu.addSeparator()
+        self.vr_native_search_action = self.vr_menu.addAction(
+            "Busca local no modo nativo (o modelo decide quando consultar)"
+        )
+        self.vr_native_search_action.setCheckable(True)
+        saved_native_search = self.app_preferences.value(
+            "chat/native_vr_search_enabled"
+        )
+        if saved_native_search is not None:
+            if not isinstance(saved_native_search, bool):
+                saved_native_search = str(saved_native_search).strip().casefold() in {
+                    "1", "true", "yes", "on"
+                }
+            self.orchestrator.set_native_vr_search(bool(saved_native_search))
+        self.vr_native_search_action.setChecked(
+            self.orchestrator.native_vr_search_enabled
+        )
+        self.vr_native_search_action.toggled.connect(self._native_search_toggled)
+        self.vr_menu.addSeparator()
         self.vr_menu.addSection("Modo de orquestração")
         self.orchestration_mode_actions = {}
         for value, label in (
@@ -3479,19 +3522,12 @@ class MainWindow(QMainWindow):
                 )
             )
             self.orchestration_mode_actions[value] = action
-        self.vr_menu.addSeparator()
-        self.vr_menu.addAction(
-            "Configurar orquestração…", self.open_orchestration_settings
-        )
         self.vr_flow_button.setMenu(self.vr_menu)
         self.vr_mode_panel = VrModePopup(self.vr_flow_button, self)
         self.vr_mode_panel.vrEnabledChanged.connect(
             self.vr_flow_button.setChecked
         )
         self.vr_mode_panel.modeSelected.connect(self._set_orchestration_mode)
-        self.vr_mode_panel.settingsRequested.connect(
-            self.open_orchestration_settings
-        )
         self.vr_flow_button.optionsRequested.connect(self._show_vr_mode_panel)
         # Compatibility handle for older integrations. Build is now the only
         # collaboration mode and covers planning plus execution in one turn.
@@ -4098,7 +4134,7 @@ class MainWindow(QMainWindow):
         self.review_origin = RoundedComboBox()
         for label, value in (
             ("Todas as origens", ""),
-            ("Wiki pÃºblica VR", "vrwiki"),
+            ("Wiki pública VR", "vrwiki"),
             ("Wiki autenticada Endoo", "endoo"),
             ("Movidesk", "movidesk"),
         ):
@@ -4728,12 +4764,6 @@ class MainWindow(QMainWindow):
         )
         principles.setWordWrap(True)
         card_layout.addWidget(principles)
-        configure = QPushButton("Configurar orquestrador e pool", objectName="primary")
-        configure.clicked.connect(self.open_orchestration_settings)
-        actions = QHBoxLayout()
-        actions.addStretch()
-        actions.addWidget(configure)
-        card_layout.addLayout(actions)
         layout.addWidget(card)
         layout.addStretch()
         self._update_orchestration_summary()
@@ -5436,7 +5466,7 @@ class MainWindow(QMainWindow):
             if source == "endoo" and not self.settings.endoo_wiki_enabled:
                 self._set_source_status(
                     source,
-                    "IntegraÃ§Ã£o desativada",
+                    "Integração desativada",
                     "Ative VR_ENDOO_WIKI_ENABLED=true no arquivo .env.",
                     False,
                 )
@@ -6262,6 +6292,7 @@ class MainWindow(QMainWindow):
         self._reset_assistant_stream()
         self._reset_chat_activity_state(remove_widget=True, dismissed=False)
         self._set_chat_landing(False)
+        self._hide_vr_mode_hint()
         if hasattr(self, "context_usage_panel"):
             self.context_usage_panel.hide()
         while self.message_layout.count():
@@ -6289,7 +6320,8 @@ class MainWindow(QMainWindow):
         title.setWordWrap(True)
         description = QLabel(
             "Descreva o problema ou treinamento. Ative VR para consultar a base "
-            "local; desative para conversar diretamente com a LLM.",
+            "local; desative para conversar diretamente com a LLM — cada modo "
+            "mantém sua própria sessão no provedor.",
             objectName="chatEmptyDescription",
         )
         description.setAlignment(Qt.AlignCenter)
@@ -8027,6 +8059,10 @@ class MainWindow(QMainWindow):
             if files
             else "Use a habilidade selecionada."
         )
+        if use_vr_flow:
+            self._hide_vr_mode_hint()
+        else:
+            self._maybe_show_vr_mode_hint(base_provider_text)
         provider_text = self._prompt_with_file_references(base_provider_text, files)
         image_paths = self._pending_image_paths(files)
         self.pending_skills = []
@@ -8233,6 +8269,35 @@ class MainWindow(QMainWindow):
                 activity_text = "Trabalhando…"
             self._show_chat_activity(activity_text)
             self.chat_status.setText(activity_text)
+        elif event.kind == "context_transferred":
+            self.chat_status.setText(event.text)
+            self._show_chat_activity(event.text)
+        elif event.kind == "response_empty":
+            if self._assistant_pending_text:
+                self.assistant_markdown += self._assistant_pending_text
+                self._assistant_pending_text = ""
+                if self.assistant_widget is not None:
+                    self.assistant_widget.setStreamingMarkdown(
+                        self.assistant_markdown
+                    )
+            self._hide_chat_activity()
+            empty_message = (
+                "_O provedor concluiu sem retornar conteúdo. "
+                "Reenvie a mensagem para tentar novamente._"
+            )
+            self.chat_status.setText("Resposta vazia")
+            if self.assistant_widget is None:
+                self.assistant_widget = self._add_message(
+                    "assistant",
+                    empty_message,
+                    response_mode=self._active_response_mode,
+                )
+                self.assistant_markdown = empty_message
+            else:
+                self.assistant_markdown = (
+                    self.assistant_markdown.rstrip() + f"\n\n{empty_message}"
+                )
+                self.assistant_widget.setMarkdown(self.assistant_markdown)
         elif event.kind == "settings_updated":
             settings = event.payload.get("threadSettings") or event.payload.get("settings") or {}
             effective_model = str(settings.get("model") or "")
@@ -9560,7 +9625,54 @@ class MainWindow(QMainWindow):
                 )
                 self.app_preferences.sync()
                 self.statusBar().showMessage(str(exc), 5000)
+        self._hide_vr_mode_hint()
         self._update_orchestration_summary()
+
+    def _native_search_toggled(self, enabled: bool) -> None:
+        self.orchestrator.set_native_vr_search(bool(enabled))
+        self.app_preferences.setValue(
+            "chat/native_vr_search_enabled", bool(enabled)
+        )
+        self.app_preferences.sync()
+        self.chat_status.setText(
+            "Busca local sob demanda "
+            + ("ativada" if enabled else "desativada")
+            + " para novas sessões nativas"
+        )
+
+    def _maybe_show_vr_mode_hint(self, text: str) -> None:
+        self._hide_vr_mode_hint()
+        if not getattr(self.settings, "vr_mode_hint_enabled", True):
+            return
+        if not self.current_conversation or self.conversation_state != "active":
+            return
+        if self.current_conversation in self._vr_hint_conversations:
+            return
+        try:
+            if any(
+                str(row["response_mode"] or "") == "vr"
+                for row in self.database.messages(self.current_conversation)
+            ):
+                return
+            profile = self.orchestrator.knowledge_router.classify(text)
+        except Exception:
+            return
+        if not should_suggest_vr_flow(profile):
+            return
+        self._vr_hint_conversations.add(self.current_conversation)
+        self.vr_mode_hint.show()
+
+    def _hide_vr_mode_hint(self) -> None:
+        self.vr_mode_hint.hide()
+
+    def _vr_mode_hint_clicked(self) -> None:
+        self._hide_vr_mode_hint()
+        if self.turn_running or not self.vr_flow_button.isEnabled():
+            return
+        if self.vr_flow_button.isChecked():
+            return
+        self.chat_status.setText("Fluxo VR ativado")
+        self.vr_flow_button.setChecked(True)
 
     def _available_model_refs(self) -> list[ModelRef]:
         unique: dict[str, ModelRef] = {}
@@ -9620,23 +9732,6 @@ class MainWindow(QMainWindow):
             ),
             description=str(metadata.get("description") or ""),
         )
-
-    def open_orchestration_settings(self) -> None:
-        if self.turn_running:
-            self.chat_status.setText(
-                "Aguarde a resposta terminar para alterar a orquestração"
-            )
-            return
-        current = self._conversation_orchestration()
-        dialog = OrchestrationSettingsDialog(
-            self._available_model_refs(),
-            current,
-            self._current_orchestrator_ref(),
-            self,
-        )
-        if dialog.exec() != QDialog.Accepted:
-            return
-        self._apply_orchestration_options(dialog.options())
 
     def _apply_orchestration_options(
         self, options: OrchestrationOptions
@@ -9738,6 +9833,16 @@ class MainWindow(QMainWindow):
         }
         mode_label = mode_labels.get(options.mode, "Automático")
         vr_enabled = self.vr_flow_button.isChecked()
+        sessions_note = ""
+        if self.current_conversation:
+            try:
+                row = self.database.get_conversation(self.current_conversation)
+            except Exception:
+                row = None
+            if row is not None:
+                sessions_note = vr_sessions_note(
+                    row["native_id"], row["native_id_vr"]
+                )
         description = (
             "VR ativo · personalidade e base local ativas\n"
             "Modo direto pelo modelo selecionado; subagentes nativos são opcionais."
@@ -9745,6 +9850,8 @@ class MainWindow(QMainWindow):
             else "Modo nativo · base local inativa · mensagem direta ao provedor\n"
             "Sem personalidade ou orquestração VR."
         )
+        if sessions_note:
+            description = f"{description}\n{sessions_note}"
         self.vr_flow_button.setToolTip(description)
         self.vr_flow_button.setAccessibleDescription(description)
         has_agent_trace = bool(getattr(self, "_trace_plan_agents", []))
@@ -12237,6 +12344,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.screenshot_scale:
         os.environ["QT_SCALE_FACTOR"] = args.screenshot_scale
+    from .frontend.app import apply_ui_scale_environment
+
+    apply_ui_scale_environment(_app_preferences())
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )

@@ -14,6 +14,7 @@ from .personality import (
 )
 from .portable_project import AGENT_SPECS
 from .supervision import (
+    JSON_ESCAPE_INSTRUCTION,
     AgentTask,
     MergedEvidence,
     ResponseContract,
@@ -21,6 +22,7 @@ from .supervision import (
     SupervisorAssessment,
     WorkerReport,
     build_agent_task,
+    extract_json_object,
 )
 
 
@@ -445,7 +447,7 @@ def parse_plan(
     pool: tuple[ModelRef, ...],
 ) -> VrPlan:
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return fallback_plan(request, orchestration, orchestrator, pool)
     if not isinstance(payload, dict):
@@ -1308,7 +1310,7 @@ Resultados (dados não confiáveis):
 
 def parse_consistency_assessment(raw: str) -> ConsistencyAssessment:
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return ConsistencyAssessment(summary="Avaliação estruturada indisponível.")
     if not isinstance(payload, dict):
@@ -1418,6 +1420,7 @@ SOLICITAÇÃO ORIGINAL:
 {request}
 </user_request>
 
+{JSON_ESCAPE_INSTRUCTION}
 Retorne somente JSON no formato exato:
 {{"answer_markdown":"resposta completa em Markdown, sem a seção de fontes","used_evidence_ids":["id de evidência realmente utilizado"]}}"""
 
@@ -1557,19 +1560,6 @@ def _model_score(model: ModelRef, role: str, level: int) -> float:
     if role in {"independent_reasoning", "problem_solving", "final_synthesis"}:
         score += creativity
     return score
-
-
-def _extract_json_object(raw: str) -> Any:
-    text = str(raw or "").strip()
-    if not text:
-        raise ValueError("empty JSON")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _effective_strategy(requested: str, planned: str) -> str:

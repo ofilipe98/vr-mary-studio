@@ -28,7 +28,7 @@ from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..chat_widgets import FENCE_RE, code_language_badge
 from ..config import MarySettings
 from ..db import MaryDatabase
-from ..models import ModelRef, OrchestrationOptions, RuntimeEvent
+from ..models import ModelRef, RuntimeEvent
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
 
@@ -73,6 +73,13 @@ def markdown_for_display(markdown: str) -> str:
         part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
         for index, part in enumerate(parts)
     )
+
+
+def short_event_text(value: object, limit: int = 140) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 class _MappingListModel(QAbstractListModel):
@@ -198,8 +205,10 @@ class ChatBridge(QObject):
     messageCopied = Signal(str)
     stateChanged = Signal()
     approvalRequested = Signal("QVariantMap")
+    fileSuggestionsChanged = Signal()
     _modelsLoaded = Signal(object)
     _extensionsLoaded = Signal(object)
+    _fileSuggestionsReady = Signal(int, object, object)
 
     def __init__(
         self,
@@ -225,6 +234,7 @@ class ChatBridge(QObject):
         self._selected: dict[str, Any] = {}
         self._draft = False
         self._turn_running = False
+        self._running_conversation_id = ""
         self._status_text = "Pronto"
         self._streaming_text = ""
         self._displayed_streaming_text = ""
@@ -234,6 +244,10 @@ class ChatBridge(QObject):
         self._approval_request: dict[str, Any] = {}
         self._activity_steps: list[dict[str, str]] = []
         self._activity_items: list[dict[str, str]] = []
+        self._turn_segments: list[dict[str, Any]] = []
+        self._turn_text = ""
+        self._segment_cursor = 0
+        self._restoring_turn_history = False
         self._reasoning_text = ""
         self._activity_started_at = 0.0
         self._activity_elapsed_seconds = 0
@@ -259,15 +273,30 @@ class ChatBridge(QObject):
         self._approval_profile = str(
             self._preferences.value("chat/last_approval_profile", "auto") or "auto"
         )
-        self._vr_enabled = True
-        self._orchestration = self._load_default_orchestration()
+        self._vr_mode = "vr"
+        self._research_model_keys: list[str] = []
+        self._research_trigger = "auto"
+        self._research_max_parallel = 3
+        self._load_research_config()
+        self._apply_research_config()
         self._attachments: list[dict[str, str]] = []
         self._extension_items: list[dict[str, Any]] = []
         self._selected_extension_keys: set[str] = set()
         self._extensions_loading = False
+        self._file_suggestions_cache: list[dict[str, str]] = []
+        self._file_suggestions_root: Path | None = None
+        self._file_suggestions_generation = 0
+        self._file_suggestions_built_at = 0.0
+        self._file_suggestions_loading = False
+        self._file_suggestions_query = ""
         self._modelsLoaded.connect(self._apply_model_catalog)
         self._extensionsLoaded.connect(self._apply_extension_catalog)
+        self._fileSuggestionsReady.connect(self._apply_file_suggestions)
         self._runtimeEvent.connect(self._on_runtime_event)
+        self._file_suggestions_timer = QTimer(self)
+        self._file_suggestions_timer.setSingleShot(True)
+        self._file_suggestions_timer.setInterval(500)
+        self._file_suggestions_timer.timeout.connect(self._rebuild_file_suggestions)
         self._stream_timer = QTimer(self)
         self._stream_timer.setInterval(28)
         self._stream_timer.timeout.connect(self._flush_stream_step)
@@ -359,7 +388,37 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def vrEnabled(self) -> bool:  # noqa: N802
-        return self._vr_enabled
+        return self._vr_mode != "off"
+
+    @Property(str, notify=stateChanged)
+    def vrMode(self) -> str:  # noqa: N802
+        return self._vr_mode
+
+    @Property("QVariantList", notify=stateChanged)
+    def researchModelItems(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [
+            {
+                "label": str(item.get("label") or item.get("value") or ""),
+                "value": str(item.get("value") or ""),
+                "key": str(item.get("key") or ""),
+                "provider": str(item.get("provider") or ""),
+                "description": str(item.get("description") or ""),
+            }
+            for item in self._model_items
+            if item.get("provider")
+        ]
+
+    @Property("QVariantList", notify=stateChanged)
+    def researchModelKeys(self) -> list[str]:  # noqa: N802
+        return list(self._research_model_keys)
+
+    @Property(str, notify=stateChanged)
+    def researchTrigger(self) -> str:  # noqa: N802
+        return self._research_trigger
+
+    @Property(int, notify=stateChanged)
+    def researchMaxParallel(self) -> int:  # noqa: N802
+        return self._research_max_parallel
 
     @Property("QVariantList", notify=stateChanged)
     def modelItems(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -484,64 +543,6 @@ class ChatBridge(QObject):
         values = [item["value"] for item in self.approvalItems]
         return values.index(self._approval_profile) if self._approval_profile in values else 2
 
-    @Property("QVariantList", constant=True)
-    def orchestrationModes(self) -> list[dict[str, str]]:  # noqa: N802
-        return [
-            {"label": "Desligado", "value": "off"},
-            {"label": "Automático", "value": "automatic"},
-            {"label": "Ligado", "value": "standard"},
-            {"label": "Ultra", "value": "ultra"},
-        ]
-
-    @Property("QVariantList", constant=True)
-    def orchestrationStrategies(self) -> list[dict[str, str]]:  # noqa: N802
-        return [
-            {"label": "Automática", "value": "automatic"},
-            {"label": "Adaptativa", "value": "adaptive"},
-            {"label": "Paralela", "value": "parallel"},
-            {"label": "Especializada", "value": "specialized"},
-            {"label": "Sequencial", "value": "sequential"},
-            {"label": "Debate", "value": "debate"},
-            {"label": "Consenso", "value": "consensus"},
-        ]
-
-    @Property(str, notify=stateChanged)
-    def orchestrationMode(self) -> str:  # noqa: N802
-        return self._orchestration.mode
-
-    @Property(str, notify=stateChanged)
-    def orchestrationModeLabel(self) -> str:  # noqa: N802
-        labels = {item["value"]: item["label"] for item in self.orchestrationModes}
-        return labels.get(self._orchestration.mode, "Automático")
-
-    @Property(str, notify=stateChanged)
-    def orchestrationStrategy(self) -> str:  # noqa: N802
-        return self._orchestration.strategy
-
-    @Property(bool, notify=stateChanged)
-    def orchestrationShowExecution(self) -> bool:  # noqa: N802
-        return self._orchestration.show_execution
-
-    @Property(bool, notify=stateChanged)
-    def orchestrationExplainRouting(self) -> bool:  # noqa: N802
-        return self._orchestration.explain_routing
-
-    @Property(bool, notify=stateChanged)
-    def orchestrationDynamicModels(self) -> bool:  # noqa: N802
-        return self._orchestration.dynamic_model_routing
-
-    @Property(bool, notify=stateChanged)
-    def orchestrationDynamicAgents(self) -> bool:  # noqa: N802
-        return self._orchestration.dynamic_agent_count
-
-    @Property(bool, notify=stateChanged)
-    def orchestrationDifficultyRouting(self) -> bool:  # noqa: N802
-        return self._orchestration.difficulty_routing
-
-    @Property("QVariantList", notify=stateChanged)
-    def orchestrationPoolKeys(self) -> list[str]:  # noqa: N802
-        return [model.key for model in self._orchestration.model_pool]
-
     @Property("QVariantList", notify=stateChanged)
     def attachments(self) -> list[dict[str, str]]:
         return list(self._attachments)
@@ -625,6 +626,9 @@ class ChatBridge(QObject):
     def activityElapsedLabel(self) -> str:  # noqa: N802
         seconds = max(0, int(self._activity_elapsed_seconds))
         minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {minutes}m"
         if minutes:
             return f"{minutes}m {seconds:02d}s"
         return f"{seconds}s"
@@ -891,102 +895,6 @@ class ChatBridge(QObject):
             values = []
         return {str(value) for value in values if str(value).strip()}
 
-    def _load_default_orchestration(self) -> OrchestrationOptions:
-        def boolean(key: str, default: bool) -> bool:
-            raw = self._preferences.value(key, default)
-            if isinstance(raw, bool):
-                return raw
-            return str(raw).strip().casefold() not in {"", "0", "false", "no", "off"}
-
-        raw_models = self._preferences.value("orchestration/available_models", "[]")
-        try:
-            values = json.loads(str(raw_models or "[]"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
-        return OrchestrationOptions(
-            mode=str(self._preferences.value("orchestration/mode", "automatic") or "automatic"),
-            strategy=str(self._preferences.value("orchestration/strategy", "automatic") or "automatic"),
-            model_pool=tuple(ModelRef.from_mapping(item) for item in values if isinstance(item, dict)),
-            show_execution=boolean("orchestration/show_execution", True),
-            explain_routing=boolean("orchestration/explain_routing", False),
-            dynamic_model_routing=boolean("orchestration/dynamic_model_routing", True),
-            dynamic_agent_count=boolean("orchestration/dynamic_agent_count", True),
-            difficulty_routing=boolean("orchestration/difficulty_routing", True),
-        )
-
-    def _save_default_orchestration(self) -> None:
-        options = self._orchestration
-        self._preferences.setValue("orchestration/mode", options.mode)
-        self._preferences.setValue("orchestration/strategy", options.strategy)
-        self._preferences.setValue("orchestration/show_execution", options.show_execution)
-        self._preferences.setValue("orchestration/explain_routing", options.explain_routing)
-        self._preferences.setValue("orchestration/dynamic_model_routing", options.dynamic_model_routing)
-        self._preferences.setValue("orchestration/dynamic_agent_count", options.dynamic_agent_count)
-        self._preferences.setValue("orchestration/difficulty_routing", options.difficulty_routing)
-        self._preferences.setValue(
-            "orchestration/available_models",
-            json.dumps([model.to_dict() for model in options.model_pool], ensure_ascii=False),
-        )
-        self._preferences.sync()
-
-    def _apply_orchestration(self) -> None:
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if conversation_id:
-            self._orchestrator.update_orchestration(conversation_id, self._orchestration)
-        else:
-            self._save_default_orchestration()
-        self.stateChanged.emit()
-
-    @Slot(str)
-    def setOrchestrationMode(self, mode: str) -> None:  # noqa: N802
-        current = self._orchestration
-        self._orchestration = OrchestrationOptions(
-            mode=str(mode or "automatic"),
-            strategy=current.strategy,
-            model_pool=current.model_pool,
-            show_execution=current.show_execution,
-            explain_routing=current.explain_routing,
-            dynamic_model_routing=current.dynamic_model_routing,
-            dynamic_agent_count=current.dynamic_agent_count,
-            difficulty_routing=current.difficulty_routing,
-        )
-        self._apply_orchestration()
-
-    @Slot(str, bool, bool, bool, bool, bool, "QVariantList")
-    def saveOrchestrationSettings(  # noqa: N802
-        self,
-        strategy: str,
-        show_execution: bool,
-        explain_routing: bool,
-        dynamic_models: bool,
-        dynamic_agents: bool,
-        difficulty_routing: bool,
-        pool_keys: list[Any],
-    ) -> None:
-        wanted = {str(value) for value in pool_keys}
-        pool = tuple(
-            ModelRef(
-                provider=str(item.get("provider") or ""),
-                model=str(item.get("value") or ""),
-                display_name=str(item.get("label") or ""),
-                description=str(item.get("description") or ""),
-            )
-            for item in self._model_items
-            if str(item.get("key") or "") in wanted and item.get("provider")
-        )
-        current = self._orchestration
-        self._orchestration = OrchestrationOptions(
-            mode=current.mode,
-            strategy=str(strategy or "automatic"),
-            model_pool=pool,
-            show_execution=show_execution,
-            explain_routing=explain_routing,
-            dynamic_model_routing=dynamic_models,
-            dynamic_agent_count=dynamic_agents,
-            difficulty_routing=difficulty_routing,
-        )
-        self._apply_orchestration()
-
     @Slot(result="QVariantList")
     def chooseAttachments(self) -> list[dict[str, str]]:  # noqa: N802
         selected, _ = QFileDialog.getOpenFileNames(
@@ -1014,25 +922,84 @@ class ChatBridge(QObject):
 
     @Slot(str, result="QVariantList")
     def fileSuggestions(self, query: str) -> list[dict[str, str]]:  # noqa: N802
-        root = self._project_scope or self._settings.root
-        if not root.is_dir():
-            return []
         needle = str(query or "").strip().casefold()
-        ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
-        results: list[dict[str, str]] = []
-        try:
-            for path in root.rglob("*"):
-                if any(part in ignored for part in path.parts) or not path.is_file():
-                    continue
-                relative = str(path.relative_to(root)).replace("\\", "/")
-                if needle and needle not in relative.casefold():
-                    continue
-                results.append({"label": relative, "path": str(path)})
-                if len(results) >= 40:
-                    break
-        except OSError:
-            return []
-        return results
+        self._file_suggestions_query = needle
+        if self._file_suggestions_stale() and not self._file_suggestions_timer.isActive():
+            self._file_suggestions_timer.start()
+        return [
+            {"label": item["relative"], "path": item["path"]}
+            for item in self._file_suggestions_cache
+            if not needle or needle in item["relative"].casefold()
+        ][:40]
+
+    def _file_suggestions_stale(self) -> bool:
+        if self._file_suggestions_loading:
+            return False
+        root = (self._project_scope or self._settings.root).resolve(strict=False)
+        if self._file_suggestions_root != root:
+            return True
+        if not self._file_suggestions_cache:
+            return True
+        return time.monotonic() - self._file_suggestions_built_at > 60
+
+    def _invalidate_file_suggestions(self) -> None:
+        self._file_suggestions_generation += 1
+        self._file_suggestions_cache = []
+        self._file_suggestions_root = None
+        self._file_suggestions_built_at = 0.0
+        self._file_suggestions_timer.start()
+
+    @Slot()
+    def _rebuild_file_suggestions(self) -> None:  # noqa: N802
+        if self._file_suggestions_loading:
+            return
+        root = (self._project_scope or self._settings.root).resolve(strict=False)
+        if not root.is_dir():
+            self._file_suggestions_root = root
+            self._file_suggestions_cache = []
+            self._file_suggestions_built_at = time.monotonic()
+            self._apply_pending_file_suggestions()
+            return
+        self._file_suggestions_loading = True
+        generation = self._file_suggestions_generation
+
+        def scan() -> None:
+            ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
+            entries: list[dict[str, str]] = []
+            try:
+                for path in root.rglob("*"):
+                    if any(part in ignored for part in path.parts) or not path.is_file():
+                        continue
+                    relative = str(path.relative_to(root)).replace("\\", "/")
+                    entries.append({"relative": relative, "path": str(path)})
+            except OSError:
+                entries = []
+            self._fileSuggestionsReady.emit(generation, root, entries)
+
+        threading.Thread(target=scan, daemon=True).start()
+
+    @Slot(int, object, object)
+    def _apply_file_suggestions(
+        self, generation: int, root: object, entries: object
+    ) -> None:  # noqa: N802
+        self._file_suggestions_loading = False
+        if generation != self._file_suggestions_generation:
+            return
+        self._file_suggestions_cache = [
+            {
+                "relative": str(item.get("relative") or ""),
+                "path": str(item.get("path") or ""),
+            }
+            for item in list(entries or [])
+            if isinstance(item, dict) and item.get("relative")
+        ]
+        self._file_suggestions_root = root if isinstance(root, Path) else None
+        self._file_suggestions_built_at = time.monotonic()
+        self._apply_pending_file_suggestions()
+
+    def _apply_pending_file_suggestions(self) -> None:
+        if self._file_suggestions_query:
+            self.fileSuggestionsChanged.emit()
 
     @Slot(str, result=str)
     def readFilePreview(self, value: str) -> str:  # noqa: N802
@@ -1200,6 +1167,7 @@ class ChatBridge(QObject):
         self._current_project_index = index
         raw_path = self._projects[index]["path"]
         self._project_scope = Path(raw_path).resolve(strict=False) if raw_path else None
+        self._invalidate_file_suggestions()
         self._preferences.setValue("chat/current_project", raw_path)
         self._preferences.sync()
         self.projectsChanged.emit()
@@ -1245,10 +1213,20 @@ class ChatBridge(QObject):
         self._approval_profile = str(
             self._preferences.value("chat/last_approval_profile", "auto") or "auto"
         )
-        self._vr_enabled = self._stored_bool(
-            self._preferences.value("chat/vr_flow_enabled", True), True
+        self._vr_mode = self._normalize_vr_mode(
+            self._preferences.value("chat/vr_mode", "")
+        ) or (
+            "vr"
+            if self._stored_bool(
+                self._preferences.value("chat/vr_flow_enabled", True), True
+            )
+            else "off"
         )
-        self._orchestration = self._load_default_orchestration()
+        self._research_model_keys: list[str] = []
+        self._research_trigger = "auto"
+        self._research_max_parallel = 3
+        self._load_research_config()
+        self._apply_research_config()
         self._attachments = []
         self._activity_steps = []
         self._activity_items = []
@@ -1296,9 +1274,13 @@ class ChatBridge(QObject):
         if changing_conversation:
             self._activity_steps = []
             self._activity_items = []
+            self._turn_segments = []
+            self._turn_text = ""
+            self._segment_cursor = 0
             self._reasoning_text = ""
             self._activity_elapsed_seconds = 0
             self._agent_items = []
+            self._invalidate_file_suggestions()
         self._selected_index = index
         self._selected = dict(selected)
         row = self._database.get_conversation(str(selected["conversationId"]))
@@ -1308,18 +1290,21 @@ class ChatBridge(QObject):
             self._effort = str(row["effort"] or "medium")
             self._service_tier = str(row["service_tier"] or "")
             self._approval_profile = str(row["approval_profile"] or "auto")
-            self._vr_enabled = bool(row["vr_enabled"])
-            self._orchestration = OrchestrationOptions.from_mapping(
-                row,
-                tuple(
-                    self._database.conversation_model_pool(
-                        str(selected["conversationId"])
-                    )
-                ),
+            self._vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
+                "vr" if bool(row["vr_enabled"]) else "off"
             )
             self._remember_current_chat_options()
         if changing_conversation:
             self._restore_activity_from_history(str(selected["conversationId"]))
+        if (
+            changing_conversation
+            and self._turn_running
+            and str(selected.get("conversationId") or "") == self._running_conversation_id
+            and self._activity_started_at
+        ):
+            self._activity_elapsed_seconds = max(
+                0, int(time.monotonic() - self._activity_started_at)
+            )
         self._reload_selected_messages()
         self.stateChanged.emit()
 
@@ -1368,15 +1353,108 @@ class ChatBridge(QObject):
             )
         self.stateChanged.emit()
 
+    @staticmethod
+    def _normalize_vr_mode(value: object) -> str:
+        mode = str(value or "").strip().casefold()
+        return mode if mode in {"off", "vr", "ultra"} else ""
+
     @Slot()
-    def toggleVr(self) -> None:  # noqa: N802
-        self._vr_enabled = not self._vr_enabled
-        self._preferences.setValue("chat/vr_flow_enabled", self._vr_enabled)
+    def cycleVrMode(self) -> None:  # noqa: N802
+        order = ["off", "vr", "ultra"]
+        nxt = order[(order.index(self._vr_mode) + 1) % len(order)]
+        self.setVrMode(nxt)
+
+    @Slot(str)
+    def setVrMode(self, mode: str) -> None:  # noqa: N802
+        resolved = self._normalize_vr_mode(mode)
+        if not resolved or resolved == self._vr_mode:
+            return
+        self._vr_mode = resolved
+        self._preferences.setValue("chat/vr_mode", resolved)
+        self._preferences.setValue(
+            "chat/vr_flow_enabled", resolved != "off"
+        )
         self._preferences.sync()
-        if self._selected:
-            self._database.update_conversation(
-                str(self._selected["conversationId"]), vr_enabled=int(self._vr_enabled)
+        conversation_id = str(self._selected.get("conversationId") or "")
+        if conversation_id:
+            try:
+                self._orchestrator.update_vr_mode(conversation_id, resolved)
+            except Exception as exc:
+                self._status_text = f"Falha: {exc}"
+        self.stateChanged.emit()
+
+    def _load_research_config(self) -> None:
+        raw_keys = self._preferences.value("research/model_pool", "[]")
+        try:
+            values = json.loads(str(raw_keys or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        self._research_model_keys = [
+            str(item) for item in values if str(item or "").strip()
+        ]
+        trigger = str(self._preferences.value("research/trigger", "auto") or "auto")
+        self._research_trigger = (
+            "manual" if trigger.strip().casefold() == "manual" else "auto"
+        )
+        try:
+            parallel = int(self._preferences.value("research/max_parallel", 3))
+        except (TypeError, ValueError):
+            parallel = 3
+        self._research_max_parallel = max(1, min(3, parallel))
+
+    def _apply_research_config(self) -> None:
+        wanted = set(self._research_model_keys)
+        pool = [
+            ModelRef(
+                provider=str(item.get("provider") or ""),
+                model=str(item.get("value") or ""),
+                display_name=str(item.get("label") or ""),
             )
+            for item in self._model_items
+            if str(item.get("key") or "") in wanted and item.get("provider")
+        ]
+        try:
+            self._orchestrator.set_research_config(
+                pool=pool,
+                trigger=self._research_trigger,
+                max_parallel=self._research_max_parallel,
+            )
+        except Exception:
+            pass
+
+    @Slot("QVariantList")
+    def setResearchModels(self, keys: list) -> None:  # noqa: N802
+        self._research_model_keys = [
+            str(item) for item in keys if str(item or "").strip()
+        ]
+        self._preferences.setValue(
+            "research/model_pool",
+            json.dumps(self._research_model_keys),
+        )
+        self._preferences.sync()
+        self._apply_research_config()
+        self.stateChanged.emit()
+
+    @Slot(str)
+    def setResearchTrigger(self, trigger: str) -> None:  # noqa: N802
+        self._research_trigger = (
+            "manual" if str(trigger or "").casefold() == "manual" else "auto"
+        )
+        self._preferences.setValue("research/trigger", self._research_trigger)
+        self._preferences.sync()
+        self._apply_research_config()
+        self.stateChanged.emit()
+
+    @Slot(int)
+    def setResearchMaxParallel(self, value: int) -> None:  # noqa: N802
+        try:
+            parallel = int(value)
+        except (TypeError, ValueError):
+            return
+        self._research_max_parallel = max(1, min(3, parallel))
+        self._preferences.setValue("research/max_parallel", self._research_max_parallel)
+        self._preferences.sync()
+        self._apply_research_config()
         self.stateChanged.emit()
 
     @Slot(result=str)
@@ -1412,6 +1490,19 @@ class ChatBridge(QObject):
         content = str(text or "").strip()
         if not content or self._turn_running:
             return
+        force_research = False
+        if content.lower().startswith("/pesquisa"):
+            argument = content[len("/pesquisa"):].strip()
+            if self._vr_mode == "off":
+                self._status_text = "Ative o VR para pesquisar na base local."
+                self.stateChanged.emit()
+                return
+            if not argument:
+                self._status_text = "Use: /pesquisa <pergunta>"
+                self.stateChanged.emit()
+                return
+            content = argument
+            force_research = True
         selected_extensions = [
             item
             for item in self._extension_items
@@ -1439,8 +1530,7 @@ class ChatBridge(QObject):
                     approval_profile=self._approval_profile,
                     mcp_tools=mcp_tools,
                     workspace=workspace,
-                    orchestration=self._orchestration,
-                    vr_enabled=self._vr_enabled,
+                    vr_mode=self._vr_mode,
                 )
             except Exception as exc:
                 self._status_text = f"Falha: {exc}"
@@ -1493,6 +1583,7 @@ class ChatBridge(QObject):
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
         self._turn_running = True
+        self._running_conversation_id = conversation_id
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
         self._activity_items = []
@@ -1510,7 +1601,7 @@ class ChatBridge(QObject):
                 "displayContent": content,
                 "segments": [],
                 "createdAt": "",
-                "responseMode": "vr" if self._vr_enabled else "native",
+                "responseMode": "vr" if self._vr_mode != "off" else "native",
             }
         )
         self._messages.append(self._activity_timeline_item())
@@ -1524,32 +1615,33 @@ class ChatBridge(QObject):
                 skills,
                 content,
                 content,
-                self._vr_enabled,
+                self._vr_mode != "off",
                 image_paths=image_paths,
+                vr_mode=self._vr_mode,
+                force_research=force_research,
             )
             self._attachments = []
             self._selected_extension_keys = set()
             self.stateChanged.emit()
         except Exception as exc:
             self._turn_running = False
+            self._running_conversation_id = ""
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
 
     @Slot()
     def stopTurn(self) -> None:  # noqa: N802
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if not conversation_id or not self._turn_running:
+        target = str(self._running_conversation_id or "")
+        if not target or not self._turn_running:
             return
         self._status_text = "Parando…"
         self.stateChanged.emit()
 
         def interrupt() -> None:
             try:
-                self._orchestrator.interrupt(conversation_id)
+                self._orchestrator.interrupt(target)
             except Exception as exc:
-                self._runtimeEvent.emit(
-                    RuntimeEvent(conversation_id, "error", str(exc))
-                )
+                self._runtimeEvent.emit(RuntimeEvent(target, "error", str(exc)))
 
         threading.Thread(target=interrupt, daemon=True).start()
 
@@ -1610,8 +1702,7 @@ class ChatBridge(QObject):
             return
         selected_id = str(self._selected.get("conversationId") or "")
         if event.conversation_id != selected_id:
-            if event.kind in {"turn_completed", "error"}:
-                self.refresh()
+            self._on_background_runtime_event(event)
             return
         self._record_execution_event(event)
         if event.kind == "assistant_delta":
@@ -1619,6 +1710,7 @@ class ChatBridge(QObject):
             if not delta:
                 return
             self._streaming_text += delta
+            self._turn_text += delta
             self._stream_pending_text += delta
             if not self._assistant_stream_started:
                 self._assistant_stream_started = True
@@ -1645,10 +1737,55 @@ class ChatBridge(QObject):
                 else event.text or "Trabalhando…"
             )
             self.stateChanged.emit()
+        elif event.kind == "response_empty":
+            self._status_text = "O provedor concluiu sem conteúdo."
+            self.stateChanged.emit()
+        elif event.kind == "research_failed":
+            self._status_text = f"Pesquisa falhou: {short_event_text(event.text)}"
+            self.stateChanged.emit()
+        elif event.kind == "context_transferred":
+            self._status_text = "Contexto transferido para nova sessão."
+            self.stateChanged.emit()
         elif event.kind in {"turn_completed", "orchestration_completed"}:
             self._queue_terminal_state(event.kind)
         elif event.kind in {"error", "orchestration_cancelled"}:
             self._queue_terminal_state(event.kind)
+
+    def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
+        if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
+            self._approval_request = dict(event.payload)
+            self._approval_request["conversation_id"] = event.conversation_id
+            self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
+            self._status_text = "Aguardando aprovação…"
+            self.approvalRequested.emit(dict(self._approval_request))
+            self.stateChanged.emit()
+            return
+        if event.kind in {
+            "turn_completed",
+            "orchestration_completed",
+            "error",
+            "orchestration_cancelled",
+        }:
+            if self._turn_running and event.conversation_id == self._running_conversation_id:
+                self._finish_background_turn(event.kind)
+            else:
+                self.refresh()
+
+    def _finish_background_turn(self, kind: str) -> None:
+        self._turn_running = False
+        self._running_conversation_id = ""
+        self._activity_clock.stop()
+        self._stream_timer.stop()
+        self._activity_started_at = 0.0
+        self._activity_elapsed_seconds = 0
+        self._status_text = (
+            "Erro"
+            if kind == "error"
+            else "Interrompido" if kind == "orchestration_cancelled" else "Pronto"
+        )
+        self.stateChanged.emit()
+        self.selectionChanged.emit()
+        self.refresh()
 
     def _ensure_streaming_message(self) -> None:
         if self._messages._items and self._messages._items[-1].get("role") == "assistant":
@@ -1661,7 +1798,7 @@ class ChatBridge(QObject):
                 "displayContent": "",
                 "segments": [],
                 "createdAt": "",
-                "responseMode": "vr" if self._vr_enabled else "native",
+                "responseMode": "vr" if self._vr_mode != "off" else "native",
             }
         )
 
@@ -1674,6 +1811,9 @@ class ChatBridge(QObject):
         self._displayed_streaming_text = ""
         self._stream_pending_text = ""
         self._stream_terminal_kind = ""
+        self._turn_segments = []
+        self._turn_text = ""
+        self._segment_cursor = 0
         self._assistant_stream_started = False
         self._activity_started_at = 0.0
         self._activity_elapsed_seconds = 0
@@ -1703,6 +1843,9 @@ class ChatBridge(QObject):
             self._messages.update_last(
                 content=self._streaming_text,
                 displayContent=markdown_for_display(self._displayed_streaming_text),
+                segments=self._turn_display_segments(
+                    reveal_limit=len(self._displayed_streaming_text)
+                ),
             )
             return
         self._stream_timer.stop()
@@ -1748,6 +1891,7 @@ class ChatBridge(QObject):
 
     def _finalize_terminal_state(self, kind: str) -> None:
         self._turn_running = False
+        self._running_conversation_id = ""
         self._status_text = (
             "Erro"
             if kind == "error"
@@ -1787,10 +1931,15 @@ class ChatBridge(QObject):
     def _restore_activity_from_history(self, conversation_id: str) -> None:
         self._activity_steps = []
         self._activity_items = []
+        self._turn_segments = []
+        self._turn_text = ""
+        self._segment_cursor = 0
+        self._restoring_turn_history = True
         self._reasoning_text = ""
         self._activity_elapsed_seconds = 0
         rows = self._database.latest_turn_events(conversation_id)
         if not rows:
+            self._restoring_turn_history = False
             return
         try:
             started_at = datetime.fromisoformat(str(rows[0]["created_at"] or ""))
@@ -1801,31 +1950,35 @@ class ChatBridge(QObject):
         except (TypeError, ValueError):
             pass
         terminal = False
-        for row in rows:
-            kind = str(row["kind"] or "")
-            text = str(row["text"] or "")
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            if kind == "reasoning_delta":
-                self._reasoning_text += text
-            elif kind == "assistant_delta":
-                self._advance_default_activity()
-            else:
-                self._record_execution_event(
-                    RuntimeEvent(conversation_id, kind, text, payload),
-                    emit_state=False,
-                )
-            if kind in {
-                "turn_completed",
-                "orchestration_completed",
-                "orchestration_cancelled",
-                "turn_recovered",
-            }:
-                terminal = True
+        try:
+            for row in rows:
+                kind = str(row["kind"] or "")
+                text = str(row["text"] or "")
+                try:
+                    payload = json.loads(str(row["payload_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                if kind == "reasoning_delta":
+                    self._reasoning_text += text
+                elif kind == "assistant_delta":
+                    self._turn_text += text
+                    self._advance_default_activity()
+                else:
+                    self._record_execution_event(
+                        RuntimeEvent(conversation_id, kind, text, payload),
+                        emit_state=False,
+                    )
+                if kind in {
+                    "turn_completed",
+                    "orchestration_completed",
+                    "orchestration_cancelled",
+                    "turn_recovered",
+                }:
+                    terminal = True
+        finally:
+            self._restoring_turn_history = False
         if not self._activity_steps and any(
             str(row["kind"] or "") in {"turn_started", "assistant_delta"}
             for row in rows
@@ -1858,6 +2011,8 @@ class ChatBridge(QObject):
             "agent_delta",
             "agent_completed",
             "agent_failed",
+            "research_started",
+            "research_completed",
             "evidence_merge_completed",
             "evidence_validation_completed",
             "critic_completed",
@@ -1875,6 +2030,9 @@ class ChatBridge(QObject):
             "response_rewrite_completed",
             "orchestration_completed",
             "orchestration_cancelled",
+            "response_empty",
+            "research_failed",
+            "context_transferred",
         }
         if event.kind not in execution_kinds:
             return
@@ -1942,6 +2100,12 @@ class ChatBridge(QObject):
                     item["statusLabel"] = "Interrompido"
 
         message = str(event.text or "").strip()
+        if not message:
+            message = {
+                "context_transferred": "Contexto transferido",
+                "response_empty": "Resposta vazia",
+                "research_failed": "Pesquisa falhou",
+            }.get(event.kind, "")
         if event.kind not in {
             "response_plan_created",
             "tool_event",
@@ -2038,6 +2202,7 @@ class ChatBridge(QObject):
             None,
         )
         if existing is None:
+            self._record_turn_tool_segment(item_type)
             self._activity_items.append(
                 {
                     "id": identifier,
@@ -2048,6 +2213,7 @@ class ChatBridge(QObject):
                         if item_type in {"userMessage", "agentMessage"}
                         else "tool"
                     ),
+                    "itemType": item_type,
                     "text": label,
                     "detail": detail,
                     "state": state,
@@ -2056,9 +2222,130 @@ class ChatBridge(QObject):
             self._activity_items = self._activity_items[-60:]
             return
         existing["text"] = label or existing.get("text", "Ferramenta")
+        existing["itemType"] = item_type
         existing["state"] = state
         if detail:
             existing["detail"] = detail
+
+    def _record_turn_tool_segment(self, item_type: str) -> None:
+        """Track per-turn tool usage so summaries can interleave with text."""
+        if item_type in {"reasoning", "userMessage", "agentMessage"}:
+            return
+        if not (self._turn_running or self._restoring_turn_history):
+            return
+        cursor = len(self._turn_text)
+        if cursor > self._segment_cursor:
+            self._turn_segments.append(
+                {"kind": "text", "start": self._segment_cursor, "end": cursor}
+            )
+            self._segment_cursor = cursor
+        category = (
+            "commands"
+            if item_type == "commandExecution"
+            else "files"
+            if item_type == "fileChange"
+            else "tools"
+        )
+        last = self._turn_segments[-1] if self._turn_segments else None
+        if last is not None and last.get("kind") == "tools":
+            last[category] = int(last.get(category) or 0) + 1
+            return
+        segment: dict[str, Any] = {
+            "kind": "tools",
+            "offset": cursor,
+            "commands": 0,
+            "files": 0,
+            "tools": 0,
+        }
+        segment[category] = 1
+        self._turn_segments.append(segment)
+
+    @staticmethod
+    def _tool_summary_label(segment: dict[str, Any]) -> str:
+        parts: list[str] = []
+        files = int(segment.get("files") or 0)
+        commands = int(segment.get("commands") or 0)
+        tools = int(segment.get("tools") or 0)
+        if files:
+            parts.append(f"Alterou {files} arquivo" + ("s" if files > 1 else ""))
+        if commands:
+            parts.append(f"executou {commands} comando" + ("s" if commands > 1 else ""))
+        if tools:
+            parts.append(f"usou {tools} ferramenta" + ("s" if tools > 1 else ""))
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return ", ".join(parts[:-1]) + " e " + parts[-1]
+
+    @staticmethod
+    def _segments_for_text_chunk(chunk: str) -> list[dict[str, Any]]:
+        chunk = str(chunk or "")
+        if not chunk.strip():
+            return []
+        segments = segments_for_display(chunk)
+        if segments:
+            return segments
+        return [{"kind": "text", "content": markdown_for_display(chunk)}]
+
+    def _turn_display_segments(
+        self, reveal_limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Build QML segments for the live turn, interleaving tool summaries."""
+        if not any(segment.get("kind") == "tools" for segment in self._turn_segments):
+            return []
+        text = self._turn_text
+        limit = (
+            len(text)
+            if reveal_limit is None
+            else max(0, min(int(reveal_limit), len(text)))
+        )
+        units: list[dict[str, Any]] = []
+        for segment in self._turn_segments:
+            if segment.get("kind") == "text":
+                units.append(
+                    {
+                        "kind": "text",
+                        "start": int(segment.get("start") or 0),
+                        "end": int(segment.get("end") or 0),
+                    }
+                )
+            else:
+                units.append(
+                    {
+                        "kind": "tools",
+                        "offset": int(segment.get("offset") or 0),
+                        "segment": segment,
+                    }
+                )
+        units.append({"kind": "text", "start": self._segment_cursor, "end": len(text)})
+        display: list[dict[str, Any]] = []
+        for unit in units:
+            if unit["kind"] == "tools":
+                if unit["offset"] > limit:
+                    break
+                segment = unit["segment"]
+                display.append(
+                    {
+                        "kind": "tools",
+                        "label": self._tool_summary_label(segment),
+                        "commands": int(segment.get("commands") or 0),
+                        "files": int(segment.get("files") or 0),
+                        "tools": int(segment.get("tools") or 0),
+                    }
+                )
+                continue
+            start, end = int(unit["start"]), int(unit["end"])
+            if start >= limit:
+                break
+            visible_end = min(end, limit)
+            if visible_end > start:
+                display.extend(
+                    self._segments_for_text_chunk(text[start:visible_end])
+                )
+            if limit < end:
+                break
+        return display
 
     def _upsert_agent(
         self,
@@ -2134,6 +2421,8 @@ class ChatBridge(QObject):
 
     @staticmethod
     def _event_state(kind: str) -> str:
+        if kind in {"response_empty", "context_transferred"}:
+            return "completed"
         if kind.endswith("failed"):
             return "error"
         if kind.endswith("completed"):
@@ -2172,6 +2461,10 @@ class ChatBridge(QObject):
                 len(items),
             )
             items.insert(assistant_index, self._activity_timeline_item())
+        if self._turn_segments and items and items[-1].get("role") == "assistant":
+            merged_segments = self._turn_display_segments()
+            if merged_segments:
+                items[-1]["segments"] = merged_segments
         self._messages.replace(items)
         self.selectionChanged.emit()
 

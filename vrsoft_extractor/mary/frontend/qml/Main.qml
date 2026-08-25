@@ -1,18 +1,25 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import "pages"
 import "theme"
 
 ApplicationWindow {
     id: window
 
-    width: 1480
-    height: 900
+    // QHD and 4K monitors: grow with the screen, capped for comfortable use.
+    width: Math.max(minimumWidth, Math.min(Screen.desktopAvailableWidth * 0.88, 1760))
+    height: Math.max(minimumHeight, Math.min(Screen.desktopAvailableHeight * 0.86, 1120))
     minimumWidth: 1120
     minimumHeight: 700
     visible: true
     title: frontend.appName
     color: frontend.palette.background
+
+    // Pages stay alive after the first visit: recreating ChatPreview on every
+    // switch was the dominant tab-change cost (measured at 40-110 ms).
+    property bool chatVisited: frontend.currentPage === 1
+    property bool hubVisited: frontend.currentPage !== 1
 
     Connections {
         target: studio
@@ -27,6 +34,8 @@ ApplicationWindow {
     Connections {
         target: frontend
         function onCurrentPageChanged() {
+            if (frontend.currentPage === 1) chatVisited = true
+            else hubVisited = true
             if (studio) studio.activatePage(frontend.currentPage)
         }
     }
@@ -36,9 +45,17 @@ ApplicationWindow {
     }
 
     Loader {
-        id: pageLoader
         anchors.fill: parent
-        sourceComponent: frontend.currentPage === 1 ? chatComponent : settingsHubComponent
+        active: window.chatVisited
+        visible: frontend.currentPage === 1
+        sourceComponent: chatComponent
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: window.hubVisited
+        visible: frontend.currentPage !== 1
+        sourceComponent: settingsHubComponent
     }
 
     Popup {

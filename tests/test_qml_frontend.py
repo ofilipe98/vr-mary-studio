@@ -63,9 +63,15 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertEqual(light["navText"], "#02021E")
         self.assertEqual(light["navHover"], "#F1F1F4")
         self.assertEqual(light["background"], "#F3F3F3")
+        self.assertEqual(light["accentSoft"], "#FFE8D6")
+        self.assertEqual(dark["accentSoft"], "#462813")
+        self.assertEqual(brand.ACCENT_SOFT, "#FFE8D6")
+        self.assertEqual(brand.DARK_ACCENT_SOFT, "#462813")
         self.assertNotEqual(light["surfaceRaised"], light["surface"])
-        self.assertEqual(dark["background"], "#12100F")
-        self.assertEqual(dark["surface"], "#1B1816")
+        self.assertEqual(dark["background"], "#000000")
+        self.assertEqual(dark["surface"], "#131110")
+        self.assertEqual(dark["surfaceRaised"], "#1B1816")
+        self.assertEqual(dark["border"], "#2C2823")
 
     def test_bridge_exposes_current_navigation_without_business_services(self):
         with TemporaryDirectory() as temporary:
@@ -98,6 +104,47 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.themeId, "dark_orange")
             self.assertEqual(preferences.value("appearance/theme"), "dark_orange")
             self.assertIsNotNone(preferences.value("appearance/nav_collapsed"))
+
+    def test_ui_scale_preference_persists_and_ignores_invalid_values(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            settings = self._settings(root)
+            bridge = FrontendBridge(settings, preferences)
+
+            self.assertEqual(bridge.uiScale, "100")
+            bridge.setUiScale("125")
+            self.assertEqual(bridge.uiScale, "125")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "125")
+            bridge.setUiScale("999")
+            bridge.setUiScale("abc")
+            self.assertEqual(bridge.uiScale, "125")
+            bridge.setUiScale("150%")
+            self.assertEqual(bridge.uiScale, "150")
+
+    def test_startup_applies_saved_ui_scale_to_qt_environment(self):
+        from vrsoft_extractor.mary.frontend import app as app_module
+
+        with TemporaryDirectory() as temporary:
+            preferences = QSettings(
+                str(Path(temporary) / "preferences.ini"), QSettings.IniFormat
+            )
+            os.environ.pop("QT_SCALE_FACTOR", None)
+
+            app_module.apply_ui_scale_environment(preferences)
+            self.assertNotIn("QT_SCALE_FACTOR", os.environ)
+
+            preferences.setValue("appearance/ui_scale", "150")
+            preferences.sync()
+            app_module.apply_ui_scale_environment(preferences)
+            self.assertEqual(os.environ.get("QT_SCALE_FACTOR"), "1.50")
+
+            os.environ["QT_SCALE_FACTOR"] = "2.0"
+            app_module.apply_ui_scale_environment(preferences)
+            self.assertEqual(os.environ.get("QT_SCALE_FACTOR"), "2.0")
+            os.environ.pop("QT_SCALE_FACTOR", None)
 
     def test_qml_shell_loads_with_the_frontend_bridge(self):
         with TemporaryDirectory() as temporary:
@@ -616,6 +663,105 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(preferences.value("chat/last_model/codex"), "gpt-5.6-sol")
 
+    def test_vr_mode_tri_state_persists_and_cycles(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            conversation_id = bridge._orchestrator.new_conversation(
+                "codex", "sol", defer_provider_start=True, vr_mode="vr"
+            )
+            database.update_conversation(conversation_id, title="c")
+            bridge.refresh()
+            target = next(
+                (
+                    index
+                    for index, item in enumerate(bridge._conversations._items)
+                    if item["conversationId"] == conversation_id
+                ),
+                None,
+            )
+            assert target is not None
+            bridge.selectConversation(target)
+
+            bridge.setVrMode("ultra")
+            self.assertEqual(bridge.vrMode, "ultra")
+            self.assertEqual(
+                database.get_conversation(conversation_id)["vr_mode"], "ultra"
+            )
+            self.assertEqual(
+                str(preferences.value("chat/vr_mode")), "ultra"
+            )
+
+            bridge.cycleVrMode()
+            self.assertEqual(bridge.vrMode, "off")
+            bridge.cycleVrMode()
+            self.assertEqual(bridge.vrMode, "vr")
+
+    def test_research_config_slots_apply_to_orchestrator(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            bridge._model_items = [
+                {
+                    "label": "Sol",
+                    "value": "sol",
+                    "key": "codex:sol",
+                    "provider": "codex",
+                }
+            ]
+
+            bridge.setResearchModels(["codex:sol"])
+            bridge.setResearchTrigger("manual")
+            bridge.setResearchMaxParallel(1)
+
+            self.assertEqual(bridge.researchModelKeys, ["codex:sol"])
+            self.assertEqual(bridge.researchTrigger, "manual")
+            self.assertEqual(bridge.researchMaxParallel, 1)
+            pool = bridge._orchestrator._research_pool
+            self.assertEqual(
+                [(ref.provider, ref.model) for ref in pool], [("codex", "sol")]
+            )
+            self.assertEqual(bridge._orchestrator._research_trigger, "manual")
+            self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
+
+    def test_pesquisa_command_requires_vr(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.setVrMode("off")
+
+            bridge.sendMessage("/pesquisa onde grava o SPED")
+
+            self.assertIn("Ative o VR", bridge._status_text)
+            self.assertEqual(len(database.list_conversations()), 0)
+
     def test_effort_and_service_tier_options_follow_selected_model_metadata(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -833,6 +979,102 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("3 resultados", item["detail"])
             self.assertIn("VRProject/manual.md", bridge.activityItems[1]["detail"])
 
+    def test_chat_bridge_processes_background_turn_events_without_blocking_composer(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            selected_id = database.create_conversation(
+                "Selecionada", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(selected_id, "user", "Mensagem na selecionada.")
+            background_id = database.create_conversation(
+                "Segundo plano", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            selected_index = next(
+                index
+                for index, item in enumerate(bridge._conversations._items)
+                if item["conversationId"] == selected_id
+            )
+            bridge.selectConversation(selected_index)
+            self.assertEqual(bridge.selectedTitle, "Selecionada")
+            bridge._turn_running = True
+            bridge._running_conversation_id = background_id
+            approvals = []
+            bridge.approvalRequested.connect(
+                lambda payload: approvals.append(dict(payload))
+            )
+
+            bridge._on_runtime_event(
+                RuntimeEvent(
+                    background_id, "approval_requested", "", {"request_id": "req-1"}
+                )
+            )
+
+            self.assertEqual(
+                bridge._approval_request.get("conversation_id"), background_id
+            )
+            self.assertEqual(approvals[-1].get("request_id"), "req-1")
+            self.assertEqual(bridge.statusText, "Aguardando aprovação…")
+            self.assertTrue(bridge.turnRunning)
+
+            bridge._on_runtime_event(RuntimeEvent(background_id, "turn_completed"))
+
+            self.assertFalse(bridge.turnRunning)
+            self.assertEqual(bridge._running_conversation_id, "")
+            self.assertEqual(bridge.statusText, "Pronto")
+            self.assertEqual(
+                [
+                    bridge.messages.item(index)["role"]
+                    for index in range(bridge.messages.rowCount())
+                ],
+                ["user"],
+            )
+
+    def test_chat_file_suggestions_use_background_cache_and_reemit_updates(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            (settings.root / "Notas Fiscal.md").write_text("# Notas", encoding="utf-8")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            updates = []
+            bridge.fileSuggestionsChanged.connect(
+                lambda: updates.append(bridge.fileSuggestions("fiscal"))
+            )
+
+            self.assertEqual(bridge.fileSuggestions("fiscal"), [])
+            for _attempt in range(60):
+                self.application.processEvents()
+                QTest.qWait(25)
+                if bridge.fileSuggestions("fiscal"):
+                    break
+
+            results = bridge.fileSuggestions("fiscal")
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["label"], "Notas Fiscal.md")
+            self.assertTrue(results[0]["path"].endswith("Notas Fiscal.md"))
+            self.assertTrue(updates)
+            self.assertEqual(updates[-1], results)
+
     def test_studio_bridge_loads_pages_lazily_and_tracks_video_descendants(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -895,7 +1137,11 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Keys.onEnterPressed", chat_qml)
         self.assertIn("onLinkActivated", chat_qml)
         self.assertIn("onLinkActivated", knowledge_qml)
-        self.assertNotIn("Digite EXCLUIR", settings_qml)
+        self.assertIn("Digite EXCLUIR", settings_qml)
+        self.assertIn('objectName: "conversationSidebarToggle"', chat_qml)
+        self.assertNotIn(
+            "conversationSidebar.x + conversationSidebar.width", chat_qml
+        )
 
     def test_chat_bridge_restores_latest_persisted_task_timeline(self):
         with TemporaryDirectory() as temporary:
@@ -1021,6 +1267,82 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.readFilePreview(str(document)), "# Instruções VR")
             self.assertIn("fora do projeto", bridge.readFilePreview(str(outside)))
 
+    def test_videos_page_starts_with_libraries_collapsed(self):
+        videos_qml = (
+            MAIN_QML.parent / "pages" / "VideosPage.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("function ensureInitialCollapse", videos_qml)
+        self.assertIn("onCountChanged: root.ensureInitialCollapse()", videos_qml)
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(root, initial_page="Vídeos")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            studio_bridge = StudioBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            # Keep the lazy page load from racing the real async inventory
+            # refresh; the QML side must collapse on the model change itself.
+            studio_bridge._loaded_pages.add(5)
+            engine = create_engine(bridge, chat_bridge, studio_bridge)
+            self.application.processEvents()
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
+            studio_bridge._all_video_items = [
+                {
+                    "nodeId": "root",
+                    "ancestorIds": [],
+                    "expandable": True,
+                    "title": "Cursos",
+                    "depth": 0,
+                },
+                {
+                    "nodeId": "root:library",
+                    "ancestorIds": ["root"],
+                    "expandable": True,
+                    "title": "Biblioteca",
+                    "depth": 1,
+                },
+                {
+                    "nodeId": "video:1",
+                    "ancestorIds": ["root", "root:library"],
+                    "expandable": False,
+                    "title": "Aula 01",
+                    "depth": 2,
+                },
+            ]
+            studio_bridge._apply_video_filters()
+            studio_bridge.videosChanged.emit()
+            self.application.processEvents()
+
+            window = engine.rootObjects()[0]
+            page = window.findChild(QObject, "videosPage")
+            self.assertIsNotNone(page)
+            collapsed_value = page.property("collapsedNodeIds")
+            collapsed = list(
+                collapsed_value.toVariant()
+                if hasattr(collapsed_value, "toVariant")
+                else (collapsed_value or [])
+            )
+            self.assertIn("root", collapsed)
+            self.assertIn("root:library", collapsed)
+            self.assertNotIn("video:1", collapsed)
+
     def test_application_entrypoint_dispatches_qml_by_default(self):
         from vrsoft_extractor.mary import ui
 
@@ -1031,6 +1353,161 @@ class QmlFrontendTest(unittest.TestCase):
 
         self.assertEqual(result, 23)
         qml_main.assert_called_once_with(["--project-dir", "demo"])
+
+    def test_settings_tabs_use_canonical_tab_bar_with_accent_token(self):
+        from vrsoft_extractor.mary import ui as ui_module
+
+        components_dir = MAIN_QML.parent / "components"
+        tab_bar_qml = (components_dir / "VrTabBar.qml").read_text(encoding="utf-8")
+        button_qml = (components_dir / "VrButton.qml").read_text(encoding="utf-8")
+        settings_qml = (
+            MAIN_QML.parent / "pages" / "SettingsPage.qml"
+        ).read_text(encoding="utf-8")
+        ui_qml_source = Path(ui_module.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("Accessible.role: Accessible.PageTab", tab_bar_qml)
+        self.assertIn("Keys.onLeftPressed", tab_bar_qml)
+        self.assertIn("Keys.onRightPressed", tab_bar_qml)
+        self.assertIn("frontend.palette.accentSoft", tab_bar_qml)
+        self.assertNotIn('"primary" : "ghost"', settings_qml)
+        self.assertNotIn("variant: root.tabIndex === index", settings_qml)
+        self.assertIn("objectName: \"settingsTabBar\"", settings_qml)
+        self.assertIn("variant: \"danger\"", settings_qml)
+        self.assertIn("enabled: deleteConfirmField.text === \"EXCLUIR\"", settings_qml)
+        self.assertIn("Escala da interface", settings_qml)
+        self.assertIn("objectName: \"uiScaleCombo\"", settings_qml)
+        self.assertIn("VrPageColumn {", settings_qml)
+        page_column_qml = (
+            components_dir / "VrPageColumn.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("property int maximumWidth: 1120", page_column_qml)
+        main_qml = MAIN_QML.read_text(encoding="utf-8")
+        self.assertIn("Screen.desktopAvailableWidth", main_qml)
+        self.assertIn("Screen.desktopAvailableHeight", main_qml)
+        self.assertIn("chatVisited", main_qml)
+        hub_qml = (
+            MAIN_QML.parent / "pages" / "SettingsHub.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("visitedPages", hub_qml)
+        self.assertNotIn("Repeater {\n                model: root.hubPages", hub_qml)
+        for page in (
+            "DashboardPreview.qml",
+            "KnowledgePage.qml",
+            "ReviewPage.qml",
+            "VideosPage.qml",
+            "LogsPage.qml",
+            "SyncPage.qml",
+        ):
+            page_qml = (MAIN_QML.parent / "pages" / page).read_text(
+                encoding="utf-8"
+            )
+            # Data pages fill the window; only Configurações caps the width.
+            self.assertNotIn("VrPageColumn", page_qml, page)
+            self.assertIn("anchors.fill: parent", page_qml, page)
+        self.assertIn("apply_ui_scale_environment(_app_preferences())", ui_qml_source)
+        self.assertIn("control.variant === \"danger\"", button_qml)
+        self.assertIn("{ACCENT_SOFT}", ui_qml_source)
+        self.assertIn("{DARK_ACCENT_SOFT}", ui_qml_source)
+        self.assertNotIn("#FFE8D6", ui_qml_source)
+        self.assertNotIn("#EAEAF0", ui_qml_source)
+        self.assertNotIn("#462813", ui_qml_source)
+
+    def test_settings_page_loads_with_tab_bar_in_engine(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
+            window = engine.rootObjects()[0]
+            tab_bar = window.findChild(QObject, "settingsTabBar")
+            self.assertIsNotNone(tab_bar)
+            self.assertEqual(tab_bar.property("count"), 4)
+            self.assertEqual(tab_bar.property("currentIndex"), 0)
+            self.assertIsNotNone(window.findChild(QObject, "uiScaleCombo"))
+
+            tab_bar.activate(2)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 2)
+            self.assertEqual(bridge.currentPage, 7)
+
+            tab_bar.activate(99)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 2)
+
+            tab_bar.activate(0)
+            self.application.processEvents()
+            quick_window = tab_bar.window()
+            QTest.keyClick(quick_window, Qt.Key_Right)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 1)
+            QTest.keyClick(quick_window, Qt.Key_Right)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 2)
+            QTest.keyClick(quick_window, Qt.Key_Left)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 1)
+            QTest.keyClick(quick_window, Qt.Key_Return)
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 1)
+
+    def test_all_pages_load_in_engine_with_centered_page_column(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(root, initial_page="Dashboard")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            studio_bridge = StudioBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge, studio_bridge)
+            self.application.processEvents()
+
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
+            for page_index in (0, 2, 3, 4, 5, 6, 7):
+                bridge.setCurrentPage(page_index)
+                self.application.processEvents()
+                self.assertEqual(bridge.currentPage, page_index)
+
+            self.assertEqual(
+                [
+                    warning.toString()
+                    for warning in engine._qml_warnings
+                    if "VrPageColumn" in warning.toString()
+                ],
+                [],
+            )
 
     def test_qml_preview_remains_a_compatibility_alias(self):
         from vrsoft_extractor.mary import ui

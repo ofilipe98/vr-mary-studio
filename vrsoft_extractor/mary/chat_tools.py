@@ -183,9 +183,9 @@ def run_local_tool(
         raise ToolExecutionError(
             f"A tool terminou com código {completed.returncode}: {detail[:4000]}"
         )
-    if stderr:
-        raise ToolExecutionError(f"A tool escreveu em stderr: {stderr[:4000]}")
     text = stdout.strip()
+    if not text and stderr:
+        text = stderr[:4000]
     if not text:
         text = "Tool executada sem saída."
     try:

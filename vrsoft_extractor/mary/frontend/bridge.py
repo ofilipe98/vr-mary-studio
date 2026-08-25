@@ -42,6 +42,15 @@ def _stored_bool(value: object, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
+UI_SCALE_OPTIONS = ("100", "110", "125", "150")
+
+
+def normalized_ui_scale(value: object, default: str = "100") -> str:
+    """Return a supported interface scale percentage (no percent sign)."""
+    text = str(value or "").strip().rstrip("%").strip()
+    return text if text in UI_SCALE_OPTIONS else default
+
+
 class FrontendBridge(QObject):
     """Stable QML-facing state; business rules remain in the existing backend."""
 
@@ -49,6 +58,7 @@ class FrontendBridge(QObject):
     currentPageChanged = Signal()
     navigationCollapsedChanged = Signal()
     reduceMotionChanged = Signal()
+    uiScaleChanged = Signal()
 
     def __init__(
         self,
@@ -79,6 +89,10 @@ class FrontendBridge(QObject):
         self._reduce_motion = _stored_bool(
             self._preferences.value("appearance/reduce_motion", False)
         )
+        self._ui_scale = normalized_ui_scale(
+            self._preferences.value("appearance/ui_scale", "100")
+        )
+        self._palette_cache: dict[str, str] | None = None
         page_names = [title for title, _icon in NAVIGATION_ITEMS]
         try:
             self._current_page = page_names.index(initial_page)
@@ -123,7 +137,12 @@ class FrontendBridge(QObject):
 
     @Property("QVariantMap", notify=themeChanged)
     def palette(self) -> dict[str, str]:
-        return brand_palette(self._theme_id)
+        # Rebuilt on demand and cached: QML evaluates this property for every
+        # color binding, so rebuilding the dict per read shows up as tab-switch
+        # latency on page creation.
+        if self._palette_cache is None:
+            self._palette_cache = brand_palette(self._theme_id)
+        return self._palette_cache
 
     @Property(int, notify=currentPageChanged)
     def currentPage(self) -> int:  # noqa: N802 - QML property naming
@@ -141,12 +160,17 @@ class FrontendBridge(QObject):
     def reduceMotion(self) -> bool:  # noqa: N802
         return self._reduce_motion
 
+    @Property(str, notify=uiScaleChanged)
+    def uiScale(self) -> str:  # noqa: N802 - QML property naming
+        return self._ui_scale
+
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:  # noqa: N802
         selected = "dark_orange" if theme_id == "dark_orange" else "light"
         if selected == self._theme_id:
             return
         self._theme_id = selected
+        self._palette_cache = None
         self._preferences.setValue("appearance/theme", selected)
         self._preferences.sync()
         self.themeChanged.emit()
@@ -217,3 +241,13 @@ class FrontendBridge(QObject):
         self._preferences.setValue("appearance/reduce_motion", selected)
         self._preferences.sync()
         self.reduceMotionChanged.emit()
+
+    @Slot(str)
+    def setUiScale(self, value: str) -> None:  # noqa: N802
+        selected = normalized_ui_scale(value, default=self._ui_scale)
+        if selected == self._ui_scale:
+            return
+        self._ui_scale = selected
+        self._preferences.setValue("appearance/ui_scale", selected)
+        self._preferences.sync()
+        self.uiScaleChanged.emit()

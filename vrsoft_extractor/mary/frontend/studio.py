@@ -135,12 +135,15 @@ class StudioBridge(QObject):
     terminalChanged = Signal()
     toastRequested = Signal(str, str)
     navigationRequested = Signal(int)
+    reviewFilterValuesChanged = Signal()
+    reviewSelectionChanged = Signal()
 
     def __init__(
         self,
         settings: MarySettings,
         database: MaryDatabase,
         preferences: QSettings | None = None,
+        chat_orchestrator: Any = None,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -227,7 +230,8 @@ class StudioBridge(QObject):
         self._video_refresh_task: _Task | None = None
         self._terminal_process: QProcess | None = None
         self._terminal_output = ""
-        self._conversation_orchestrator: Any = None
+        self._conversation_orchestrator = chat_orchestrator
+        self._review_selection: set[int] = set()
         self._video_buffer = ""
         self._video_pending_output = ""
         self._video_output_timer = QTimer(self)
@@ -417,13 +421,21 @@ class StudioBridge(QObject):
     def sourceItems(self) -> list[str]:  # noqa: N802
         return ["Todas", "wiki", "kb"]
 
-    @Property("QVariantList", constant=True)
+    @Property("QVariantList", notify=reviewFilterValuesChanged)
     def productItems(self) -> list[str]:  # noqa: N802
         return list(self._product_items)
 
-    @Property("QVariantList", constant=True)
+    @Property("QVariantList", notify=reviewFilterValuesChanged)
     def categoryItems(self) -> list[str]:  # noqa: N802
         return list(self._category_items)
+
+    @Property(int, notify=reviewSelectionChanged)
+    def reviewSelectionCount(self) -> int:  # noqa: N802
+        return len(self._review_selection)
+
+    @Property("QVariantList", notify=reviewSelectionChanged)
+    def selectedReviewIds(self) -> list[int]:  # noqa: N802
+        return sorted(self._review_selection)
 
     @Slot(int)
     def activatePage(self, index: int) -> None:  # noqa: N802
@@ -687,25 +699,30 @@ class StudioBridge(QObject):
         self._review_offset = 0
         self._load_reviews()
 
+    def _review_query_filters(self, limit: int, offset: int) -> ReviewFilters:
+        values = self._review_filters
+        return ReviewFilters(
+            query=self._review_query,
+            source=str(values.get("source") or ""),
+            source_origin=str(values.get("sourceOrigin") or ""),
+            current_module=str(values.get("currentModule") or ""),
+            suggested_module=str(values.get("suggestedModule") or ""),
+            confidence_band=str(values.get("confidence") or ""),
+            product=str(values.get("product") or ""),
+            category=str(values.get("category") or ""),
+            status=str(values.get("status") or "pending"),
+            period_days=int(values.get("periodDays") or 0),
+            special=str(values.get("special") or ""),
+            sort=str(values.get("sort") or "risk"),
+            limit=limit,
+            offset=offset,
+        )
+
     def _load_reviews(self) -> None:
         try:
-            values = self._review_filters
-            page = self._database.query_reviews(ReviewFilters(
-                query=self._review_query,
-                source=str(values.get("source") or ""),
-                source_origin=str(values.get("sourceOrigin") or ""),
-                current_module=str(values.get("currentModule") or ""),
-                suggested_module=str(values.get("suggestedModule") or ""),
-                confidence_band=str(values.get("confidence") or ""),
-                product=str(values.get("product") or ""),
-                category=str(values.get("category") or ""),
-                status=str(values.get("status") or "pending"),
-                period_days=int(values.get("periodDays") or 0),
-                special=str(values.get("special") or ""),
-                sort=str(values.get("sort") or "risk"),
-                limit=100,
-                offset=self._review_offset,
-            ))
+            page = self._database.query_reviews(
+                self._review_query_filters(100, self._review_offset)
+            )
             rows = page.items
             self._review_total = page.total
             self._review_offset = page.offset
@@ -792,6 +809,54 @@ class StudioBridge(QObject):
         self._review_selected = index
         self.reviewChanged.emit()
 
+    @Slot(int, result=bool)
+    def isReviewSelected(self, review_id: int) -> bool:  # noqa: N802
+        return int(review_id) in self._review_selection
+
+    @Slot(int, bool)
+    def setReviewSelected(self, review_id: int, selected: bool) -> None:  # noqa: N802
+        identifier = int(review_id)
+        if selected:
+            if identifier in self._review_selection:
+                return
+            self._review_selection.add(identifier)
+        else:
+            if identifier not in self._review_selection:
+                return
+            self._review_selection.discard(identifier)
+        self.reviewSelectionChanged.emit()
+
+    @Slot(bool)
+    def setAllReviewsSelected(self, selected: bool) -> None:  # noqa: N802
+        if not selected:
+            if not self._review_selection:
+                return
+            self._review_selection = set()
+            self.reviewSelectionChanged.emit()
+            return
+        selection: set[int] = set()
+        try:
+            offset = 0
+            while offset < 10_000:
+                page = self._database.query_reviews(
+                    self._review_query_filters(500, offset)
+                )
+                selection.update(int(row["id"]) for row in page.items)
+                if len(page.items) < 500:
+                    break
+                offset += len(page.items)
+        except Exception as exc:
+            self.toastRequested.emit(str(exc), "error")
+            return
+        self._review_selection = selection
+        self.reviewSelectionChanged.emit()
+
+    def _clear_review_selection(self) -> None:
+        if not self._review_selection:
+            return
+        self._review_selection = set()
+        self.reviewSelectionChanged.emit()
+
     @Slot()
     def previousReviewPage(self) -> None:  # noqa: N802
         if not self.reviewCanPrevious:
@@ -821,8 +886,10 @@ class StudioBridge(QObject):
             self.toastRequested.emit(str(exc), "error")
             return
         self.toastRequested.emit(f"{count} revisão(ões) atualizada(s).", "success")
+        self._clear_review_selection()
         self._load_reviews()
         self._refresh_dashboard()
+        self._refresh_review_filter_values()
 
     @Slot()
     def refreshVideos(self) -> None:  # noqa: N802
@@ -1187,6 +1254,7 @@ class StudioBridge(QObject):
         self._video_process.setProcessChannelMode(QProcess.MergedChannels)
         self._video_process.readyReadStandardOutput.connect(self._read_video_output)
         self._video_process.finished.connect(self._video_finished)
+        self._video_process.finished.connect(self._video_process.deleteLater)
         args = ["-m", "vrsoft_extractor", "--project-dir", str(self._settings.root), action, *extra_args]
         if action == "scan" and not self._settings.endoo_state_path.is_file():
             args.append("--headed")
@@ -1270,8 +1338,12 @@ class StudioBridge(QObject):
 
     @Slot()
     def stopVideoAction(self) -> None:  # noqa: N802
-        if self._video_process and self._video_process.state() != QProcess.NotRunning:
-            self._video_process.terminate()
+        process = self._video_process
+        if not process or process.state() == QProcess.NotRunning:
+            return
+        process.terminate()
+        if not process.waitForFinished(3000):
+            process.kill()
 
     def _read_video_output(self) -> None:
         if not self._video_process:
@@ -1291,6 +1363,7 @@ class StudioBridge(QObject):
         self.videosChanged.emit()
 
     def _video_finished(self, code: int, _status: Any) -> None:
+        self._video_process = None
         self._video_output_timer.stop()
         self._flush_video_output()
         self._video_summary = "Concluído" if code == 0 else f"Falha · código {code}"
@@ -1392,6 +1465,18 @@ class StudioBridge(QObject):
         path = OcrManager(self._settings.tesseract_dir).install_portable(self._sync_progress)
         return str(path)
 
+    def _refresh_review_filter_values(self) -> None:
+        try:
+            values = self._database.review_filter_values()
+        except Exception:
+            return
+        self._product_items = ["Todos os produtos", *values.get("products", [])]
+        self._category_items = [
+            "Todas as categorias",
+            *values.get("categories", []),
+        ]
+        self.reviewFilterValuesChanged.emit()
+
     def _sync_finished(self, task: _Task, label: str, result: Any) -> None:
         self._tasks.discard(task)
         self._sync_running = False
@@ -1402,6 +1487,8 @@ class StudioBridge(QObject):
         self._refresh_dashboard()
         self._load_knowledge()
         self._load_reviews()
+        self._clear_review_selection()
+        self._refresh_review_filter_values()
         self.toastRequested.emit(f"{label}: sincronização concluída.", "success")
 
     def _sync_failed(self, task: _Task, error: str) -> None:
@@ -1411,6 +1498,7 @@ class StudioBridge(QObject):
         self._sync_log.append(error)
         self._append_log(error)
         self.syncChanged.emit()
+        self._refresh_review_filter_values()
         self.toastRequested.emit(error, "error")
 
     @Slot(result=str)
@@ -1638,6 +1726,7 @@ class StudioBridge(QObject):
         self._terminal_process.setProcessChannelMode(QProcess.MergedChannels)
         self._terminal_process.readyReadStandardOutput.connect(self._read_terminal_output)
         self._terminal_process.finished.connect(self._terminal_finished)
+        self._terminal_process.finished.connect(self._terminal_process.deleteLater)
         self._append_log(f"> {value}")
         if sys.platform == "win32":
             self._terminal_process.start("powershell.exe", ["-NoProfile", "-Command", value])
@@ -1658,6 +1747,7 @@ class StudioBridge(QObject):
         self.terminalChanged.emit()
 
     def _terminal_finished(self, code: int, _status: Any) -> None:
+        self._terminal_process = None
         self._terminal_output += f"\n[processo finalizado · código {code}]"
         self.terminalChanged.emit()
         self.toastRequested.emit(

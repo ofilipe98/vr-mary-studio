@@ -265,6 +265,7 @@ def test_turn_end_gate_corrects_leaky_answer(tmp_path: Path) -> None:
     orchestrator._handle_event(
         RuntimeEvent(conversation_id, "turn_completed", payload={"turn": {"id": "t1"}})
     )
+    orchestrator.drain_turn_finalizations()
 
     assistant_rows = [
         row

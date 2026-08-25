@@ -35,12 +35,14 @@ from vrsoft_extractor.mary.supervision import (
     RefinementReason,
     ResponseContract,
     SupervisorAssessment,
+    _internal_leaks,
     analyze_response_intent,
     build_controlled_failure,
     build_response_contract,
     combine_final_validations,
     combine_supervision,
     deterministic_supervision,
+    parse_final_draft,
     parse_worker_report,
     render_sources,
     validate_final_response,
@@ -803,3 +805,69 @@ def test_rejected_draft_is_rewritten_privately_before_user_sees_it(
         ).fetchone()[0]
     assert [row["text"] for row in persisted] == visible
     assert citations == 1
+
+
+def _simple_contract() -> ResponseContract:
+    return ResponseContract(
+        purpose="guidance",
+        audience="operational_user",
+        technical_level="low_to_medium",
+        detail_level="normal",
+    )
+
+
+def test_parse_final_draft_rescues_envelope_with_unescaped_inner_quotes() -> None:
+    raw = (
+        '{"answer_markdown": "Abra **Nota Saída > Emissão** e clique em "Incluir" '
+        '(ou tecla "F2").\\n\\n## Resultado esperado\\n\\n- **NF:** nota '
+        'transmitida.", "used_evidence_ids": ["e1"]}'
+    )
+    draft = parse_final_draft(raw, allowed_evidence_ids=("e1",))
+    assert not draft.answer_markdown.lstrip().startswith('{"')
+    assert draft.answer_markdown.startswith("Abra **Nota Saída")
+    assert '"Incluir"' in draft.answer_markdown
+    assert "\n\n" in draft.answer_markdown
+    assert draft.used_evidence_ids == ("e1",)
+
+
+def test_parse_final_draft_rescues_envelope_without_used_ids_key() -> None:
+    raw = '{"answer_markdown": "Resposta com "aspas" internas e \\n quebra."}'
+    draft = parse_final_draft(raw, allowed_evidence_ids=())
+    assert draft.answer_markdown == 'Resposta com "aspas" internas e \n quebra.'
+
+
+def test_parse_final_draft_keeps_valid_envelope_and_plain_markdown() -> None:
+    valid = '{"answer_markdown": "# Resposta\\n\\nTexto.", "used_evidence_ids": ["e1"]}'
+    draft = parse_final_draft(valid, allowed_evidence_ids=("e1", "e2"))
+    assert draft.answer_markdown == "# Resposta\n\nTexto."
+    assert draft.used_evidence_ids == ("e1",)
+    plain = "Resposta em markdown simples com **negrito**."
+    draft_plain = parse_final_draft(plain, allowed_evidence_ids=("e1",))
+    assert draft_plain.answer_markdown == plain
+
+
+def test_unrecoverable_envelope_is_flagged_as_internal_leak() -> None:
+    raw = '{"answer_markdown": "Inicio de resposta truncada sem fechamento'
+    draft = parse_final_draft(raw, allowed_evidence_ids=())
+    assert draft.answer_markdown == raw
+    leaks = _internal_leaks(draft.answer_markdown, "pergunta do usuário")
+    assert any("JSON" in item for item in leaks)
+    violations = validate_final_response(
+        draft, _simple_contract(), user_message="pergunta do usuário"
+    )
+    assert violations.verdict != "approve"
+    assert RefinementReason.INTERNAL_METADATA_LEAK in violations.reasons
+
+
+def test_good_answer_is_not_flagged_by_envelope_patterns() -> None:
+    answer = (
+        "# Título\n\n## Passo a passo\n\n"
+        '1. Clique em "Incluir" para iniciar.\n'
+        "2. Confirme os dados e transmita.\n\n"
+        "https://exemplo.com/wiki/pagina"
+    )
+    assert _internal_leaks(answer, "pergunta") == []
+    validation = validate_final_response(
+        FinalDraft(answer, ()), _simple_contract(), user_message="pergunta"
+    )
+    assert RefinementReason.INTERNAL_METADATA_LEAK not in validation.reasons

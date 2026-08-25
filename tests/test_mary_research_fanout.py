@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -321,7 +322,42 @@ class _FakeFanoutProvider:
         callback(RuntimeEvent(conversation_id, "turn_completed"))
 
 
-def test_run_module_fanout_publishes_merged_answer(tmp_path: Path) -> None:
+class _FlakyFanoutProvider(_FakeFanoutProvider):
+    """Fails the first N calls of a given module, then succeeds."""
+
+    def __init__(self, fail_module: str, failures: int = 1) -> None:
+        super().__init__()
+        self.fail_module = fail_module
+        self.remaining_failures = failures
+
+    def send_message(self, conversation_id, native_id, model, effort, workspace,
+                     message, callback, options=None, skills=None, image_paths=None):
+        with self.lock:
+            self.calls.append(conversation_id)
+        callback(RuntimeEvent(conversation_id, "turn_started", payload={"turn": {"id": "t"}}))
+        if (
+            f":vr_fanout_{self.fail_module}" in conversation_id
+            and self.remaining_failures > 0
+        ):
+            with self.lock:
+                self.remaining_failures -= 1
+            callback(RuntimeEvent(conversation_id, "error", "upstream indisponível"))
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+            return
+        output = SYNTHESIS_JSON
+        if ":vr_fanout_" in conversation_id:
+            report = REPORT_BY_MODULE.get(
+                "Fiscal" if "fiscal" in conversation_id else "PDV"
+            )
+            output = json.dumps(report, ensure_ascii=False)
+        callback(RuntimeEvent(conversation_id, "assistant_delta", output))
+        callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+
+def test_run_module_fanout_publishes_merged_answer(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
+    )
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     database.upsert_document(
@@ -368,6 +404,8 @@ def test_run_module_fanout_publishes_merged_answer(tmp_path: Path) -> None:
         ("Fiscal", "PDV"),
     )
 
+    orchestrator.drain_turn_finalizations()
+
     assistant_rows = [
         row for row in database.messages(conversation_id) if row["role"] == "assistant"
     ]
@@ -376,6 +414,23 @@ def test_run_module_fanout_publishes_merged_answer(tmp_path: Path) -> None:
     assert "Resposta" in saved
     kinds = [event.kind for event in events]
     assert "research_started" in kinds and "synthesis_started" in kinds
+    assert "plan_created" in kinds, "estágios deveriam ser publicados para o painel"
+    plan_event = next(e for e in events if e.kind == "plan_created")
+    stages = plan_event.payload.get("runtime_stages") or []
+    assert [s["id"] for s in stages] == [
+        "fanout_fiscal",
+        "fanout_pdv",
+        "fanout_synthesis",
+    ]
+    assert stages[-1]["final"] is True
+    started_ids = [
+        e.payload.get("agent_id") for e in events if e.kind == "agent_started"
+    ]
+    completed_ids = [
+        e.payload.get("agent_id") for e in events if e.kind == "agent_completed"
+    ]
+    assert set(started_ids) == {"fanout_fiscal", "fanout_pdv"}
+    assert set(completed_ids) == {"fanout_fiscal", "fanout_pdv"}
     assert provider.parallel_peak >= 2, "pesquisadores deveriam rodar em paralelo"
     with database.connect() as connection:
         citations = connection.execute(
@@ -386,8 +441,155 @@ def test_run_module_fanout_publishes_merged_answer(tmp_path: Path) -> None:
     assert any(row["document_id"] == 1 for row in citations)
 
 
-def test_run_module_fanout_is_provider_agnostic(tmp_path: Path) -> None:
+def test_researchers_cycle_through_model_pool(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
+    )
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _FakeFanoutProvider()
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    database.update_conversation(conversation_id, native_id="native-x")
+
+    from vrsoft_extractor.mary.models import ModelRef, OrchestrationOptions
+
+    options = ConversationOptions(
+        effort="medium",
+        vr_enabled=True,
+        orchestration=OrchestrationOptions(
+            mode="off",
+            model_pool=(
+                ModelRef("codex", "sol", "Sol"),
+                ModelRef("codex", "opus", "Opus"),
+            ),
+        ),
+    )
+    events: list[RuntimeEvent] = []
+    orchestrator._external_callbacks[conversation_id] = events.append
+
+    orchestrator._run_module_fanout(
+        conversation_id,
+        dict(database.get_conversation(conversation_id)),
+        "native-x",
+        settings.work_dir,
+        "Pergunta?",
+        provider,
+        options,
+        [],
+        _bundle(modules=("Fiscal", "PDV"), candidates=(_candidate(1),)),
+        _intent(),
+        _contract(),
+        ("Fiscal", "PDV"),
+    )
+
+    models = [
+        (e.payload.get("model") or {}).get("model")
+        for e in events
+        if e.kind == "agent_started"
+    ]
+    assert models == ["sol", "opus"], "pesquisadores deveriam alternar o pool"
+
+
+def test_researcher_retry_recovers_transient_failure(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _FlakyFanoutProvider("pdv", failures=1)
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    database.update_conversation(conversation_id, native_id="native-x")
+
+    bundle = _bundle(modules=("Fiscal", "PDV"), candidates=(_candidate(1),))
+    orchestrator._run_module_fanout(
+        conversation_id,
+        dict(database.get_conversation(conversation_id)),
+        "native-x",
+        settings.work_dir,
+        "Pergunta?",
+        provider,
+        ConversationOptions(effort="medium", vr_enabled=True),
+        [],
+        bundle,
+        _intent(),
+        _contract(),
+        ("Fiscal", "PDV"),
+    )
+
+    orchestrator.drain_turn_finalizations()
+
+    assistant_rows = [
+        row for row in database.messages(conversation_id) if row["role"] == "assistant"
+    ]
+    assert assistant_rows and "Resposta" in assistant_rows[-1]["content"]
+    pdv_calls = [c for c in provider.calls if "fanout_pdv" in c]
+    assert len(pdv_calls) == 2, "PDV deveria ser re-tentado uma vez"
+
+
+def test_all_researchers_failed_falls_back_to_direct(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+
+    class _AlwaysFails(_FakeFanoutProvider):
+        def send_message(self, conversation_id, native_id, model, effort, workspace,
+                         message, callback, options=None, skills=None, image_paths=None):
+            with self.lock:
+                self.calls.append(conversation_id)
+            callback(RuntimeEvent(conversation_id, "turn_started", payload={"turn": {"id": "t"}}))
+            if ":vr_fanout_" in conversation_id:
+                callback(RuntimeEvent(conversation_id, "error", "upstream down"))
+                callback(RuntimeEvent(conversation_id, "turn_completed"))
+                return
+            callback(RuntimeEvent(conversation_id, "assistant_delta", "RESPOSTA DIRETA"))
+            callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+    provider = _AlwaysFails()
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    database.update_conversation(conversation_id, native_id="native-x")
+
+    orchestrator._run_module_fanout(
+        conversation_id,
+        dict(database.get_conversation(conversation_id)),
+        "native-x",
+        settings.work_dir,
+        "Pergunta?",
+        provider,
+        ConversationOptions(effort="medium", vr_enabled=True),
+        [],
+        _bundle(modules=("Fiscal", "PDV"), candidates=(_candidate(1),)),
+        _intent(),
+        _contract(),
+        ("Fiscal", "PDV"),
+    )
+
+    orchestrator.drain_turn_finalizations()
+
+    deadline = time.monotonic() + 5
+    assistant_rows: list[Any] = []
+    while time.monotonic() < deadline:
+        assistant_rows = [
+            row for row in database.messages(conversation_id) if row["role"] == "assistant"
+        ]
+        if assistant_rows:
+            break
+        threading.Event().wait(0.05)
+    assert assistant_rows and assistant_rows[-1]["content"] == "RESPOSTA DIRETA"
+
+
+def test_run_module_fanout_is_provider_agnostic(tmp_path: Path, monkeypatch) -> None:
     """The fan-out only needs the standard provider surface (opencode works)."""
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
+    )
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
@@ -416,6 +618,8 @@ def test_run_module_fanout_is_provider_agnostic(tmp_path: Path) -> None:
         _contract(),
         ("Fiscal", "PDV"),
     )
+
+    orchestrator.drain_turn_finalizations()
 
     assistant_rows = [
         row for row in database.messages(conversation_id) if row["role"] == "assistant"

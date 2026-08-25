@@ -494,6 +494,16 @@ class ConversationOptions:
     mcp_tools: tuple[dict[str, str], ...] = ()
     orchestration: OrchestrationOptions = field(default_factory=OrchestrationOptions)
     vr_enabled: bool = False
+    vr_mode: str = ""
+
+    VALID_VR_MODES = ("off", "vr", "ultra")
+
+    def __post_init__(self) -> None:
+        mode = str(self.vr_mode or "").strip().casefold()
+        if mode not in self.VALID_VR_MODES:
+            mode = "vr" if self.vr_enabled else "off"
+        object.__setattr__(self, "vr_mode", mode)
+        object.__setattr__(self, "vr_enabled", mode != "off")
 
     @classmethod
     def from_mapping(
@@ -514,6 +524,7 @@ class ConversationOptions:
             approval_profile=field_value("approval_profile", "auto") or "auto",
             collaboration_mode=field_value("collaboration_mode", "default") or "default",
             orchestration=OrchestrationOptions.from_mapping(value, model_pool),
+            vr_mode=field_value("vr_mode"),
             vr_enabled=(
                 str(get("vr_enabled")).strip().casefold()
                 not in {"", "0", "false", "no", "off"}

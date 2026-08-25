@@ -11,10 +11,8 @@ Item {
 
     Rectangle { anchors.fill: parent; color: frontend.palette.background }
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: Theme.pageMargin
-        spacing: 10
+    VrPageColumn {
+        spacing: Theme.pageSpacing
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -22,20 +20,12 @@ Item {
             subtitle: "Provedores, aparência, projetos arquivados e preferências locais."
         }
 
-        RowLayout {
+        VrTabBar {
+            objectName: "settingsTabBar"
             Layout.fillWidth: true
-            spacing: 8
-            Repeater {
-                model: ["Geral", "Provedores", "Temas", "Projetos arquivados"]
-                delegate: VrButton {
-                    required property int index
-                    required property string modelData
-                    text: modelData
-                    variant: root.tabIndex === index ? "primary" : "ghost"
-                    onClicked: root.tabIndex = index
-                }
-            }
-            Item { Layout.fillWidth: true }
+            model: ["Geral", "Provedores", "Temas", "Projetos arquivados"]
+            currentIndex: root.tabIndex
+            onActivated: index => root.tabIndex = index
         }
 
         StackLayout {
@@ -43,79 +33,277 @@ Item {
             Layout.fillHeight: true
             currentIndex: root.tabIndex
 
+            // ------------------------------------------------------------ Geral
             Item {
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: Math.min(parent.height, 380)
-                    anchors.margins: 4
-                    radius: Theme.radiusCard
-                    color: frontend.palette.surface
-                    border.width: 1
-                    border.color: frontend.palette.border
-                    GridLayout {
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        columns: 3
-                        rowSpacing: 7
-                        columnSpacing: 7
-                        Text { text: "Fonte de conhecimento VR"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrTextField { id: rootField; Layout.fillWidth: true; text: studio.settingsValues.root || "" }
-                        VrButton { text: "Procurar…"; onClicked: { var value = studio.chooseKnowledgeRoot(); if (value.length) rootField.text = value } }
-                        Text { text: "Email Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrTextField { id: movideskEmail; Layout.fillWidth: true; Layout.columnSpan: 2; text: studio.settingsValues.movideskEmail || "" }
-                        Text { text: "Senha Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrTextField { id: movideskPassword; Layout.fillWidth: true; Layout.columnSpan: 2; text: studio.settingsValues.movideskPassword || ""; echoMode: TextInput.Password }
-                        Text { text: "Email Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrTextField { id: endooEmail; Layout.fillWidth: true; Layout.columnSpan: 2; text: studio.settingsValues.endooEmail || "" }
-                        Text { text: "Senha Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrTextField { id: endooPassword; Layout.fillWidth: true; Layout.columnSpan: 2; text: studio.settingsValues.endooPassword || ""; echoMode: TextInput.Password }
-                        Text { text: "Repetir sincronização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
-                        VrComboBox {
-                            id: interval
+                clip: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spaceXs
+                    spacing: Theme.spaceSm
+
+                    VrCard {
+                        id: geralCard
+                        Layout.fillWidth: true
+
+                        GridLayout {
                             Layout.fillWidth: true
-                            Layout.columnSpan: 2
-                            model: ["A cada 15 minutos", "A cada 30 minutos", "A cada 1 hora", "A cada 2 horas", "A cada 4 horas", "A cada 8 horas", "A cada 24 horas"]
-                            property var values: ["15", "30", "60", "120", "240", "480", "1440"]
-                            Component.onCompleted: {
-                                var found = values.indexOf(studio.settingsValues.interval || "120")
-                                currentIndex = found >= 0 ? found : 3
+                            columns: 3
+                            rowSpacing: Theme.spaceSm
+                            columnSpacing: Theme.spaceSm
+
+                            Text { text: "Fonte de conhecimento VR"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrTextField {
+                                id: rootField
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 140
+                                text: studio.settingsValues.root || ""
                             }
-                        }
-                        Text { text: "Diagnóstico"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; Layout.alignment: Qt.AlignTop }
-                        Text { Layout.fillWidth: true; Layout.columnSpan: 2; text: studio.settingsValues.diagnostic || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 13; wrapMode: Text.WordWrap }
-                        Item { }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.columnSpan: 2
-                            VrButton { text: "Instalar OCR portátil por+eng"; onClicked: studio.runSync("ocr") }
-                            VrButton { text: "Preparar/abrir projeto Codex"; onClicked: studio.openVrInCodex() }
-                            Item { Layout.fillWidth: true }
-                            VrButton {
-                                text: "Salvar .env"
-                                variant: "primary"
-                                onClicked: studio.saveSettings(rootField.text, movideskEmail.text, movideskPassword.text, endooEmail.text, endooPassword.text, interval.values[interval.currentIndex])
+                            VrButton { text: "Procurar…"; onClicked: { var value = studio.chooseKnowledgeRoot(); if (value.length) rootField.text = value } }
+
+                            Text { text: "Email Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrTextField { id: movideskEmail; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.movideskEmail || "" }
+                            Text { text: "Senha Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrTextField { id: movideskPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.movideskPassword || ""; echoMode: TextInput.Password }
+                            Text { text: "Email Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrTextField { id: endooEmail; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.endooEmail || "" }
+                            Text { text: "Senha Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrTextField { id: endooPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.endooPassword || ""; echoMode: TextInput.Password }
+
+                            Text { text: "Repetir sincronização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            VrComboBox {
+                                id: interval
+                                Layout.fillWidth: true
+                                Layout.columnSpan: 2
+                                model: ["A cada 15 minutos", "A cada 30 minutos", "A cada 1 hora", "A cada 2 horas", "A cada 4 horas", "A cada 8 horas", "A cada 24 horas"]
+                                property var values: ["15", "30", "60", "120", "240", "480", "1440"]
+                                Component.onCompleted: {
+                                    var found = values.indexOf(studio.settingsValues.interval || "120")
+                                    currentIndex = found >= 0 ? found : 3
+                                }
+                            }
+
+                            Text { text: "Diagnóstico"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; Layout.alignment: Qt.AlignTop }
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 100
+                                Layout.columnSpan: 2
+                                text: studio.settingsValues.diagnostic || ""
+                                color: frontend.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.bodySize
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                Layout.columnSpan: 2
+                                spacing: Theme.spaceSm
+
+                                VrButton { text: "Instalar OCR portátil"; onClicked: studio.runSync("ocr") }
+                                VrButton { text: "Abrir no Codex"; onClicked: studio.openVrInCodex() }
+                                Item { Layout.fillWidth: true }
+                                VrButton {
+                                    text: "Salvar .env"
+                                    variant: "primary"
+                                    onClicked: studio.saveSettings(rootField.text, movideskEmail.text, movideskPassword.text, endooEmail.text, endooPassword.text, interval.values[interval.currentIndex])
+                                }
                             }
                         }
                     }
+
+                    // ------------------------------------------------ pesquisa
+                    VrCard {
+                        id: researchCard
+                        objectName: "researchSettingsCard"
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spaceMd
+                            spacing: Theme.spaceSm
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Text { text: "Pesquisa multiagente (VR Ultra)"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Modelos usados pelos pesquisadores paralelos. A síntese usa o modelo da conversa; a qualidade é a mesma do VR — o Ultra só acelera."
+                                    color: frontend.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.captionSize
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Rectangle {
+                                id: researchModelList
+                                objectName: "researchModelList"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 148
+                                radius: Theme.radiusControl
+                                color: frontend.palette.background
+                                border.width: 1
+                                border.color: frontend.palette.border
+
+                                ListView {
+                                    id: researchList
+                                    anchors.fill: parent
+                                    anchors.margins: 4
+                                    clip: true
+                                    spacing: 2
+                                    model: chat.researchModelItems
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        width: researchList.width
+                                        height: 58
+                                        radius: Theme.radiusControl
+                                        color: researchDelegateMouse.containsMouse
+                                            ? frontend.palette.chatControl
+                                            : selected ? frontend.palette.accentSoft : "transparent"
+                                        border.width: selected ? 1 : 0
+                                        border.color: frontend.palette.brandOrange
+                                        property bool selected: chat.researchModelKeys.indexOf(modelData.key) >= 0
+
+                                        MouseArea {
+                                            id: researchDelegateMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                var keys = chat.researchModelKeys.slice()
+                                                var at = keys.indexOf(modelData.key)
+                                                if (at >= 0) keys.splice(at, 1)
+                                                else keys.push(modelData.key)
+                                                chat.setResearchModels(keys)
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.spaceSm
+                                            spacing: Theme.spaceSm
+
+                                            VrCheckBox { checked: parent.parent.selected }
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+
+                                                RowLayout {
+                                                    spacing: Theme.spaceSm
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: modelData.label
+                                                        color: frontend.palette.text
+                                                        font.family: Theme.fontFamily
+                                                        font.pixelSize: Theme.bodySize
+                                                        font.weight: Font.DemiBold
+                                                        elide: Text.ElideRight
+                                                    }
+                                                    Rectangle {
+                                                        radius: 8
+                                                        implicitWidth: providerBadge.implicitWidth + 14
+                                                        implicitHeight: 18
+                                                        color: frontend.palette.chatControl
+                                                        Text {
+                                                            id: providerBadge
+                                                            anchors.centerIn: parent
+                                                            text: modelData.provider.toUpperCase()
+                                                            color: frontend.palette.mutedText
+                                                            font.family: Theme.fontFamily
+                                                            font.pixelSize: Theme.captionSize
+                                                            font.weight: Font.DemiBold
+                                                        }
+                                                    }
+                                                }
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: modelData.description || modelData.value
+                                                    color: frontend.palette.mutedText
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.captionSize
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: chat.researchModelItems.length === 0
+                                        text: "Nenhum modelo disponível.\nVerifique os provedores na aba ao lado."
+                                        horizontalAlignment: Text.AlignHCenter
+                                        color: frontend.palette.mutedText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.bodySize
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spaceMd
+
+                                Text {
+                                    text: chat.researchModelKeys.length
+                                        + (chat.researchModelKeys.length === 1
+                                           ? " modelo selecionado"
+                                           : " modelos selecionados")
+                                    color: frontend.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.captionSize
+                                }
+                                Item { Layout.fillWidth: true }
+
+                                ColumnLayout {
+                                    spacing: 2
+                                    Text { text: "Disparo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                                    VrComboBox {
+                                        Layout.preferredWidth: 180
+                                        model: ["Automático", "Somente /pesquisa"]
+                                        currentIndex: chat.researchTrigger === "manual" ? 1 : 0
+                                        onActivated: index => chat.setResearchTrigger(index === 1 ? "manual" : "auto")
+                                    }
+                                }
+                                ColumnLayout {
+                                    spacing: 2
+                                    Text { text: "Simultâneos"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                                    VrComboBox {
+                                        Layout.preferredWidth: 160
+                                        model: ["1 (sequencial)", "2", "3 (padrão)"]
+                                        currentIndex: chat.researchMaxParallel - 1
+                                        onActivated: index => chat.setResearchMaxParallel(index + 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
                 }
             }
 
+            // -------------------------------------------------------- Provedores
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 4
-                    spacing: 10
+                    anchors.margins: Theme.spaceXs
+                    spacing: Theme.spaceMd
+
                     RowLayout {
                         Layout.fillWidth: true
                         ColumnLayout {
                             Layout.fillWidth: true
+                            spacing: 3
                             Text { text: "Provedores"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
-                            Text { text: "Ative os provedores disponíveis para novas conversas. O estado é verificado localmente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                            Text { text: "Ative os provedores disponíveis para novas conversas. O estado é verificado localmente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
                         }
                         VrButton { text: "Atualizar"; onClicked: studio.refreshProviders() }
                     }
+
                     Repeater {
                         model: studio.providerItems
                         delegate: Rectangle {
@@ -128,30 +316,32 @@ Item {
                             border.color: frontend.palette.border
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.margins: 14
+                                anchors.margins: Theme.spaceMd
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 3
-                                    Text { text: modelData.name; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 16; font.weight: Font.DemiBold }
-                                    Text { text: modelData.description; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                                    Text { text: modelData.status; color: modelData.available && modelData.enabled ? frontend.palette.success : frontend.palette.warning; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                    Text { text: modelData.name; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
+                                    Text { text: modelData.description; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                                    Text { text: modelData.status; color: modelData.available && modelData.enabled ? frontend.palette.success : frontend.palette.warning; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
                                 }
                                 VrCheckBox { text: "Ativo"; checked: modelData.enabled; onToggled: studio.setProviderEnabled(modelData.id, checked) }
                             }
                         }
                     }
-                    Text { text: "Verificado agora · configurações aplicadas a novas conversas"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+                    Text { text: "Verificado agora · configurações aplicadas a novas conversas"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
                     Item { Layout.fillHeight: true }
                 }
             }
 
+            // ------------------------------------------------------------ Temas
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 4
-                    spacing: 10
+                    anchors.margins: Theme.spaceXs
+                    spacing: Theme.spaceMd
                     Text { text: "Aparência"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
-                    Text { text: "Escolha o tema usado em todas as telas do VR Norte Studio."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
+                    Text { text: "Escolha o tema usado em todas as telas do VR Norte Studio."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 96
@@ -161,11 +351,12 @@ Item {
                         border.color: frontend.palette.border
                         RowLayout {
                             anchors.fill: parent
-                            anchors.margins: 14
+                            anchors.margins: Theme.spaceMd
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Text { text: "Tema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold }
-                                Text { text: "A alteração é aplicada imediatamente e salva neste computador."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+                                spacing: 3
+                                Text { text: "Tema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                                Text { text: "A alteração é aplicada imediatamente e salva neste computador."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
                             }
                             VrComboBox {
                                 Layout.preferredWidth: 210
@@ -184,24 +375,56 @@ Item {
                         border.color: frontend.palette.border
                         RowLayout {
                             anchors.fill: parent
-                            anchors.margins: 14
+                            anchors.margins: Theme.spaceMd
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Text { text: "Movimento"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold }
-                                Text { text: "Evita pulsos e transições decorativas sem remover feedback de estado."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+                                spacing: 3
+                                Text { text: "Movimento"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                                Text { text: "Evita pulsos e transições decorativas sem remover feedback de estado."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
                             }
                             VrCheckBox { text: "Reduzir movimento"; checked: frontend.reduceMotion; onToggled: frontend.setReduceMotion(checked) }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 96
+                        radius: Theme.radiusCard
+                        color: frontend.palette.surface
+                        border.width: 1
+                        border.color: frontend.palette.border
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spaceMd
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Text { text: "Escala da interface"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                                Text { text: "Aumenta textos e controles em monitores QHD e 4K. A alteração é aplicada ao reiniciar o Studio e se soma à escala do Windows."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
+                            }
+                            VrComboBox {
+                                id: uiScaleCombo
+                                objectName: "uiScaleCombo"
+                                Layout.preferredWidth: 210
+                                model: ["100%", "110%", "125%", "150%"]
+                                property var values: ["100", "110", "125", "150"]
+                                Component.onCompleted: {
+                                    var found = values.indexOf(frontend.uiScale)
+                                    currentIndex = found >= 0 ? found : 0
+                                }
+                                onActivated: index => frontend.setUiScale(values[index])
+                            }
                         }
                     }
                     Item { Layout.fillHeight: true }
                 }
             }
 
+            // ------------------------------------------------ Projetos arquivados
             Item {
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 4
-                    spacing: 10
+                    anchors.margins: Theme.spaceXs
+                    spacing: Theme.spaceMd
                     Text { text: "Projetos arquivados"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
                     Text { Layout.fillWidth: true; text: "Conversas arquivadas ficam separadas do Chat VR. Use o botão de excluir no item para removê-las definitivamente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
                     RowLayout {
@@ -214,7 +437,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        spacing: 6
+                        spacing: Theme.spaceXs
                         model: studio.archivedModel
                         delegate: Rectangle {
                             required property string conversationId
@@ -230,11 +453,12 @@ Item {
                             border.color: frontend.palette.border
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.margins: 10
+                                anchors.margins: Theme.spaceSm
                                 ColumnLayout {
                                     Layout.fillWidth: true
-                                    Text { Layout.fillWidth: true; text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { Layout.fillWidth: true; text: project + " · " + provider + " · " + updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 11; elide: Text.ElideRight }
+                                    spacing: 2
+                                    Text { Layout.fillWidth: true; text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Text { Layout.fillWidth: true; text: project + " · " + provider + " · " + updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; elide: Text.ElideRight }
                                 }
                                 VrButton { text: "Restaurar"; onClicked: studio.restoreArchived(conversationId) }
                                 VrButton { text: "Excluir"; onClicked: { root.pendingDeleteId = conversationId; deleteDialog.open() } }
@@ -248,6 +472,7 @@ Item {
     }
 
     Timer { id: archiveDelay; interval: 180; onTriggered: studio.refreshArchived(archivedSearch.text) }
+
     Dialog {
         id: deleteDialog
         anchors.centerIn: parent
@@ -255,16 +480,20 @@ Item {
         modal: true
         title: "Excluir conversa definitivamente?"
         standardButtons: Dialog.NoButton
+        onAboutToShow: deleteConfirmField.text = ""
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.spaceMd
             Text { Layout.fillWidth: true; text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "Digite EXCLUIR para confirmar."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+            VrTextField { id: deleteConfirmField; Layout.fillWidth: true; placeholderText: "EXCLUIR" }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Cancelar"; onClicked: deleteDialog.close() }
                 Item { Layout.fillWidth: true }
                 VrButton {
                     text: "Excluir definitivamente"
-                    variant: "primary"
+                    variant: "danger"
+                    enabled: deleteConfirmField.text === "EXCLUIR"
                     onClicked: {
                         studio.purgeArchived(root.pendingDeleteId)
                         root.pendingDeleteId = ""

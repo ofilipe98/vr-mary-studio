@@ -12,6 +12,14 @@ Button {
     property int currentTierIndex: 0
     readonly property var currentEffort: currentEffortIndex >= 0
         && currentEffortIndex < effortModel.length ? effortModel[currentEffortIndex] : ({})
+    readonly property var currentTier: currentTierIndex >= 0
+        && currentTierIndex < tierModel.length ? tierModel[currentTierIndex] : ({})
+    readonly property string compactLabel: {
+        var effort = control.currentEffort.label || ""
+        var tier = control.currentTier.label || ""
+        if (effort.length && tier.length) return effort + " · " + tier
+        return effort.length ? effort : tier
+    }
     signal effortActivated(int index)
     signal tierActivated(int index)
 
@@ -35,7 +43,7 @@ Button {
             font.pixelSize: 14
         }
         Text {
-            text: control.currentEffort.label || "Medium"
+            text: control.compactLabel || "Medium"
             color: frontend.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: 13

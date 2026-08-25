@@ -18,13 +18,20 @@ Item {
     Connections {
         target: studio
         function onVideosChanged() {
-            if (studio.videoLoading) return
-            if (!root.treeInitialized && studio.videoExpandableNodeIds.length > 0) {
-                root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
-                root.treeInitialized = true
-            }
+            root.ensureInitialCollapse()
         }
     }
+
+    function ensureInitialCollapse() {
+        if (root.treeInitialized || root.filterActive) return
+        if (studio.videoLoading) return
+        if (videoList.count <= 0) return
+        if (studio.videoExpandableNodeIds.length <= 0) return
+        root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
+        root.treeInitialized = true
+    }
+
+    Component.onCompleted: root.ensureInitialCollapse()
 
     function runFilter() {
         studio.filterVideos(
@@ -225,6 +232,7 @@ Item {
                     Layout.fillHeight: true
                     clip: true
                     model: studio.videoModel
+                    onCountChanged: root.ensureInitialCollapse()
                     delegate: Rectangle {
                         id: videoRow
                         required property int index

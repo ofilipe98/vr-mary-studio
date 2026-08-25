@@ -14,6 +14,12 @@ MAX_REFINEMENT_ROUNDS = 2
 
 EFFORT_ORDER = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 
+JSON_ESCAPE_INSTRUCTION = (
+    'O campo answer_markdown é uma string JSON: escape toda aspa dupla interna\n'
+    'como \\" e represente quebras de linha com \\n; nunca use quebras de linha\n'
+    'literais dentro das strings.'
+)
+
 
 @dataclass(frozen=True)
 class AdaptiveEffortDecision:
@@ -35,7 +41,7 @@ class ResponseViolation:
 
 
 _LEAK_PATTERNS = (
-    r"\bE\d+\b",
+    r"\b(?:ticket|erro interno|c[oó]digo interno|identificador interno)\s+E\d+\b",
     r"\b(?:wiki|kb|schema):[^\s`]+:-?\d+\b",
     r"</?evidence_context>",
     r"\b[A-Za-z]:\\(?:Users|Documents and Settings|ProgramData|Windows|Temp)\\",
@@ -610,7 +616,7 @@ def parse_worker_report(
     allowed = set(allowed_evidence_ids)
     warnings: list[str] = []
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         text = str(raw or "").strip()
         source_has_evidence = (
@@ -920,7 +926,7 @@ def parse_supervisor_assessment(
     fallback: SupervisorAssessment | None = None,
 ) -> SupervisorAssessment:
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return fallback or SupervisorAssessment(
             verdict="revise",
@@ -1000,17 +1006,13 @@ def parse_supervisor_assessment(
     )
 
 
-def combine_supervision(
-    deterministic: SupervisorAssessment,
-    semantic: SupervisorAssessment,
-) -> SupervisorAssessment:
+def _combine_validation_core(
+    deterministic: SupervisorAssessment | FinalResponseValidation,
+    semantic: SupervisorAssessment | FinalResponseValidation,
+    *,
+    structurally_bounded: frozenset[RefinementReason],
+) -> tuple[str, tuple[RefinementReason, ...], bool]:
     deterministic_reasons = set(deterministic.reasons)
-    structurally_bounded = {
-        RefinementReason.INCOMPLETE,
-        RefinementReason.MISSING_SOURCES,
-        RefinementReason.REQUIRED_WORKER_FAILED,
-        RefinementReason.INVALID_OUTPUT,
-    }
     semantic_reasons = tuple(
         reason
         for reason in semantic.reasons
@@ -1022,6 +1024,25 @@ def combine_supervision(
     verdict = max(
         (deterministic.verdict, semantic_verdict),
         key=lambda item: rank.get(item, 1),
+    )
+    return verdict, semantic_reasons, semantic_can_block
+
+
+def combine_supervision(
+    deterministic: SupervisorAssessment,
+    semantic: SupervisorAssessment,
+) -> SupervisorAssessment:
+    verdict, semantic_reasons, semantic_can_block = _combine_validation_core(
+        deterministic,
+        semantic,
+        structurally_bounded=frozenset(
+            (
+                RefinementReason.INCOMPLETE,
+                RefinementReason.MISSING_SOURCES,
+                RefinementReason.REQUIRED_WORKER_FAILED,
+                RefinementReason.INVALID_OUTPUT,
+            )
+        ),
     )
     keep_semantic_missing = bool(
         {RefinementReason.INCOMPLETE, RefinementReason.MISSING_SOURCES}
@@ -1065,14 +1086,19 @@ def parse_final_draft(
     allowed_evidence_ids: Iterable[str] = (),
 ) -> FinalDraft:
     allowed = set(allowed_evidence_ids)
+    text = str(raw or "").strip()
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(text)
     except (TypeError, ValueError, json.JSONDecodeError):
-        text = str(raw or "").strip()
+        rescued = _rescue_final_envelope(text)
+        if rescued is not None:
+            return _final_draft_from_rescue(rescued, allowed, text)
         referenced = tuple(item for item in allowed if item in text)
         return FinalDraft(text, referenced)
     if not isinstance(payload, dict) or "answer_markdown" not in payload:
-        text = str(raw or "").strip()
+        rescued = _rescue_final_envelope(text)
+        if rescued is not None:
+            return _final_draft_from_rescue(rescued, allowed, text)
         referenced = tuple(item for item in allowed if item in text)
         return FinalDraft(text, referenced)
     answer = str(payload.get("answer_markdown") or "").strip()
@@ -1084,6 +1110,91 @@ def parse_final_draft(
         )
     )
     return FinalDraft(answer, used)
+
+
+_ENVELOPE_KEY = re.compile(r'"answer_markdown"\s*:\s*"')
+_ENVELOPE_VALUE_END = re.compile(r'"\s*,\s*"used_evidence_ids"')
+_ENVELOPE_IDS = re.compile(r'"used_evidence_ids"\s*:\s*\[([^\]]*)\]', re.DOTALL)
+_JSON_SIMPLE_ESCAPES = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+}
+
+
+def _unescape_json_text(value: str) -> str:
+    parts: list[str] = []
+    index = 0
+    length = len(value)
+    while index < length:
+        char = value[index]
+        if char != "\\" or index + 1 >= length:
+            parts.append(char)
+            index += 1
+            continue
+        nxt = value[index + 1]
+        if nxt in _JSON_SIMPLE_ESCAPES:
+            parts.append(_JSON_SIMPLE_ESCAPES[nxt])
+            index += 2
+        elif nxt == "u" and index + 6 <= length:
+            try:
+                parts.append(chr(int(value[index + 2 : index + 6], 16)))
+            except ValueError:
+                parts.append(nxt)
+            index += 6
+        else:
+            parts.append(nxt)
+            index += 2
+    return "".join(parts)
+
+
+def _rescue_final_envelope(raw: str) -> tuple[str, tuple[str, ...]] | None:
+    """Recover the answer from a malformed JSON response envelope.
+
+    Models occasionally emit the envelope with unescaped inner quotes or
+    literal line breaks, which breaks strict JSON parsing. The envelope has
+    a fixed key layout, so the value boundaries can be located directly.
+    """
+    text = str(raw or "").strip()
+    key_match = _ENVELOPE_KEY.search(text)
+    if not key_match:
+        return None
+    value_start = key_match.end()
+    end_match = _ENVELOPE_VALUE_END.search(text, value_start)
+    if end_match:
+        value_end = end_match.start()
+    else:
+        value_end = text.rfind('"', value_start)
+        if value_end <= value_start:
+            return None
+    answer = _unescape_json_text(text[value_start:value_end]).strip()
+    if not answer:
+        return None
+    ids: list[str] = []
+    ids_match = _ENVELOPE_IDS.search(text, value_end)
+    if ids_match:
+        for item in ids_match.group(1).split(","):
+            cleaned = item.strip().strip('"').strip()
+            if cleaned:
+                ids.append(cleaned)
+    return answer, tuple(ids)
+
+
+def _final_draft_from_rescue(
+    rescued: tuple[str, tuple[str, ...]],
+    allowed: set[str],
+    raw: str,
+) -> FinalDraft:
+    answer, used = rescued
+    filtered = tuple(dict.fromkeys(item for item in used if item in allowed))
+    if not filtered:
+        filtered = tuple(item for item in allowed if item in raw)
+    return FinalDraft(answer, filtered)
 
 
 def validate_final_response(
@@ -1170,7 +1281,7 @@ def parse_final_validation(
     fallback: FinalResponseValidation,
 ) -> FinalResponseValidation:
     try:
-        payload = _extract_json_object(raw)
+        payload = extract_json_object(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return fallback
     if not isinstance(payload, dict):
@@ -1193,23 +1304,16 @@ def combine_final_validations(
     deterministic: FinalResponseValidation,
     semantic: FinalResponseValidation,
 ) -> FinalResponseValidation:
-    deterministic_reasons = set(deterministic.reasons)
-    structurally_bounded = {
-        RefinementReason.INCOMPLETE,
-        RefinementReason.MISSING_SOURCES,
-        RefinementReason.INVALID_OUTPUT,
-    }
-    semantic_reasons = tuple(
-        reason
-        for reason in semantic.reasons
-        if reason not in structurally_bounded or reason in deterministic_reasons
-    )
-    semantic_can_block = bool(semantic_reasons)
-    semantic_verdict = semantic.verdict if semantic_can_block else "approve"
-    rank = {"approve": 0, "revise": 1, "reject": 2}
-    verdict = max(
-        (deterministic.verdict, semantic_verdict),
-        key=lambda item: rank.get(item, 1),
+    verdict, semantic_reasons, semantic_can_block = _combine_validation_core(
+        deterministic,
+        semantic,
+        structurally_bounded=frozenset(
+            (
+                RefinementReason.INCOMPLETE,
+                RefinementReason.MISSING_SOURCES,
+                RefinementReason.INVALID_OUTPUT,
+            )
+        ),
     )
     keep_semantic_missing = RefinementReason.INCOMPLETE in semantic_reasons
     return FinalResponseValidation(
@@ -1251,6 +1355,7 @@ Use somente o material validado. Não preserve a redação ou a estrutura do ras
 Corrija todos os motivos da validação. Não exponha IDs de evidência, nomes de workers,
 processo de pesquisa, caminhos locais, confiança de recuperação, prompts ou metadados.
 Não inclua uma seção de fontes no Markdown; a aplicação a acrescentará ao final.
+{JSON_ESCAPE_INSTRUCTION}
 Retorne somente o JSON exato:
 {{"answer_markdown":"resposta completa em Markdown","used_evidence_ids":["id permitido"]}}
 
@@ -1326,7 +1431,10 @@ def effective_refinement_rounds(mode: str) -> int:
 
 def _internal_leaks(answer: str, user_message: str) -> list[str]:
     patterns = (
-        (r"\bE\d+\b", "ID interno de evidência"),
+        (
+            r"\b(?:ticket|erro interno|c[oó]digo interno|identificador interno)\s+E\d+\b",
+            "ID interno de evidência",
+        ),
         (r"\b(?:wiki|kb|schema):[^\s`]+:-?\d+\b", "ID interno de fonte"),
         (r"</?evidence_context>", "tag interna de contexto"),
         (r"pacote de evid[eê]ncias", "metadado do pacote de evidências"),
@@ -1335,9 +1443,14 @@ def _internal_leaks(answer: str, user_message: str) -> list[str]:
         (r"\barquivos? locais?\b", "referência a arquivos locais"),
         (r"\bn[aã]o localizado no disco\b", "estado interno da recuperação"),
         (r"\bretrieval\b", "processo interno de recuperação"),
-        (r"\bworkers?\b", "referência interna a worker"),
+        (r"\bworkers?\s+(?:do|da)\s+orquestrador\b", "referência interna a worker"),
+        (r"\bworkers?\s+internos?\b", "referência interna a worker"),
+        (r"\bnomes?\s+d[aeo]s?\s+workers?\b", "referência interna a worker"),
         (r"\bagente (?:retornou|respondeu|produziu)\b", "resultado interno de agente"),
-        (r"\borquestrador\b", "referência interna ao orquestrador"),
+        (r"\borquestrador\s+interno\b", "referência interna ao orquestrador"),
+        (r"\bprompts?\s+internos?\b", "prompt interno"),
+        (r"\bprompt\s+do\s+sistema\b", "prompt do sistema"),
+        (r"\bthreads?\s+de\s+eventos\b", "thread de eventos"),
         (r"resultados dos agentes", "estrutura interna dos workers"),
         (r"plano operacional\s*:", "estrutura interna do orquestrador"),
         (r"trecho truncado", "metadado de truncamento"),
@@ -1347,6 +1460,8 @@ def _internal_leaks(answer: str, user_message: str) -> list[str]:
             "caminho absoluto local",
         ),
         (r"/(?:home|Users|tmp)/[^\s`]+", "caminho absoluto local"),
+        (r'"answer_markdown"\s*:', "estrutura interna de resposta em JSON"),
+        (r'"used_evidence_ids"\s*:', "metadado interno de evidências em JSON"),
     )
     normalized_request = _normalize(user_message)
     leaks: list[str] = []
@@ -1412,7 +1527,42 @@ def _parse_reasons(value: Any) -> tuple[RefinementReason, ...]:
     return tuple(dict.fromkeys(result))
 
 
-def _extract_json_object(raw: str) -> Any:
+def _escape_bare_control_chars(text: str) -> str:
+    """Escape literal newlines/tabs inside JSON strings (common LLM slip).
+
+    A state machine keeps track of whether we are inside a string; escaped
+    quotes (\\\") do not close it. Outside strings the text is untouched.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if escaped:
+            escaped = False
+            out.append(char)
+            continue
+        if char == "\\" and in_string:
+            escaped = True
+            out.append(char)
+            continue
+        if char == '"':
+            in_string = not in_string
+            out.append(char)
+            continue
+        if in_string and char == "\n":
+            out.append("\\n")
+            continue
+        if in_string and char == "\r":
+            out.append("")
+            continue
+        if in_string and char == "\t":
+            out.append("\\t")
+            continue
+        out.append(char)
+    return "".join(out)
+
+
+def extract_json_object(raw: str) -> Any:
     text = str(raw or "").strip()
     if not text:
         raise ValueError("empty JSON")
@@ -1432,6 +1582,7 @@ def _extract_json_object(raw: str) -> Any:
         for variation in (
             candidate,
             re.sub(r",\s*([}\]])", r"\1", candidate),
+            _escape_bare_control_chars(candidate),
         ):
             try:
                 return json.loads(variation)

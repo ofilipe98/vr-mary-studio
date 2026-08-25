@@ -17,13 +17,27 @@ from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import load_vr_settings
 from ..workspace import initialize_workspace
-from .bridge import FrontendBridge
+from .bridge import FrontendBridge, normalized_ui_scale
 from .chat import ChatBridge
 from .studio import StudioBridge
 
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
 MAIN_QML = QML_DIR / "Main.qml"
+
+
+def apply_ui_scale_environment(preferences: QSettings) -> None:
+    """Apply the saved interface scale before the QGuiApplication exists.
+
+    QHD and 4K monitors often run at 100% system scaling, where the default
+    density feels small. The preference multiplies the whole render through
+    QT_SCALE_FACTOR and must be set before Qt reads the environment.
+    """
+    scale = normalized_ui_scale(str(preferences.value("appearance/ui_scale", "") or ""))
+    if scale == "100":
+        return
+    if "QT_SCALE_FACTOR" not in os.environ:
+        os.environ["QT_SCALE_FACTOR"] = f"{int(scale) / 100:.2f}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError:  # pragma: no cover - optional Qt module in minimal builds
         pass
 
+    preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
+    apply_ui_scale_environment(preferences)
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -110,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuração inválida: {exc}", file=sys.stderr)
         return 1
 
-    preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
     bridge = FrontendBridge(
         settings,
         preferences,
@@ -120,7 +136,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     database = initialize_workspace(settings)
     chat_bridge = ChatBridge(settings, database, preferences)
-    studio_bridge = StudioBridge(settings, database, preferences)
+    studio_bridge = StudioBridge(
+        settings,
+        database,
+        preferences,
+        chat_orchestrator=chat_bridge._orchestrator,
+    )
     engine = create_engine(bridge, chat_bridge, studio_bridge)
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):

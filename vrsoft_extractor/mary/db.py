@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -44,6 +45,8 @@ REVIEW_MODULES = {
 }
 REVIEW_ACTIONS = {"approve", "keep", "defer", "reopen"}
 
+LOGGER = logging.getLogger(__name__)
+
 
 def _default_source_origin(source: str) -> str:
     return {
@@ -51,6 +54,15 @@ def _default_source_origin(source: str) -> str:
         "kb": "movidesk",
         "schema": "local",
     }.get(str(source or "").strip().casefold(), str(source or "").strip().casefold())
+
+
+def _escape_like(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
 
 
 def _review_reasons(raw: str) -> list[str]:
@@ -199,6 +211,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     model TEXT NOT NULL DEFAULT '',
     effort TEXT NOT NULL DEFAULT 'medium',
     native_id TEXT NOT NULL DEFAULT '',
+    native_id_vr TEXT NOT NULL DEFAULT '',
     workspace TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle',
     archived INTEGER NOT NULL DEFAULT 0,
@@ -215,6 +228,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
     difficulty_routing INTEGER NOT NULL DEFAULT 1,
     vr_enabled INTEGER NOT NULL DEFAULT 0,
+    vr_mode TEXT NOT NULL DEFAULT 'off',
     context_used_tokens INTEGER NOT NULL DEFAULT 0,
     context_window_tokens INTEGER NOT NULL DEFAULT 0,
     total_processed_tokens INTEGER NOT NULL DEFAULT 0,
@@ -428,6 +442,8 @@ class MaryDatabase:
                 ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
                 ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("vr_mode", "TEXT NOT NULL DEFAULT ''"),
+                ("native_id_vr", "TEXT NOT NULL DEFAULT ''"),
                 ("context_used_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("context_window_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("total_processed_tokens", "INTEGER NOT NULL DEFAULT 0"),
@@ -435,6 +451,11 @@ class MaryDatabase:
                 ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
             ):
                 self._ensure_column(connection, "conversations", column, definition)
+            connection.execute(
+                """UPDATE conversations
+                      SET vr_mode=CASE WHEN vr_enabled=1 THEN 'vr' ELSE 'off' END
+                    WHERE trim(vr_mode)=''"""
+            )
             connection.execute(
                 """UPDATE conversations
                       SET orchestration_mode=CASE
@@ -513,6 +534,18 @@ class MaryDatabase:
                     ON schema_relations(to_schema,to_table,to_column);
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_conversation_kind
                     ON runtime_events(conversation_id,kind,id);
+                CREATE INDEX IF NOT EXISTS idx_messages_conversation
+                    ON messages(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_source_citations_message
+                    ON source_citations(message_id);
+                CREATE INDEX IF NOT EXISTS idx_source_citations_conversation
+                    ON source_citations(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_document_versions_document
+                    ON document_versions(document_id);
+                CREATE INDEX IF NOT EXISTS idx_approvals_conversation
+                    ON approvals(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_conversation
+                    ON artifacts(conversation_id);
                 """
             )
 
@@ -726,7 +759,8 @@ class MaryDatabase:
                        ''
                      )
                      ELSE document_hash
-                   END""",
+                   END
+                WHERE queued_at='' OR updated_at='' OR document_hash=''""",
             (now, now),
         )
         rows = connection.execute(
@@ -829,7 +863,10 @@ class MaryDatabase:
                         THEN documents.review_status
                       ELSE excluded.review_status END,
                     status=excluded.status,category=excluded.category,product=excluded.product,
-                    created_at=excluded.created_at,updated_at=excluded.updated_at,
+                    created_at=CASE
+                      WHEN trim(documents.created_at)=''
+                      THEN excluded.created_at ELSE documents.created_at END,
+                    updated_at=excluded.updated_at,
                     synced_at=excluded.synced_at,revision=excluded.revision,
                     content_hash=excluded.content_hash,markdown=excluded.markdown,
                     ocr_text=excluded.ocr_text,local_path=excluded.local_path,
@@ -1079,9 +1116,6 @@ class MaryDatabase:
             )
             return True
 
-    def decide_review(self, review_id: int, module: str) -> None:
-        self.decide_reviews([review_id], "approve", module=module)
-
     def decide_reviews(
         self,
         review_ids: list[int],
@@ -1295,8 +1329,10 @@ class MaryDatabase:
                 else:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(content)
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Falha ao restaurar arquivo %s: %s", path, exc
+                )
 
     def _remove_replaced_document_files(
         self, replaced_files: list[tuple[Path, Path]]
@@ -1313,11 +1349,25 @@ class MaryDatabase:
                     and previous.is_file()
                 ):
                     previous.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Falha ao remover arquivo substituído %s: %s", previous, exc
+                )
 
     def list_reviews(self) -> list[dict[str, Any]]:
-        return self.query_reviews(ReviewFilters(limit=10_000)).items
+        items: list[dict[str, Any]] = []
+        page_size = 500
+        maximum = 10_000
+        offset = 0
+        while len(items) < maximum:
+            page = self.query_reviews(
+                ReviewFilters(limit=page_size, offset=offset)
+            )
+            items.extend(page.items)
+            if len(page.items) < page_size or len(items) >= page.total:
+                break
+            offset += page_size
+        return items[:maximum]
 
     def query_reviews(self, filters: ReviewFilters) -> ReviewPage:
         where = ["d.status='active'"]
@@ -1356,13 +1406,13 @@ class MaryDatabase:
             )
             params.append(f"-{filters.period_days} days")
         if filters.query.strip():
-            needle = f"%{filters.query.strip().casefold()}%"
+            needle = f"%{_escape_like(filters.query.strip().casefold())}%"
             where.append(
                 """lower(
                      d.title || ' ' || d.source_id || ' ' || d.product || ' ' ||
                      d.category || ' ' || r.reasons_json || ' ' || d.markdown ||
                      ' ' || d.ocr_text
-                   ) LIKE ?"""
+                   ) LIKE ? ESCAPE '\\'"""
             )
             params.append(needle)
 
@@ -1638,10 +1688,11 @@ class MaryDatabase:
         if not terms:
             return []
         where = " OR ".join(
-            "lower(t.schema_name||'.'||t.table_name||' '||c.column_name) LIKE ?"
+            "lower(t.schema_name||'.'||t.table_name||' '||c.column_name) "
+            "LIKE ? ESCAPE '\\'"
             for _ in terms
         )
-        params = [f"%{term.casefold()}%" for term in terms]
+        params = [f"%{_escape_like(term.casefold())}%" for term in terms]
         with self.connect() as connection:
             rows = connection.execute(
                 f"""SELECT t.id AS table_id,t.document_id,t.schema_name,t.table_name,
@@ -1824,10 +1875,14 @@ class MaryDatabase:
         collaboration_mode: str = "default",
         orchestration: OrchestrationOptions | None = None,
         vr_enabled: bool = False,
+        vr_mode: str = "",
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
         orchestration = orchestration or OrchestrationOptions()
+        resolved_mode = str(vr_mode or "").strip().casefold()
+        if resolved_mode not in {"off", "vr", "ultra"}:
+            resolved_mode = "vr" if vr_enabled else "off"
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO conversations
@@ -1835,9 +1890,9 @@ class MaryDatabase:
                     collaboration_mode,orchestration_enabled,orchestration_mode,
                     orchestration_strategy,
                     ultra_enabled,show_execution,explain_routing,dynamic_model_routing,
-                     dynamic_agent_count,difficulty_routing,vr_enabled,workspace,cloned_from,
-                     created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     dynamic_agent_count,difficulty_routing,vr_enabled,vr_mode,workspace,
+                     cloned_from,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
@@ -1857,6 +1912,7 @@ class MaryDatabase:
                     int(orchestration.dynamic_agent_count),
                     int(orchestration.difficulty_routing),
                     int(vr_enabled),
+                    resolved_mode,
                     to_portable_path(self.root, workspace) if self.root else str(workspace),
                     cloned_from,
                     now,
@@ -1901,13 +1957,14 @@ class MaryDatabase:
 
     def update_conversation(self, conversation_id: str, **fields: Any) -> None:
         allowed = {
-            "title", "provider", "model", "effort", "native_id", "status", "archived",
+            "title", "provider", "model", "effort", "native_id", "native_id_vr",
+            "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
             "orchestration_enabled", "orchestration_mode",
             "orchestration_strategy", "ultra_enabled",
             "show_execution", "explain_routing",
             "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
-            "workspace", "original_workspace", "vr_enabled",
+            "workspace", "original_workspace", "vr_enabled", "vr_mode",
             "context_used_tokens", "context_window_tokens", "total_processed_tokens",
         }
         values = {key: value for key, value in fields.items() if key in allowed}

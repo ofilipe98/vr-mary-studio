@@ -47,6 +47,12 @@ class MarySettings:
     # Production keeps this disabled; focused legacy tests may enable it while
     # the old implementation remains available for rollback and comparison.
     legacy_vr_orchestration: bool = False
+    # Discreet hint suggesting the VR flow when a native-mode message clearly
+    # targets the local ERP domain (max once per conversation).
+    vr_mode_hint_enabled: bool = True
+    # Opt-in: expose the vr_search tool to native turns so the provider can
+    # pull local evidence on demand. Applies to threads created after enabling.
+    native_vr_search_enabled: bool = False
 
     @property
     def state_dir(self) -> Path:
@@ -201,6 +207,12 @@ def load_vr_settings(
         vr_research_fanout=str(
             os.environ.get("VR_RESEARCH_FANOUT", "1")
         ).strip().casefold() not in {"", "0", "false", "no", "off"},
+        vr_mode_hint_enabled=str(
+            os.environ.get("VR_MODE_HINT_ENABLED", "1")
+        ).strip().casefold() not in {"", "0", "false", "no", "off"},
+        native_vr_search_enabled=str(
+            os.environ.get("VR_NATIVE_SEARCH_ENABLED", "0")
+        ).strip().casefold() in {"1", "true", "yes", "on"},
         sync_interval_minutes=max(15, interval),
         default_effort=effort,
     )

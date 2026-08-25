@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from .db import MaryDatabase
 from .knowledge import (
@@ -25,6 +26,7 @@ from .models import (
 )
 from .schema_sync import SchemaSync
 from .search import (
+    MODULE_HINTS,
     infer_search_module,
     infer_search_modules,
     normalize_search_text,
@@ -88,6 +90,30 @@ ROLE_SOURCES: dict[str, tuple[str, ...]] = {
 
 LANE_MAX_WORKERS = 4
 MODULE_MAX_WORKERS = 3
+
+# Confidence (share of the leading intent) above which a classified profile is
+# treated as clearly ERP-related when suggesting the VR flow in native mode.
+VR_HINT_INTENT_CONFIDENCE = 0.64
+
+
+def should_suggest_vr_flow(profile: QueryProfile) -> bool:
+    """Decide whether a native-mode message deserves the "ative VR" hint.
+
+    Pure and cheap: only uses the already-computed :class:`QueryProfile`, so
+    callers can run it on every send without touching the index. Errs toward
+    omission — the hint must never nag on generic questions.
+    """
+    if str(profile.product or "").strip():
+        return True
+    module = str(profile.module or "")
+    if module not in KNOWLEDGE_MODULES:
+        return False
+    if max(profile.intents.values(), default=0.0) >= VR_HINT_INTENT_CONFIDENCE:
+        return True
+    # Two or more module-specific terms are strong local-domain evidence on
+    # their own ("cadastro de produto", "cupom fiscal").
+    matched_hints = len(set(profile.terms) & MODULE_HINTS.get(module, frozenset()))
+    return matched_hints >= 2
 
 
 class KnowledgeRouter:
@@ -844,6 +870,11 @@ class KnowledgeRouter:
         scan_limit = max(8, self.per_source_limit * 3)
         rows_by_key: dict[tuple[int, int], dict[str, Any]] = {}
         search_modules = (module, "Multimodulo") if module else ("",)
+        schema_document = (
+            self.database.get_document("schema", "postgresql-vr")
+            if source == "schema"
+            else None
+        )
         for lane_query in queries:
             query_found = False
             for search_module in search_modules:
@@ -879,7 +910,9 @@ class KnowledgeRouter:
                 for item in self.database.search_schema_catalog(
                     lane_query, scan_limit
                 ):
-                    converted = self._schema_catalog_candidate_row(item)
+                    converted = self._schema_catalog_candidate_row(
+                        item, document=schema_document
+                    )
                     key = (
                         int(converted.get("document_id") or 0),
                         int(converted.get("chunk_id") or 0),
@@ -891,9 +924,11 @@ class KnowledgeRouter:
         return list(rows_by_key.values()), queries
 
     def _schema_catalog_candidate_row(
-        self, item: dict[str, Any]
+        self,
+        item: dict[str, Any],
+        *,
+        document: Any = None,
     ) -> dict[str, Any]:
-        document = self.database.get_document("schema", "postgresql-vr")
         document_data = dict(document) if document is not None else {}
         schema_name = str(item.get("schema_name") or "public")
         table_name = str(item.get("table_name") or "")
@@ -1015,18 +1050,6 @@ class KnowledgeRouter:
                         _settings_adapter(self.root), self.database
                     ).sync()
             self._ready = True
-
-    def prepare_index(self, *, backfill: bool = True) -> dict[str, int]:
-        """Index local SchemaVR and optionally backfill legacy documents."""
-        schema_created = 0
-        schema_path = self.root / "agentes" / "SchemaVR" / "schema.md"
-        if schema_path.is_file():
-            stats = SchemaSync(_settings_adapter(self.root), self.database).sync()
-            schema_created = stats.created + stats.updated
-        documents = self.database.backfill_knowledge_chunks() if backfill else 0
-        with self._ready_lock:
-            self._ready = True
-        return {"schema": schema_created, "documents": documents}
 
     @staticmethod
     def _legacy_candidate_row(item: dict[str, Any]) -> dict[str, Any]:
@@ -1344,6 +1367,7 @@ class KnowledgeRouter:
                     ]
         groups: list[EvidenceGroup] = []
         conflicts: list[EvidenceConflict] = []
+        group_suffix = uuid4().hex[:8]
         for index, members in enumerate(group_members, start=1):
             if len(members) < 2:
                 continue
@@ -1353,7 +1377,7 @@ class KnowledgeRouter:
                 relationship = "complementary"
             groups.append(
                 EvidenceGroup(
-                    group_id=f"group-{index}",
+                    group_id=f"group-{index}-{group_suffix}",
                     concept=representative.heading or representative.title,
                     evidence_ids=tuple(item.evidence_id for item in members),
                     relationship=relationship,

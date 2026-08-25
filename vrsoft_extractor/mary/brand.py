@@ -30,16 +30,22 @@ STATUS_GOOD = "#176B3A"
 STATUS_WARN = "#8A5500"
 SCROLLBAR_HANDLE = "#848493"
 SCROLLBAR_TRACK = "#F0F0F4"
+# Soft accent wash used by secondary selection surfaces (tabs, chips).
+ACCENT_SOFT = "#FFE8D6"
+ACCENT_SOFT_HOVER = "#EAEAF0"
 
-DARK_BACKGROUND = "#12100F"
-DARK_SURFACE = "#1B1816"
-DARK_SURFACE_RAISED = "#24201D"
+# Deep dark canvas unified with the black navigation rail and Chat VR so the
+# Dark & Orange theme never reads as gray. Surfaces keep the warm tones.
+DARK_BACKGROUND = "#000000"
+DARK_SURFACE = "#131110"
+DARK_SURFACE_RAISED = "#1B1816"
 DARK_TEXT = "#E4E4E7"
 DARK_MUTED = "#A1A1AA"
-DARK_BORDER = "#756A63"
+DARK_BORDER = "#2C2823"
 DARK_STATUS_GOOD = "#56D18B"
 DARK_STATUS_WARN = "#FFB55C"
 DARK_SCROLLBAR_HANDLE = "#8C8077"
+DARK_ACCENT_SOFT = "#462813"
 
 
 def brand_palette(theme_id: str) -> dict[str, str]:
@@ -67,9 +73,10 @@ def brand_palette(theme_id: str) -> dict[str, str]:
         "chatDivider": "#202023" if dark else "#D7D7DF",
         "text": DARK_TEXT if dark else BRAND_NAVY,
         "mutedText": DARK_MUTED if dark else TEXT_MUTED,
-        "border": "#3A3A40" if dark else "#D7D7DF",
-        "hover": "#202023" if dark else "#F1F1F4",
+        "border": "#2C2823" if dark else "#D7D7DF",
+        "hover": "#1D1A17" if dark else "#F1F1F4",
         "selection": "#27272A" if dark else "#E8E8EE",
+        "accentSoft": DARK_ACCENT_SOFT if dark else ACCENT_SOFT,
         "focus": "#6D6D76" if dark else "#686875",
         "success": DARK_STATUS_GOOD if dark else STATUS_GOOD,
         "warning": DARK_STATUS_WARN if dark else STATUS_WARN,

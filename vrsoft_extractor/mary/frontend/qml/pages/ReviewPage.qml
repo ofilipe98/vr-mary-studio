@@ -7,7 +7,6 @@ import "../theme"
 Item {
     id: root
     property bool filtersVisible: false
-    property var selectedIds: []
     property var filterControls: ({})
     property string pendingAction: ""
 
@@ -38,7 +37,6 @@ Item {
             special: filterValue("special"),
             sort: filterValue("sort")
         })
-        selectedIds = []
     }
 
     function clearFilters() {
@@ -165,15 +163,11 @@ Item {
             VrButton {
                 text: "Selecionar todos"
                 enabled: studio.reviewTotal > 0
-                onClicked: {
-                    var ids = []
-                    for (var i = 0; i < reviewList.count; ++i) ids.push(reviewList.itemAtIndex(i).reviewId)
-                    root.selectedIds = ids
-                }
+                onClicked: studio.setAllReviewsSelected(true)
             }
-            VrButton { text: "Limpar seleção"; enabled: root.selectedIds.length > 0; onClicked: root.selectedIds = [] }
+            VrButton { text: "Limpar seleção"; enabled: studio.reviewSelectionCount > 0; onClicked: studio.setAllReviewsSelected(false) }
             Item { Layout.fillWidth: true }
-            Text { text: root.selectedIds.length + " selecionados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+            Text { text: studio.reviewSelectionCount + " selecionados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
         }
 
         SplitView {
@@ -260,14 +254,9 @@ Item {
                             spacing: 5
                             VrCheckBox {
                                 implicitWidth: 25
-                                checked: root.selectedIds.indexOf(reviewRow.reviewId) >= 0
-                                onToggled: {
-                                    var values = root.selectedIds.slice()
-                                    var position = values.indexOf(reviewRow.reviewId)
-                                    if (checked && position < 0) values.push(reviewRow.reviewId)
-                                    else if (!checked && position >= 0) values.splice(position, 1)
-                                    root.selectedIds = values
-                                }
+                                checked: studio.reviewSelectionCount >= 0
+                                    && studio.isReviewSelected(reviewRow.reviewId)
+                                onToggled: studio.setReviewSelected(reviewRow.reviewId, checked)
                             }
                             Text { Layout.fillWidth: true; text: reviewRow.title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
                             Text { Layout.preferredWidth: 45; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 11; elide: Text.ElideRight }
@@ -347,7 +336,7 @@ Item {
     }
 
     function decide(action) {
-        if (root.selectedIds.length > 1) {
+        if (studio.reviewSelectionCount > 1) {
             root.pendingAction = action
             bulkDecisionDialog.open()
             return
@@ -356,8 +345,7 @@ Item {
     }
 
     function applyDecision(action) {
-        studio.decideReviews(action, root.selectedIds, destinationModule.currentText, reviewNote.text)
-        root.selectedIds = []
+        studio.decideReviews(action, studio.selectedReviewIds, destinationModule.currentText, reviewNote.text)
     }
 
     Timer { id: filterDelay; interval: 180; onTriggered: root.applyFilters() }
@@ -373,7 +361,7 @@ Item {
             spacing: 10
             Text {
                 Layout.fillWidth: true
-                text: "A ação será aplicada a " + root.selectedIds.length + " revisões e ficará registrada no histórico. Destino: " + destinationModule.currentText + "."
+                text: "A ação será aplicada a " + studio.reviewSelectionCount + " revisões e ficará registrada no histórico. Destino: " + destinationModule.currentText + "."
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize

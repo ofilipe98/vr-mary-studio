@@ -16,6 +16,7 @@ from .personality import (
     VRMASTER_FINAL_RESPONSE_POLICY,
 )
 from .supervision import (
+    JSON_ESCAPE_INSTRUCTION,
     MergedEvidence,
     ResponseContract,
     ResponseIntent,
@@ -27,6 +28,11 @@ from .supervision import (
 RESEARCH_EFFORT = "medium"
 READING_BUDGET_DOCS = 6
 MAX_PARALLEL_RESEARCHERS = 3
+RESEARCH_ATTEMPTS = 3
+RESEARCH_RETRY_BACKOFF_SECONDS = 3.0
+# Stagger researcher launches so flapping free-tier endpoints are not hit
+# by a simultaneous burst.
+RESEARCH_STAGGER_SECONDS = 1.0
 GLOBAL_MODULE_LABEL = "Multimodulo"
 SCHEMA_MODULE_LABEL = "Schema"
 
@@ -139,6 +145,7 @@ SOLICITAÇÃO ORIGINAL:
 {request}
 </user_request>
 
+{JSON_ESCAPE_INSTRUCTION}
 Retorne somente JSON no formato exato:
 {{"answer_markdown":"resposta completa em Markdown, sem a seção de fontes","used_evidence_ids":["id de evidência realmente utilizado"]}}"""
 

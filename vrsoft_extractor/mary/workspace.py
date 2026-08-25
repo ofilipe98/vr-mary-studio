@@ -217,5 +217,5 @@ def prepare_conversation_workspace(settings: MarySettings, path: Path) -> Path:
     if is_managed_conversation_workspace(settings, resolved):
         return ensure_conversation_workspace(resolved, settings.root)
     if not resolved.is_dir():
-        raise FileNotFoundError(f"A pasta do projeto nÃ£o existe: {resolved}")
+        raise FileNotFoundError(f"A pasta do projeto não existe: {resolved}")
     return resolved

@@ -1786,7 +1786,7 @@ class MaryCoreTest(unittest.TestCase):
                 provider = CodexProvider()
                 calls: list[tuple[str, dict]] = []
 
-                def rpc(method, params, timeout=45):
+                def rpc(method, params, timeout=45, **kwargs):
                     calls.append((method, params))
                     return {"thread": {"id": f"native-{profile}"}} if method == "thread/start" else {}
 
@@ -1886,8 +1886,8 @@ class MaryCoreTest(unittest.TestCase):
             **tool,
             "arguments": ["-c", "import sys; sys.stderr.write('aviso')"],
         }
-        with self.assertRaisesRegex(ToolExecutionError, "stderr"):
-            run_local_tool(stderr_only, {"name": "Mary"}, self.root)
+        warned = run_local_tool(stderr_only, {"name": "Mary"}, self.root)
+        self.assertEqual(warned.text, "aviso")
         oversized = {
             **tool,
             "arguments": ["-c", f"print('x'*{MAX_TOOL_OUTPUT_BYTES + 1})"],
@@ -4750,7 +4750,7 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(application.property("vr_theme"), "dark_orange")
             self.assertEqual(
                 application.palette().color(QPalette.Window).name().lower(),
-                "#12100f",
+                "#000000",
             )
             self.assertEqual(
                 window.app_preferences.values["appearance/theme"], "dark_orange"
