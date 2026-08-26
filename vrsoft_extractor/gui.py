@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from .settings import DEFAULT_BASE_URL, update_dotenv_file
+from .settings import DEFAULT_BASE_URL, load_dotenv_file, update_dotenv_file
 
 
 APP_TITLE = "VRSoft Extractor"
@@ -43,6 +43,7 @@ def smoke_test_requested(argv: list[str] | None = None) -> bool:
 
 
 def read_env_file(path: Path) -> GuiConfig:
+    load_dotenv_file(path)
     values: dict[str, str] = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -53,7 +54,7 @@ def read_env_file(path: Path) -> GuiConfig:
             values[key.strip()] = value.strip().strip('"').strip("'")
     return GuiConfig(
         email=values.get("ENDOO_EMAIL", ""),
-        password=values.get("ENDOO_PASSWORD", ""),
+        password=os.environ.get("ENDOO_PASSWORD", values.get("ENDOO_PASSWORD", "")),
         base_url=values.get("ENDOO_BASE_URL", DEFAULT_BASE_URL) or DEFAULT_BASE_URL,
         max_pages=_safe_int(values.get("ENDOO_MAX_PAGES"), DEFAULT_MAX_PAGES),
         concurrency=_safe_int(values.get("ENDOO_CONCURRENCY"), DEFAULT_CONCURRENCY),

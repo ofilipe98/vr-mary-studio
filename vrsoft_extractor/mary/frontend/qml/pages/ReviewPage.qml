@@ -9,6 +9,7 @@ Item {
     property bool filtersVisible: false
     property var filterControls: ({})
     property string pendingAction: ""
+    property var pendingReviewIds: []
 
     function registerFilter(key, control) {
         filterControls[key] = control
@@ -336,16 +337,18 @@ Item {
     }
 
     function decide(action) {
-        if (studio.reviewSelectionCount > 1) {
+        if (studio.reviewSelectionCount > 0) {
             root.pendingAction = action
+            root.pendingReviewIds = studio.selectedReviewIds
             bulkDecisionDialog.open()
             return
         }
-        applyDecision(action)
+        if (studio.currentReviewId > 0)
+            applyDecision(action, [studio.currentReviewId])
     }
 
-    function applyDecision(action) {
-        studio.decideReviews(action, studio.selectedReviewIds, destinationModule.currentText, reviewNote.text)
+    function applyDecision(action, reviewIds) {
+        studio.decideReviews(action, reviewIds, destinationModule.currentText, reviewNote.text)
     }
 
     Timer { id: filterDelay; interval: 180; onTriggered: root.applyFilters() }
@@ -355,13 +358,13 @@ Item {
         anchors.centerIn: parent
         width: 500
         modal: true
-        title: "Confirmar ação em lote"
+        title: "Confirmar ação nos selecionados"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: 10
             Text {
                 Layout.fillWidth: true
-                text: "A ação será aplicada a " + studio.reviewSelectionCount + " revisões e ficará registrada no histórico. Destino: " + destinationModule.currentText + "."
+                text: "A ação será aplicada a " + root.pendingReviewIds.length + " revisão(ões) selecionada(s) e ficará registrada no histórico. Destino: " + destinationModule.currentText + "."
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize
@@ -371,7 +374,7 @@ Item {
                 Layout.fillWidth: true
                 VrButton { text: "Cancelar"; onClicked: bulkDecisionDialog.close() }
                 Item { Layout.fillWidth: true }
-                VrButton { text: "Aplicar em lote"; variant: "primary"; onClicked: { root.applyDecision(root.pendingAction); bulkDecisionDialog.close() } }
+                VrButton { text: "Aplicar"; variant: "primary"; onClicked: { root.applyDecision(root.pendingAction, root.pendingReviewIds); bulkDecisionDialog.close() } }
             }
         }
         background: Rectangle { color: frontend.palette.surface; border.width: 1; border.color: frontend.palette.border; radius: Theme.radiusPopup }

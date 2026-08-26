@@ -206,6 +206,7 @@ class ChatBridge(QObject):
     stateChanged = Signal()
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
+    conversationArchived = Signal(str)
     _modelsLoaded = Signal(object)
     _extensionsLoaded = Signal(object)
     _fileSuggestionsReady = Signal(int, object, object)
@@ -233,8 +234,10 @@ class ChatBridge(QObject):
         self._selected_index = -1
         self._selected: dict[str, Any] = {}
         self._draft = False
+        self._active_turns: set[str] = set()
         self._turn_running = False
         self._running_conversation_id = ""
+        self._closed = False
         self._status_text = "Pronto"
         self._streaming_text = ""
         self._displayed_streaming_text = ""
@@ -283,6 +286,7 @@ class ChatBridge(QObject):
         self._extension_items: list[dict[str, Any]] = []
         self._selected_extension_keys: set[str] = set()
         self._extensions_loading = False
+        self._extensions_generation = 0
         self._file_suggestions_cache: list[dict[str, str]] = []
         self._file_suggestions_root: Path | None = None
         self._file_suggestions_generation = 0
@@ -380,7 +384,8 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def turnRunning(self) -> bool:  # noqa: N802
-        return self._turn_running
+        conversation_id = self._selected_conversation_id()
+        return bool(conversation_id and conversation_id in self._active_turns)
 
     @Property(str, notify=stateChanged)
     def statusText(self) -> str:  # noqa: N802
@@ -638,8 +643,37 @@ class ChatBridge(QObject):
         return [dict(item) for item in self._agent_items]
 
     def _selected_database_row(self) -> Any:
-        conversation_id = str(self._selected.get("conversationId") or "")
+        conversation_id = self._selected_conversation_id()
         return self._database.get_conversation(conversation_id) if conversation_id else None
+
+    @Slot()
+    def close(self) -> None:
+        """Release providers and timers exactly once during application shutdown."""
+
+        if self._closed:
+            return
+        self._closed = True
+        for timer in (
+            self._file_suggestions_timer,
+            self._stream_timer,
+            self._activity_clock,
+            self._state_update_timer,
+        ):
+            timer.stop()
+        self._orchestrator.close()
+        self._active_turns.clear()
+        self._sync_selected_turn_state()
+
+    def _selected_conversation_id(self) -> str:
+        return str(self._selected.get("conversationId") or "")
+
+    def _sync_selected_turn_state(self) -> None:
+        """Keep private compatibility fields scoped to the selected conversation."""
+
+        conversation_id = self._selected_conversation_id()
+        running = bool(conversation_id and conversation_id in self._active_turns)
+        self._turn_running = running
+        self._running_conversation_id = conversation_id if running else ""
 
     def _enabled_provider_names(self) -> list[str]:
         enabled: list[str] = []
@@ -835,7 +869,7 @@ class ChatBridge(QObject):
 
     @Slot(int)
     def setModel(self, index: int) -> None:  # noqa: N802
-        if not 0 <= index < len(self._model_items) or self._turn_running:
+        if not 0 <= index < len(self._model_items) or self.turnRunning:
             return
         item = self._model_items[index]
         provider = str(item.get("provider") or "codex")
@@ -1049,12 +1083,12 @@ class ChatBridge(QObject):
 
     @Slot()
     def refreshExtensions(self) -> None:  # noqa: N802
-        if self._extensions_loading:
-            return
+        self._extensions_generation += 1
+        generation = self._extensions_generation
         self._extensions_loading = True
         self.stateChanged.emit()
         provider_name = self._provider
-        workspace = self._project_scope or self._settings.root
+        workspace = (self._project_scope or self._settings.root).resolve(strict=False)
 
         def load() -> None:
             values: list[dict[str, Any]] = []
@@ -1089,14 +1123,34 @@ class ChatBridge(QObject):
                     "description": str(item.get("description") or item.get("serverDescription") or "MCP"),
                     "payload": {"server": server, "tool": tool},
                 })
-            self._extensionsLoaded.emit(values)
+            self._extensionsLoaded.emit(
+                {
+                    "generation": generation,
+                    "provider": provider_name,
+                    "workspace": str(workspace),
+                    "items": values,
+                }
+            )
 
         threading.Thread(target=load, daemon=True).start()
 
     @Slot(object)
     def _apply_extension_catalog(self, values: object) -> None:
+        payload = dict(values) if isinstance(values, dict) else {"items": values}
+        generation = int(payload.get("generation") or self._extensions_generation)
+        current_workspace = str(
+            (self._project_scope or self._settings.root).resolve(strict=False)
+        )
+        if (
+            generation != self._extensions_generation
+            or str(payload.get("provider") or self._provider) != self._provider
+            or str(payload.get("workspace") or current_workspace) != current_workspace
+        ):
+            return
         self._extension_items = [
-            dict(item) for item in list(values or []) if isinstance(item, dict)
+            dict(item)
+            for item in list(payload.get("items") or [])
+            if isinstance(item, dict)
         ]
         available = {str(item.get("key") or "") for item in self._extension_items}
         self._selected_extension_keys.intersection_update(available)
@@ -1116,9 +1170,15 @@ class ChatBridge(QObject):
 
     @Slot()
     def refresh(self) -> None:
-        selected_id = str(self._selected.get("conversationId") or "")
+        selected_id = self._selected_conversation_id()
+        rows = list(self._database.list_conversations(state="active"))
+        self._active_turns = {
+            str(row["id"])
+            for row in rows
+            if str(row["status"] or "idle") == "running"
+        }
         conversations: list[dict[str, Any]] = []
-        for row in self._database.list_conversations(state="active"):
+        for row in rows:
             workspace = self._settings.resolve_path(row["workspace"])
             project_label = (
                 "Projeto temporário"
@@ -1177,8 +1237,6 @@ class ChatBridge(QObject):
 
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
-        if self._turn_running:
-            return
         self._remember_current_chat_options()
         enabled = self._enabled_provider_names()
         saved_provider = str(self._preferences.value("chat/last_provider", "") or "")
@@ -1245,6 +1303,7 @@ class ChatBridge(QObject):
         self._selected_index = -1
         self._selected = {}
         self._draft = True
+        self._sync_selected_turn_state()
         self._messages.replace([])
         self.selectionChanged.emit()
         self._status_text = "Pronto"
@@ -1272,6 +1331,7 @@ class ChatBridge(QObject):
         changing_conversation = previous_id != str(selected.get("conversationId") or "")
         self._draft = False
         if changing_conversation:
+            self._reset_stream_state()
             self._activity_steps = []
             self._activity_items = []
             self._turn_segments = []
@@ -1296,16 +1356,26 @@ class ChatBridge(QObject):
             self._remember_current_chat_options()
         if changing_conversation:
             self._restore_activity_from_history(str(selected["conversationId"]))
-        if (
-            changing_conversation
-            and self._turn_running
-            and str(selected.get("conversationId") or "") == self._running_conversation_id
-            and self._activity_started_at
-        ):
-            self._activity_elapsed_seconds = max(
-                0, int(time.monotonic() - self._activity_started_at)
+        self._sync_selected_turn_state()
+        if changing_conversation and self.turnRunning:
+            self._status_text = "Executando…"
+            self._activity_started_at = (
+                time.monotonic() - self._activity_elapsed_seconds
             )
+            self._activity_clock.start()
+        elif changing_conversation:
+            status = str(selected.get("status") or "idle")
+            self._status_text = STATUS_LABELS.get(status, status.title())
         self._reload_selected_messages()
+        if changing_conversation and self.turnRunning and self._streaming_text:
+            self._ensure_streaming_message()
+            self._messages.update_last(
+                content=self._streaming_text,
+                displayContent=markdown_for_display(self._displayed_streaming_text),
+                segments=self._turn_display_segments(
+                    reveal_limit=len(self._displayed_streaming_text)
+                ),
+            )
         self.stateChanged.emit()
 
     @Slot(int)
@@ -1488,7 +1558,7 @@ class ChatBridge(QObject):
     @Slot(str)
     def sendMessage(self, text: str) -> None:  # noqa: N802
         content = str(text or "").strip()
-        if not content or self._turn_running:
+        if not content or self.turnRunning:
             return
         force_research = False
         if content.lower().startswith("/pesquisa"):
@@ -1576,14 +1646,19 @@ class ChatBridge(QObject):
             for item in self._attachments
             if Path(item["path"]).suffix.casefold() in image_extensions
         ]
+        reference_paths = [
+            item["path"]
+            for item in self._attachments
+            if item["path"] not in image_paths or self._provider != "codex"
+        ]
         file_references = " ".join(
             f'@"{item["path"]}"'
             for item in self._attachments
-            if item["path"] not in image_paths
+            if item["path"] in reference_paths
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
-        self._turn_running = True
-        self._running_conversation_id = conversation_id
+        self._active_turns.add(conversation_id)
+        self._sync_selected_turn_state()
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
         self._activity_items = []
@@ -1622,17 +1697,19 @@ class ChatBridge(QObject):
             )
             self._attachments = []
             self._selected_extension_keys = set()
+            self.refresh()
             self.stateChanged.emit()
         except Exception as exc:
-            self._turn_running = False
-            self._running_conversation_id = ""
+            self._active_turns.discard(conversation_id)
+            self._sync_selected_turn_state()
             self._status_text = f"Falha: {exc}"
+            self.refresh()
             self.stateChanged.emit()
 
     @Slot()
     def stopTurn(self) -> None:  # noqa: N802
-        target = str(self._running_conversation_id or "")
-        if not target or not self._turn_running:
+        target = self._selected_conversation_id()
+        if not target or target not in self._active_turns:
             return
         self._status_text = "Parando…"
         self.stateChanged.emit()
@@ -1647,8 +1724,8 @@ class ChatBridge(QObject):
 
     @Slot()
     def archiveCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if not conversation_id or self._turn_running:
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id or conversation_id in self._active_turns:
             return
         try:
             self._orchestrator.archive(conversation_id)
@@ -1657,12 +1734,13 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
             return
         self.refresh()
+        self.conversationArchived.emit(conversation_id)
         self.startNewChat()
 
     @Slot()
     def trashCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if not conversation_id or self._turn_running:
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id or conversation_id in self._active_turns:
             return
         try:
             self._orchestrator.trash(conversation_id)
@@ -1700,10 +1778,13 @@ class ChatBridge(QObject):
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
         if not isinstance(event, RuntimeEvent):
             return
-        selected_id = str(self._selected.get("conversationId") or "")
+        if event.kind == "turn_started":
+            self._active_turns.add(event.conversation_id)
+        selected_id = self._selected_conversation_id()
         if event.conversation_id != selected_id:
             self._on_background_runtime_event(event)
             return
+        self._sync_selected_turn_state()
         self._record_execution_event(event)
         if event.kind == "assistant_delta":
             delta = str(event.text or "")
@@ -1756,9 +1837,7 @@ class ChatBridge(QObject):
             self._approval_request = dict(event.payload)
             self._approval_request["conversation_id"] = event.conversation_id
             self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
-            self._status_text = "Aguardando aprovação…"
             self.approvalRequested.emit(dict(self._approval_request))
-            self.stateChanged.emit()
             return
         if event.kind in {
             "turn_completed",
@@ -1766,25 +1845,12 @@ class ChatBridge(QObject):
             "error",
             "orchestration_cancelled",
         }:
-            if self._turn_running and event.conversation_id == self._running_conversation_id:
-                self._finish_background_turn(event.kind)
-            else:
-                self.refresh()
+            self._finish_background_turn(event.conversation_id)
 
-    def _finish_background_turn(self, kind: str) -> None:
-        self._turn_running = False
-        self._running_conversation_id = ""
-        self._activity_clock.stop()
-        self._stream_timer.stop()
-        self._activity_started_at = 0.0
-        self._activity_elapsed_seconds = 0
-        self._status_text = (
-            "Erro"
-            if kind == "error"
-            else "Interrompido" if kind == "orchestration_cancelled" else "Pronto"
-        )
+    def _finish_background_turn(self, conversation_id: str) -> None:
+        self._active_turns.discard(str(conversation_id or ""))
+        self._sync_selected_turn_state()
         self.stateChanged.emit()
-        self.selectionChanged.emit()
         self.refresh()
 
     def _ensure_streaming_message(self) -> None:
@@ -1856,7 +1922,7 @@ class ChatBridge(QObject):
 
     def _queue_terminal_state(self, kind: str) -> None:
         if (
-            not self._turn_running
+            not self.turnRunning
             and kind in {"turn_completed", "orchestration_completed"}
             and self._status_text in {"Erro", "Interrompido"}
         ):
@@ -1890,8 +1956,9 @@ class ChatBridge(QObject):
         self._finalize_terminal_state(terminal_kind)
 
     def _finalize_terminal_state(self, kind: str) -> None:
-        self._turn_running = False
-        self._running_conversation_id = ""
+        conversation_id = self._selected_conversation_id()
+        self._active_turns.discard(conversation_id)
+        self._sync_selected_turn_state()
         self._status_text = (
             "Erro"
             if kind == "error"
@@ -1964,6 +2031,8 @@ class ChatBridge(QObject):
                     self._reasoning_text += text
                 elif kind == "assistant_delta":
                     self._turn_text += text
+                    self._streaming_text += text
+                    self._displayed_streaming_text += text
                     self._advance_default_activity()
                 else:
                     self._record_execution_event(
@@ -2231,7 +2300,7 @@ class ChatBridge(QObject):
         """Track per-turn tool usage so summaries can interleave with text."""
         if item_type in {"reasoning", "userMessage", "agentMessage"}:
             return
-        if not (self._turn_running or self._restoring_turn_history):
+        if not (self.turnRunning or self._restoring_turn_history):
             return
         cursor = len(self._turn_text)
         if cursor > self._segment_cursor:
@@ -2525,8 +2594,11 @@ class ChatBridge(QObject):
 
     def _clear_selection(self) -> None:
         changed = self._selected_index != -1 or bool(self._selected)
+        self._reset_stream_state()
         self._selected_index = -1
         self._selected = {}
+        self._sync_selected_turn_state()
+        self._status_text = "Pronto"
         self._messages.replace([])
         if changed:
             self.selectionChanged.emit()

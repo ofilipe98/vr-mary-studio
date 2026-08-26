@@ -1816,6 +1816,79 @@ class MaryDatabase:
             )
         return selected
 
+    def search_page(
+        self,
+        query: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        module: str = "",
+        source: str = "",
+        include_unvalidated: bool = False,
+        excluded_sources: tuple[str, ...] = (),
+        source_origin: str = "",
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return a deterministic FTS page and its uncapped result count."""
+
+        terms = search_terms(query)
+        if not terms:
+            return [], 0
+        filters = ["d.status='active'"]
+        if not include_unvalidated:
+            filters.extend(
+                [
+                    "d.module<>'Revisar'",
+                    "d.review_status IN ('approved','kept')",
+                ]
+            )
+        filter_params: list[Any] = []
+        if module:
+            filters.append("d.module=?")
+            filter_params.append(module)
+        if source:
+            filters.append("d.source=?")
+            filter_params.append(source)
+        if source_origin:
+            filters.append("d.source_origin=?")
+            filter_params.append(source_origin)
+        ignored = tuple(
+            str(item).strip() for item in excluded_sources if str(item).strip()
+        )
+        if ignored:
+            placeholders = ",".join("?" for _ in ignored)
+            filters.append(f"d.source NOT IN ({placeholders})")
+            filter_params.extend(ignored)
+        where = " AND ".join(filters)
+        match_query = _fts_query(query)
+        page_limit = max(1, int(limit))
+        page_offset = max(0, int(offset))
+        with self.connect() as connection:
+            total = int(
+                connection.execute(
+                    f"""SELECT count(*)
+                          FROM knowledge_fts
+                          JOIN documents d ON d.id=knowledge_fts.rowid
+                         WHERE knowledge_fts MATCH ? AND {where}""",
+                    [match_query, *filter_params],
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                      FROM knowledge_fts
+                      JOIN documents d ON d.id=knowledge_fts.rowid
+                     WHERE knowledge_fts MATCH ? AND {where}
+                     ORDER BY rank, d.title COLLATE NOCASE, d.id
+                     LIMIT ? OFFSET ?""",
+                [match_query, *filter_params, page_limit, page_offset],
+            ).fetchall()
+        results = [dict(row) for row in rows]
+        for result in results:
+            result["excerpt"] = search_excerpt(
+                result.get("markdown") or str(result.get("ocr_text") or ""),
+                terms,
+            )
+        return results, total
+
     def start_sync(self, source: str, source_origin: str = "") -> int:
         origin = source_origin or _default_source_origin(source)
         with self.connect() as connection:

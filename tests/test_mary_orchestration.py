@@ -3195,6 +3195,11 @@ def test_native_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> No
     # The upfront VR pipeline must stay out of native turns.
     assert not any(event.kind == "knowledge_routed" for event in events)
     assert not any(event.kind == "intent_analysis_started" for event in events)
+    orchestrator.drain_turn_finalizations()
+    assert conversation_id not in orchestrator._external_callbacks
+    assert conversation_id not in orchestrator._callback_generations
+    assert not orchestrator._dynamic_tool_callbacks
+    orchestrator.close()
 
 
 def test_vr_sessions_note_covers_slot_combinations() -> None:

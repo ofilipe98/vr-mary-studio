@@ -49,6 +49,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="vrsoft_extractor/mary/assets/vrnorte-app.ico",
+    version="installer/VRNorteStudio.version.txt",
 )
 
 coll = COLLECT(

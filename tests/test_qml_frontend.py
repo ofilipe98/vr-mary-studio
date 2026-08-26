@@ -188,6 +188,8 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
+            self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNotNone(window.findChild(QObject, "chatAttachmentList"))
             self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
             new_chat_button = window.findChild(QObject, "newChatButton")
             self.assertIsNotNone(new_chat_button)
@@ -1007,8 +1009,8 @@ class QmlFrontendTest(unittest.TestCase):
             )
             bridge.selectConversation(selected_index)
             self.assertEqual(bridge.selectedTitle, "Selecionada")
-            bridge._turn_running = True
-            bridge._running_conversation_id = background_id
+            database.update_conversation(background_id, status="running")
+            bridge.refresh()
             approvals = []
             bridge.approvalRequested.connect(
                 lambda payload: approvals.append(dict(payload))
@@ -1024,13 +1026,13 @@ class QmlFrontendTest(unittest.TestCase):
                 bridge._approval_request.get("conversation_id"), background_id
             )
             self.assertEqual(approvals[-1].get("request_id"), "req-1")
-            self.assertEqual(bridge.statusText, "Aguardando aprovação…")
-            self.assertTrue(bridge.turnRunning)
+            self.assertEqual(bridge.statusText, "Pronto")
+            self.assertFalse(bridge.turnRunning)
 
+            database.update_conversation(background_id, status="idle")
             bridge._on_runtime_event(RuntimeEvent(background_id, "turn_completed"))
 
             self.assertFalse(bridge.turnRunning)
-            self.assertEqual(bridge._running_conversation_id, "")
             self.assertEqual(bridge.statusText, "Pronto")
             self.assertEqual(
                 [
@@ -1039,6 +1041,89 @@ class QmlFrontendTest(unittest.TestCase):
                 ],
                 ["user"],
             )
+
+    def test_switching_conversation_discards_visual_stream_and_keeps_other_composer_free(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            first_id = database.create_conversation(
+                "Conversa A", "codex", "gpt-5.6", settings.root
+            )
+            second_id = database.create_conversation(
+                "Conversa B", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            first_index = next(
+                index
+                for index, item in enumerate(bridge._conversations._items)
+                if item["conversationId"] == first_id
+            )
+            second_index = next(
+                index
+                for index, item in enumerate(bridge._conversations._items)
+                if item["conversationId"] == second_id
+            )
+            bridge.selectConversation(first_index)
+            bridge._active_turns.add(first_id)
+            bridge._sync_selected_turn_state()
+            bridge._on_runtime_event(
+                RuntimeEvent(first_id, "assistant_delta", "SEGREDO-DA-CONVERSA-A")
+            )
+
+            bridge.selectConversation(second_index)
+
+            self.assertEqual(bridge.selectedTitle, "Conversa B")
+            self.assertFalse(bridge.turnRunning)
+            self.assertNotIn(
+                "SEGREDO-DA-CONVERSA-A",
+                " ".join(
+                    str(item.get("content") or "")
+                    for item in bridge.messages._items
+                ),
+            )
+            with patch.object(bridge._orchestrator, "send") as send:
+                bridge.sendMessage("Mensagem independente")
+            send.assert_called_once()
+            self.assertEqual(send.call_args.args[0], second_id)
+
+    def test_non_codex_image_attachment_is_sent_as_visible_file_reference(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "evidencia.png"
+            image.write_bytes(b"png")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Claude", "claude", "sonnet", settings.root
+            )
+            bridge = ChatBridge(settings, database)
+            index = next(
+                index
+                for index, item in enumerate(bridge._conversations._items)
+                if item["conversationId"] == conversation_id
+            )
+            bridge.selectConversation(index)
+            bridge._attachments = [{"name": image.name, "path": str(image)}]
+
+            with patch.object(bridge._orchestrator, "send") as send:
+                bridge.sendMessage("Analise a evidência")
+
+            self.assertIn(f'@"{image}"', send.call_args.args[1])
+            self.assertEqual(send.call_args.kwargs["image_paths"], [str(image)])
 
     def test_chat_file_suggestions_use_background_cache_and_reemit_updates(self):
         with TemporaryDirectory() as temporary:
@@ -1119,6 +1204,119 @@ class QmlFrontendTest(unittest.TestCase):
                 bridge.videoDescendantNodeIds("root"),
                 ["root:module", "root:module:folder"],
             )
+
+    def test_bridge_shutdown_is_idempotent_and_closes_orchestrator(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat = ChatBridge(settings, database)
+            studio = StudioBridge(settings, database)
+            with patch.object(chat._orchestrator, "close") as close_orchestrator:
+                studio.close()
+                studio.close()
+                chat.close()
+                chat.close()
+            close_orchestrator.assert_called_once_with()
+
+    def test_settings_and_logs_do_not_expose_configured_passwords(self):
+        with TemporaryDirectory() as temporary, patch.dict(
+            os.environ,
+            {
+                "MOVIDESK_PASSWORD": "movidesk-super-secret",
+                "ENDOO_PASSWORD": "endoo-super-secret",
+            },
+            clear=False,
+        ):
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            studio = StudioBridge(settings, database)
+            studio._refresh_settings()
+            studio._append_log(
+                "credenciais movidesk-super-secret e endoo-super-secret"
+            )
+
+            self.assertEqual(studio.settingsValues["movideskPassword"], "")
+            self.assertEqual(studio.settingsValues["endooPassword"], "")
+            self.assertTrue(studio.settingsValues["movideskPasswordConfigured"])
+            self.assertTrue(studio.settingsValues["endooPasswordConfigured"])
+            self.assertNotIn("movidesk-super-secret", studio.logText)
+            self.assertNotIn("endoo-super-secret", studio.logText)
+            self.assertIn("[REDACTED]", studio.logText)
+
+    def test_review_actions_target_preview_unless_selection_is_explicit(self):
+        review_qml = (
+            MAIN_QML.parent / "pages" / "ReviewPage.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("applyDecision(action, [studio.currentReviewId])", review_qml)
+        self.assertIn("studio.reviewSelectionCount > 0", review_qml)
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = StudioBridge(settings, database)
+            bridge._review.replace(
+                [
+                    {"reviewId": 101, "title": "Revisão A"},
+                    {"reviewId": 202, "title": "Revisão B"},
+                ]
+            )
+            bridge.selectReview(1)
+            bridge.setReviewSelected(101, True)
+
+            self.assertEqual(bridge.currentReviewId, 202)
+            self.assertEqual(bridge.selectedReviewIds, [101])
+            bridge.searchReviewsAdvanced("", {})
+            self.assertEqual(bridge.reviewSelectionCount, 0)
+
+    def test_restoring_archive_refreshes_chat_bridge_through_shared_signal(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Arquivada", "codex", "gpt-5.6", settings.root
+            )
+            chat = ChatBridge(settings, database)
+            studio = StudioBridge(
+                settings,
+                database,
+                chat_orchestrator=chat._orchestrator,
+            )
+            studio.conversationRestored.connect(chat.refresh)
+            chat._orchestrator.archive(conversation_id)
+            chat.refresh()
+            self.assertNotIn(
+                conversation_id,
+                [item["conversationId"] for item in chat._all_conversations],
+            )
+
+            studio.restoreArchived(conversation_id)
+
+            self.assertIn(
+                conversation_id,
+                [item["conversationId"] for item in chat._all_conversations],
+            )
+            studio.close()
+            chat.close()
 
     def test_qml_chat_actions_keep_archive_only_and_enable_safe_source_links(self):
         chat_qml = (

@@ -41,9 +41,14 @@ from ..models import ReviewFilters
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
+from ...settings import redact_sensitive_text
 
 
 MODULES = ("Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar")
+MAX_PROCESS_OUTPUT_CHARS = 200_000
+MAX_LOG_LINES = 800
+MAX_LOG_ENTRY_CHARS = 8_000
+MAX_SYNC_LOG_LINES = 800
 STATUS_LABELS = {
     "pending": "Pendente",
     "approved": "Aprovado",
@@ -56,6 +61,14 @@ STATUS_LABELS = {
     "completed": "Concluído",
     "error": "Erro",
 }
+
+
+def _bounded_text(current: str, addition: str, limit: int = MAX_PROCESS_OUTPUT_CHARS) -> str:
+    combined = str(current or "") + str(addition or "")
+    if len(combined) <= limit:
+        return combined
+    marker = "[...saída anterior truncada...]\n"
+    return marker + combined[-max(0, limit - len(marker)):]
 
 
 class MappingListModel(QAbstractListModel):
@@ -137,6 +150,7 @@ class StudioBridge(QObject):
     navigationRequested = Signal(int)
     reviewFilterValuesChanged = Signal()
     reviewSelectionChanged = Signal()
+    conversationRestored = Signal(str)
 
     def __init__(
         self,
@@ -219,7 +233,7 @@ class StudioBridge(QObject):
         self._sync_status = "Pronto"
         self._sync_log: list[str] = []
         self._schema_path = self._default_schema_path()
-        self._settings_values: dict[str, str] = {}
+        self._settings_values: dict[str, Any] = {}
         self._providers: list[dict[str, Any]] = []
         self._archived = MappingListModel(
             ("conversationId", "title", "project", "provider", "updatedAt"), self
@@ -230,6 +244,7 @@ class StudioBridge(QObject):
         self._video_refresh_task: _Task | None = None
         self._terminal_process: QProcess | None = None
         self._terminal_output = ""
+        self._closed = False
         self._conversation_orchestrator = chat_orchestrator
         self._review_selection: set[int] = set()
         self._video_buffer = ""
@@ -301,6 +316,11 @@ class StudioBridge(QObject):
     def reviewTitle(self) -> str:  # noqa: N802
         row = self._review.item(self._review_selected)
         return str(row.get("title") or "Nenhuma revisão encontrada") if row else "Nenhuma revisão encontrada"
+
+    @Property(int, notify=reviewChanged)
+    def currentReviewId(self) -> int:  # noqa: N802
+        row = self._review.item(self._review_selected)
+        return int(row.get("reviewId") or 0) if row else 0
 
     @Property(str, notify=reviewChanged)
     def reviewLocalPath(self) -> str:  # noqa: N802
@@ -387,7 +407,7 @@ class StudioBridge(QObject):
         return str(self._schema_path)
 
     @Property("QVariantMap", notify=settingsChanged)
-    def settingsValues(self) -> dict[str, str]:  # noqa: N802
+    def settingsValues(self) -> dict[str, Any]:  # noqa: N802
         return dict(self._settings_values)
 
     @Property("QVariantList", notify=providersChanged)
@@ -631,16 +651,15 @@ class StudioBridge(QObject):
                     ).fetchall()
                     results = [dict(row) for row in rows]
             else:
-                all_results = self._database.search(
+                results, total = self._database.search_page(
                     query,
-                    limit=500,
+                    limit=self._knowledge_page_size,
+                    offset=self._knowledge_offset,
                     module="" if module == "Todos" else module,
                     source="" if source == "Todas" else source,
                     source_origin=self._knowledge_origin,
                     excluded_sources=("schema",),
                 )
-                total = len(all_results)
-                results = all_results[self._knowledge_offset:self._knowledge_offset + self._knowledge_page_size]
         except Exception as exc:
             self._append_log(f"Falha ao consultar conhecimento: {exc}")
             self.toastRequested.emit(str(exc), "error")
@@ -687,6 +706,7 @@ class StudioBridge(QObject):
 
     @Slot(str)
     def searchReviews(self, query: str) -> None:  # noqa: N802
+        self._clear_review_selection()
         self._review_query = str(query or "").strip()
         self._review_filters = {}
         self._review_offset = 0
@@ -694,6 +714,7 @@ class StudioBridge(QObject):
 
     @Slot(str, "QVariantMap")
     def searchReviewsAdvanced(self, query: str, filters: dict[str, Any]) -> None:  # noqa: N802
+        self._clear_review_selection()
         self._review_query = str(query or "").strip()
         self._review_filters = dict(filters or {})
         self._review_offset = 0
@@ -1342,15 +1363,24 @@ class StudioBridge(QObject):
         if not process or process.state() == QProcess.NotRunning:
             return
         process.terminate()
-        if not process.waitForFinished(3000):
-            process.kill()
+        QTimer.singleShot(3000, lambda: self._kill_process_if_running(process))
+
+    @staticmethod
+    def _kill_process_if_running(process: QProcess) -> None:
+        try:
+            if process.state() != QProcess.NotRunning:
+                process.kill()
+        except RuntimeError:
+            pass
 
     def _read_video_output(self) -> None:
         if not self._video_process:
             return
         text = bytes(self._video_process.readAllStandardOutput()).decode("utf-8", "replace")
         if text:
-            self._video_pending_output += text
+            self._video_pending_output = _bounded_text(
+                self._video_pending_output, redact_sensitive_text(text)
+            )
             self._append_log(text.rstrip())
             if not self._video_output_timer.isActive():
                 self._video_output_timer.start()
@@ -1358,7 +1388,9 @@ class StudioBridge(QObject):
     def _flush_video_output(self) -> None:
         if not self._video_pending_output:
             return
-        self._video_buffer += self._video_pending_output
+        self._video_buffer = _bounded_text(
+            self._video_buffer, self._video_pending_output
+        )
         self._video_pending_output = ""
         self.videosChanged.emit()
 
@@ -1400,8 +1432,15 @@ class StudioBridge(QObject):
         task.signals.failed.connect(lambda error, task=task: self._sync_failed(task, error))
         self._pool.start(task)
 
+    def _append_sync_log(self, message: object) -> None:
+        value = redact_sensitive_text(message)
+        if len(value) > MAX_LOG_ENTRY_CHARS:
+            value = "[...entrada truncada...]\n" + value[-MAX_LOG_ENTRY_CHARS:]
+        self._sync_log.append(value)
+        self._sync_log = self._sync_log[-MAX_SYNC_LOG_LINES:]
+
     def _sync_progress(self, message: str) -> None:
-        self._sync_log.append(str(message))
+        self._append_sync_log(message)
         self._append_log(str(message))
         self.syncChanged.emit()
 
@@ -1482,7 +1521,7 @@ class StudioBridge(QObject):
         self._sync_running = False
         value = result.to_dict() if hasattr(result, "to_dict") else result
         self._sync_status = f"{label}: concluído"
-        self._sync_log.append(json.dumps(value, ensure_ascii=False, indent=2))
+        self._append_sync_log(json.dumps(value, ensure_ascii=False, indent=2))
         self.syncChanged.emit()
         self._refresh_dashboard()
         self._load_knowledge()
@@ -1495,7 +1534,7 @@ class StudioBridge(QObject):
         self._tasks.discard(task)
         self._sync_running = False
         self._sync_status = "Falha na sincronização"
-        self._sync_log.append(error)
+        self._append_sync_log(error)
         self._append_log(error)
         self.syncChanged.emit()
         self._refresh_review_filter_values()
@@ -1523,12 +1562,16 @@ class StudioBridge(QObject):
         return self._settings.root / "schema" / "schema.md"
 
     def _refresh_settings(self) -> None:
+        movidesk_password = os.environ.get("MOVIDESK_PASSWORD", "")
+        endoo_password = os.environ.get("ENDOO_PASSWORD", "")
         self._settings_values = {
             "root": str(self._settings.root),
             "movideskEmail": os.environ.get("MOVIDESK_EMAIL", ""),
-            "movideskPassword": os.environ.get("MOVIDESK_PASSWORD", ""),
+            "movideskPassword": "",
+            "movideskPasswordConfigured": bool(movidesk_password),
             "endooEmail": os.environ.get("ENDOO_EMAIL", ""),
-            "endooPassword": os.environ.get("ENDOO_PASSWORD", ""),
+            "endooPassword": "",
+            "endooPasswordConfigured": bool(endoo_password),
             "interval": str(self._settings.sync_interval_minutes),
             "diagnostic": self._diagnostic_text(),
         }
@@ -1551,12 +1594,20 @@ class StudioBridge(QObject):
 
     @Slot(str, str, str, str, str, str)
     def saveSettings(self, root: str, movidesk_email: str, movidesk_password: str, endoo_email: str, endoo_password: str, interval: str) -> None:  # noqa: N802
+        movidesk_secret = (
+            movidesk_password
+            if movidesk_password
+            else os.environ.get("MOVIDESK_PASSWORD", "")
+        )
+        endoo_secret = (
+            endoo_password if endoo_password else os.environ.get("ENDOO_PASSWORD", "")
+        )
         values = {
             "VR_ROOT": root,
             "MOVIDESK_EMAIL": movidesk_email,
-            "MOVIDESK_PASSWORD": movidesk_password,
+            "MOVIDESK_PASSWORD": movidesk_secret,
             "ENDOO_EMAIL": endoo_email,
-            "ENDOO_PASSWORD": endoo_password,
+            "ENDOO_PASSWORD": endoo_secret,
             "VR_SYNC_INTERVAL_MINUTES": interval,
             "VR_DEFAULT_EFFORT": self._settings.default_effort,
         }
@@ -1570,9 +1621,11 @@ class StudioBridge(QObject):
         self._settings_values.update({
             "root": root,
             "movideskEmail": movidesk_email,
-            "movideskPassword": movidesk_password,
+            "movideskPassword": "",
+            "movideskPasswordConfigured": bool(movidesk_secret),
             "endooEmail": endoo_email,
-            "endooPassword": endoo_password,
+            "endooPassword": "",
+            "endooPasswordConfigured": bool(endoo_secret),
             "interval": interval,
         })
         self.settingsChanged.emit()
@@ -1644,6 +1697,7 @@ class StudioBridge(QObject):
             self.toastRequested.emit(str(exc), "error")
             return
         self.refreshArchived("")
+        self.conversationRestored.emit(conversation_id)
         self.toastRequested.emit("Conversa restaurada.", "success")
 
     @Slot(str)
@@ -1721,7 +1775,7 @@ class StudioBridge(QObject):
             self.toastRequested.emit("Já existe um comando em execução.", "warning")
             return
         self._terminal_process = QProcess(self)
-        self._terminal_output = f"> {value}\n"
+        self._terminal_output = f"> {redact_sensitive_text(value)}\n"
         self._terminal_process.setWorkingDirectory(str(self._settings.root))
         self._terminal_process.setProcessChannelMode(QProcess.MergedChannels)
         self._terminal_process.readyReadStandardOutput.connect(self._read_terminal_output)
@@ -1734,6 +1788,14 @@ class StudioBridge(QObject):
             self._terminal_process.start("sh", ["-lc", value])
         self.terminalChanged.emit()
 
+    @Slot()
+    def stopTerminalCommand(self) -> None:  # noqa: N802
+        process = self._terminal_process
+        if not process or process.state() == QProcess.NotRunning:
+            return
+        process.terminate()
+        QTimer.singleShot(2000, lambda: self._kill_process_if_running(process))
+
     def _read_terminal_output(self) -> None:
         if not self._terminal_process:
             return
@@ -1742,18 +1804,40 @@ class StudioBridge(QObject):
         )
         if not value:
             return
-        self._terminal_output += value
+        self._terminal_output = _bounded_text(
+            self._terminal_output, redact_sensitive_text(value)
+        )
         self._append_log(value.rstrip())
         self.terminalChanged.emit()
 
     def _terminal_finished(self, code: int, _status: Any) -> None:
         self._terminal_process = None
-        self._terminal_output += f"\n[processo finalizado · código {code}]"
+        self._terminal_output = _bounded_text(
+            self._terminal_output, f"\n[processo finalizado · código {code}]"
+        )
         self.terminalChanged.emit()
         self.toastRequested.emit(
             f"Comando concluído · código {code}",
             "success" if code == 0 else "error",
         )
+
+    @Slot()
+    def close(self) -> None:
+        """Stop owned processes before the QML engine and event loop disappear."""
+
+        if self._closed:
+            return
+        self._closed = True
+        self._video_output_timer.stop()
+        for process in (self._terminal_process, self._video_process):
+            if not process or process.state() == QProcess.NotRunning:
+                continue
+            process.terminate()
+            if not process.waitForFinished(1200):
+                process.kill()
+                process.waitForFinished(800)
+        self._terminal_process = None
+        self._video_process = None
 
     @Slot(str)
     def copyText(self, value: str) -> None:  # noqa: N802
@@ -1766,7 +1850,11 @@ class StudioBridge(QObject):
 
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self._log_lines.append(f"[{timestamp}] {message}")
+        value = redact_sensitive_text(message)
+        if len(value) > MAX_LOG_ENTRY_CHARS:
+            value = "[...entrada truncada...]\n" + value[-MAX_LOG_ENTRY_CHARS:]
+        self._log_lines.append(f"[{timestamp}] {value}")
+        self._log_lines = self._log_lines[-MAX_LOG_LINES:]
         self.logsChanged.emit()
 
     @staticmethod

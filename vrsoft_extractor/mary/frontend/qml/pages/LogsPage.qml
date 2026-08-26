@@ -27,7 +27,7 @@ Item {
                 anchors.margins: 14
                 TextArea {
                     width: parent.width
-                    text: studio.logText.length ? studio.logText : "Nenhum evento nesta sessão. Senhas e cookies nunca são exibidos."
+                    text: studio.logText.length ? studio.logText : "Nenhum evento nesta sessão. Credenciais configuradas são redigidas automaticamente; não imprima arquivos de sessão no terminal."
                     color: studio.logText.length ? frontend.palette.text : frontend.palette.mutedText
                     readOnly: true
                     selectByMouse: true

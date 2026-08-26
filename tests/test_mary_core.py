@@ -146,6 +146,74 @@ class MaryCoreTest(unittest.TestCase):
 
         self.assertEqual(env_path.read_text(encoding="utf-8"), "CUSTOM_FLAG=keep\n")
 
+    def test_save_vr_env_round_trips_passwords_with_dotenv_metacharacters(self):
+        from dotenv import dotenv_values
+        from vrsoft_extractor.settings import load_dotenv_file
+
+        secret = "abc # trecho-final 'com aspas' \\ caminho"
+        save_vr_env(
+            self.app,
+            {
+                "VR_ROOT": str(self.settings.root),
+                "MOVIDESK_EMAIL": "user@example.com",
+                "MOVIDESK_PASSWORD": secret,
+                "ENDOO_EMAIL": "video@example.com",
+                "ENDOO_PASSWORD": secret,
+                "VR_SYNC_INTERVAL_MINUTES": "30",
+                "VR_DEFAULT_EFFORT": "medium",
+            },
+        )
+
+        values = dotenv_values(self.app / ".env")
+        if os.name == "nt":
+            self.assertEqual(values["MOVIDESK_PASSWORD"], "")
+            self.assertEqual(values["ENDOO_PASSWORD"], "")
+            protected = self.app / ".state" / "credentials.dpapi.json"
+            self.assertTrue(protected.is_file())
+            self.assertNotIn(secret, protected.read_text(encoding="utf-8"))
+            with patch.dict(
+                os.environ,
+                {"MOVIDESK_PASSWORD": "", "ENDOO_PASSWORD": ""},
+                clear=False,
+            ):
+                load_dotenv_file(self.app / ".env")
+                self.assertEqual(os.environ["MOVIDESK_PASSWORD"], secret)
+                self.assertEqual(os.environ["ENDOO_PASSWORD"], secret)
+        else:
+            self.assertEqual(values["MOVIDESK_PASSWORD"], secret)
+            self.assertEqual(values["ENDOO_PASSWORD"], secret)
+
+    @unittest.skipUnless(os.name == "nt", "A migração DPAPI é exclusiva do Windows")
+    def test_load_dotenv_migrates_legacy_plaintext_passwords_to_dpapi(self):
+        from dotenv import dotenv_values
+        from vrsoft_extractor.settings import load_dotenv_file
+
+        secret = "segredo-legado # com metacaractere"
+        env_path = self.app / ".env"
+        env_path.write_text(
+            "MOVIDESK_EMAIL=movidesk@example.com\n"
+            f"MOVIDESK_PASSWORD='{secret}'\n"
+            "ENDOO_EMAIL=endoo@example.com\n"
+            f"ENDOO_PASSWORD='{secret}'\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            os.environ,
+            {"MOVIDESK_PASSWORD": "", "ENDOO_PASSWORD": ""},
+            clear=False,
+        ):
+            load_dotenv_file(env_path)
+            self.assertEqual(os.environ["MOVIDESK_PASSWORD"], secret)
+            self.assertEqual(os.environ["ENDOO_PASSWORD"], secret)
+
+        values = dotenv_values(env_path)
+        self.assertEqual(values["MOVIDESK_PASSWORD"], "")
+        self.assertEqual(values["ENDOO_PASSWORD"], "")
+        protected = self.app / ".state" / "credentials.dpapi.json"
+        self.assertTrue(protected.is_file())
+        self.assertNotIn(secret, protected.read_text(encoding="utf-8"))
+
     def test_download_asset_rejects_empty_and_oversized_responses(self):
         destination = self.root / "assets"
         with self.assertRaisesRegex(ValueError, "vazio"):
@@ -581,6 +649,33 @@ class MaryCoreTest(unittest.TestCase):
                 "SELECT count(*) FROM document_versions"
             ).fetchone()[0]
         self.assertEqual(versions, 1)
+
+    def test_search_page_reports_and_reaches_results_beyond_legacy_cap(self):
+        database = MaryDatabase(self.settings.database_path)
+        for index in range(501):
+            database.upsert_document(
+                KnowledgeDocument(
+                    source="wiki",
+                    source_id=f"audit-{index:03d}",
+                    title=f"Termoauditoria documento {index:03d}",
+                    url=f"https://example.com/audit-{index:03d}",
+                    markdown=f"Conteúdo termoauditoria número {index:03d}.",
+                    module="Fiscal",
+                    review_status="approved",
+                    content_hash=f"audit-hash-{index:03d}",
+                    local_path=f"audit-{index:03d}.md",
+                )
+            )
+
+        first, total = database.search_page("termoauditoria", limit=100, offset=0)
+        last, last_total = database.search_page(
+            "termoauditoria", limit=100, offset=500
+        )
+
+        self.assertEqual(total, 501)
+        self.assertEqual(last_total, 501)
+        self.assertEqual(len(first), 100)
+        self.assertEqual(len(last), 1)
 
     def test_search_ranks_function_102_and_expands_map_reference(self):
         database = MaryDatabase(self.settings.database_path)
@@ -6479,6 +6574,7 @@ class MaryCoreTest(unittest.TestCase):
         class FakeProvider:
             def __init__(self):
                 self.prompts = []
+                self.message_sent = threading.Event()
 
             def available(self):
                 return True
@@ -6488,12 +6584,14 @@ class MaryCoreTest(unittest.TestCase):
 
             def send_message(self, *args):
                 self.prompts.append(args[5])
+                self.message_sent.set()
 
             def close(self):
                 pass
 
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
+        self.addCleanup(orchestrator.close)
         codex = FakeProvider()
         claude = FakeProvider()
         orchestrator.providers = {"codex": codex, "claude": claude}
@@ -6519,12 +6617,10 @@ class MaryCoreTest(unittest.TestCase):
         orchestrator.send(
             conversation_id, "Continue o trabalho", lambda _event: None
         )
-        for _ in range(100):
-            if claude.prompts:
-                break
-            import time
-
-            time.sleep(0.005)
+        self.assertTrue(
+            claude.message_sent.wait(5.0),
+            "O provedor alternado não recebeu a mensagem dentro do prazo.",
+        )
         self.assertIn("CONTEXTO TRANSFERIDO", claude.prompts[-1])
         self.assertIn("Criar treinamento de PIX", claude.prompts[-1])
 

@@ -160,6 +160,10 @@ class ChatOrchestrator:
         )
         self._assistant_buffers: dict[str, list[str]] = {}
         self._external_callbacks: dict[str, EventCallback] = {}
+        self._callback_generations: dict[str, int] = {}
+        self._dynamic_tool_callbacks: dict[
+            tuple[str, str], tuple[int, EventCallback]
+        ] = {}
         self._pending_user_messages: dict[str, int] = {}
         self._pending_response_modes: dict[str, str] = {}
         self._pending_evidence_bundles: dict[str, EvidenceBundle] = {}
@@ -178,7 +182,7 @@ class ChatOrchestrator:
         self._finalized_turns: set[str] = set()
         self._agent_run_lock = threading.RLock()
         self._turn_finalizer_executor = ThreadPoolExecutor(
-            max_workers=1,
+            max_workers=4,
             thread_name_prefix="mary-turn-finalize",
         )
         self._pending_finalizers: dict[str, set[Future]] = {}
@@ -361,6 +365,9 @@ class ChatOrchestrator:
                 self._terminal_turn_states.pop(conversation_id, None)
                 self._finalized_turns.discard(conversation_id)
                 self._assistant_buffers[conversation_id] = []
+                self._callback_generations[conversation_id] = (
+                    self._callback_generations.get(conversation_id, 0) + 1
+                )
                 self._external_callbacks[conversation_id] = callback
                 self._pending_user_messages[conversation_id] = message_id
                 self._pending_response_modes[conversation_id] = (
@@ -2983,6 +2990,9 @@ class ChatOrchestrator:
         terminal_state: str,
         run_id: str,
     ) -> None:
+        with self._agent_run_lock:
+            turn_callback = self._external_callbacks.get(event.conversation_id)
+            turn_generation = self._callback_generations.get(event.conversation_id, 0)
         try:
             derived_events: list[RuntimeEvent] = []
             if self.database.get_conversation(event.conversation_id) is None:
@@ -3066,7 +3076,7 @@ class ChatOrchestrator:
                 )
                 self.database.add_event(completion)
                 derived_events.append(completion)
-            callback = self._external_callbacks.get(event.conversation_id)
+            callback = turn_callback
             if callback:
                 for derived in derived_events:
                     callback(derived)
@@ -3077,6 +3087,23 @@ class ChatOrchestrator:
                 event.conversation_id,
             )
             self._emit_terminal_error(event.conversation_id, str(exc))
+        finally:
+            with self._agent_run_lock:
+                if (
+                    self._external_callbacks.get(event.conversation_id)
+                    is turn_callback
+                    and self._callback_generations.get(event.conversation_id, 0)
+                    == turn_generation
+                ):
+                    self._external_callbacks.pop(event.conversation_id, None)
+                if (
+                    event.conversation_id not in self._external_callbacks
+                    and not any(
+                        key[0] == event.conversation_id
+                        for key in self._dynamic_tool_callbacks
+                    )
+                ):
+                    self._callback_generations.pop(event.conversation_id, None)
 
     def _emit_terminal_error(self, conversation_id: str, text: str) -> None:
         event = RuntimeEvent(conversation_id, "error", text[:400])
@@ -3573,6 +3600,14 @@ class ChatOrchestrator:
             self._pending_dynamic_tools.pop(request_id, None)
         with self._agent_run_lock:
             self._external_callbacks.pop(conversation_id, None)
+            self._callback_generations.pop(conversation_id, None)
+            stale_callbacks = [
+                key
+                for key in self._dynamic_tool_callbacks
+                if key[0] == conversation_id
+            ]
+            for key in stale_callbacks:
+                self._dynamic_tool_callbacks.pop(key, None)
             self._terminal_turn_states.pop(conversation_id, None)
         self._assistant_buffers.pop(conversation_id, None)
         self._finalized_turns.discard(conversation_id)
@@ -3802,6 +3837,7 @@ class ChatOrchestrator:
             )
 
     def _handle_dynamic_tool(self, event: RuntimeEvent) -> None:
+        self._remember_dynamic_tool_callback(event)
         name = str(event.payload.get("tool") or event.text)
         if name == VR_SEARCH_TOOL_NAME:
             self._handle_vr_search_tool(event)
@@ -3923,7 +3959,26 @@ class ChatOrchestrator:
                 content_items or [{"type": "inputText", "text": text}],
                 success,
             )
-        callback = self._external_callbacks.get(event.conversation_id)
+        request_id = str(event.payload.get("request_id") or "")
+        callback: EventCallback | None = None
+        with self._agent_run_lock:
+            captured = self._dynamic_tool_callbacks.pop(
+                (event.conversation_id, request_id), None
+            )
+            if captured is not None:
+                generation, candidate = captured
+                if self._callback_generations.get(event.conversation_id) == generation:
+                    callback = candidate
+            else:
+                callback = self._external_callbacks.get(event.conversation_id)
+            if (
+                event.conversation_id not in self._external_callbacks
+                and not any(
+                    key[0] == event.conversation_id
+                    for key in self._dynamic_tool_callbacks
+                )
+            ):
+                self._callback_generations.pop(event.conversation_id, None)
         if callback:
             callback(
                 RuntimeEvent(
@@ -3933,6 +3988,21 @@ class ChatOrchestrator:
                     {"success": success, "output": text, **event.payload},
                 )
             )
+
+    def _remember_dynamic_tool_callback(self, event: RuntimeEvent) -> None:
+        """Keep late tool results attached to the turn that requested them."""
+
+        request_id = str(event.payload.get("request_id") or "")
+        if not request_id:
+            return
+        with self._agent_run_lock:
+            callback = self._external_callbacks.get(event.conversation_id)
+            if callback is None:
+                return
+            generation = self._callback_generations.get(event.conversation_id, 0)
+            self._dynamic_tool_callbacks[
+                (event.conversation_id, request_id)
+            ] = (generation, callback)
 
     def close(self) -> None:
         with self._agent_run_lock:
@@ -3956,6 +4026,8 @@ class ChatOrchestrator:
                     )
                 )
         self._external_callbacks.clear()
+        self._callback_generations.clear()
+        self._dynamic_tool_callbacks.clear()
         self._assistant_buffers.clear()
         self._pending_user_messages.clear()
         self._pending_used_evidence_ids.clear()

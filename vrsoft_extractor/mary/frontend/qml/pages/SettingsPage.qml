@@ -64,11 +64,11 @@ Item {
                             Text { text: "Email Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
                             VrTextField { id: movideskEmail; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.movideskEmail || "" }
                             Text { text: "Senha Movidesk"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
-                            VrTextField { id: movideskPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.movideskPassword || ""; echoMode: TextInput.Password }
+                            VrTextField { id: movideskPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: ""; placeholderText: studio.settingsValues.movideskPasswordConfigured ? "Senha configurada — deixe vazio para manter" : "Informe a senha"; echoMode: TextInput.Password }
                             Text { text: "Email Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
                             VrTextField { id: endooEmail; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.endooEmail || "" }
                             Text { text: "Senha Endoo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
-                            VrTextField { id: endooPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: studio.settingsValues.endooPassword || ""; echoMode: TextInput.Password }
+                            VrTextField { id: endooPassword; Layout.fillWidth: true; Layout.minimumWidth: 140; Layout.columnSpan: 2; text: ""; placeholderText: studio.settingsValues.endooPasswordConfigured ? "Senha configurada — deixe vazio para manter" : "Informe a senha"; echoMode: TextInput.Password }
 
                             Text { text: "Repetir sincronização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize }
                             VrComboBox {

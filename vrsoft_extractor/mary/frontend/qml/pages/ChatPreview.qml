@@ -731,7 +731,7 @@ Item {
                     ? Math.min(parent.height - height - 48, Math.max(330, parent.height * 0.54))
                     : parent.height - height - 48
                 width: Math.min(770, parent.width - 40)
-                height: 110
+                height: chat.attachments.length ? 146 : 110
                 radius: 24
                 color: frontend.palette.chatComposer
                 border.width: 1
@@ -756,6 +756,58 @@ Item {
                     Keys.onEnterPressed: event => root.handleComposerEnter(event)
                 }
 
+                ListView {
+                    id: attachmentList
+                    objectName: "chatAttachmentList"
+                    visible: chat.attachments.length > 0
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: composerInput.bottom
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 14
+                    anchors.topMargin: 2
+                    height: visible ? 30 : 0
+                    orientation: ListView.Horizontal
+                    spacing: 6
+                    clip: true
+                    model: chat.attachments
+                    delegate: Rectangle {
+                        required property int index
+                        required property var modelData
+                        width: Math.min(220, attachmentLabel.implicitWidth + 34)
+                        height: 26
+                        radius: 8
+                        color: frontend.palette.chatControl
+                        border.width: 1
+                        border.color: frontend.palette.chatBorder
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 4
+                            spacing: 4
+                            Text {
+                                id: attachmentLabel
+                                width: parent.parent.width - 30
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.name
+                                elide: Text.ElideMiddle
+                                color: frontend.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 10
+                            }
+                            VrIconButton {
+                                width: 22
+                                height: 22
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconKind: "close"
+                                iconSize: 11
+                                foreground: frontend.palette.mutedText
+                                onClicked: chat.removeAttachment(index)
+                            }
+                        }
+                    }
+                }
+
                 RowLayout {
                     anchors.left: parent.left
                     anchors.right: parent.right
@@ -764,6 +816,18 @@ Item {
                     anchors.rightMargin: 12
                     anchors.bottomMargin: 8
                     spacing: 5
+                    VrIconButton {
+                        objectName: "chatAttachButton"
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        iconKind: "plus"
+                        iconSize: 15
+                        enabled: !chat.turnRunning
+                        foreground: frontend.palette.mutedText
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Anexar arquivos"
+                        onClicked: chat.chooseAttachments()
+                    }
                     VrModelPicker {
                         id: modelSelector
                         objectName: "chatModelPicker"
@@ -1257,6 +1321,15 @@ Item {
                                         clear()
                                     }
                                 }
+                                VrButton {
+                                    objectName: "terminalStopButton"
+                                    visible: studio.terminalRunning
+                                    enabled: studio.terminalRunning
+                                    text: "Parar"
+                                    variant: "danger"
+                                    implicitHeight: 30
+                                    onClicked: studio.stopTerminalCommand()
+                                }
                             }
                         }
                         ScrollView {
@@ -1461,10 +1534,8 @@ Item {
     Connections {
         target: chat
         function onFileSuggestionsChanged() {
-            if (composerAssistPopup.visible && composerSuggestions.length
-                    && composerSuggestions[0].action === "reference") {
-                root.updateComposerSuggestions()
-            }
+            root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
+            root.updateComposerSuggestions()
         }
     }
 

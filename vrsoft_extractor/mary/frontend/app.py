@@ -142,11 +142,27 @@ def main(argv: list[str] | None = None) -> int:
         preferences,
         chat_orchestrator=chat_bridge._orchestrator,
     )
+    studio_bridge.conversationRestored.connect(chat_bridge.refresh)
+    chat_bridge.conversationArchived.connect(
+        lambda _conversation_id: studio_bridge.refreshArchived("")
+    )
+    shutdown_complete = False
+
+    def shutdown() -> None:
+        nonlocal shutdown_complete
+        if shutdown_complete:
+            return
+        shutdown_complete = True
+        studio_bridge.close()
+        chat_bridge.close()
+
+    app.aboutToQuit.connect(shutdown)
     engine = create_engine(bridge, chat_bridge, studio_bridge)
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):
             print(warning.toString(), file=sys.stderr)
         print(f"Não foi possível carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
+        shutdown()
         return 1
 
     window = engine.rootObjects()[0]
@@ -175,7 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     engine._frontend_bridge = bridge  # type: ignore[attr-defined]
     engine._chat_bridge = chat_bridge  # type: ignore[attr-defined]
     engine._studio_bridge = studio_bridge  # type: ignore[attr-defined]
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        shutdown()
 
 
 if __name__ == "__main__":
