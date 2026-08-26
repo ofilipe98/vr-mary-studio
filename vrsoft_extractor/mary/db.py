@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -44,6 +45,8 @@ REVIEW_MODULES = {
 }
 REVIEW_ACTIONS = {"approve", "keep", "defer", "reopen"}
 
+LOGGER = logging.getLogger(__name__)
+
 
 def _default_source_origin(source: str) -> str:
     return {
@@ -51,6 +54,15 @@ def _default_source_origin(source: str) -> str:
         "kb": "movidesk",
         "schema": "local",
     }.get(str(source or "").strip().casefold(), str(source or "").strip().casefold())
+
+
+def _escape_like(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
 
 
 def _review_reasons(raw: str) -> list[str]:
@@ -199,6 +211,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     model TEXT NOT NULL DEFAULT '',
     effort TEXT NOT NULL DEFAULT 'medium',
     native_id TEXT NOT NULL DEFAULT '',
+    native_id_vr TEXT NOT NULL DEFAULT '',
     workspace TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle',
     archived INTEGER NOT NULL DEFAULT 0,
@@ -215,6 +228,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
     difficulty_routing INTEGER NOT NULL DEFAULT 1,
     vr_enabled INTEGER NOT NULL DEFAULT 0,
+    vr_mode TEXT NOT NULL DEFAULT 'off',
     context_used_tokens INTEGER NOT NULL DEFAULT 0,
     context_window_tokens INTEGER NOT NULL DEFAULT 0,
     total_processed_tokens INTEGER NOT NULL DEFAULT 0,
@@ -428,6 +442,8 @@ class MaryDatabase:
                 ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
                 ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("vr_mode", "TEXT NOT NULL DEFAULT ''"),
+                ("native_id_vr", "TEXT NOT NULL DEFAULT ''"),
                 ("context_used_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("context_window_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("total_processed_tokens", "INTEGER NOT NULL DEFAULT 0"),
@@ -435,6 +451,11 @@ class MaryDatabase:
                 ("original_workspace", "TEXT NOT NULL DEFAULT ''"),
             ):
                 self._ensure_column(connection, "conversations", column, definition)
+            connection.execute(
+                """UPDATE conversations
+                      SET vr_mode=CASE WHEN vr_enabled=1 THEN 'vr' ELSE 'off' END
+                    WHERE trim(vr_mode)=''"""
+            )
             connection.execute(
                 """UPDATE conversations
                       SET orchestration_mode=CASE
@@ -513,6 +534,18 @@ class MaryDatabase:
                     ON schema_relations(to_schema,to_table,to_column);
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_conversation_kind
                     ON runtime_events(conversation_id,kind,id);
+                CREATE INDEX IF NOT EXISTS idx_messages_conversation
+                    ON messages(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_source_citations_message
+                    ON source_citations(message_id);
+                CREATE INDEX IF NOT EXISTS idx_source_citations_conversation
+                    ON source_citations(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_document_versions_document
+                    ON document_versions(document_id);
+                CREATE INDEX IF NOT EXISTS idx_approvals_conversation
+                    ON approvals(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_conversation
+                    ON artifacts(conversation_id);
                 """
             )
 
@@ -616,20 +649,7 @@ class MaryDatabase:
         root = self.root
         if root is None:
             raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
-        absolute_pattern = "%:\\%"
-        checks = (
-            ("documents", "local_path LIKE ? OR assets_json LIKE ?"),
-            ("conversations", "workspace LIKE ? OR original_workspace LIKE ?"),
-            ("artifacts", "path LIKE ? OR path LIKE ?"),
-        )
-        has_absolute_paths = any(
-            connection.execute(
-                f"SELECT 1 FROM {table} WHERE {where} LIMIT 1",
-                (absolute_pattern, "%:/%"),
-            ).fetchone()
-            for table, where in checks
-        )
-        if not has_absolute_paths:
+        if not self._has_nonportable_paths(connection):
             return
         backup_path = (
             root / ".state" / "backups" / "conhecimento-pre-portable.sqlite"
@@ -640,12 +660,41 @@ class MaryDatabase:
         with sqlite3.connect(backup_path) as target:
             connection.backup(target)
 
+    @staticmethod
+    def _has_nonportable_paths(connection: sqlite3.Connection) -> bool:
+        checks = (
+            ("documents", ("local_path", "assets_json")),
+            ("conversations", ("workspace", "original_workspace")),
+            ("artifacts", ("path",)),
+        )
+        for table, columns in checks:
+            where, parameters = MaryDatabase._nonportable_path_filter(columns)
+            if connection.execute(
+                f"SELECT 1 FROM {table} WHERE {where} LIMIT 1", parameters
+            ).fetchone():
+                return True
+        return False
+
+    @staticmethod
+    def _nonportable_path_filter(columns: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+        patterns = ("%:\\%", "%:/%")
+        where = " OR ".join(
+            f"({column} LIKE ? OR {column} LIKE ?)" for column in columns
+        )
+        return where, tuple(pattern for _column in columns for pattern in patterns)
+
     def _migrate_portable_paths(self, connection: sqlite3.Connection) -> None:
         root = self.root
         if root is None:
             raise RuntimeError("A raiz da base é obrigatória para migrar caminhos.")
+        if not self._has_nonportable_paths(connection):
+            return
+        document_where, document_parameters = self._nonportable_path_filter(
+            ("local_path", "assets_json")
+        )
         rows = connection.execute(
-            "SELECT id,local_path,assets_json FROM documents"
+            f"SELECT id,local_path,assets_json FROM documents WHERE {document_where}",
+            document_parameters,
         ).fetchall()
         for row in rows:
             try:
@@ -668,7 +717,10 @@ class MaryDatabase:
                 else ("path",)
             )
             selected = ",".join(("id", *columns))
-            for row in connection.execute(f"SELECT {selected} FROM {table}").fetchall():
+            where, parameters = self._nonportable_path_filter(columns)
+            for row in connection.execute(
+                f"SELECT {selected} FROM {table} WHERE {where}", parameters
+            ).fetchall():
                 values = {column: to_portable_path(root, row[column]) for column in columns}
                 if any(values[column] != row[column] for column in columns):
                     assignments = ",".join(f"{column}=?" for column in columns)
@@ -707,7 +759,8 @@ class MaryDatabase:
                        ''
                      )
                      ELSE document_hash
-                   END""",
+                   END
+                WHERE queued_at='' OR updated_at='' OR document_hash=''""",
             (now, now),
         )
         rows = connection.execute(
@@ -810,7 +863,10 @@ class MaryDatabase:
                         THEN documents.review_status
                       ELSE excluded.review_status END,
                     status=excluded.status,category=excluded.category,product=excluded.product,
-                    created_at=excluded.created_at,updated_at=excluded.updated_at,
+                    created_at=CASE
+                      WHEN trim(documents.created_at)=''
+                      THEN excluded.created_at ELSE documents.created_at END,
+                    updated_at=excluded.updated_at,
                     synced_at=excluded.synced_at,revision=excluded.revision,
                     content_hash=excluded.content_hash,markdown=excluded.markdown,
                     ocr_text=excluded.ocr_text,local_path=excluded.local_path,
@@ -1060,9 +1116,6 @@ class MaryDatabase:
             )
             return True
 
-    def decide_review(self, review_id: int, module: str) -> None:
-        self.decide_reviews([review_id], "approve", module=module)
-
     def decide_reviews(
         self,
         review_ids: list[int],
@@ -1276,8 +1329,10 @@ class MaryDatabase:
                 else:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(content)
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Falha ao restaurar arquivo %s: %s", path, exc
+                )
 
     def _remove_replaced_document_files(
         self, replaced_files: list[tuple[Path, Path]]
@@ -1294,11 +1349,25 @@ class MaryDatabase:
                     and previous.is_file()
                 ):
                     previous.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Falha ao remover arquivo substituído %s: %s", previous, exc
+                )
 
     def list_reviews(self) -> list[dict[str, Any]]:
-        return self.query_reviews(ReviewFilters(limit=10_000)).items
+        items: list[dict[str, Any]] = []
+        page_size = 500
+        maximum = 10_000
+        offset = 0
+        while len(items) < maximum:
+            page = self.query_reviews(
+                ReviewFilters(limit=page_size, offset=offset)
+            )
+            items.extend(page.items)
+            if len(page.items) < page_size or len(items) >= page.total:
+                break
+            offset += page_size
+        return items[:maximum]
 
     def query_reviews(self, filters: ReviewFilters) -> ReviewPage:
         where = ["d.status='active'"]
@@ -1337,13 +1406,13 @@ class MaryDatabase:
             )
             params.append(f"-{filters.period_days} days")
         if filters.query.strip():
-            needle = f"%{filters.query.strip().casefold()}%"
+            needle = f"%{_escape_like(filters.query.strip().casefold())}%"
             where.append(
                 """lower(
                      d.title || ' ' || d.source_id || ' ' || d.product || ' ' ||
                      d.category || ' ' || r.reasons_json || ' ' || d.markdown ||
                      ' ' || d.ocr_text
-                   ) LIKE ?"""
+                   ) LIKE ? ESCAPE '\\'"""
             )
             params.append(needle)
 
@@ -1619,10 +1688,11 @@ class MaryDatabase:
         if not terms:
             return []
         where = " OR ".join(
-            "lower(t.schema_name||'.'||t.table_name||' '||c.column_name) LIKE ?"
+            "lower(t.schema_name||'.'||t.table_name||' '||c.column_name) "
+            "LIKE ? ESCAPE '\\'"
             for _ in terms
         )
-        params = [f"%{term.casefold()}%" for term in terms]
+        params = [f"%{_escape_like(term.casefold())}%" for term in terms]
         with self.connect() as connection:
             rows = connection.execute(
                 f"""SELECT t.id AS table_id,t.document_id,t.schema_name,t.table_name,
@@ -1746,6 +1816,79 @@ class MaryDatabase:
             )
         return selected
 
+    def search_page(
+        self,
+        query: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        module: str = "",
+        source: str = "",
+        include_unvalidated: bool = False,
+        excluded_sources: tuple[str, ...] = (),
+        source_origin: str = "",
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return a deterministic FTS page and its uncapped result count."""
+
+        terms = search_terms(query)
+        if not terms:
+            return [], 0
+        filters = ["d.status='active'"]
+        if not include_unvalidated:
+            filters.extend(
+                [
+                    "d.module<>'Revisar'",
+                    "d.review_status IN ('approved','kept')",
+                ]
+            )
+        filter_params: list[Any] = []
+        if module:
+            filters.append("d.module=?")
+            filter_params.append(module)
+        if source:
+            filters.append("d.source=?")
+            filter_params.append(source)
+        if source_origin:
+            filters.append("d.source_origin=?")
+            filter_params.append(source_origin)
+        ignored = tuple(
+            str(item).strip() for item in excluded_sources if str(item).strip()
+        )
+        if ignored:
+            placeholders = ",".join("?" for _ in ignored)
+            filters.append(f"d.source NOT IN ({placeholders})")
+            filter_params.extend(ignored)
+        where = " AND ".join(filters)
+        match_query = _fts_query(query)
+        page_limit = max(1, int(limit))
+        page_offset = max(0, int(offset))
+        with self.connect() as connection:
+            total = int(
+                connection.execute(
+                    f"""SELECT count(*)
+                          FROM knowledge_fts
+                          JOIN documents d ON d.id=knowledge_fts.rowid
+                         WHERE knowledge_fts MATCH ? AND {where}""",
+                    [match_query, *filter_params],
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                      FROM knowledge_fts
+                      JOIN documents d ON d.id=knowledge_fts.rowid
+                     WHERE knowledge_fts MATCH ? AND {where}
+                     ORDER BY rank, d.title COLLATE NOCASE, d.id
+                     LIMIT ? OFFSET ?""",
+                [match_query, *filter_params, page_limit, page_offset],
+            ).fetchall()
+        results = [dict(row) for row in rows]
+        for result in results:
+            result["excerpt"] = search_excerpt(
+                result.get("markdown") or str(result.get("ocr_text") or ""),
+                terms,
+            )
+        return results, total
+
     def start_sync(self, source: str, source_origin: str = "") -> int:
         origin = source_origin or _default_source_origin(source)
         with self.connect() as connection:
@@ -1805,10 +1948,14 @@ class MaryDatabase:
         collaboration_mode: str = "default",
         orchestration: OrchestrationOptions | None = None,
         vr_enabled: bool = False,
+        vr_mode: str = "",
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
         orchestration = orchestration or OrchestrationOptions()
+        resolved_mode = str(vr_mode or "").strip().casefold()
+        if resolved_mode not in {"off", "vr", "ultra"}:
+            resolved_mode = "vr" if vr_enabled else "off"
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO conversations
@@ -1816,9 +1963,9 @@ class MaryDatabase:
                     collaboration_mode,orchestration_enabled,orchestration_mode,
                     orchestration_strategy,
                     ultra_enabled,show_execution,explain_routing,dynamic_model_routing,
-                     dynamic_agent_count,difficulty_routing,vr_enabled,workspace,cloned_from,
-                     created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     dynamic_agent_count,difficulty_routing,vr_enabled,vr_mode,workspace,
+                     cloned_from,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
@@ -1838,6 +1985,7 @@ class MaryDatabase:
                     int(orchestration.dynamic_agent_count),
                     int(orchestration.difficulty_routing),
                     int(vr_enabled),
+                    resolved_mode,
                     to_portable_path(self.root, workspace) if self.root else str(workspace),
                     cloned_from,
                     now,
@@ -1882,13 +2030,14 @@ class MaryDatabase:
 
     def update_conversation(self, conversation_id: str, **fields: Any) -> None:
         allowed = {
-            "title", "provider", "model", "effort", "native_id", "status", "archived",
+            "title", "provider", "model", "effort", "native_id", "native_id_vr",
+            "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
             "orchestration_enabled", "orchestration_mode",
             "orchestration_strategy", "ultra_enabled",
             "show_execution", "explain_routing",
             "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
-            "workspace", "original_workspace", "vr_enabled",
+            "workspace", "original_workspace", "vr_enabled", "vr_mode",
             "context_used_tokens", "context_window_tokens", "total_processed_tokens",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
@@ -2337,6 +2486,39 @@ class MaryDatabase:
                     ORDER BY id""",
                 (conversation_id, int(event_id), *kinds),
             ).fetchall()
+
+    def latest_turn_events(self, conversation_id: str) -> list[sqlite3.Row]:
+        """Return the persisted events that belong to the latest chat turn.
+
+        Response planning can be emitted before the provider's ``turn_started``
+        event, so the previous terminal event is the reliable boundary.
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM runtime_events
+                   WHERE conversation_id=? ORDER BY id DESC LIMIT 1000""",
+                (conversation_id,),
+            ).fetchall()
+        ordered = list(reversed(rows))
+        if not ordered:
+            return []
+        terminal_indexes = [
+            index
+            for index, row in enumerate(ordered)
+            if str(row["kind"] or "")
+            in {"turn_completed", "orchestration_cancelled", "turn_recovered"}
+        ]
+        if not terminal_indexes:
+            return ordered
+        latest_terminal = terminal_indexes[-1]
+        has_events_after_latest = latest_terminal < len(ordered) - 1
+        boundary_index = (
+            latest_terminal
+            if has_events_after_latest
+            else (terminal_indexes[-2] if len(terminal_indexes) > 1 else -1)
+        )
+        return ordered[boundary_index + 1 :]
 
     def purge_conversation(self, conversation_id: str) -> None:
         with self.connect() as connection:

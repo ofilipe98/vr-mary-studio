@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from .db import MaryDatabase
 from .knowledge import (
@@ -24,6 +26,7 @@ from .models import (
 )
 from .schema_sync import SchemaSync
 from .search import (
+    MODULE_HINTS,
     infer_search_module,
     infer_search_modules,
     normalize_search_text,
@@ -83,6 +86,34 @@ ROLE_SOURCES: dict[str, tuple[str, ...]] = {
     "process": ("kb", "wiki"),
     "functional": ("wiki", "kb"),
 }
+
+
+LANE_MAX_WORKERS = 4
+MODULE_MAX_WORKERS = 3
+
+# Confidence (share of the leading intent) above which a classified profile is
+# treated as clearly ERP-related when suggesting the VR flow in native mode.
+VR_HINT_INTENT_CONFIDENCE = 0.64
+
+
+def should_suggest_vr_flow(profile: QueryProfile) -> bool:
+    """Decide whether a native-mode message deserves the "ative VR" hint.
+
+    Pure and cheap: only uses the already-computed :class:`QueryProfile`, so
+    callers can run it on every send without touching the index. Errs toward
+    omission — the hint must never nag on generic questions.
+    """
+    if str(profile.product or "").strip():
+        return True
+    module = str(profile.module or "")
+    if module not in KNOWLEDGE_MODULES:
+        return False
+    if max(profile.intents.values(), default=0.0) >= VR_HINT_INTENT_CONFIDENCE:
+        return True
+    # Two or more module-specific terms are strong local-domain evidence on
+    # their own ("cadastro de produto", "cupom fiscal").
+    matched_hints = len(set(profile.terms) & MODULE_HINTS.get(module, frozenset()))
+    return matched_hints >= 2
 
 
 class KnowledgeRouter:
@@ -226,41 +257,18 @@ class KnowledgeRouter:
         else:
             modular_candidates: list[EvidenceCandidate] = []
             reports: list[SourceSearchReport] = []
-            for module in selected_modules:
-                modular_sources = tuple(
-                    source
-                    for source in routed_sources
-                    if source in MODULE_KNOWLEDGE_SOURCES
+            warnings.extend(
+                self._collect_module_lanes(
+                    profile,
+                    selected_modules,
+                    routed_sources=routed_sources,
+                    seed_results=discovery_results,
+                    seed_queries=discovery_queries,
+                    seed_candidates=discovery_selected,
+                    out_candidates=modular_candidates,
+                    out_reports=reports,
                 )
-                lane_results, lane_queries, lane_errors, lane_warnings = (
-                    self._collect_lanes(
-                        profile,
-                        module=module,
-                        seed_results=discovery_results,
-                        seed_queries=discovery_queries,
-                        seed_candidates=discovery_selected,
-                        sources=modular_sources,
-                    )
-                )
-                warnings.extend(lane_warnings)
-                candidates = self._rerank(profile, lane_results)
-                lane_selected, _lane_groups, _lane_conflicts = (
-                    self._deduplicate_and_group(candidates)
-                )
-                lane_selected = self._restore_source_coverage(
-                    lane_selected, candidates
-                )
-                modular_candidates.extend(lane_selected)
-                reports.extend(
-                    self._build_source_reports(
-                        module,
-                        lane_results,
-                        lane_queries,
-                        lane_errors,
-                        lane_selected,
-                        sources=modular_sources,
-                    )
-                )
+            )
             if "schema" in routed_sources:
                 schema_candidates = [
                     item
@@ -303,6 +311,63 @@ class KnowledgeRouter:
             missing_sources=missing,
             warnings=tuple(dict.fromkeys(warnings)),
         )
+
+    def search(
+        self,
+        query: str,
+        *,
+        source: str = "",
+        module: str = "",
+        limit: int = 6,
+    ) -> dict[str, Any]:
+        """Run a focused evidence retrieval for the vr_search native tool."""
+        self._ensure_index_ready()
+        normalized_source = str(source or "").strip().casefold()
+        sources = (
+            (normalized_source,)
+            if normalized_source in KNOWLEDGE_SOURCES
+            else KNOWLEDGE_SOURCES
+        )
+        normalized_module = str(module or "").strip()
+        try:
+            limit_value = max(1, min(10, int(limit)))
+        except (TypeError, ValueError):
+            limit_value = 6
+        profile = self.classify(query)
+        lane_results, _lane_queries, lane_errors, warnings = self._collect_lanes(
+            profile,
+            module=normalized_module,
+            sources=sources,
+        )
+        candidates = self._rerank(profile, lane_results)
+        selected, _groups, conflicts = self._deduplicate_and_group(candidates)
+        results = [
+            {
+                "evidence_id": item.evidence_id,
+                "title": item.title,
+                "heading": item.heading,
+                "source": item.source,
+                "source_origin": item.source_origin,
+                "module": item.module,
+                "content_type": item.content_type,
+                "excerpt": (item.excerpt or "")[:600],
+                "url": item.url,
+                "local_path": item.local_path,
+                "confidence": round(float(item.confidence), 3),
+                "matched_terms": list(item.matched_terms)[:8],
+            }
+            for item in selected[:limit_value]
+        ]
+        return {
+            "query": query,
+            "source": normalized_source,
+            "module": normalized_module,
+            "total": len(results),
+            "results": results,
+            "conflicts": [item.to_dict() for item in conflicts],
+            "warnings": list(dict.fromkeys(warnings)),
+            "errors": {key: value for key, value in lane_errors.items()},
+        }
 
     @staticmethod
     def sources_for_profile(profile: QueryProfile) -> tuple[str, ...]:
@@ -426,6 +491,7 @@ class KnowledgeRouter:
         lane_queries: dict[str, tuple[str, ...]] = {}
         lane_errors: dict[str, str] = {}
         warnings: list[str] = []
+        pending: list[str] = []
         for source in sources:
             source_has_seed = bool(
                 module
@@ -447,19 +513,137 @@ class KnowledgeRouter:
                     (seed_queries or {}).get(source, ())
                 )
                 continue
-            try:
-                rows, executed_queries = self._search_lane(
-                    profile, source, module=module
-                )
-                lane_results[source] = rows
-                lane_queries[source] = executed_queries
-            except Exception as exc:
-                lane_results[source] = []
-                lane_queries[source] = _query_variants(profile, module)
-                lane_errors[source] = str(exc)[:500]
+            pending.append(source)
+        if not pending:
+            return lane_results, lane_queries, lane_errors, warnings
+        # Lanes are independent read-only searches; results are collected in
+        # submission order so the output stays identical to the sequential run.
+        if len(pending) == 1:
+            outcomes = [(pending[0], self._run_lane_search(profile, pending[0], module))]
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(LANE_MAX_WORKERS, len(pending))
+            ) as executor:
+                futures = [
+                    executor.submit(self._run_lane_search, profile, source, module)
+                    for source in pending
+                ]
+                outcomes = [
+                    (source, future.result())
+                    for source, future in zip(pending, futures)
+                ]
+        for source, (rows, executed_queries, error) in outcomes:
+            lane_results[source] = rows
+            lane_queries[source] = executed_queries
+            if error:
+                lane_errors[source] = error[:500]
                 lane_label = f"{module}/{source.upper()}" if module else source.upper()
-                warnings.append(f"Falha na trilha {lane_label}: {exc}")
+                warnings.append(f"Falha na trilha {lane_label}: {error}")
         return lane_results, lane_queries, lane_errors, warnings
+
+    def _run_lane_search(
+        self, profile: QueryProfile, source: str, module: str
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...], str]:
+        try:
+            rows, executed_queries = self._search_lane(profile, source, module=module)
+            return rows, executed_queries, ""
+        except Exception as exc:
+            return [], _query_variants(profile, module), str(exc)
+
+    def _module_lane(
+        self,
+        profile: QueryProfile,
+        module: str,
+        *,
+        routed_sources: tuple[str, ...],
+        seed_results: dict[str, list[dict[str, Any]]] | None,
+        seed_queries: dict[str, tuple[str, ...]] | None,
+        seed_candidates: list[EvidenceCandidate] | None,
+    ) -> tuple[list[EvidenceCandidate], list[SourceSearchReport], list[str]]:
+        modular_sources = tuple(
+            source
+            for source in routed_sources
+            if source in MODULE_KNOWLEDGE_SOURCES
+        )
+        lane_results, lane_queries, lane_errors, warnings = self._collect_lanes(
+            profile,
+            module=module,
+            seed_results=seed_results,
+            seed_queries=seed_queries,
+            seed_candidates=seed_candidates,
+            sources=modular_sources,
+        )
+        candidates = self._rerank(profile, lane_results)
+        lane_selected, _lane_groups, _lane_conflicts = (
+            self._deduplicate_and_group(candidates)
+        )
+        lane_selected = self._restore_source_coverage(lane_selected, candidates)
+        reports = self._build_source_reports(
+            module,
+            lane_results,
+            lane_queries,
+            lane_errors,
+            lane_selected,
+            sources=modular_sources,
+        )
+        return lane_selected, reports, warnings
+
+    def _collect_module_lanes(
+        self,
+        profile: QueryProfile,
+        selected_modules: tuple[str, ...],
+        *,
+        routed_sources: tuple[str, ...],
+        seed_results: dict[str, list[dict[str, Any]]] | None,
+        seed_queries: dict[str, tuple[str, ...]] | None,
+        seed_candidates: list[EvidenceCandidate] | None,
+        out_candidates: list[EvidenceCandidate],
+        out_reports: list[SourceSearchReport],
+    ) -> list[str]:
+        if not selected_modules:
+            return []
+        if len(selected_modules) == 1:
+            outcomes = [
+                (
+                    selected_modules[0],
+                    self._module_lane(
+                        profile,
+                        selected_modules[0],
+                        routed_sources=routed_sources,
+                        seed_results=seed_results,
+                        seed_queries=seed_queries,
+                        seed_candidates=seed_candidates,
+                    ),
+                )
+            ]
+        else:
+            # Module lanes are independent; collect in module order to keep
+            # the merged bundle deterministic.
+            with ThreadPoolExecutor(
+                max_workers=min(MODULE_MAX_WORKERS, len(selected_modules))
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        self._module_lane,
+                        profile,
+                        module,
+                        routed_sources=routed_sources,
+                        seed_results=seed_results,
+                        seed_queries=seed_queries,
+                        seed_candidates=seed_candidates,
+                    )
+                    for module in selected_modules
+                ]
+                outcomes = [
+                    (module, future.result())
+                    for module, future in zip(selected_modules, futures)
+                ]
+        all_warnings: list[str] = []
+        for _module, (lane_selected, reports, warnings) in outcomes:
+            out_candidates.extend(lane_selected)
+            out_reports.extend(reports)
+            all_warnings.extend(warnings)
+        return all_warnings
 
     def _build_source_reports(
         self,
@@ -686,6 +870,11 @@ class KnowledgeRouter:
         scan_limit = max(8, self.per_source_limit * 3)
         rows_by_key: dict[tuple[int, int], dict[str, Any]] = {}
         search_modules = (module, "Multimodulo") if module else ("",)
+        schema_document = (
+            self.database.get_document("schema", "postgresql-vr")
+            if source == "schema"
+            else None
+        )
         for lane_query in queries:
             query_found = False
             for search_module in search_modules:
@@ -721,7 +910,9 @@ class KnowledgeRouter:
                 for item in self.database.search_schema_catalog(
                     lane_query, scan_limit
                 ):
-                    converted = self._schema_catalog_candidate_row(item)
+                    converted = self._schema_catalog_candidate_row(
+                        item, document=schema_document
+                    )
                     key = (
                         int(converted.get("document_id") or 0),
                         int(converted.get("chunk_id") or 0),
@@ -733,9 +924,11 @@ class KnowledgeRouter:
         return list(rows_by_key.values()), queries
 
     def _schema_catalog_candidate_row(
-        self, item: dict[str, Any]
+        self,
+        item: dict[str, Any],
+        *,
+        document: Any = None,
     ) -> dict[str, Any]:
-        document = self.database.get_document("schema", "postgresql-vr")
         document_data = dict(document) if document is not None else {}
         schema_name = str(item.get("schema_name") or "public")
         table_name = str(item.get("table_name") or "")
@@ -857,18 +1050,6 @@ class KnowledgeRouter:
                         _settings_adapter(self.root), self.database
                     ).sync()
             self._ready = True
-
-    def prepare_index(self, *, backfill: bool = True) -> dict[str, int]:
-        """Index local SchemaVR and optionally backfill legacy documents."""
-        schema_created = 0
-        schema_path = self.root / "agentes" / "SchemaVR" / "schema.md"
-        if schema_path.is_file():
-            stats = SchemaSync(_settings_adapter(self.root), self.database).sync()
-            schema_created = stats.created + stats.updated
-        documents = self.database.backfill_knowledge_chunks() if backfill else 0
-        with self._ready_lock:
-            self._ready = True
-        return {"schema": schema_created, "documents": documents}
 
     @staticmethod
     def _legacy_candidate_row(item: dict[str, Any]) -> dict[str, Any]:
@@ -1186,6 +1367,7 @@ class KnowledgeRouter:
                     ]
         groups: list[EvidenceGroup] = []
         conflicts: list[EvidenceConflict] = []
+        group_suffix = uuid4().hex[:8]
         for index, members in enumerate(group_members, start=1):
             if len(members) < 2:
                 continue
@@ -1195,7 +1377,7 @@ class KnowledgeRouter:
                 relationship = "complementary"
             groups.append(
                 EvidenceGroup(
-                    group_id=f"group-{index}",
+                    group_id=f"group-{index}-{group_suffix}",
                     concept=representative.heading or representative.title,
                     evidence_ids=tuple(item.evidence_id for item in members),
                     relationship=relationship,

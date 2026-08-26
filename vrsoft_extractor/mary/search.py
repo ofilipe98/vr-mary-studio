@@ -62,6 +62,7 @@ MODULE_HINTS: dict[str, frozenset[str]] = {
             "cfop",
             "fiscal",
             "icms",
+            "nf",
             "nfe",
             "nfce",
             "nota",
@@ -151,8 +152,16 @@ def infer_search_modules(terms: Iterable[str]) -> tuple[str, ...]:
     best_score = max(scores.values(), default=0)
     if best_score <= 0:
         return ()
+    # A module with meaningful evidence (>= half of the strongest score)
+    # participates: explicit multi-module questions must not collapse to a
+    # single winner just because one side scored higher.
+    threshold = max(1, -(-best_score // 2))
+    ranked = sorted(
+        scores.items(),
+        key=lambda item: (-item[1], list(MODULE_HINTS).index(item[0])),
+    )
     return tuple(
-        module for module, score in scores.items() if score == best_score
+        module for module, score in ranked if score >= threshold
     )
 
 

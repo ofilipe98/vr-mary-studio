@@ -72,7 +72,7 @@ def login(settings: Settings, *, headless: bool = False, force: bool = False) ->
 
         credentials = get_credentials(required=False)
         if credentials:
-            LOGGER.info("Preenchendo formulario de login com credenciais do .env")
+            LOGGER.info("Preenchendo formulário de login com credenciais locais protegidas")
             username_filled = _fill_first(page, EMAIL_SELECTORS, credentials.email)
             if not username_filled:
                 LOGGER.warning("Campo de usuario nao encontrado automaticamente")

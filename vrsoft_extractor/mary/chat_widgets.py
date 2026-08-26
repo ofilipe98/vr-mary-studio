@@ -42,7 +42,12 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFormat,
+    QTextFrameFormat,
+    QTextLength,
     QTextOption,
+    QTextTable,
+    QTextTableCellFormat,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -662,24 +667,7 @@ class CodeBlockWidget(QFrame):
         self.setFixedHeight(editor_height + 40)
 
     def _language_badge(self) -> str:
-        return {
-            "python": "Py",
-            "py": "Py",
-            "sql": "DB",
-            "postgres": "DB",
-            "postgresql": "DB",
-            "json": "{}",
-            "javascript": "JS",
-            "js": "JS",
-            "typescript": "TS",
-            "ts": "TS",
-            "powershell": ">_",
-            "shell": ">_",
-            "bash": ">_",
-        }.get(
-            self.language,
-            "<>" if self.language == "text" else self.language[:3].upper(),
-        )
+        return code_language_badge(self.language)
 
     def _set_line_wrap(self, enabled: bool) -> None:
         self.editor.setLineWrapMode(
@@ -702,14 +690,250 @@ class CodeBlockWidget(QFrame):
         self.copy_button.setToolTip("Copiar código")
 
 
+FENCE_RE = re.compile(
+    r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+_LANGUAGE_BADGES = {
+    "python": "Py",
+    "py": "Py",
+    "sql": "DB",
+    "postgres": "DB",
+    "postgresql": "DB",
+    "json": "{}",
+    "javascript": "JS",
+    "js": "JS",
+    "typescript": "TS",
+    "ts": "TS",
+    "powershell": ">_",
+    "shell": ">_",
+    "bash": ">_",
+}
+
+
+def code_language_badge(language: str) -> str:
+    normalized = str(language or "text").strip().casefold() or "text"
+    return _LANGUAGE_BADGES.get(
+        normalized,
+        "<>" if normalized == "text" else normalized[:3].upper(),
+    )
+
+
+_THEMATIC_BREAK_RE = re.compile(
+    r"(?:^|\n)[ \t]*\n[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)"
+    r"|^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)"
+)
+
+
+def _count_horizontal_rules(markdown: str) -> int:
+    return len(_THEMATIC_BREAK_RE.findall(str(markdown or "")))
+
+
+def _style_document_tables(
+    document: QTextDocument,
+    dark: bool,
+    ranges: list[tuple[int, int]],
+) -> None:
+    """Give imported tables the bordered T3 look and record their extents."""
+    border = QColor("#3F3F46" if dark else "#D8D8E0")
+    header_background = QColor("#26262B" if dark else "#F0F0F4")
+
+    def visit(frame) -> None:
+        for child in frame.childFrames():
+            if isinstance(child, QTextTable):
+                table_format = child.format()
+                table_format.setBorder(1)
+                table_format.setBorderBrush(border)
+                table_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
+                table_format.setBorderCollapse(True)
+                table_format.setCellPadding(6)
+                table_format.setCellSpacing(0)
+                table_format.setWidth(QTextLength(QTextLength.PercentageLength, 100))
+                child.setFormat(table_format)
+                ranges.append((child.firstPosition(), child.lastPosition() + 1))
+                for row in range(child.rows()):
+                    for column in range(child.columns()):
+                        cell = child.cellAt(row, column)
+                        if not cell.isValid():
+                            continue
+                        cell_format = QTextTableCellFormat(cell.format())
+                        cell_format.setLeftBorder(1)
+                        cell_format.setRightBorder(1)
+                        cell_format.setTopBorder(1)
+                        cell_format.setBottomBorder(1)
+                        cell_format.setBorderBrush(border)
+                        cell_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
+                        if row == 0:
+                            cell_format.setBackground(header_background)
+                        cell.setFormat(cell_format)
+            visit(child)
+
+    visit(document.rootFrame())
+
+
+def apply_message_document_style(
+    document: QTextDocument,
+    markdown: str = "",
+    dark: bool | None = None,
+) -> None:
+    """Apply the T3-like rhythm that Qt's Markdown importer omits."""
+    if dark is None:
+        application = QApplication.instance()
+        dark = bool(
+            application
+            and application.property("vr_theme") == "dark_orange"
+        )
+    text_color = QColor("#D4D4D8" if dark else "#27272A")
+    heading_color = QColor("#FAFAFA" if dark else "#18181B")
+    muted_color = QColor("#A1A1AA" if dark else "#52525B")
+    link_color = QColor("#58A6FF" if dark else "#075EAD")
+    code_text = QColor("#E4E4E7" if dark else "#27272A")
+    code_background = QColor("#26262B" if dark else "#ECECF1")
+    quote_background = QColor("#232327" if dark else "#F4F4F7")
+    rule_color = QColor("#3F3F46" if dark else "#C9C9D3")
+    document.setIndentWidth(18)
+
+    table_ranges: list[tuple[int, int]] = []
+    _style_document_tables(document, dark, table_ranges)
+    rule_budget = _count_horizontal_rules(markdown)
+
+    def inside_table(position: int) -> bool:
+        return any(start <= position < end for start, end in table_ranges)
+
+    def quote_level_of(block_format: QTextBlockFormat) -> int:
+        key = int(QTextFormat.BlockQuoteLevel)
+        if not block_format.hasProperty(key):
+            return 0
+        return int(block_format.property(key))
+
+    def is_code_block(block_format: QTextBlockFormat) -> bool:
+        return block_format.hasProperty(int(QTextFormat.BlockCodeLanguage))
+
+    block = document.firstBlock()
+    previous_quote = False
+    previous_code = False
+    while block.isValid():
+        block_format = block.blockFormat()
+        block_format.setLineHeight(
+            155.0,
+            QTextBlockFormat.ProportionalHeight.value,
+        )
+        heading_level = block_format.headingLevel()
+        text_list = block.textList()
+        quote_level = quote_level_of(block_format)
+        code_flag = is_code_block(block_format)
+        in_table = inside_table(block.position())
+        next_block = block.next()
+        if not in_table:
+            if heading_level:
+                block_format.setTopMargin(0 if block == document.firstBlock() else 20)
+                block_format.setBottomMargin(9)
+            elif text_list is not None:
+                same_list_continues = (
+                    next_block.isValid() and next_block.textList() is text_list
+                )
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(7 if same_list_continues else 14)
+            elif quote_level:
+                quote_continues = next_block.isValid() and bool(
+                    quote_level_of(next_block.blockFormat())
+                )
+                block_format.setTopMargin(0 if previous_quote else 12)
+                block_format.setBottomMargin(0 if quote_continues else 14)
+                block_format.setLeftMargin(10)
+                block_format.setRightMargin(6)
+                block_format.setBackground(QBrush(quote_background))
+            elif code_flag:
+                code_continues = next_block.isValid() and is_code_block(
+                    next_block.blockFormat()
+                )
+                block_format.setTopMargin(0 if previous_code else 12)
+                block_format.setBottomMargin(0 if code_continues else 12)
+                block_format.setLeftMargin(10)
+                block_format.setRightMargin(10)
+                block_format.setBackground(QBrush(code_background))
+            elif not block.text() and rule_budget > 0:
+                rule_budget -= 1
+                block_format.setLineHeight(2.0, QTextBlockFormat.FixedHeight.value)
+                block_format.setBackground(QBrush(rule_color))
+                block_format.setTopMargin(10)
+                block_format.setBottomMargin(12)
+            else:
+                block_format.setTopMargin(0)
+                block_format.setBottomMargin(0 if not next_block.isValid() else 16)
+            previous_quote = bool(quote_level)
+            previous_code = code_flag
+            block_cursor = QTextCursor(block)
+            block_cursor.setBlockFormat(block_format)
+
+        in_quote = bool(quote_level)
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            fragment_format = fragment.charFormat()
+            if fragment_format.isImageFormat():
+                image_format = fragment_format.toImageFormat()
+                image_url = QUrl(image_format.name())
+                image_path = (
+                    image_url.toLocalFile()
+                    if image_url.isLocalFile()
+                    else image_format.name()
+                )
+                image_size = QImageReader(image_path).size()
+                if image_size.isValid() and image_size.width() > 0:
+                    scale = min(
+                        1.0,
+                        480.0 / image_size.width(),
+                        320.0 / image_size.height(),
+                    )
+                    image_format.setWidth(image_size.width() * scale)
+                    image_format.setHeight(image_size.height() * scale)
+                fragment_cursor = QTextCursor(document)
+                fragment_cursor.setPosition(fragment.position())
+                fragment_cursor.setPosition(
+                    fragment.position() + fragment.length(),
+                    QTextCursor.KeepAnchor,
+                )
+                fragment_cursor.mergeCharFormat(image_format)
+                iterator += 1
+                continue
+            if fragment_format.fontFixedPitch():
+                fragment_format.setFontFamilies(["Consolas"])
+                fragment_format.setFontPointSize(9.5)
+                fragment_format.setForeground(code_text)
+                fragment_format.setBackground(code_background)
+            elif heading_level:
+                fragment_format.setFontPointSize(
+                    {1: 15.0, 2: 12.75, 3: 11.25}.get(
+                        heading_level,
+                        10.5,
+                    )
+                )
+                fragment_format.setFontWeight(700)
+                fragment_format.setForeground(heading_color)
+            elif fragment_format.isAnchor():
+                fragment_format.setForeground(link_color)
+            elif in_quote:
+                fragment_format.setForeground(muted_color)
+            else:
+                fragment_format.setForeground(text_color)
+            fragment_cursor = QTextCursor(document)
+            fragment_cursor.setPosition(fragment.position())
+            fragment_cursor.setPosition(
+                fragment.position() + fragment.length(),
+                QTextCursor.KeepAnchor,
+            )
+            fragment_cursor.mergeCharFormat(fragment_format)
+            iterator += 1
+        block = next_block
+
+
 class MarkdownMessageWidget(QWidget):
     """Markdown message split into native text and polished code cards."""
 
     anchorClicked = Signal(QUrl)
-    _FENCE_RE = re.compile(
-        r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
-        re.MULTILINE | re.DOTALL,
-    )
+    _FENCE_RE = FENCE_RE
     _CODE_OR_URL_RE = re.compile(r"(`+.*?`+|https?://\S+)", re.DOTALL)
     _GLUED_SENTENCE_RE = re.compile(
         r"(?<=[a-záàâãéêíóôõúüç][.!?])"
@@ -730,7 +954,7 @@ class MarkdownMessageWidget(QWidget):
         self._configure_browser = configure_browser
         self._content_layout = QVBoxLayout(self)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
-        self._content_layout.setSpacing(10)
+        self._content_layout.setSpacing(12)
         self._style_probe = QTextBrowser(self)
         self._style_probe.hide()
         self._configure_browser(self._style_probe)
@@ -785,7 +1009,7 @@ class MarkdownMessageWidget(QWidget):
             self._stream_browser.setMarkdown(
                 self._markdown_for_display(self._markdown)
             )
-            self._apply_native_markdown_style(self._stream_browser)
+            self._apply_native_markdown_style(self._stream_browser, self._markdown)
             self._resize_markdown_browser(self._stream_browser)
         self._sync_content_height()
 
@@ -811,7 +1035,7 @@ class MarkdownMessageWidget(QWidget):
         text_options.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         browser.document().setDefaultTextOption(text_options)
         browser.setMarkdown(self._markdown_for_display(markdown))
-        self._apply_native_markdown_style(browser)
+        self._apply_native_markdown_style(browser, markdown)
         browser.document().documentLayout().documentSizeChanged.connect(
             lambda _size=None, widget=browser: self._resize_markdown_browser(widget)
         )
@@ -873,100 +1097,11 @@ class MarkdownMessageWidget(QWidget):
         )
 
     @staticmethod
-    def _apply_native_markdown_style(browser: QTextBrowser) -> None:
-        """Apply the T3-like rhythm that Qt's Markdown importer omits."""
-        application = QApplication.instance()
-        dark = bool(
-            application
-            and application.property("vr_theme") == "dark_orange"
-        )
-        text_color = QColor("#D4D4D8" if dark else "#27272A")
-        link_color = QColor("#58A6FF" if dark else "#075EAD")
-        code_text = QColor("#E4E4E7" if dark else "#27272A")
-        code_background = QColor("#202023" if dark else "#EEEEF2")
-        document = browser.document()
-        document.setIndentWidth(22)
-
-        block = document.firstBlock()
-        while block.isValid():
-            block_format = block.blockFormat()
-            block_format.setLineHeight(
-                155.0,
-                QTextBlockFormat.ProportionalHeight.value,
-            )
-            heading_level = block_format.headingLevel()
-            text_list = block.textList()
-            next_block = block.next()
-            if heading_level:
-                block_format.setTopMargin(0 if block == document.firstBlock() else 16)
-                block_format.setBottomMargin(8)
-            elif text_list is not None:
-                same_list_continues = (
-                    next_block.isValid() and next_block.textList() is text_list
-                )
-                block_format.setTopMargin(0)
-                block_format.setBottomMargin(6 if same_list_continues else 14)
-            else:
-                block_format.setTopMargin(0)
-                block_format.setBottomMargin(0 if not next_block.isValid() else 14)
-            block_cursor = QTextCursor(block)
-            block_cursor.setBlockFormat(block_format)
-
-            iterator = block.begin()
-            while not iterator.atEnd():
-                fragment = iterator.fragment()
-                fragment_format = fragment.charFormat()
-                if fragment_format.isImageFormat():
-                    image_format = fragment_format.toImageFormat()
-                    image_url = QUrl(image_format.name())
-                    image_path = (
-                        image_url.toLocalFile()
-                        if image_url.isLocalFile()
-                        else image_format.name()
-                    )
-                    image_size = QImageReader(image_path).size()
-                    if image_size.isValid() and image_size.width() > 0:
-                        scale = min(
-                            1.0,
-                            480.0 / image_size.width(),
-                            320.0 / image_size.height(),
-                        )
-                        image_format.setWidth(image_size.width() * scale)
-                        image_format.setHeight(image_size.height() * scale)
-                    fragment_cursor = QTextCursor(document)
-                    fragment_cursor.setPosition(fragment.position())
-                    fragment_cursor.setPosition(
-                        fragment.position() + fragment.length(),
-                        QTextCursor.KeepAnchor,
-                    )
-                    fragment_cursor.mergeCharFormat(image_format)
-                    iterator += 1
-                    continue
-                fragment_format.setForeground(
-                    link_color if fragment_format.isAnchor() else text_color
-                )
-                if fragment_format.fontFixedPitch():
-                    fragment_format.setFontFamilies(["Consolas"])
-                    fragment_format.setFontPointSize(9.0)
-                    fragment_format.setForeground(code_text)
-                    fragment_format.setBackground(code_background)
-                elif heading_level:
-                    fragment_format.setFontPointSize(
-                        {1: 15.0, 2: 12.75, 3: 11.25}.get(
-                            heading_level,
-                            10.5,
-                        )
-                    )
-                    fragment_format.setFontWeight(700)
-                fragment_cursor = QTextCursor(document)
-                fragment_cursor.setPosition(fragment.position())
-                fragment_cursor.setPosition(
-                    fragment.position() + fragment.length(),
-                    QTextCursor.KeepAnchor,
-                )
-                fragment_cursor.mergeCharFormat(fragment_format)
-                iterator += 1
-            block = next_block
+    def _apply_native_markdown_style(
+        browser: QTextBrowser,
+        markdown: str = "",
+    ) -> None:
+        apply_message_document_style(browser.document(), markdown)
 
     def document(self) -> QTextDocument:
         return self._style_probe.document()
@@ -2135,367 +2270,6 @@ class ModelPickerCombo(RoundedComboBox):
         dialog.show()
         dialog.raise_()
         search.setFocus()
-
-
-class OrchestrationSettingsDialog(QDialog):
-    """Edit VR orchestration without coupling an agent role to a model."""
-
-    STRATEGIES = (
-        (
-            "automatic",
-            "Automática",
-            "O orquestrador escolhe o fluxo, os agentes e a estratégia efetiva.",
-        ),
-        (
-            "adaptive",
-            "Adaptativa",
-            "Combina estratégias conforme a dificuldade e os resultados parciais.",
-        ),
-        (
-            "parallel",
-            "Paralela",
-            "Executa análises independentes em paralelo e compara os resultados.",
-        ),
-        (
-            "specialized",
-            "Especializada",
-            "Distribui subtarefas diferentes aos agentes mais adequados.",
-        ),
-        (
-            "sequential",
-            "Sequencial",
-            "Usa a saída de uma etapa como entrada da etapa seguinte.",
-        ),
-        (
-            "debate",
-            "Debate",
-            "Solicita propostas e críticas entre agentes antes da síntese.",
-        ),
-        (
-            "consensus",
-            "Consenso",
-            "Compara concordâncias e divergências antes de decidir.",
-        ),
-    )
-
-    def __init__(
-        self,
-        available_models: list[ModelRef] | tuple[ModelRef, ...],
-        current: OrchestrationOptions,
-        orchestrator: ModelRef,
-        parent: QWidget | None = None,
-    ):
-        super().__init__(parent)
-        self._current = current
-        self._orchestrator = (
-            orchestrator
-            if isinstance(orchestrator, ModelRef)
-            else ModelRef.from_mapping(orchestrator)
-        )
-        self._available_keys: set[str] = set()
-        self._models_by_key: dict[str, ModelRef] = {}
-        for raw_model in available_models:
-            model = (
-                raw_model
-                if isinstance(raw_model, ModelRef)
-                else ModelRef.from_mapping(raw_model)
-            )
-            if not model.provider or model.key in self._models_by_key:
-                continue
-            self._available_keys.add(model.key)
-            self._models_by_key[model.key] = model
-        # Keep stale saved choices visible so opening and accepting the dialog
-        # never drops configuration silently. They can be explicitly unchecked.
-        for raw_model in current.model_pool:
-            model = (
-                raw_model
-                if isinstance(raw_model, ModelRef)
-                else ModelRef.from_mapping(raw_model)
-            )
-            if model.provider and model.key not in self._models_by_key:
-                self._models_by_key[model.key] = model
-
-        self.setWindowTitle("Orquestração VR")
-        self.setAccessibleName("Configurações de orquestração VR")
-        self.resize(640, 620)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 16)
-        layout.setSpacing(12)
-
-        title = QLabel("Orquestração VR", objectName="sectionTitle")
-        layout.addWidget(title)
-        description = QLabel(
-            "O fluxo define quais agentes trabalham; o orquestrador escolhe um "
-            "modelo deste pool para cada agente.",
-            objectName="muted",
-        )
-        description.setWordWrap(True)
-        layout.addWidget(description)
-
-        mode_labels = {
-            "off": "Desligado",
-            "automatic": "Automático",
-            "standard": "Ligado",
-            "ultra": "Ultra",
-        }
-        self.mode_status = QLabel(
-            f"Modo atual: {mode_labels.get(current.mode, 'Automático')}. "
-            "Use o menu VR no chat para alterá-lo.",
-            objectName="muted",
-        )
-        self.mode_status.setWordWrap(True)
-        layout.addWidget(self.mode_status)
-
-        orchestrator_card = QFrame(objectName="panel")
-        orchestrator_layout = QHBoxLayout(orchestrator_card)
-        orchestrator_layout.setContentsMargins(14, 11, 14, 11)
-        orchestrator_layout.setSpacing(10)
-        orchestrator_icon = QLabel()
-        orchestrator_icon.setFixedSize(24, 24)
-        orchestrator_icon.setPixmap(
-            provider_icon(self._orchestrator.provider).pixmap(QSize(22, 22))
-        )
-        orchestrator_icon.setAccessibleName(
-            f"Provedor {provider_display_name(self._orchestrator.provider)}"
-        )
-        orchestrator_layout.addWidget(orchestrator_icon)
-        orchestrator_text = QVBoxLayout()
-        orchestrator_text.setContentsMargins(0, 0, 0, 0)
-        orchestrator_text.setSpacing(1)
-        orchestrator_text.addWidget(QLabel("Orquestrador", objectName="muted"))
-        orchestrator_name = self._model_label(self._orchestrator)
-        self.orchestrator_label = QLabel(orchestrator_name, objectName="sectionTitle")
-        self.orchestrator_label.setAccessibleName(
-            f"Orquestrador atual: {orchestrator_name}"
-        )
-        orchestrator_text.addWidget(self.orchestrator_label)
-        orchestrator_layout.addLayout(orchestrator_text, 1)
-        layout.addWidget(orchestrator_card)
-
-        strategy_row = QHBoxLayout()
-        strategy_label = QLabel("Estratégia")
-        strategy_row.addWidget(strategy_label)
-        self.strategy_combo = DescriptiveComboBox()
-        self.strategy_combo.popup_title = "Estratégia de orquestração"
-        self.strategy_combo.setAccessibleName("Estratégia de orquestração")
-        self.strategy_combo.setMinimumWidth(220)
-        for value, label, detail in self.STRATEGIES:
-            self.strategy_combo.addItem(label, value)
-            self.strategy_combo.setItemData(
-                self.strategy_combo.count() - 1,
-                detail,
-                Qt.ToolTipRole,
-            )
-        strategy_index = self.strategy_combo.findData(current.strategy)
-        self.strategy_combo.setCurrentIndex(strategy_index if strategy_index >= 0 else 0)
-        strategy_label.setBuddy(self.strategy_combo)
-        strategy_row.addWidget(self.strategy_combo, 1)
-        layout.addLayout(strategy_row)
-
-        pool_heading = QHBoxLayout()
-        pool_heading.addWidget(QLabel("Modelos disponíveis para os agentes"))
-        pool_heading.addStretch()
-        self.select_all_button = QPushButton("Todos")
-        self.select_all_button.setAccessibleName("Selecionar todos os modelos")
-        self.clear_pool_button = QPushButton("Limpar")
-        self.clear_pool_button.setAccessibleName("Limpar seleção de modelos")
-        pool_heading.addWidget(self.select_all_button)
-        pool_heading.addWidget(self.clear_pool_button)
-        layout.addLayout(pool_heading)
-
-        self.pool_list = QListWidget()
-        self.pool_list.setAccessibleName(
-            "Pool de modelos disponíveis para orquestração"
-        )
-        self.pool_list.setSelectionMode(QAbstractItemView.NoSelection)
-        self.pool_list.setAlternatingRowColors(True)
-        self.pool_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        selected_keys = {model.key for model in current.model_pool}
-        for key, model in self._models_by_key.items():
-            available = key in self._available_keys
-            availability = "" if available else " · indisponível agora"
-            model_id = model.model or "modelo padrão"
-            item = QListWidgetItem(
-                f"{self._model_label(model)}\n"
-                f"{provider_display_name(model.provider)} · {model_id}{availability}"
-            )
-            item.setIcon(provider_icon(model.provider))
-            item.setData(Qt.UserRole, key)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if key in selected_keys else Qt.Unchecked)
-            item.setToolTip(
-                model.description
-                or f"{provider_display_name(model.provider)} · {model_id}{availability}"
-            )
-            item.setSizeHint(QSize(0, 54))
-            self.pool_list.addItem(item)
-        if not self._models_by_key:
-            empty = QListWidgetItem("Nenhum modelo disponível no momento.")
-            empty.setFlags(Qt.NoItemFlags)
-            self.pool_list.addItem(empty)
-        layout.addWidget(self.pool_list, 1)
-
-        self.pool_status = QLabel("", objectName="muted")
-        self.pool_status.setWordWrap(True)
-        layout.addWidget(self.pool_status)
-
-        self.show_execution_check = QCheckBox(
-            "Mostrar o andamento da execução VR"
-        )
-        self.show_execution_check.setAccessibleName(
-            "Mostrar andamento da execução VR"
-        )
-        self.show_execution_check.setChecked(bool(current.show_execution))
-        layout.addWidget(self.show_execution_check)
-
-        self.explain_routing_check = QCheckBox(
-            "Mostrar resumos dos motivos de escolha dos modelos"
-        )
-        self.explain_routing_check.setAccessibleName(
-            "Mostrar motivos operacionais da escolha dos modelos"
-        )
-        self.explain_routing_check.setToolTip(
-            "Exibe somente um resumo operacional; raciocínio interno privado não é mostrado."
-        )
-        self.explain_routing_check.setChecked(bool(current.explain_routing))
-        layout.addWidget(self.explain_routing_check)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        apply_button = buttons.button(QDialogButtonBox.Ok)
-        if apply_button is not None:
-            apply_button.setText("Aplicar")
-        cancel_button = buttons.button(QDialogButtonBox.Cancel)
-        if cancel_button is not None:
-            cancel_button.setText("Cancelar")
-        buttons.accepted.connect(self._validate)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.pool_list.itemChanged.connect(lambda _item: self._update_pool_status())
-        self.select_all_button.clicked.connect(lambda: self._set_all_models(True))
-        self.clear_pool_button.clicked.connect(lambda: self._set_all_models(False))
-        self._sync_enabled_state(True)
-        self._update_pool_status()
-
-    @staticmethod
-    def _model_label(model: ModelRef) -> str:
-        return model.display_name or model.model or "Modelo padrão"
-
-    def _selected_models(self) -> tuple[ModelRef, ...]:
-        selected: list[ModelRef] = []
-        for index in range(self.pool_list.count()):
-            item = self.pool_list.item(index)
-            if item.checkState() != Qt.Checked:
-                continue
-            model = self._models_by_key.get(str(item.data(Qt.UserRole) or ""))
-            if model is not None:
-                selected.append(model)
-        return tuple(selected)
-
-    def _set_all_models(self, checked: bool) -> None:
-        self.pool_list.blockSignals(True)
-        try:
-            for index in range(self.pool_list.count()):
-                item = self.pool_list.item(index)
-                key = str(item.data(Qt.UserRole) or "")
-                if key:
-                    item.setCheckState(
-                        Qt.Checked
-                        if checked and key in self._available_keys
-                        else Qt.Unchecked
-                    )
-        finally:
-            self.pool_list.blockSignals(False)
-        self._update_pool_status()
-
-    def _sync_enabled_state(self, enabled: bool) -> None:
-        enabled = bool(enabled)
-        has_models = bool(self._models_by_key)
-        for widget in (
-            self.strategy_combo,
-            self.show_execution_check,
-            self.explain_routing_check,
-        ):
-            widget.setEnabled(enabled)
-        for widget in (
-            self.pool_list,
-            self.select_all_button,
-            self.clear_pool_button,
-        ):
-            widget.setEnabled(enabled and has_models)
-        self._update_pool_status()
-
-    def _update_pool_status(self) -> None:
-        count = len(self._selected_models())
-        unavailable = sum(
-            model.key not in self._available_keys
-            for model in self._selected_models()
-        )
-        suffix = "modelo selecionado" if count == 1 else "modelos selecionados"
-        if self._current.mode != "off" and count == 0:
-            self.pool_status.setText(
-                "Selecione pelo menos um modelo antes de ativar a orquestração."
-            )
-        elif self._current.mode != "off" and unavailable:
-            self.pool_status.setText(
-                f"{count} {suffix}; {unavailable} indisponível no momento."
-            )
-        else:
-            self.pool_status.setText(f"{count} {suffix} para os agentes VR.")
-
-    def value(self) -> OrchestrationOptions:
-        """Return the edited options while preserving non-visual routing flags."""
-        return OrchestrationOptions(
-            mode=self._current.mode,
-            strategy=str(self.strategy_combo.currentData() or "automatic"),
-            model_pool=self._selected_models(),
-            show_execution=self.show_execution_check.isChecked(),
-            explain_routing=self.explain_routing_check.isChecked(),
-            dynamic_model_routing=self._current.dynamic_model_routing,
-            dynamic_agent_count=self._current.dynamic_agent_count,
-            difficulty_routing=self._current.difficulty_routing,
-        )
-
-    def options(self) -> OrchestrationOptions:
-        return self.value()
-
-    def orchestrator_model(self) -> ModelRef:
-        return self._orchestrator
-
-    def _validate(self) -> None:
-        selected = self._selected_models()
-        if self._current.mode != "off" and not selected:
-            QMessageBox.warning(
-                self,
-                "Orquestração VR",
-                "Selecione pelo menos um modelo disponível para os agentes.",
-            )
-            self.pool_list.setFocus()
-            return
-        unavailable = [
-            model for model in selected if model.key not in self._available_keys
-        ]
-        if self._current.mode != "off" and unavailable:
-            QMessageBox.warning(
-                self,
-                "Orquestração VR",
-                "Remova do pool os modelos marcados como indisponíveis.",
-            )
-            self.pool_list.setFocus()
-            return
-        self.accept()
-
-    @classmethod
-    def get_options(
-        cls,
-        available_models: list[ModelRef] | tuple[ModelRef, ...],
-        current: OrchestrationOptions,
-        orchestrator: ModelRef,
-        parent: QWidget | None = None,
-    ) -> tuple[OrchestrationOptions, bool]:
-        dialog = cls(available_models, current, orchestrator, parent)
-        accepted = dialog.exec() == QDialog.Accepted
-        return (dialog.value() if accepted else current), accepted
 
 
 class ApprovalDialog(QDialog):

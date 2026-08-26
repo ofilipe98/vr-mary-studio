@@ -4,6 +4,7 @@ import abc
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -18,6 +19,17 @@ from .models import ConversationOptions, RuntimeEvent, approval_preset
 
 
 EventCallback = Callable[[RuntimeEvent], None]
+
+
+def _seconds_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _as_token_count(value: Any) -> int:
@@ -167,6 +179,11 @@ class ProviderError(RuntimeError):
     pass
 
 
+UUID4_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
 class AgentProvider(abc.ABC):
     name: str
 
@@ -298,6 +315,12 @@ class CodexProvider(AgentProvider):
         self._known_mcp_servers: list[str] = []
         self._mcp_server_configs: dict[str, dict[str, Any]] = {}
         self._has_started_once = False
+        self.rpc_timeout_seconds = _seconds_from_env(
+            "VR_CODEX_RPC_TIMEOUT_SECONDS", 45.0
+        )
+        self.start_timeout_seconds = _seconds_from_env(
+            "VR_CODEX_START_TIMEOUT_SECONDS", 10.0
+        )
 
     def available(self) -> bool:
         return bool(self.command)
@@ -353,7 +376,7 @@ class CodexProvider(AgentProvider):
                         },
                         "capabilities": {"experimentalApi": True},
                     },
-                    timeout=10,
+                    timeout=self.start_timeout_seconds,
                 )
                 self._notify("initialized", {})
                 self._has_started_once = True
@@ -374,8 +397,15 @@ class CodexProvider(AgentProvider):
             raise ProviderError(self._process_error(process)) from exc
 
     def _rpc(
-        self, method: str, params: dict[str, Any] | None = None, timeout: float = 45
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
+        effective_timeout = (
+            self.rpc_timeout_seconds if timeout is None else timeout
+        )
         response_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
         with self._state_lock:
             self._request_id += 1
@@ -391,7 +421,7 @@ class CodexProvider(AgentProvider):
                 self._pending.pop(request_id, None)
             raise
         try:
-            response = response_queue.get(timeout=timeout)
+            response = response_queue.get(timeout=effective_timeout)
         except queue.Empty as exc:
             with self._state_lock:
                 self._pending.pop(request_id, None)
@@ -399,9 +429,11 @@ class CodexProvider(AgentProvider):
             if process and process.poll() is not None:
                 raise ProviderError(self._process_error(process)) from exc
             detail = "\n".join(self._stderr_lines)
+            requester = f" (conversa {conversation_id})" if conversation_id else ""
             self._stop_process(process)
             raise ProviderError(
-                f"Timeout do Codex em {method}." + (f"\n{detail}" if detail else "")
+                f"Timeout do Codex em {method}{requester}."
+                + (f"\n{detail}" if detail else "")
             ) from exc
         if "error" in response:
             error = response["error"]
@@ -554,7 +586,7 @@ class CodexProvider(AgentProvider):
                     params,
                 )
             )
-        elif method in {"item/agentMessage/delta", "item/plan/delta"}:
+        elif method == "item/agentMessage/delta":
             delta = str(params.get("delta", ""))
             item_id = str(params.get("itemId") or params.get("item_id") or "")
             item_key = f"{method}:{item_id}" if item_id else method
@@ -563,9 +595,8 @@ class CodexProvider(AgentProvider):
                     conversation_id, ""
                 )
                 self._assistant_item_keys[conversation_id] = item_key
-            # Codex emits commentary/plan text and the final answer as distinct
-            # items. Joining their deltas verbatim produced strings such as
-            # ``versão.Para`` and made both blocks look like one paragraph.
+            # Codex can emit commentary and the final answer as distinct
+            # agent-message items. Keep a readable boundary between them.
             if previous_item_key and previous_item_key != item_key and delta:
                 leading_newlines = len(delta) - len(delta.lstrip("\r\n"))
                 delta = "\n" * max(0, 2 - leading_newlines) + delta
@@ -574,6 +605,15 @@ class CodexProvider(AgentProvider):
                     conversation_id,
                     "assistant_delta",
                     delta,
+                    {"method": method, **params},
+                )
+            )
+        elif method == "item/plan/delta":
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    str(params.get("delta", "")),
                     {"method": method, **params},
                 )
             )
@@ -796,6 +836,7 @@ class CodexProvider(AgentProvider):
         result = self._rpc(
             "thread/start",
             params,
+            conversation_id=conversation_id,
         )
         native_id = str((result.get("thread") or {}).get("id", ""))
         if not native_id:
@@ -835,6 +876,7 @@ class CodexProvider(AgentProvider):
         result = self._rpc(
             "thread/resume",
             params,
+            conversation_id=conversation_id,
         )
         resumed_id = str((result.get("thread") or {}).get("id", native_id))
         with self._state_lock:
@@ -942,7 +984,7 @@ class CodexProvider(AgentProvider):
         sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
         if preset.sandbox_policy_type == "workspaceWrite":
             sandbox_policy.update(
-                {"writableRoots": [str(workspace)], "networkAccess": False}
+                {"writableRoots": [str(workspace)], "networkAccess": True}
             )
         selected_model = options.model or model
         turn_input: list[dict[str, Any]] = []
@@ -997,7 +1039,7 @@ class CodexProvider(AgentProvider):
             params["serviceTier"] = options.service_tier
         try:
             try:
-                self._rpc("turn/start", params)
+                self._rpc("turn/start", params, conversation_id=conversation_id)
             except ProviderError as exc:
                 if not self._is_archived_session_error(exc):
                     raise
@@ -1013,7 +1055,7 @@ class CodexProvider(AgentProvider):
                 with self._state_lock:
                     self._callbacks[conversation_id] = callback
                     self._native_to_local[native_id] = conversation_id
-                self._rpc("turn/start", params)
+                self._rpc("turn/start", params, conversation_id=conversation_id)
         except Exception:
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
@@ -1091,7 +1133,7 @@ class CodexProvider(AgentProvider):
         sandbox_policy: dict[str, Any] = {"type": preset.sandbox_policy_type}
         if preset.sandbox_policy_type == "workspaceWrite":
             sandbox_policy.update(
-                {"writableRoots": [str(workspace)], "networkAccess": False}
+                {"writableRoots": [str(workspace)], "networkAccess": True}
             )
         selected_model = options.model
         params: dict[str, Any] = {
@@ -1193,6 +1235,7 @@ class ClaudeProvider(AgentProvider):
         )
         self._active: dict[str, subprocess.Popen[str]] = {}
         self._new_sessions: set[str] = set()
+        self._workspaces: dict[str, Path] = {}
         # Each in-flight Popen owns a unique reservation.  A close, release or
         # interrupt can revoke that reservation while Popen is still blocked;
         # the process is only published when the same token remains current.
@@ -1251,6 +1294,8 @@ class ClaudeProvider(AgentProvider):
         if not self.command:
             raise ProviderError("Claude não foi encontrado no PATH.")
         options = options or ConversationOptions(model=model, effort=effort)
+        with self._state_lock:
+            self._workspaces[conversation_id] = Path(workspace).resolve()
         preset = approval_preset(options.approval_profile)
         readable_roots = [workspace.resolve()]
         image_roots = {
@@ -1285,9 +1330,6 @@ class ClaudeProvider(AgentProvider):
             "--verbose",
             "--include-partial-messages",
         ]
-        if not options.vr_enabled:
-            for root in image_roots:
-                command.extend(["--add-dir", str(root)])
         if options.vr_enabled:
             command.extend(["--permission-mode", "dontAsk"])
             for root in readable_roots:
@@ -1297,9 +1339,18 @@ class ClaudeProvider(AgentProvider):
                     "--allowedTools",
                     ",".join(allowed_tools),
                     "--disallowedTools",
-                    "Bash,WebFetch,WebSearch",
+                    "Bash",
                 ]
             )
+        else:
+            for root in image_roots:
+                command.extend(["--add-dir", str(root)])
+            permission_mode = {
+                "workspace-write": "acceptEdits",
+                "danger-full-access": "bypassPermissions",
+            }.get(preset.sandbox)
+            if permission_mode:
+                command.extend(["--permission-mode", permission_mode])
         if model and model != "default":
             command.extend(["--model", model])
         command.extend(["--effort", normalize_effort(effort, provider="claude")])
@@ -1484,8 +1535,37 @@ class ClaudeProvider(AgentProvider):
             process = self._active.pop(conversation_id, None)
             self._starting.pop(conversation_id, None)
             self._new_sessions.discard(native_id)
+            workspace = self._workspaces.pop(conversation_id, None)
         if process and process.poll() is None:
             process.terminate()
+        if workspace is not None:
+            self._cleanup_session_rollout(native_id, workspace)
+
+    @staticmethod
+    def _cleanup_session_rollout(native_id: str, workspace: Path) -> None:
+        try:
+            native = str(native_id or "")
+            if not UUID4_PATTERN.fullmatch(native):
+                return
+            projects_root = Path.home() / ".claude" / "projects"
+            if not projects_root.is_dir():
+                return
+            expected = f"{native}.jsonl"
+            encoded_candidates: list[str] = []
+            for candidate in (workspace.resolve(), workspace):
+                for text in {str(candidate), str(candidate).lower()}:
+                    encoded = re.sub(r"[^A-Za-z0-9]", "-", text)
+                    if encoded not in encoded_candidates:
+                        encoded_candidates.append(encoded)
+            for encoded in encoded_candidates:
+                session_dir = projects_root / encoded
+                if not session_dir.is_dir():
+                    continue
+                for entry in session_dir.iterdir():
+                    if entry.name == expected and entry.is_file():
+                        entry.unlink()
+        except Exception:
+            pass
 
 
 class OpenCodeProvider(AgentProvider):
@@ -1506,6 +1586,17 @@ class OpenCodeProvider(AgentProvider):
         return bool(self.command)
 
     def list_models(self) -> list[dict[str, Any]]:
+        return list(self._load_model_catalog())
+
+    def _load_model_catalog(self) -> list[dict[str, Any]]:
+        models = self._fetch_model_catalog()
+        self._model_variants = {
+            str(item["id"]): set(item.get("_opencodeVariants") or [])
+            for item in models
+        }
+        return models
+
+    def _fetch_model_catalog(self) -> list[dict[str, Any]]:
         if not self.command:
             raise ProviderError("OpenCode não foi encontrado no PATH.")
         startup_info: dict[str, Any] = {}
@@ -1529,10 +1620,6 @@ class OpenCodeProvider(AgentProvider):
         models = _parse_opencode_models(result.stdout)
         if not models:
             raise ProviderError("O OpenCode não retornou nenhum modelo disponível.")
-        self._model_variants = {
-            str(item["id"]): set(item.get("_opencodeVariants") or [])
-            for item in models
-        }
         return models
 
     def start_conversation(
@@ -1591,6 +1678,11 @@ class OpenCodeProvider(AgentProvider):
             command.extend(["--session", resume_id])
         if model and model != "default":
             command.extend(["--model", model])
+        if not self._model_variants:
+            try:
+                self._load_model_catalog()
+            except Exception:
+                pass
         normalized_effort = normalize_effort(effort, provider="opencode")
         if normalized_effort in self._model_variants.get(model, set()):
             command.extend(["--variant", normalized_effort])
@@ -1938,6 +2030,7 @@ def _opencode_environment(
         if preset.sandbox != "read-only":
             permission["edit"] = "allow"
             permission["bash"] = "allow"
+        permission["webfetch"] = "allow"
         if knowledge_root:
             resolved_root = str(knowledge_root.resolve()).replace("\\", "/")
             knowledge_pattern = resolved_root.rstrip("/") + "/**"
@@ -1950,6 +2043,7 @@ def _opencode_environment(
                     f"*{resolved_root}*": "deny",
                     f"*{search_script}*": "allow",
                 }
+            permission["webfetch"] = "allow"
     config["permission"] = permission
     environment["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
     return environment

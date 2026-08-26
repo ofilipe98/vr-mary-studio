@@ -20,6 +20,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Saída sempre em UTF-8: hosts que redirecionam stdout (PowerShell 5.1) usam
+# a codepage OEM por padrão e corrompem caracteres não-ASCII do JSON.
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $CatalogPath = Join-Path $ProjectRoot 'indice\catalogo.jsonl'
 $KnowledgeRoot = Join-Path $ProjectRoot 'conhecimento'

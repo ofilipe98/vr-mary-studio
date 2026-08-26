@@ -5,6 +5,7 @@ import io
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 from unittest.mock import patch
@@ -16,7 +17,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.knowledge import extract_knowledge_entities
-from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
+from vrsoft_extractor.mary.knowledge_router import (
+    KnowledgeRouter,
+    should_suggest_vr_flow,
+)
 from vrsoft_extractor.mary.schema_catalog import parse_schema_markdown
 from vrsoft_extractor.mary.schema_sync import SchemaSync
 from vrsoft_extractor.mary.models import (
@@ -39,7 +43,11 @@ from vrsoft_extractor.mary.multiagent import (
     execution_batches,
     parse_plan,
 )
-from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.orchestrator import (
+    ChatOrchestrator,
+    OrchestrationCancelled,
+    vr_sessions_note,
+)
 from vrsoft_extractor.mary.providers import (
     AgentProvider,
     ClaudeProvider,
@@ -393,49 +401,6 @@ def test_orchestration_modes_normalize_legacy_flags_and_route_automatic_levels()
     ] == ["off", "standard", "standard", "ultra", "ultra"]
     assert effective_orchestration_mode(standard, 5) == "standard"
     assert effective_orchestration_mode(OrchestrationOptions(mode="ultra"), 1) == "ultra"
-
-
-def test_orchestration_dialog_keeps_agent_pool_separate_from_orchestrator() -> None:
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QDialogButtonBox
-
-    from vrsoft_extractor.mary.chat_widgets import OrchestrationSettingsDialog
-
-    application = QApplication.instance() or QApplication([])
-    sol = ModelRef("codex", "sol", "Sol")
-    opus = ModelRef("claude", "opus", "Opus")
-    current = OrchestrationOptions(
-        mode="ultra",
-        strategy="adaptive",
-        model_pool=(opus,),
-        explain_routing=True,
-        dynamic_model_routing=False,
-        dynamic_agent_count=False,
-        difficulty_routing=False,
-    )
-    dialog = OrchestrationSettingsDialog((sol, opus), current, sol)
-    try:
-        application.processEvents()
-        checked_keys = {
-            str(dialog.pool_list.item(index).data(Qt.UserRole))
-            for index in range(dialog.pool_list.count())
-            if dialog.pool_list.item(index).checkState() == Qt.Checked
-        }
-        assert checked_keys == {"claude:opus"}
-        assert dialog.orchestrator_model() == sol
-        edited = dialog.options()
-        assert edited.model_pool == (opus,)
-        assert edited.mode == "ultra"
-        assert edited.ultra is True
-        assert edited.dynamic_model_routing is False
-        assert edited.dynamic_agent_count is False
-        assert edited.difficulty_routing is False
-        buttons = dialog.findChild(QDialogButtonBox)
-        assert buttons is not None
-        assert buttons.button(QDialogButtonBox.Ok).text() == "Aplicar"
-        assert buttons.button(QDialogButtonBox.Cancel).text() == "Cancelar"
-    finally:
-        dialog.close()
 
 
 def test_standard_and_ultra_share_the_compact_composer_outline() -> None:
@@ -1369,7 +1334,7 @@ def test_vr_on_direct_adds_identity_and_local_base_without_multiagent(
     assert database.messages(conversation_id)[-1]["response_mode"] == "vr"
 
 
-def test_changing_vr_mode_releases_session_and_starts_an_isolated_one(
+def test_changing_vr_mode_preserves_a_native_session_per_mode(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
@@ -1380,14 +1345,42 @@ def test_changing_vr_mode_releases_session_and_starts_an_isolated_one(
     conversation_id = orchestrator.new_conversation(
         "codex", "sol", defer_provider_start=True, vr_enabled=True
     )
-    database.update_conversation(conversation_id, native_id="native-vr")
+    database.update_conversation(conversation_id, native_id_vr="native-vr")
 
     orchestrator.update_vr_mode(conversation_id, False)
 
     row = database.get_conversation(conversation_id)
     assert row["vr_enabled"] == 0
-    assert row["native_id"] == ""
-    assert provider.released == [(conversation_id, "native-vr", False)]
+    assert row["native_id_vr"] == "native-vr"
+    assert provider.released == []
+
+    completed = threading.Event()
+    orchestrator.send(
+        conversation_id,
+        "Primeira pergunta nativa",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+    assert completed.wait(5)
+
+    row = database.get_conversation(conversation_id)
+    assert row["native_id"].startswith("native:")
+    assert row["native_id_vr"] == "native-vr"
+
+    orchestrator.update_vr_mode(conversation_id, True)
+    completed.clear()
+    orchestrator.send(
+        conversation_id,
+        "De volta ao VR",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=True,
+    )
+    assert completed.wait(5)
+
+    row = database.get_conversation(conversation_id)
+    assert row["native_id_vr"] == "native-vr"
+    assert provider.sent[0]["native_id"].startswith("native:")
+    assert provider.sent[-1]["native_id"] == "native-vr"
 
 
 def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
@@ -2710,7 +2703,7 @@ def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
             project,
             "mensagem nativa",
             lambda _event: None,
-            ConversationOptions(vr_enabled=False),
+            ConversationOptions(vr_enabled=False, approval_profile="supervised"),
         )
 
     command = popen.call_args.args[0]
@@ -2720,6 +2713,56 @@ def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
     assert "--allowedTools" not in command
     assert "--disallowedTools" not in command
     assert str(knowledge) not in command
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_mode"),
+    [
+        ("supervised", None),
+        ("auto_edits", "acceptEdits"),
+        ("auto", "acceptEdits"),
+        ("full_access", "bypassPermissions"),
+    ],
+)
+def test_claude_native_turn_honours_approval_profile(
+    tmp_path: Path,
+    profile: str,
+    expected_mode: str | None,
+) -> None:
+    knowledge = (tmp_path / "VR_Mary_V2").resolve()
+    project = (tmp_path / "projeto").resolve()
+    knowledge.mkdir()
+    project.mkdir()
+    provider = ClaudeProvider(knowledge)
+    provider.command = "claude"
+
+    with (
+        patch(
+            "vrsoft_extractor.mary.providers.subprocess.Popen",
+            side_effect=OSError("stop after command capture"),
+        ) as popen,
+        pytest.raises(OSError, match="command capture"),
+    ):
+        provider.send_message(
+            "local",
+            "native",
+            "sonnet",
+            "medium",
+            project,
+            "mensagem nativa",
+            lambda _event: None,
+            ConversationOptions(vr_enabled=False, approval_profile=profile),
+        )
+
+    command = popen.call_args.args[0]
+    if expected_mode is None:
+        assert "--permission-mode" not in command
+    else:
+        assert command[command.index("--permission-mode") + 1] == expected_mode
+    assert "--allowedTools" not in command
+    assert "--disallowedTools" not in command
+    assert str(knowledge) not in command
+    assert popen.call_args.kwargs["cwd"] == project
 
 
 def test_opencode_native_environment_does_not_expose_knowledge_root(
@@ -2854,3 +2897,344 @@ def test_opencode_native_session_event_is_persisted(tmp_path: Path) -> None:
     )
 
     assert database.get_conversation(conversation_id)["native_id"] == "ses-persisted"
+
+
+@pytest.mark.parametrize(
+    ("use_vr", "expected_text"),
+    [
+        (False, "Execução interrompida."),
+        (True, "Execução VR interrompida."),
+    ],
+)
+def test_cancellation_message_reflects_response_mode(
+    tmp_path: Path, use_vr: bool, expected_text: str
+) -> None:
+    class CancellingProvider(FakeProvider):
+        def send_message(self, *args, **kwargs) -> None:
+            raise OrchestrationCancelled(str(args[0] if args else ""))
+
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.providers = {"codex": CancellingProvider("codex")}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Olá", callback, use_vr=use_vr)
+
+    assert completed.wait(5)
+    cancelled = [
+        event for event in events if event.kind == "orchestration_cancelled"
+    ]
+    assert [event.text for event in cancelled] == [expected_text]
+
+
+def test_empty_provider_answer_warns_instead_of_disappearing(tmp_path: Path) -> None:
+    class EmptyProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__("codex", final_text="")
+
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.providers = {"codex": EmptyProvider()}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(
+        conversation_id, "Pergunta sem resposta", callback, use_vr=False
+    )
+
+    assert completed.wait(5)
+    warnings = [event for event in events if event.kind == "response_empty"]
+    assert len(warnings) == 1
+    assert "sem retornar conteúdo" in warnings[0].text
+    assert [
+        (row["role"], row["content"]) for row in database.messages(conversation_id)
+    ] == [("user", "Pergunta sem resposta")]
+    with database.connect() as connection:
+        persisted = connection.execute(
+            "SELECT text FROM runtime_events "
+            "WHERE conversation_id=? AND kind='response_empty'",
+            (conversation_id,),
+        ).fetchall()
+    assert ["sem retornar conteúdo" in row["text"] for row in persisted] == [True]
+
+
+def test_context_transfer_is_announced_when_session_starts_with_history(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    codex = FakeProvider("codex")
+    orchestrator.providers = {"codex": codex}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    database.add_message(conversation_id, "user", "Primeira dúvida")
+    database.add_message(conversation_id, "assistant", "Primeira resposta")
+
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(
+        conversation_id, "Continue de onde paramos", callback, use_vr=False
+    )
+
+    assert completed.wait(5)
+    transfers = [event for event in events if event.kind == "context_transferred"]
+    assert len(transfers) == 1
+    assert "2 mensagens" in transfers[0].text
+    assert transfers[0].payload["provider"] == "codex"
+    sent_message = codex.sent[-1]["message"]
+    assert "CONTEXTO TRANSFERIDO DE OUTRO PROVEDOR" in sent_message
+    assert sent_message.rstrip().endswith("Continue de onde paramos")
+
+
+def _tool_names(options: ConversationOptions | None) -> set[str]:
+    return {
+        str(tool.get("name") or "")
+        for tool in (options.dynamic_tools if options else ())
+    }
+
+
+def test_native_turn_registers_vr_search_only_when_opt_in(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Pergunta nativa sem busca local",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+    assert completed.wait(5)
+
+    assert "vr_search" not in _tool_names(provider.start_options[0])
+    assert "vr_search" not in _tool_names(provider.sent[0]["options"])
+
+    # VR turns keep the tool regardless of the opt-in.
+    completed.clear()
+    orchestrator.send(
+        conversation_id,
+        "Pergunta com base local",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=True,
+    )
+    assert completed.wait(5)
+    assert "vr_search" in _tool_names(provider.sent[-1]["options"])
+
+
+def test_native_opt_in_registers_vr_search_for_provider_decided_calls(
+    tmp_path: Path,
+) -> None:
+    settings = MarySettings(
+        app_dir=(tmp_path / "app").resolve(),
+        root=(tmp_path / "mary").resolve(),
+        old_root=(tmp_path / "old").resolve(),
+        legacy_vr_orchestration=False,
+        native_vr_search_enabled=True,
+    )
+    settings.app_dir.mkdir(parents=True)
+    settings.old_root.mkdir(parents=True)
+    settings.ensure_dirs()
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Pergunta nativa com busca sob demanda",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+    assert completed.wait(5)
+
+    assert "vr_search" in _tool_names(provider.start_options[0])
+    assert "vr_search" in _tool_names(provider.sent[0]["options"])
+    assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+
+
+class ToolCallingProvider(FakeProvider):
+    """Native provider that decides to call vr_search mid-turn."""
+
+    def __init__(self) -> None:
+        super().__init__("codex", final_text="Resposta com evidência local.")
+
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: Callable[[RuntimeEvent], None],
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
+    ) -> None:
+        with self._lock:
+            self.sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "native_id": native_id,
+                    "model": model,
+                    "effort": effort,
+                    "message": message,
+                    "options": options,
+                }
+            )
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_started",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "dynamic_tool_requested",
+                "vr_search",
+                {
+                    "tool": "vr_search",
+                    "request_id": "req-vr-search-1",
+                    "arguments": {"query": "sped fiscal"},
+                },
+            )
+        )
+        callback(RuntimeEvent(conversation_id, "assistant_delta", self.final_text))
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_completed",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+
+
+def test_native_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
+    settings = MarySettings(
+        app_dir=(tmp_path / "app").resolve(),
+        root=(tmp_path / "mary").resolve(),
+        old_root=(tmp_path / "old").resolve(),
+        legacy_vr_orchestration=False,
+        native_vr_search_enabled=True,
+    )
+    settings.app_dir.mkdir(parents=True)
+    settings.old_root.mkdir(parents=True)
+    settings.ensure_dirs()
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.providers = {"codex": ToolCallingProvider()}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(
+        conversation_id,
+        "Onde o SPED grava as notas?",
+        callback,
+        use_vr=False,
+    )
+
+    assert completed.wait(5)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and not any(
+        event.kind == "tool_event" for event in events
+    ):
+        time.sleep(0.05)
+    tool_events = [event for event in events if event.kind == "tool_event"]
+    assert len(tool_events) == 1
+    assert tool_events[0].payload["success"] is True
+    payload = json.loads(str(tool_events[0].payload["output"]))
+    assert payload["query"] == "sped fiscal"
+    assert payload["total"] == 0
+    # The upfront VR pipeline must stay out of native turns.
+    assert not any(event.kind == "knowledge_routed" for event in events)
+    assert not any(event.kind == "intent_analysis_started" for event in events)
+    orchestrator.drain_turn_finalizations()
+    assert conversation_id not in orchestrator._external_callbacks
+    assert conversation_id not in orchestrator._callback_generations
+    assert not orchestrator._dynamic_tool_callbacks
+    orchestrator.close()
+
+
+def test_vr_sessions_note_covers_slot_combinations() -> None:
+    assert vr_sessions_note("", "") == ""
+    assert vr_sessions_note("native:x", "") == (
+        "Somente o thread nativo foi criado nesta conversa."
+    )
+    assert vr_sessions_note("", "native:v") == (
+        "Somente o thread VR foi criado nesta conversa."
+    )
+    assert vr_sessions_note("native:x", "native:v") == (
+        "Threads nativo e VR ativos nesta conversa."
+    )
+
+
+def test_should_suggest_vr_flow_targets_erp_questions(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    router = KnowledgeRouter(database, settings.root)
+
+    process_question = router.classify(
+        "Como fazer o passo a passo para gerar o SPED fiscal?"
+    )
+    schema_question = router.classify(
+        "Em qual tabela e coluna os dados sao gravados da nfce?"
+    )
+    product_mention = router.classify("Explique como funciona o VRMaster")
+    two_term_hint = router.classify("Preciso ajustar o cadastro de produto")
+    single_weak_hint = router.classify("Me ajuda com estoque?")
+    generic = router.classify("Qual a capital da França?")
+
+    assert should_suggest_vr_flow(process_question) is True
+    assert should_suggest_vr_flow(schema_question) is True
+    assert should_suggest_vr_flow(product_mention) is True
+    assert should_suggest_vr_flow(two_term_hint) is True
+    # Errs toward omission on weak or generic signals.
+    assert should_suggest_vr_flow(single_weak_hint) is False
+    assert should_suggest_vr_flow(generic) is False

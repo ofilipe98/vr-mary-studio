@@ -146,6 +146,74 @@ class MaryCoreTest(unittest.TestCase):
 
         self.assertEqual(env_path.read_text(encoding="utf-8"), "CUSTOM_FLAG=keep\n")
 
+    def test_save_vr_env_round_trips_passwords_with_dotenv_metacharacters(self):
+        from dotenv import dotenv_values
+        from vrsoft_extractor.settings import load_dotenv_file
+
+        secret = "abc # trecho-final 'com aspas' \\ caminho"
+        save_vr_env(
+            self.app,
+            {
+                "VR_ROOT": str(self.settings.root),
+                "MOVIDESK_EMAIL": "user@example.com",
+                "MOVIDESK_PASSWORD": secret,
+                "ENDOO_EMAIL": "video@example.com",
+                "ENDOO_PASSWORD": secret,
+                "VR_SYNC_INTERVAL_MINUTES": "30",
+                "VR_DEFAULT_EFFORT": "medium",
+            },
+        )
+
+        values = dotenv_values(self.app / ".env")
+        if os.name == "nt":
+            self.assertEqual(values["MOVIDESK_PASSWORD"], "")
+            self.assertEqual(values["ENDOO_PASSWORD"], "")
+            protected = self.app / ".state" / "credentials.dpapi.json"
+            self.assertTrue(protected.is_file())
+            self.assertNotIn(secret, protected.read_text(encoding="utf-8"))
+            with patch.dict(
+                os.environ,
+                {"MOVIDESK_PASSWORD": "", "ENDOO_PASSWORD": ""},
+                clear=False,
+            ):
+                load_dotenv_file(self.app / ".env")
+                self.assertEqual(os.environ["MOVIDESK_PASSWORD"], secret)
+                self.assertEqual(os.environ["ENDOO_PASSWORD"], secret)
+        else:
+            self.assertEqual(values["MOVIDESK_PASSWORD"], secret)
+            self.assertEqual(values["ENDOO_PASSWORD"], secret)
+
+    @unittest.skipUnless(os.name == "nt", "A migração DPAPI é exclusiva do Windows")
+    def test_load_dotenv_migrates_legacy_plaintext_passwords_to_dpapi(self):
+        from dotenv import dotenv_values
+        from vrsoft_extractor.settings import load_dotenv_file
+
+        secret = "segredo-legado # com metacaractere"
+        env_path = self.app / ".env"
+        env_path.write_text(
+            "MOVIDESK_EMAIL=movidesk@example.com\n"
+            f"MOVIDESK_PASSWORD='{secret}'\n"
+            "ENDOO_EMAIL=endoo@example.com\n"
+            f"ENDOO_PASSWORD='{secret}'\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(
+            os.environ,
+            {"MOVIDESK_PASSWORD": "", "ENDOO_PASSWORD": ""},
+            clear=False,
+        ):
+            load_dotenv_file(env_path)
+            self.assertEqual(os.environ["MOVIDESK_PASSWORD"], secret)
+            self.assertEqual(os.environ["ENDOO_PASSWORD"], secret)
+
+        values = dotenv_values(env_path)
+        self.assertEqual(values["MOVIDESK_PASSWORD"], "")
+        self.assertEqual(values["ENDOO_PASSWORD"], "")
+        protected = self.app / ".state" / "credentials.dpapi.json"
+        self.assertTrue(protected.is_file())
+        self.assertNotIn(secret, protected.read_text(encoding="utf-8"))
+
     def test_download_asset_rejects_empty_and_oversized_responses(self):
         destination = self.root / "assets"
         with self.assertRaisesRegex(ValueError, "vazio"):
@@ -581,6 +649,33 @@ class MaryCoreTest(unittest.TestCase):
                 "SELECT count(*) FROM document_versions"
             ).fetchone()[0]
         self.assertEqual(versions, 1)
+
+    def test_search_page_reports_and_reaches_results_beyond_legacy_cap(self):
+        database = MaryDatabase(self.settings.database_path)
+        for index in range(501):
+            database.upsert_document(
+                KnowledgeDocument(
+                    source="wiki",
+                    source_id=f"audit-{index:03d}",
+                    title=f"Termoauditoria documento {index:03d}",
+                    url=f"https://example.com/audit-{index:03d}",
+                    markdown=f"Conteúdo termoauditoria número {index:03d}.",
+                    module="Fiscal",
+                    review_status="approved",
+                    content_hash=f"audit-hash-{index:03d}",
+                    local_path=f"audit-{index:03d}.md",
+                )
+            )
+
+        first, total = database.search_page("termoauditoria", limit=100, offset=0)
+        last, last_total = database.search_page(
+            "termoauditoria", limit=100, offset=500
+        )
+
+        self.assertEqual(total, 501)
+        self.assertEqual(last_total, 501)
+        self.assertEqual(len(first), 100)
+        self.assertEqual(len(last), 1)
 
     def test_search_ranks_function_102_and_expands_map_reference(self):
         database = MaryDatabase(self.settings.database_path)
@@ -1596,6 +1691,30 @@ class MaryCoreTest(unittest.TestCase):
         self.assertEqual(events[0].kind, "reasoning_delta")
         self.assertEqual(events[0].text, "Consultando a base local")
 
+    def test_codex_plan_delta_stays_out_of_the_assistant_answer(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        provider._handle_server_message(
+            {
+                "method": "item/plan/delta",
+                "params": {
+                    "threadId": "native-1",
+                    "itemId": "plan-1",
+                    "delta": "Inspecionar a base e preparar a resposta",
+                },
+            }
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "reasoning_delta")
+        self.assertNotEqual(events[0].kind, "assistant_delta")
+        self.assertEqual(
+            events[0].text, "Inspecionar a base e preparar a resposta"
+        )
+
     def test_codex_separates_distinct_assistant_items_with_a_blank_line(self):
         provider = CodexProvider()
         provider._native_to_local["native-1"] = "local-1"
@@ -1762,7 +1881,7 @@ class MaryCoreTest(unittest.TestCase):
                 provider = CodexProvider()
                 calls: list[tuple[str, dict]] = []
 
-                def rpc(method, params, timeout=45):
+                def rpc(method, params, timeout=45, **kwargs):
                     calls.append((method, params))
                     return {"thread": {"id": f"native-{profile}"}} if method == "thread/start" else {}
 
@@ -1862,8 +1981,8 @@ class MaryCoreTest(unittest.TestCase):
             **tool,
             "arguments": ["-c", "import sys; sys.stderr.write('aviso')"],
         }
-        with self.assertRaisesRegex(ToolExecutionError, "stderr"):
-            run_local_tool(stderr_only, {"name": "Mary"}, self.root)
+        warned = run_local_tool(stderr_only, {"name": "Mary"}, self.root)
+        self.assertEqual(warned.text, "aviso")
         oversized = {
             **tool,
             "arguments": ["-c", f"print('x'*{MAX_TOOL_OUTPUT_BYTES + 1})"],
@@ -4726,7 +4845,7 @@ class MaryCoreTest(unittest.TestCase):
             self.assertEqual(application.property("vr_theme"), "dark_orange")
             self.assertEqual(
                 application.palette().color(QPalette.Window).name().lower(),
-                "#12100f",
+                "#000000",
             )
             self.assertEqual(
                 window.app_preferences.values["appearance/theme"], "dark_orange"
@@ -5768,8 +5887,8 @@ class MaryCoreTest(unittest.TestCase):
                         )
                     iterator += 1
                 block = block.next()
-            self.assertIn("#202023", code_backgrounds)
-            self.assertEqual(browser.document().indentWidth(), 22)
+            self.assertIn("#26262b", code_backgrounds)
+            self.assertEqual(browser.document().indentWidth(), 18)
         finally:
             window.close()
             apply_application_theme(application, "light")
@@ -5822,6 +5941,105 @@ class MaryCoreTest(unittest.TestCase):
             )
         finally:
             window.close()
+
+    def test_markdown_tables_quotes_and_rules_get_t3_styling(self):
+        from PySide6.QtGui import (
+            QFont,
+            QTextFormat,
+            QTextFrameFormat,
+            QTextLength,
+            QTextTable,
+        )
+        from PySide6.QtWidgets import QApplication, QTextBrowser
+
+        application = QApplication.instance() or QApplication([])
+        apply_application_theme(application, "dark_orange")
+        window = MainWindow(
+            self.settings,
+            smoke_test=True,
+            auto_close_smoke=False,
+        )
+        try:
+            widget = window._add_message(
+                "assistant",
+                "| Titulo | Caminho |\n"
+                "|---|---|\n"
+                "| Verba | conhecimento/verba.md |\n\n"
+                "> Observação validada.\n\n"
+                "---\n\n"
+                "Parágrafo final com `codigo`.",
+            )
+            browser = widget.findChild(QTextBrowser, "messageBody")
+            document = browser.document()
+
+            def collect_tables(frame):
+                found = []
+                for child in frame.childFrames():
+                    if isinstance(child, QTextTable):
+                        found.append(child)
+                    found.extend(collect_tables(child))
+                return found
+
+            tables = collect_tables(document.rootFrame())
+            self.assertEqual(len(tables), 1)
+            table_format = tables[0].format()
+            self.assertEqual(table_format.border(), 1)
+            self.assertEqual(table_format.borderBrush().color().name(), "#3f3f46")
+            self.assertEqual(table_format.borderStyle(), QTextFrameFormat.BorderStyle_Solid)
+            self.assertTrue(table_format.borderCollapse())
+            self.assertEqual(table_format.cellPadding(), 6.0)
+            self.assertEqual(table_format.width().type(), QTextLength.PercentageLength)
+            header_cell = tables[0].cellAt(0, 0).format().toTableCellFormat()
+            self.assertEqual(header_cell.background().color().name(), "#26262b")
+            self.assertEqual(header_cell.topBorder(), 1.0)
+            self.assertEqual(header_cell.fontWeight(), QFont.Bold)
+            body_cell = tables[0].cellAt(1, 0).format()
+            self.assertFalse(
+                body_cell.hasProperty(int(QTextFormat.BackgroundBrush))
+            )
+
+            quote_blocks = []
+            rule_blocks = []
+            block = document.firstBlock()
+            while block.isValid():
+                block_format = block.blockFormat()
+                if block_format.hasProperty(int(QTextFormat.BlockQuoteLevel)):
+                    quote_blocks.append(block_format)
+                elif not block.text() and block_format.hasProperty(
+                    int(QTextFormat.BackgroundBrush)
+                ):
+                    rule_blocks.append(block_format)
+                block = block.next()
+            self.assertEqual(len(quote_blocks), 1)
+            self.assertEqual(
+                quote_blocks[0].background().color().name(), "#232327"
+            )
+            self.assertEqual(quote_blocks[0].leftMargin(), 10)
+            self.assertEqual(len(rule_blocks), 1)
+            self.assertEqual(
+                rule_blocks[0].background().color().name(), "#3f3f46"
+            )
+            self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
+
+            plain = browser.toPlainText()
+            self.assertIn("Parágrafo final", plain)
+            self.assertIn("codigo", plain)
+            code_fragments = []
+            block = document.firstBlock()
+            while block.isValid():
+                iterator = block.begin()
+                while not iterator.atEnd():
+                    fragment = iterator.fragment()
+                    if fragment.charFormat().fontFixedPitch():
+                        code_fragments.append(
+                            fragment.charFormat().background().color().name()
+                        )
+                    iterator += 1
+                block = block.next()
+            self.assertIn("#26262b", code_fragments)
+        finally:
+            window.close()
+            apply_application_theme(application, "light")
 
     def test_slash_palette_exposes_build_as_integrated_default(self):
         from PySide6.QtCore import Qt
@@ -6356,6 +6574,7 @@ class MaryCoreTest(unittest.TestCase):
         class FakeProvider:
             def __init__(self):
                 self.prompts = []
+                self.message_sent = threading.Event()
 
             def available(self):
                 return True
@@ -6365,12 +6584,14 @@ class MaryCoreTest(unittest.TestCase):
 
             def send_message(self, *args):
                 self.prompts.append(args[5])
+                self.message_sent.set()
 
             def close(self):
                 pass
 
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
+        self.addCleanup(orchestrator.close)
         codex = FakeProvider()
         claude = FakeProvider()
         orchestrator.providers = {"codex": codex, "claude": claude}
@@ -6396,12 +6617,10 @@ class MaryCoreTest(unittest.TestCase):
         orchestrator.send(
             conversation_id, "Continue o trabalho", lambda _event: None
         )
-        for _ in range(100):
-            if claude.prompts:
-                break
-            import time
-
-            time.sleep(0.005)
+        self.assertTrue(
+            claude.message_sent.wait(5.0),
+            "O provedor alternado não recebeu a mensagem dentro do prazo.",
+        )
         self.assertIn("CONTEXTO TRANSFERIDO", claude.prompts[-1])
         self.assertIn("Criar treinamento de PIX", claude.prompts[-1])
 
