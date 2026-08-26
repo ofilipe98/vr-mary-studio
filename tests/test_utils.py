@@ -31,7 +31,8 @@ class UtilsTest(unittest.TestCase):
             executable_version,
         )
         parsed_version = re.fullmatch(
-            r"(\d+)\.(\d+)\.(\d+)(?:b(\d+))?", project_version
+            r"(\d+)\.(\d+)\.(\d+)(?:b(\d+))?(?:\.dev(\d+))?",
+            project_version,
         )
 
         self.assertIsNotNone(match)
@@ -43,8 +44,12 @@ class UtilsTest(unittest.TestCase):
         self.assertEqual(match.group(1), __version__)
         self.assertEqual(product_match.group(1), __version__)
         self.assertEqual(file_match.group(1), __version__)
-        expected_fixed = tuple(
-            int(value or 0) for value in parsed_version.groups()
+        major, minor, patch, beta, development = parsed_version.groups()
+        expected_fixed = (
+            int(major),
+            int(minor),
+            int(patch),
+            int(beta or development or 0),
         )
         self.assertEqual(
             tuple(int(value) for value in fixed_match.groups()), expected_fixed
