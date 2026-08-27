@@ -16,11 +16,18 @@ Item {
     implicitWidth: compact ? 42 : navLabel.implicitWidth + 70
     focus: false
     activeFocusOnTab: true
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && navTap.pressed ? 0.975 : 1
     Accessible.role: Accessible.Button
     Accessible.name: "Abrir " + title
     Keys.onReturnPressed: activated()
     Keys.onEnterPressed: activated()
     Keys.onSpacePressed: activated()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -31,6 +38,7 @@ Item {
         border.color: frontend.palette.brandYellow
 
         Behavior on color {
+            enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
         }
     }
@@ -83,6 +91,7 @@ Item {
 
     HoverHandler { id: pointer }
     TapHandler {
+        id: navTap
         onTapped: {
             root.forceActiveFocus()
             root.activated()

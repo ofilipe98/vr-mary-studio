@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+import "../theme"
 
 Item {
     id: root
@@ -27,7 +28,11 @@ Item {
 
     Connections {
         target: frontend
-        function onCurrentPageChanged() { root.markVisited() }
+        function onCurrentPageChanged() {
+            root.markVisited()
+            if (frontend.currentPage !== 1 && !frontend.reduceMotion)
+                pageEntrance.restart()
+        }
     }
 
     Component.onCompleted: root.markVisited()
@@ -114,8 +119,33 @@ Item {
         }
 
         Item {
+            id: pageViewport
             SplitView.minimumWidth: 720
             SplitView.fillWidth: true
+
+            transform: Translate { id: pageShift; y: 0 }
+
+            SequentialAnimation {
+                id: pageEntrance
+                PropertyAction { target: pageViewport; property: "opacity"; value: 0.94 }
+                PropertyAction { target: pageShift; property: "y"; value: Theme.motionDistance }
+                ParallelAnimation {
+                    NumberAnimation {
+                        target: pageViewport
+                        property: "opacity"
+                        to: 1
+                        duration: Theme.motionDuration
+                        easing.type: Easing.OutCubic
+                    }
+                    NumberAnimation {
+                        target: pageShift
+                        property: "y"
+                        to: 0
+                        duration: Theme.motionDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
+            }
 
             // Explicit Loaders (not a Repeater): Repeater delegates get no
             // QObject parent, which disconnects them from window.findChild.

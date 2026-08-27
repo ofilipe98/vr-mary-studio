@@ -27,7 +27,14 @@ Button {
     rightPadding: 7
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
     onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         id: compactRow
@@ -58,6 +65,10 @@ Button {
             ? frontend.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: frontend.palette.focus
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {

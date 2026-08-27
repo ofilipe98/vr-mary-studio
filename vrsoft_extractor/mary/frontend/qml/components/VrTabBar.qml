@@ -30,9 +30,16 @@ Item {
                 width: tabLabel.implicitWidth + 28
                 height: root.height
                 activeFocusOnTab: true
+                transformOrigin: Item.Center
+                scale: !frontend.reduceMotion && tabTap.pressed ? 0.97 : 1
                 Accessible.role: Accessible.PageTab
                 Accessible.name: modelData
                 Accessible.selected: root.currentIndex === index
+
+                Behavior on scale {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -45,6 +52,7 @@ Item {
                     border.color: frontend.palette.focus
 
                     Behavior on color {
+                        enabled: !frontend.reduceMotion
                         ColorAnimation { duration: Theme.fastDuration }
                     }
                 }
@@ -64,6 +72,7 @@ Item {
                 HoverHandler { id: tabHover }
 
                 TapHandler {
+                    id: tabTap
                     onTapped: {
                         tab.forceActiveFocus()
                         root.activate(tab.index)

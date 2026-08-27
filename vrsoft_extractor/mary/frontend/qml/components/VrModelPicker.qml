@@ -25,7 +25,14 @@ Button {
     rightPadding: 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
     onClicked: pickerPopup.opened ? pickerPopup.close() : pickerPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         spacing: 7
@@ -57,6 +64,10 @@ Button {
             ? frontend.palette.chatControl : "transparent"
         border.width: control.activeFocus || pickerPopup.opened ? 1 : 0
         border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {

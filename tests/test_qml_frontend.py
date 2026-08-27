@@ -1433,6 +1433,44 @@ class QmlFrontendTest(unittest.TestCase):
             "conversationSidebar.x + conversationSidebar.width", chat_qml
         )
 
+    def test_qml_motion_system_keeps_chat_transitions_consistent_and_accessible(self):
+        qml_root = MAIN_QML.parent
+        theme_qml = (qml_root / "theme" / "Theme.qml").read_text(encoding="utf-8")
+        main_qml = MAIN_QML.read_text(encoding="utf-8")
+        chat_qml = (qml_root / "pages" / "ChatPreview.qml").read_text(
+            encoding="utf-8"
+        )
+        components = qml_root / "components"
+
+        for token in (
+            "pressDuration",
+            "motionDuration",
+            "pageDuration",
+            "motionDistance",
+        ):
+            self.assertIn(token, theme_qml)
+
+        self.assertIn("Behavior on opacity", main_qml)
+        self.assertIn("Theme.pageDuration", main_qml)
+        self.assertIn("enabled: !frontend.reduceMotion", main_qml)
+        self.assertIn("conversationSidebarWidth", chat_qml)
+        self.assertIn("surfacePanelWidth", chat_qml)
+        self.assertIn('objectName: "surfaceContentStack"', chat_qml)
+        self.assertIn("surfaceSwitch", chat_qml)
+        self.assertIn("root.displayedSurfaceIndex = root.surfaceIndex", chat_qml)
+
+        for component_name in (
+            "VrButton.qml",
+            "VrIconButton.qml",
+            "VrModelPicker.qml",
+            "VrReasoningPicker.qml",
+            "VrPermissionPicker.qml",
+            "VrContextButton.qml",
+        ):
+            source = (components / component_name).read_text(encoding="utf-8")
+            self.assertIn("Behavior on scale", source, component_name)
+            self.assertIn("!frontend.reduceMotion", source, component_name)
+
     def test_chat_bridge_restores_latest_persisted_task_timeline(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

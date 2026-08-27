@@ -10,6 +10,7 @@ Item {
     property bool conversationSidebarVisible: true
     property bool surfaceVisible: false
     property int surfaceIndex: 0
+    property int displayedSurfaceIndex: 0
     property var openSurfaceTabs: []
     property bool activityExpanded: true
     property bool taskBarExpanded: true
@@ -33,6 +34,8 @@ Item {
     property string pendingBrowserAddress: ""
     property bool composerDropActive: false
     property string addProjectView: "sources"
+    property real conversationSidebarWidth: conversationSidebarVisible ? 260 : 0
+    property real surfacePanelWidth: surfaceVisible ? 430 : 0
     readonly property var addProjectSources: [
         { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
         { key: "git", title: "Git URL", description: "Clone from a remote URL", icon: "models", enabled: false, badge: "Em breve" },
@@ -41,6 +44,26 @@ Item {
         { key: "bitbucket", title: "Bitbucket repository", description: "Clone Bitbucket workspace/repository", icon: "models", enabled: false, badge: "Configurar" },
         { key: "gitlab", title: "GitLab repository", description: "Clone GitLab group/project", icon: "models", enabled: false, badge: "Configurar" }
     ]
+
+    Behavior on conversationSidebarWidth {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+    }
+    Behavior on surfacePanelWidth {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+    }
+
+    onSurfaceIndexChanged: {
+        if (frontend.reduceMotion || !root.surfaceVisible) {
+            surfaceSwitch.stop()
+            root.displayedSurfaceIndex = root.surfaceIndex
+            surfaceStack.opacity = 1
+            surfaceShift.x = 0
+        } else {
+            surfaceSwitch.restart()
+        }
+    }
 
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
@@ -83,11 +106,23 @@ Item {
         Rectangle {
             id: conversationSidebar
             objectName: "conversationSidebar"
-            visible: root.conversationSidebarVisible
-            SplitView.minimumWidth: root.conversationSidebarVisible ? 220 : 0
-            SplitView.preferredWidth: root.conversationSidebarVisible ? 260 : 0
-            SplitView.maximumWidth: root.conversationSidebarVisible ? 430 : 0
+            visible: root.conversationSidebarWidth > 0.5
+            opacity: root.conversationSidebarVisible ? 1 : 0
+            SplitView.minimumWidth: 0
+            SplitView.preferredWidth: root.conversationSidebarWidth
+            SplitView.maximumWidth: root.conversationSidebarWidth > 0.5 ? 430 : 0
             color: frontend.palette.chatSidebar
+            transform: Translate {
+                x: root.conversationSidebarVisible ? 0 : -Theme.motionDistance
+                Behavior on x {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+            }
             Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: frontend.palette.chatDivider }
 
             ColumnLayout {
@@ -1016,13 +1051,25 @@ Item {
         Rectangle {
             id: surfacePanel
             objectName: "surfacePanel"
-            visible: root.surfaceVisible
-            SplitView.minimumWidth: root.surfaceVisible ? 320 : 0
-            SplitView.preferredWidth: root.surfaceVisible ? 430 : 0
-            SplitView.maximumWidth: root.surfaceVisible ? 720 : 0
+            visible: root.surfacePanelWidth > 0.5
+            opacity: root.surfaceVisible ? 1 : 0
+            SplitView.minimumWidth: 0
+            SplitView.preferredWidth: root.surfacePanelWidth
+            SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
             color: frontend.palette.chatSidebar
             border.width: 1
             border.color: frontend.palette.chatDivider
+            transform: Translate {
+                x: root.surfaceVisible ? 0 : Theme.motionDistance
+                Behavior on x {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+            }
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
@@ -1060,7 +1107,17 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     padding: 0
                                     hoverEnabled: true
+                                    transformOrigin: Item.Center
+                                    scale: !frontend.reduceMotion && down ? 0.97 : 1
                                     onClicked: root.surfaceIndex = modelData.page
+
+                                    Behavior on scale {
+                                        enabled: !frontend.reduceMotion
+                                        NumberAnimation {
+                                            duration: Theme.pressDuration
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
 
                                     contentItem: RowLayout {
                                         id: tabContent
@@ -1105,6 +1162,11 @@ Item {
                                             anchors.bottom: parent.bottom
                                             height: 2
                                             color: frontend.palette.brandOrange
+                                        }
+
+                                        Behavior on color {
+                                            enabled: !frontend.reduceMotion
+                                            ColorAnimation { duration: Theme.fastDuration }
                                         }
                                     }
                                 }
@@ -1216,9 +1278,45 @@ Item {
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: frontend.palette.chatDivider }
                 StackLayout {
+                    id: surfaceStack
+                    objectName: "surfaceContentStack"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: root.surfaceIndex
+                    currentIndex: root.displayedSurfaceIndex
+                    transform: Translate { id: surfaceShift; x: 0 }
+
+                    SequentialAnimation {
+                        id: surfaceSwitch
+                        NumberAnimation {
+                            target: surfaceStack
+                            property: "opacity"
+                            to: 0
+                            duration: Math.round(Theme.fastDuration / 2)
+                            easing.type: Easing.InQuad
+                        }
+                        ScriptAction { script: root.displayedSurfaceIndex = root.surfaceIndex }
+                        PropertyAction {
+                            target: surfaceShift
+                            property: "x"
+                            value: Theme.motionDistance
+                        }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: surfaceStack
+                                property: "opacity"
+                                to: 1
+                                duration: Theme.motionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: surfaceShift
+                                property: "x"
+                                to: 0
+                                duration: Theme.motionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                     Item {
                         ScrollView {
                             id: surfaceChooser

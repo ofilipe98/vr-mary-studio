@@ -16,6 +16,13 @@ Button {
     rightPadding: 15
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.975 : 1
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         spacing: 11
@@ -64,5 +71,9 @@ Button {
             ? frontend.palette.chatControl : frontend.palette.chatComposer
         border.width: control.activeFocus ? 2 : 1
         border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 }

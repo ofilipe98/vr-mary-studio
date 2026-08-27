@@ -33,5 +33,11 @@ QtObject {
     readonly property int titleSize: 26
     readonly property int headingSize: 18
 
+    // Motion tokens keep interactions consistent and make it easy to honor
+    // the reduce-motion preference at each animation site.
+    readonly property int pressDuration: 90
     readonly property int fastDuration: 140
+    readonly property int motionDuration: 180
+    readonly property int pageDuration: 220
+    readonly property int motionDistance: 10
 }

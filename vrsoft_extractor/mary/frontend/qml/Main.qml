@@ -45,17 +45,45 @@ ApplicationWindow {
     }
 
     Loader {
+        id: chatLoader
         anchors.fill: parent
         active: window.chatVisited
-        visible: frontend.currentPage === 1
+        visible: active && frontend.currentPage === 1
+        opacity: frontend.currentPage === 1 ? 1 : 0.72
         sourceComponent: chatComponent
+
+        transform: Translate {
+            y: frontend.currentPage === 1 ? 0 : Theme.motionDistance
+            Behavior on y {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+            }
+        }
+        Behavior on opacity {
+            enabled: !frontend.reduceMotion
+            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+        }
     }
 
     Loader {
+        id: hubLoader
         anchors.fill: parent
         active: window.hubVisited
-        visible: frontend.currentPage !== 1
+        visible: active && frontend.currentPage !== 1
+        opacity: frontend.currentPage !== 1 ? 1 : 0.72
         sourceComponent: settingsHubComponent
+
+        transform: Translate {
+            y: frontend.currentPage !== 1 ? 0 : Theme.motionDistance
+            Behavior on y {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+            }
+        }
+        Behavior on opacity {
+            enabled: !frontend.reduceMotion
+            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+        }
     }
 
     Popup {
