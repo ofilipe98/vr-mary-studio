@@ -22,7 +22,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
@@ -203,6 +203,7 @@ class ChatBridge(QObject):
     selectionChanged = Signal()
     searchChanged = Signal()
     projectsChanged = Signal()
+    projectFolderChanged = Signal()
     messageCopied = Signal(str)
     stateChanged = Signal()
     approvalRequested = Signal("QVariantMap")
@@ -231,6 +232,8 @@ class ChatBridge(QObject):
         self._projects: list[dict[str, str]] = []
         self._project_scope: Path | None = None
         self._current_project_index = 0
+        self._project_folder = Path.home().resolve(strict=False)
+        self._project_folder_items: list[dict[str, str]] = []
         self._search = ""
         self._selected_index = -1
         self._selected: dict[str, Any] = {}
@@ -335,6 +338,29 @@ class ChatBridge(QObject):
     @Property(int, notify=projectsChanged)
     def currentProjectIndex(self) -> int:  # noqa: N802
         return self._current_project_index
+
+    @Property(str, notify=projectFolderChanged)
+    def projectFolderPath(self) -> str:  # noqa: N802
+        return str(self._project_folder)
+
+    @Property(str, notify=projectFolderChanged)
+    def projectFolderDisplayPath(self) -> str:  # noqa: N802
+        home = Path.home().resolve(strict=False)
+        try:
+            relative = self._project_folder.relative_to(home)
+        except ValueError:
+            return str(self._project_folder)
+        if not relative.parts:
+            return "~/"
+        return "~/" + relative.as_posix()
+
+    @Property("QVariantList", notify=projectFolderChanged)
+    def projectFolderItems(self) -> list[dict[str, str]]:  # noqa: N802
+        return list(self._project_folder_items)
+
+    @Property(bool, notify=projectFolderChanged)
+    def projectFolderCanGoBack(self) -> bool:  # noqa: N802
+        return self._project_folder.parent != self._project_folder
 
     @Property(int, notify=conversationsChanged)
     def conversationCount(self) -> int:  # noqa: N802
@@ -1487,7 +1513,7 @@ class ChatBridge(QObject):
             values = []
         self._research_model_keys = [
             str(item) for item in values if str(item or "").strip()
-        ]
+        ][:1]
         trigger = str(self._preferences.value("research/trigger", "auto") or "auto")
         self._research_trigger = (
             "manual" if trigger.strip().casefold() == "manual" else "auto"
@@ -1523,9 +1549,9 @@ class ChatBridge(QObject):
         selected: list[str] = []
         for item in keys:
             key = str(item or "").strip()
-            if key and key not in selected:
+            if key:
                 selected.append(key)
-            if len(selected) == 3:
+            if selected:
                 break
         self._research_model_keys = selected
         self._preferences.setValue(
@@ -1567,7 +1593,56 @@ class ChatBridge(QObject):
         )
         if not selected:
             return ""
-        path = Path(selected).resolve(strict=False)
+        return self._add_project_path(Path(selected))
+
+    @Slot()
+    def beginProjectFolderBrowse(self) -> None:  # noqa: N802
+        self._set_project_folder(Path.home())
+
+    @Slot(str)
+    def browseProjectFolder(self, value: str) -> None:  # noqa: N802
+        raw = str(value or "").strip()
+        if not raw:
+            return
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self._project_folder / candidate
+        self._set_project_folder(candidate)
+
+    @Slot()
+    def browseParentProjectFolder(self) -> None:  # noqa: N802
+        self._set_project_folder(self._project_folder.parent)
+
+    @Slot(result=str)
+    def addCurrentProjectFolder(self) -> str:  # noqa: N802
+        return self._add_project_path(self._project_folder)
+
+    @Slot()
+    def openCurrentProjectFolder(self) -> None:  # noqa: N802
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._project_folder)))
+
+    def _set_project_folder(self, value: Path) -> None:
+        path = value.expanduser().resolve(strict=False)
+        if not path.is_dir():
+            return
+        items: list[dict[str, str]] = []
+        try:
+            children = sorted(
+                (child for child in path.iterdir() if child.is_dir()),
+                key=lambda child: child.name.casefold(),
+            )
+        except OSError:
+            children = []
+        for child in children:
+            items.append({"label": child.name, "path": str(child)})
+        self._project_folder = path
+        self._project_folder_items = items
+        self.projectFolderChanged.emit()
+
+    def _add_project_path(self, selected: Path) -> str:
+        path = selected.expanduser().resolve(strict=False)
+        if not path.is_dir():
+            return ""
         raw = self._preferences.value("chat/projects", "[]")
         try:
             values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])

@@ -183,10 +183,25 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             self.assertEqual(window.property("title"), "VR Norte Studio")
             self.assertGreaterEqual(window.property("minimumWidth"), 1120)
-            self.assertIsNotNone(window.findChild(QObject, "chatModelPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "modelPickerPopup"))
-            self.assertIsNotNone(window.findChild(QObject, "chatReasoningPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "chatPermissionPicker"))
+            model_picker = window.findChild(QObject, "chatModelPicker")
+            reasoning_picker = window.findChild(QObject, "chatReasoningPicker")
+            permission_picker = window.findChild(QObject, "chatPermissionPicker")
+            self.assertIsNotNone(model_picker)
+            self.assertIsNotNone(reasoning_picker)
+            self.assertIsNotNone(permission_picker)
+            for picker, popup_name in (
+                (model_picker, "modelPickerPopup"),
+                (reasoning_picker, "reasoningPickerPopup"),
+                (permission_picker, "permissionPickerPopup"),
+            ):
+                popup = window.findChild(QObject, popup_name)
+                self.assertIsNotNone(popup)
+                picker.click()
+                self.application.processEvents()
+                self.assertTrue(popup.property("visible"), popup_name)
+                picker.click()
+                self.application.processEvents()
+                self.assertFalse(popup.property("visible"), popup_name)
             self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
@@ -204,6 +219,18 @@ class QmlFrontendTest(unittest.TestCase):
             add_project_popup = window.findChild(QObject, "addProjectPopup")
             self.assertIsNotNone(add_project_popup)
             self.assertTrue(add_project_popup.property("visible"))
+            chat_page = window.findChild(QObject, "chatPage")
+            self.assertIsNotNone(chat_page)
+            chat_page.openLocalFolderBrowser()
+            self.application.processEvents()
+            self.assertEqual(chat_page.property("addProjectView"), "folder")
+            self.assertIsNotNone(window.findChild(QObject, "projectFolderPathField"))
+            self.assertIsNotNone(window.findChild(QObject, "projectFolderList"))
+            folder_back = window.findChild(QObject, "projectFolderBackButton")
+            self.assertIsNotNone(folder_back)
+            folder_back.click()
+            self.application.processEvents()
+            self.assertEqual(chat_page.property("addProjectView"), "sources")
             add_project_popup.close()
             sidebar_toggles = window.findChildren(QObject, "conversationSidebarToggle")
             self.assertEqual(len(sidebar_toggles), 1)
@@ -220,8 +247,6 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "surfacePanel"))
             conversation_menu = window.findChild(QObject, "conversationContextMenu")
             self.assertIsNotNone(conversation_menu)
-            chat_page = window.findChild(QObject, "chatPage")
-            self.assertIsNotNone(chat_page)
             chat_page.openConversationMenu(0, 50, 50)
             self.application.processEvents()
             self.assertTrue(conversation_menu.property("visible"))
@@ -331,8 +356,8 @@ class QmlFrontendTest(unittest.TestCase):
             settings_page.setProperty("tabIndex", 2)
             self.application.processEvents()
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsPage"))
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentSearch"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
             settings_navigation = window.findChild(QObject, "settingsNavigation")
             self.assertIsNotNone(settings_navigation)
             self.assertEqual(
@@ -780,6 +805,36 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(bridge._orchestrator._research_trigger, "manual")
             self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
+
+    def test_project_folder_browser_lists_directories_and_adds_current_path(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            folder = root / "Projetos"
+            (folder / "Alpha").mkdir(parents=True)
+            (folder / "beta").mkdir()
+            (folder / "arquivo.txt").write_text("x", encoding="utf-8")
+
+            bridge.browseProjectFolder(str(folder))
+
+            self.assertEqual(bridge.projectFolderPath, str(folder.resolve()))
+            self.assertEqual(
+                [item["label"] for item in bridge.projectFolderItems],
+                ["Alpha", "beta"],
+            )
+            self.assertEqual(bridge.addCurrentProjectFolder(), str(folder.resolve()))
+            self.assertTrue(
+                any(item["path"] == str(folder.resolve()) for item in bridge.projectItems)
+            )
 
     def test_pesquisa_command_requires_vr(self):
         with TemporaryDirectory() as temporary:
@@ -1589,10 +1644,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
 
             self.assertEqual((bridge._provider, bridge._model), ("claude", "b"))
-            self.assertEqual(
-                bridge.researchModelKeys,
-                ["codex:a", "opencode:c", "codex:d"],
-            )
+            self.assertEqual(bridge.researchModelKeys, ["codex:a"])
 
     def test_model_picker_keeps_provider_filters_without_hover_dialogs(self):
         picker_qml = (
@@ -1603,6 +1655,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('{key: "favorites"', picker_qml)
         self.assertIn('{key: "codex"', picker_qml)
         self.assertNotIn("ToolTip.visible", picker_qml)
+        self.assertIn("CloseOnPressOutsideParent", picker_qml)
+
+        chat_qml = (
+            MAIN_QML.parent / "pages" / "ChatPreview.qml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("createLinearGradient", chat_qml)
 
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (

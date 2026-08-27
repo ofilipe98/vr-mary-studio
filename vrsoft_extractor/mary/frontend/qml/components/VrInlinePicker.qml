@@ -22,7 +22,7 @@ Button {
     rightPadding: 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
-    onClicked: optionsPopup.open()
+    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
 
     contentItem: RowLayout {
         id: row
@@ -71,7 +71,7 @@ Button {
         width: Math.max(control.popupWidth, control.width)
         implicitHeight: Math.min(optionsList.contentHeight + 12, 330)
         padding: 6
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         background: Rectangle {
             color: frontend.palette.chatComposer
             border.width: 1

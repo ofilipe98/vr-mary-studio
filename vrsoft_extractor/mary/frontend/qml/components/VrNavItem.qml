@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import "../theme"
 
 Item {
@@ -44,6 +45,8 @@ Item {
             height: parent.height
 
             Image {
+                id: navIconSource
+                visible: false
                 anchors.centerIn: parent
                 width: Theme.iconSize
                 height: Theme.iconSize
@@ -51,7 +54,15 @@ Item {
                 sourceSize.width: 24
                 sourceSize.height: 24
                 fillMode: Image.PreserveAspectFit
-                opacity: root.selected ? 1 : 0.82
+            }
+            MultiEffect {
+                anchors.centerIn: parent
+                width: Theme.iconSize
+                height: Theme.iconSize
+                source: navIconSource
+                colorization: 1.0
+                colorizationColor: root.selected ? "#FFFFFF" : frontend.palette.navText
+                opacity: root.selected ? 1 : 0.88
             }
         }
 

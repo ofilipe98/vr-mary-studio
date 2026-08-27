@@ -32,6 +32,7 @@ Item {
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
     property bool composerDropActive: false
+    property string addProjectView: "sources"
     readonly property var addProjectSources: [
         { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
         { key: "git", title: "Git URL", description: "Clone from a remote URL", icon: "models", enabled: false, badge: "Em breve" },
@@ -199,6 +200,7 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.text: "Adicionar projeto"
                         onClicked: {
+                            root.addProjectView = "sources"
                             addProjectSearch.clear()
                             addProjectPopup.open()
                         }
@@ -930,9 +932,8 @@ Item {
                 }
             }
 
-            // VR Ultra keeps the institutional orange as the dominant accent.
-            // A thin moving spectrum identifies multi-agent execution without
-            // covering the composer or producing broken corner segments.
+            // VR Ultra uses only the institutional orange. The restrained
+            // pulse communicates activity without introducing other colors.
             Rectangle {
                 id: ultraGlowOuter
                 visible: chat.vrMode === "ultra"
@@ -992,19 +993,12 @@ Item {
                     ctx.setLineDash([])
                     ctx.stroke()
 
-                    var spectrum = ctx.createLinearGradient(0, 0, width, 0)
-                    spectrum.addColorStop(0.00, "#FF7200")
-                    spectrum.addColorStop(0.25, "#FCBD0F")
-                    spectrum.addColorStop(0.48, "#42D392")
-                    spectrum.addColorStop(0.68, "#38BDF8")
-                    spectrum.addColorStop(0.84, "#8B5CF6")
-                    spectrum.addColorStop(1.00, "#FF7200")
                     ctx.lineWidth = 3.0
                     ctx.lineCap = "round"
                     var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
                     traceRoundRect(ctx, 2, 27)
                     ctx.globalAlpha = 1.0
-                    ctx.strokeStyle = spectrum
+                    ctx.strokeStyle = frontend.palette.brandOrange
                     ctx.setLineDash([perimeter * 0.16, perimeter * 0.06,
                         perimeter * 0.08, perimeter * 0.70])
                     ctx.lineDashOffset = -sweep * perimeter
@@ -1832,10 +1826,15 @@ Item {
         dim: true
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onOpened: Qt.callLater(function() { addProjectSearch.forceActiveFocus() })
+        onOpened: Qt.callLater(function() {
+            if (root.addProjectView === "sources") addProjectSearch.forceActiveFocus()
+        })
 
-        contentItem: ColumnLayout {
-            spacing: 0
+        contentItem: StackLayout {
+            currentIndex: root.addProjectView === "folder" ? 1 : 0
+
+            ColumnLayout {
+                spacing: 0
             RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 50
@@ -1949,8 +1948,7 @@ Item {
                         enabled: sourceRow.modelData.enabled
                         onTapped: {
                             if (sourceRow.modelData.key === "local") {
-                                addProjectPopup.close()
-                                chat.addProject()
+                                root.openLocalFolderBrowser()
                             }
                         }
                     }
@@ -1977,6 +1975,17 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: 10
                 }
+            }
+            }
+
+            VrProjectFolderBrowser {
+                objectName: "addProjectFolderBrowser"
+                onBackRequested: {
+                    root.addProjectView = "sources"
+                    Qt.callLater(function() { addProjectSearch.forceActiveFocus() })
+                }
+                onCloseRequested: addProjectPopup.close()
+                onProjectAdded: addProjectPopup.close()
             }
         }
         background: Rectangle {
@@ -2226,6 +2235,11 @@ Item {
         if (hours < 24) return hours + "h"
         var days = Math.floor(hours / 24)
         return days < 30 ? days + "d" : Math.floor(days / 30) + "mo"
+    }
+
+    function openLocalFolderBrowser() {
+        chat.beginProjectFolderBrowse()
+        root.addProjectView = "folder"
     }
 
     function submitMessage() {

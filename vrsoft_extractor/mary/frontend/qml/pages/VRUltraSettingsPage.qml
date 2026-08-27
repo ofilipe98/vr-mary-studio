@@ -8,35 +8,19 @@ Item {
     id: root
     objectName: "vrUltraSettingsPage"
 
-    property string selectionWarning: ""
-
-    function modelMatches(item) {
-        var query = modelSearch.text.trim().toLowerCase()
-        if (!query.length) return true
-        return String(item.label || item.value || "").toLowerCase().indexOf(query) >= 0
-            || String(item.provider || "").toLowerCase().indexOf(query) >= 0
-            || String(item.description || "").toLowerCase().indexOf(query) >= 0
-    }
-
-    function toggleModel(key) {
-        var values = chat.researchModelKeys.slice()
-        var current = values.indexOf(key)
-        if (current >= 0) {
-            values.splice(current, 1)
-            selectionWarning = ""
-        } else if (values.length < 3) {
-            values.push(key)
-            selectionWarning = ""
-        } else {
-            selectionWarning = "O VR Ultra aceita no máximo 3 agentes."
+    readonly property int selectedModelIndex: {
+        if (!chat.researchModelKeys.length) return -1
+        var selectedKey = chat.researchModelKeys[0]
+        for (var index = 0; index < chat.modelItems.length; ++index) {
+            if (chat.modelItems[index].key === selectedKey) return index
         }
-        chat.setResearchModels(values)
+        return -1
     }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spaceXs
-        spacing: Theme.spaceMd
+        spacing: Theme.spaceLg
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -50,7 +34,7 @@ Item {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Escolha até 3 modelos para atuar como agentes de pesquisa. O provedor e o modelo selecionados no Chat VR continuam sendo o orquestrador."
+                text: "Escolha um modelo para os três agentes de pesquisa. O provedor e o modelo selecionados no Chat VR continuam sendo o orquestrador."
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize
@@ -88,186 +72,89 @@ Item {
             }
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spaceSm
-            Item {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 36
-                VrTextField {
-                    id: modelSearch
-                    objectName: "vrUltraAgentSearch"
-                    anchors.fill: parent
-                    leftPadding: 34
-                    placeholderText: "Buscar agentes por modelo ou provedor"
-                }
-                VrLineIcon {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 15
-                    height: 15
-                    kind: "search"
-                    foreground: frontend.palette.mutedText
-                }
-            }
-            Text {
-                text: chat.researchModelKeys.length + "/3 selecionados"
-                color: chat.researchModelKeys.length > 0
-                    ? frontend.palette.brandOrange : frontend.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.captionSize
-                font.weight: Font.DemiBold
-            }
-            VrButton {
-                text: "Limpar"
-                variant: "ghost"
-                enabled: chat.researchModelKeys.length > 0
-                onClicked: {
-                    root.selectionWarning = ""
-                    chat.setResearchModels([])
-                }
-            }
-        }
-
         Rectangle {
-            id: agentPool
             objectName: "vrUltraAgentPool"
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.preferredHeight: 152
             radius: Theme.radiusCard
             color: frontend.palette.surface
             border.width: 1
             border.color: frontend.palette.border
 
-            ListView {
-                id: agentList
-                objectName: "vrUltraAgentModelList"
+            ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.spaceSm
-                clip: true
-                spacing: 5
-                model: chat.researchModelItems
-                ScrollIndicator.vertical: ScrollIndicator { }
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceSm
 
-                delegate: Button {
-                    id: agentRow
-                    required property var modelData
-                    readonly property bool selected: chat.researchModelKeys.indexOf(modelData.key) >= 0
-                    readonly property bool matchesFilter: root.modelMatches(modelData)
-                    width: agentList.width
-                    height: matchesFilter ? 62 : 0
-                    visible: matchesFilter
-                    padding: 0
-                    hoverEnabled: true
-                    onClicked: root.toggleModel(modelData.key)
-
-                    background: Rectangle {
-                        radius: Theme.radiusControl
-                        color: agentRow.selected
-                            ? Qt.rgba(1.0, 0.45, 0.0, 0.13)
-                            : agentRow.hovered ? frontend.palette.chatControl : "transparent"
-                        border.width: agentRow.selected ? 1 : 0
-                        border.color: frontend.palette.brandOrange
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+                    VrLineIcon {
+                        Layout.preferredWidth: 20
+                        Layout.preferredHeight: 20
+                        kind: "agents"
+                        foreground: frontend.palette.text
                     }
-
-                    contentItem: RowLayout {
-                        spacing: Theme.spaceSm
-                        Rectangle {
-                            Layout.preferredWidth: 20
-                            Layout.preferredHeight: 20
-                            radius: 5
-                            color: agentRow.selected
-                                ? frontend.palette.brandOrange : "transparent"
-                            border.width: 1
-                            border.color: agentRow.selected
-                                ? frontend.palette.brandOrange : frontend.palette.mutedText
-                            Text {
-                                anchors.centerIn: parent
-                                visible: agentRow.selected
-                                text: "✓"
-                                color: "#FFFFFF"
-                                font.pixelSize: 12
-                                font.weight: Font.Bold
-                            }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 1
+                        Text {
+                            text: "Modelo dos três agentes"
+                            color: frontend.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.bodySize
+                            font.weight: Font.DemiBold
                         }
-                        VrProviderIcon {
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 24
-                            provider: agentRow.modelData.provider || "codex"
+                        Text {
+                            text: "A mesma escolha será usada simultaneamente pelos três pesquisadores."
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
                         }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 1
-                            Text {
-                                Layout.fillWidth: true
-                                text: agentRow.modelData.label
-                                color: frontend.palette.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.bodySize
-                                font.weight: Font.DemiBold
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                text: agentRow.modelData.description || agentRow.modelData.value
-                                color: frontend.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.captionSize
-                                elide: Text.ElideRight
-                            }
-                        }
-                        Rectangle {
-                            Layout.preferredWidth: providerText.implicitWidth + 16
-                            Layout.preferredHeight: 22
-                            radius: 7
-                            color: frontend.palette.chatControl
-                            Text {
-                                id: providerText
-                                anchors.centerIn: parent
-                                text: String(agentRow.modelData.provider || "").toUpperCase()
-                                color: agentRow.selected
-                                    ? frontend.palette.brandOrange : frontend.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.captionSize
-                                font.weight: Font.DemiBold
-                            }
+                    }
+                    Rectangle {
+                        Layout.preferredWidth: 78
+                        Layout.preferredHeight: 24
+                        radius: 8
+                        color: Qt.rgba(1.0, 0.45, 0.0, 0.12)
+                        Text {
+                            anchors.centerIn: parent
+                            text: "3 agentes"
+                            color: frontend.palette.brandOrange
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                            font.weight: Font.DemiBold
                         }
                     }
                 }
 
-                Text {
-                    anchors.centerIn: parent
-                    width: parent.width - 40
-                    visible: chat.researchModelItems.length === 0
-                    text: "Nenhum modelo disponível. Ative ou configure os provedores na aba Provedores."
-                    color: frontend.palette.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.bodySize
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
+                VrModelPicker {
+                    id: agentModelPicker
+                    objectName: "vrUltraAgentModelPicker"
+                    Layout.fillWidth: true
+                    implicitHeight: 42
+                    popupAbove: false
+                    model: chat.modelItems
+                    currentIndex: root.selectedModelIndex
+                    onActivated: index => chat.setResearchModels([chat.modelItems[index].key])
+                    onFavoriteToggled: index => chat.toggleModelFavorite(index)
                 }
             }
         }
 
         Text {
             Layout.fillWidth: true
-            visible: root.selectionWarning.length > 0
-            text: root.selectionWarning
-            color: frontend.palette.warning
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.captionSize
-        }
-        Text {
-            Layout.fillWidth: true
-            text: chat.researchModelKeys.length === 0
-                ? "Sem seleção, o VR Ultra escolhe automaticamente entre os modelos disponíveis."
-                : "Os modelos selecionados serão iniciados como agentes quando o modo VR Ultra estiver ativo no Chat."
+            text: chat.researchModelKeys.length
+                ? "Os três agentes usarão " + (agentModelPicker.currentItem.displayName
+                    || agentModelPicker.currentItem.label || "o modelo selecionado") + "."
+                : "Selecione o modelo que será repetido nos três agentes do VR Ultra."
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.captionSize
             wrapMode: Text.WordWrap
         }
+
+        Item { Layout.fillHeight: true }
     }
 
     Component.onCompleted: chat.refreshModels()

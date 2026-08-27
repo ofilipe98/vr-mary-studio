@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-settings-tab", type=int, default=-1)
     parser.add_argument(
         "--screenshot-popup",
-        choices=("", "add-project", "model", "permission"),
+        choices=("", "add-project", "project-folder", "model", "permission", "ultra-model"),
         default="",
     )
     parser.add_argument(
@@ -188,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             "add-project": "addProjectButton",
             "model": "chatModelPicker",
             "permission": "chatPermissionPicker",
+            "ultra-model": "vrUltraAgentModelPicker",
         }
 
         def open_capture_popup() -> None:
@@ -195,6 +196,14 @@ def main(argv: list[str] | None = None) -> int:
                 settings_page = window.findChild(QObject, "settingsPage")
                 if settings_page is not None:
                     settings_page.setProperty("tabIndex", args.screenshot_settings_tab)
+            if args.screenshot_popup == "project-folder":
+                add_button = window.findChild(QObject, "addProjectButton")
+                chat_page = window.findChild(QObject, "chatPage")
+                if add_button is not None and hasattr(add_button, "click"):
+                    add_button.click()
+                if chat_page is not None and hasattr(chat_page, "openLocalFolderBrowser"):
+                    chat_page.openLocalFolderBrowser()
+                return
             object_name = popup_targets.get(args.screenshot_popup, "")
             if not object_name:
                 return

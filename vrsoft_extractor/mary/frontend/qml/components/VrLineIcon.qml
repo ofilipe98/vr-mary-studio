@@ -15,6 +15,8 @@ Canvas {
     onStrokeWidthChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
+    onVisibleChanged: requestPaint()
+    Component.onCompleted: requestPaint()
 
     Connections {
         target: frontend

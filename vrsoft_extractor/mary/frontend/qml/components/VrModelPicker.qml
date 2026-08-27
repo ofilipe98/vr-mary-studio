@@ -13,6 +13,7 @@ Button {
     property var model: []
     property int currentIndex: 0
     property string providerFilter: "all"
+    property bool popupAbove: true
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
@@ -24,7 +25,7 @@ Button {
     rightPadding: 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
-    onClicked: pickerPopup.open()
+    onClicked: pickerPopup.opened ? pickerPopup.close() : pickerPopup.open()
 
     contentItem: RowLayout {
         spacing: 7
@@ -63,11 +64,11 @@ Button {
         objectName: "modelPickerPopup"
         parent: control
         x: 0
-        y: -height - 8
+        y: control.popupAbove ? -height - 8 : control.height + 8
         width: 420
         height: 400
         padding: 0
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {
             searchField.clear()
             control.providerFilter = "all"
