@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'VRNorte'),
           StringStruct('FileDescription', 'VR Norte Studio'),
-          StringStruct('FileVersion', '0.3.18b3.dev0'),
+          StringStruct('FileVersion', '0.3.18b3'),
           StringStruct('InternalName', 'VRNorteStudio'),
           StringStruct('OriginalFilename', 'VRNorteStudio.exe'),
           StringStruct('ProductName', 'VR Norte Studio'),
-          StringStruct('ProductVersion', '0.3.18b3.dev0')
+          StringStruct('ProductVersion', '0.3.18b3')
         ]
       )
     ]),

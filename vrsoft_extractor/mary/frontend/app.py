@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
+from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow  # noqa: F401 - registers QML converters
@@ -51,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-width", type=int, default=1480)
     parser.add_argument("--screenshot-height", type=int, default=900)
     parser.add_argument("--screenshot-scale", default="")
+    parser.add_argument(
+        "--screenshot-popup",
+        choices=("", "add-project", "model", "permission"),
+        default="",
+    )
+    parser.add_argument(
+        "--screenshot-vr-mode",
+        choices=("", "off", "vr", "ultra"),
+        default="",
+    )
     return parser
 
 
@@ -136,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     database = initialize_workspace(settings)
     chat_bridge = ChatBridge(settings, database, preferences)
+    if args.screenshot_vr_mode:
+        # Visual-test override only; do not persist or mutate a conversation.
+        chat_bridge._vr_mode = args.screenshot_vr_mode
     studio_bridge = StudioBridge(
         settings,
         database,
@@ -170,6 +183,20 @@ def main(argv: list[str] | None = None) -> int:
         window.setProperty("width", max(1120, args.screenshot_width))
         window.setProperty("height", max(700, args.screenshot_height))
 
+        popup_targets = {
+            "add-project": "addProjectButton",
+            "model": "chatModelPicker",
+            "permission": "chatPermissionPicker",
+        }
+
+        def open_capture_popup() -> None:
+            object_name = popup_targets.get(args.screenshot_popup, "")
+            if not object_name:
+                return
+            target = window.findChild(QObject, object_name)
+            if target is not None and hasattr(target, "click"):
+                target.click()
+
         def save_capture() -> None:
             target = Path(args.screenshot).resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
                 return
             app.quit()
 
-        QTimer.singleShot(1000, save_capture)
+        QTimer.singleShot(650, open_capture_popup)
+        QTimer.singleShot(1300, save_capture)
     elif args.smoke_test:
         QTimer.singleShot(600, app.quit)
 

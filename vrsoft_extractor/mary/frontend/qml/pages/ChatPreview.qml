@@ -31,6 +31,15 @@ Item {
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
+    property bool composerDropActive: false
+    readonly property var addProjectSources: [
+        { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
+        { key: "git", title: "Git URL", description: "Clone from a remote URL", icon: "models", enabled: false, badge: "Em breve" },
+        { key: "github", title: "GitHub repository", description: "Clone GitHub owner/repo", icon: "models", enabled: false, badge: "Em breve" },
+        { key: "azure", title: "Azure DevOps repository", description: "Clone Azure DevOps project/repository", icon: "models", enabled: false, badge: "Configurar" },
+        { key: "bitbucket", title: "Bitbucket repository", description: "Clone Bitbucket workspace/repository", icon: "models", enabled: false, badge: "Configurar" },
+        { key: "gitlab", title: "GitLab repository", description: "Clone GitLab group/project", icon: "models", enabled: false, badge: "Configurar" }
+    ]
 
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
@@ -90,6 +99,15 @@ Item {
                     Layout.preferredHeight: 62
                     showToggle: false
                     onBrandActivated: frontend.setCurrentPage(1)
+                }
+
+                VrNavItem {
+                    Layout.fillWidth: true
+                    title: "VR ULTRA"
+                    iconSource: frontend.navigationItems[8].icon
+                    selected: false
+                    compact: false
+                    onActivated: frontend.setCurrentPage(8)
                 }
 
                 RowLayout {
@@ -182,13 +200,17 @@ Item {
                         }
                     }
                     VrIconButton {
+                        objectName: "addProjectButton"
                         implicitWidth: 34
                         implicitHeight: 34
                         iconKind: "plus"
                         foreground: frontend.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Adicionar projeto"
-                        onClicked: chat.addProject()
+                        onClicked: {
+                            addProjectSearch.clear()
+                            addProjectPopup.open()
+                        }
                     }
                 }
 
@@ -735,7 +757,27 @@ Item {
                 radius: 24
                 color: frontend.palette.chatComposer
                 border.width: 1
-                border.color: frontend.palette.chatBorder
+                border.color: root.composerDropActive
+                    ? frontend.palette.focus : frontend.palette.chatBorder
+
+                DropArea {
+                    id: composerDropArea
+                    objectName: "chatComposerDropArea"
+                    anchors.fill: parent
+                    z: 100
+                    onEntered: function(drag) {
+                        root.composerDropActive = drag.hasUrls
+                        drag.accepted = drag.hasUrls
+                    }
+                    onExited: root.composerDropActive = false
+                    onDropped: function(drop) {
+                        root.composerDropActive = false
+                        if (drop.hasUrls) {
+                            chat.addDroppedAttachments(drop.urls)
+                            drop.acceptProposedAction()
+                        }
+                    }
+                }
 
                 VrTextArea {
                     id: composerInput
@@ -816,18 +858,6 @@ Item {
                     anchors.rightMargin: 12
                     anchors.bottomMargin: 8
                     spacing: 5
-                    VrIconButton {
-                        objectName: "chatAttachButton"
-                        implicitWidth: 30
-                        implicitHeight: 30
-                        iconKind: "plus"
-                        iconSize: 15
-                        enabled: !chat.turnRunning
-                        foreground: frontend.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Anexar arquivos"
-                        onClicked: chat.chooseAttachments()
-                    }
                     VrModelPicker {
                         id: modelSelector
                         objectName: "chatModelPicker"
@@ -836,8 +866,6 @@ Item {
                         enabled: !chat.turnRunning
                         onActivated: index => chat.setModel(index)
                         onFavoriteToggled: index => chat.toggleModelFavorite(index)
-                        ToolTip.visible: hovered
-                        ToolTip.text: chat.modelCatalogLoading ? "Carregando modelos…" : "Escolher modelo e provedor"
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: frontend.palette.chatBorder }
                     VrReasoningPicker {
@@ -861,6 +889,7 @@ Item {
                     Item { Layout.fillWidth: true }
                     VrButton {
                         id: vrModeButton
+                        objectName: "vrModeButton"
                         implicitWidth: chat.vrMode === "ultra" ? 104 : 58
                         implicitHeight: 32
                         leftPadding: 7; rightPadding: 7
@@ -879,13 +908,6 @@ Item {
                                 : parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
                         }
                         onClicked: chat.cycleVrMode()
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: chat.vrMode === "ultra"
-                            ? "VR Ultra: pesquisa multiagente ativa — use /pesquisa para forçar (clique para desligar)"
-                            : chat.vrMode === "vr"
-                                ? "Base local ativa (clique para VR Ultra)"
-                                : "Base local desativada (clique para ativar VR)"
                     }
                     VrContextButton {
                         id: contextUsageButton
@@ -917,11 +939,8 @@ Item {
                 }
             }
 
-            // VR Ultra: arco "rainbow laranja" girando ao redor do composer.
-            QtObject {
-                id: ultraHue
-                property real value: 0.06
-            }
+            // VR Ultra: rainbow contínuo, legível em ambos os temas e estático
+            // quando a preferência de movimento reduzido estiver ativa.
             Rectangle {
                 id: ultraGlowOuter
                 visible: chat.vrMode === "ultra"
@@ -930,8 +949,15 @@ Item {
                 height: composerCard.height + 26
                 radius: 34
                 color: "transparent"
-                border.width: 8
-                border.color: Qt.hsla(0.07, 0.9, 0.6, 0.16)
+                border.width: 7
+                border.color: Qt.rgba(0.55, 0.28, 1.0, 0.16)
+                opacity: 0.72
+                SequentialAnimation on opacity {
+                    running: ultraGlowOuter.visible && !frontend.reduceMotion
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0.42; to: 0.86; duration: 1300; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.86; to: 0.42; duration: 1300; easing.type: Easing.InOutSine }
+                }
             }
             Canvas {
                 id: ultraArc
@@ -962,25 +988,38 @@ Item {
                 onPaint: {
                     var ctx = getContext("2d")
                     ctx.reset()
-                    ctx.lineWidth = 3.5
+                    ctx.lineCap = "round"
+                    var gradient = ctx.createLinearGradient(0, 0, width, height)
+                    gradient.addColorStop(0.00, "#FF4D6D")
+                    gradient.addColorStop(0.16, "#FF9F1C")
+                    gradient.addColorStop(0.32, "#FFE66D")
+                    gradient.addColorStop(0.48, "#35E5A1")
+                    gradient.addColorStop(0.64, "#38BDF8")
+                    gradient.addColorStop(0.80, "#8B5CF6")
+                    gradient.addColorStop(1.00, "#F472B6")
+                    ctx.lineWidth = 2.2
+                    ctx.globalAlpha = 0.42
+                    traceRoundRect(ctx, width, height, 28)
+                    ctx.strokeStyle = gradient
+                    ctx.setLineDash([])
+                    ctx.stroke()
+
+                    ctx.lineWidth = 4.0
                     ctx.lineCap = "round"
                     var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
                     traceRoundRect(ctx, width, height, 28)
-                    ctx.strokeStyle = Qt.hsla(ultraHue.value, 0.97, 0.58, 1)
-                    ctx.setLineDash([perimeter * 0.66, perimeter])
+                    ctx.globalAlpha = 1.0
+                    ctx.strokeStyle = gradient
+                    ctx.setLineDash([perimeter * 0.36, perimeter * 0.08,
+                        perimeter * 0.14, perimeter * 0.42])
                     ctx.lineDashOffset = -sweep * perimeter
-                    ctx.stroke()
-                    traceRoundRect(ctx, width, height, 28)
-                    ctx.strokeStyle = Qt.hsla(0.02, 0.95, 0.5, 0.9)
-                    ctx.setLineDash([perimeter * 0.16, perimeter])
-                    ctx.lineDashOffset = -(sweep + 0.72) * perimeter
                     ctx.stroke()
                     ctx.setLineDash([])
                 }
                 SequentialAnimation on sweep {
                     running: ultraArc.visible && !frontend.reduceMotion
                     loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: 1; duration: 3200 }
+                    NumberAnimation { from: 0; to: 1; duration: 4800; easing.type: Easing.Linear }
                 }
             }
         }
@@ -1787,6 +1826,173 @@ Item {
     }
 
     Popup {
+        id: addProjectPopup
+        objectName: "addProjectPopup"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(570, parent.width - 48)
+        height: Math.min(430, parent.height - 70)
+        padding: 0
+        modal: true
+        dim: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: Qt.callLater(function() { addProjectSearch.forceActiveFocus() })
+
+        contentItem: ColumnLayout {
+            spacing: 0
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 50
+                Layout.leftMargin: 8
+                Layout.rightMargin: 10
+                spacing: 4
+                VrIconButton {
+                    implicitWidth: 34
+                    implicitHeight: 34
+                    iconKind: "back"
+                    foreground: frontend.palette.mutedText
+                    onClicked: addProjectPopup.close()
+                }
+                VrTextField {
+                    id: addProjectSearch
+                    objectName: "addProjectSearch"
+                    Layout.fillWidth: true
+                    implicitHeight: 36
+                    placeholderText: "Search..."
+                    background: Item { }
+                    Keys.onEscapePressed: addProjectPopup.close()
+                }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: 18
+                Layout.rightMargin: 18
+                Layout.topMargin: 14
+                Layout.bottomMargin: 6
+                text: "Sources"
+                color: frontend.palette.mutedText
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+            }
+            ListView {
+                id: addProjectList
+                objectName: "addProjectSourceList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 10
+                Layout.rightMargin: 10
+                clip: true
+                spacing: 2
+                model: root.filteredAddProjectSources(addProjectSearch.text)
+                delegate: Rectangle {
+                    id: sourceRow
+                    required property int index
+                    required property var modelData
+                    width: addProjectList.width
+                    height: 48
+                    radius: 7
+                    color: sourceHover.hovered && modelData.enabled
+                        ? frontend.palette.chatControl : "transparent"
+                    opacity: modelData.enabled ? 1.0 : 0.72
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 9
+                        anchors.rightMargin: 9
+                        spacing: 9
+                        VrLineIcon {
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            kind: modelData.icon
+                            foreground: modelData.enabled
+                                ? frontend.palette.text : frontend.palette.mutedText
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.title
+                                color: frontend.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 13
+                                font.weight: modelData.key === "local" ? Font.DemiBold : Font.Normal
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.description
+                                color: frontend.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 10
+                                elide: Text.ElideRight
+                            }
+                        }
+                        Rectangle {
+                            visible: modelData.badge.length > 0
+                            Layout.preferredWidth: badgeText.implicitWidth + 14
+                            Layout.preferredHeight: 24
+                            radius: 5
+                            color: frontend.palette.chatComposer
+                            border.width: 1
+                            border.color: frontend.palette.chatBorder
+                            Text {
+                                id: badgeText
+                                anchors.centerIn: parent
+                                text: modelData.badge
+                                color: frontend.palette.warning
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 9
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                    HoverHandler { id: sourceHover }
+                    TapHandler {
+                        enabled: sourceRow.modelData.enabled
+                        onTapped: {
+                            if (sourceRow.modelData.key === "local") {
+                                addProjectPopup.close()
+                                chat.addProject()
+                            }
+                        }
+                    }
+                }
+                Text {
+                    anchors.centerIn: parent
+                    visible: addProjectList.count === 0
+                    text: "Nenhuma fonte encontrada"
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
+                color: frontend.palette.chatComposer
+                border.width: 1
+                border.color: frontend.palette.chatDivider
+                Text {
+                    anchors.centerIn: parent
+                    text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                }
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.chatBackground
+            border.width: 1
+            border.color: frontend.palette.chatBorder
+            radius: 18
+        }
+    }
+
+    Popup {
         id: conversationContextMenu
         objectName: "conversationContextMenu"
         width: 196
@@ -1943,6 +2149,11 @@ Item {
             nextTabs.push(root.surfaceForPage(page))
         root.openSurfaceTabs = nextTabs
         root.surfaceIndex = page
+        if (page === 3) {
+            root.surfaceFilePath = ""
+            root.surfaceFilePreview = ""
+            root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
+        }
         if (page === 5 && root.selectedAgentIndex < 0 && chat.agentItems.length)
             root.selectedAgentIndex = 0
     }
@@ -1992,6 +2203,15 @@ Item {
             })
         }
         return result
+    }
+
+    function filteredAddProjectSources(query) {
+        var needle = String(query || "").trim().toLowerCase()
+        if (!needle.length) return root.addProjectSources
+        return root.addProjectSources.filter(function(item) {
+            return item.title.toLowerCase().indexOf(needle) >= 0
+                || item.description.toLowerCase().indexOf(needle) >= 0
+        })
     }
 
     function chooseNewChatProject(item) {

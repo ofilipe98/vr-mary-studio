@@ -27,6 +27,7 @@ NAVIGATION_ITEMS = (
     ("Vídeos", "nav-videos.svg"),
     ("Logs", "nav-logs.svg"),
     ("Configurações", "sidebar-settings.svg"),
+    ("VR ULTRA", "surface-agents.svg"),
 )
 
 

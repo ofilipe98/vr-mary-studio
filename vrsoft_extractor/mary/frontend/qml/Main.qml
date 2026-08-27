@@ -19,7 +19,8 @@ ApplicationWindow {
     // Pages stay alive after the first visit: recreating ChatPreview on every
     // switch was the dominant tab-change cost (measured at 40-110 ms).
     property bool chatVisited: frontend.currentPage === 1
-    property bool hubVisited: frontend.currentPage !== 1
+    property bool ultraVisited: frontend.currentPage === 8
+    property bool hubVisited: frontend.currentPage !== 1 && frontend.currentPage !== 8
 
     Connections {
         target: studio
@@ -35,6 +36,7 @@ ApplicationWindow {
         target: frontend
         function onCurrentPageChanged() {
             if (frontend.currentPage === 1) chatVisited = true
+            else if (frontend.currentPage === 8) ultraVisited = true
             else hubVisited = true
             if (studio) studio.activatePage(frontend.currentPage)
         }
@@ -54,8 +56,15 @@ ApplicationWindow {
     Loader {
         anchors.fill: parent
         active: window.hubVisited
-        visible: frontend.currentPage !== 1
+        visible: frontend.currentPage !== 1 && frontend.currentPage !== 8
         sourceComponent: settingsHubComponent
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: window.ultraVisited
+        visible: frontend.currentPage === 8
+        sourceComponent: ultraComponent
     }
 
     Popup {
@@ -93,4 +102,5 @@ ApplicationWindow {
 
     Component { id: chatComponent; ChatPreview { } }
     Component { id: settingsHubComponent; SettingsHub { } }
+    Component { id: ultraComponent; VRUltraPage { } }
 }

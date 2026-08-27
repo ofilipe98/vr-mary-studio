@@ -17,6 +17,7 @@ from PySide6.QtCore import (
     Property,
     QSettings,
     QTimer,
+    QUrl,
     Qt,
     Signal,
     Slot,
@@ -937,16 +938,39 @@ class ChatBridge(QObject):
             str(self._project_scope or self._settings.root),
             "Arquivos suportados (*.png *.jpg *.jpeg *.webp *.gif *.md *.txt *.json *.csv *.pdf);;Todos os arquivos (*.*)",
         )
-        known = {item["path"] for item in self._attachments}
-        for raw in selected:
-            path = Path(raw).resolve(strict=False)
-            if str(path) in known:
-                continue
-            self._attachments.append({"name": path.name, "path": str(path)})
-            known.add(str(path))
-        if selected:
-            self.stateChanged.emit()
+        self._stage_attachment_paths(selected)
         return self.attachments
+
+    def _stage_attachment_paths(self, values: list[object]) -> int:
+        """Stage existing local files supplied by a picker or QML drop event."""
+
+        known = {item["path"] for item in self._attachments}
+        added = 0
+        for raw in values:
+            if isinstance(raw, QUrl):
+                local_value = raw.toLocalFile() if raw.isLocalFile() else ""
+            else:
+                text = str(raw or "").strip()
+                url = QUrl(text)
+                local_value = url.toLocalFile() if url.isLocalFile() else text
+            if not local_value:
+                continue
+            path = Path(local_value).expanduser().resolve(strict=False)
+            normalized = str(path)
+            if not path.is_file() or normalized in known:
+                continue
+            self._attachments.append({"name": path.name, "path": normalized})
+            known.add(normalized)
+            added += 1
+        if added:
+            self.stateChanged.emit()
+        return added
+
+    @Slot("QVariantList", result=int)
+    def addDroppedAttachments(self, values: list) -> int:  # noqa: N802
+        """Receive local file URLs dropped directly on the QML composer."""
+
+        return self._stage_attachment_paths(list(values or []))
 
     @Slot(int)
     def removeAttachment(self, index: int) -> None:  # noqa: N802
@@ -1006,6 +1030,7 @@ class ChatBridge(QObject):
                         continue
                     relative = str(path.relative_to(root)).replace("\\", "/")
                     entries.append({"relative": relative, "path": str(path)})
+                entries.sort(key=lambda item: item["relative"].casefold())
             except OSError:
                 entries = []
             self._fileSuggestionsReady.emit(generation, root, entries)
@@ -1032,8 +1057,9 @@ class ChatBridge(QObject):
         self._apply_pending_file_suggestions()
 
     def _apply_pending_file_suggestions(self) -> None:
-        if self._file_suggestions_query:
-            self.fileSuggestionsChanged.emit()
+        # Files can be opened with an empty search.  The asynchronous scan must
+        # still notify QML or the initial project listing remains blank.
+        self.fileSuggestionsChanged.emit()
 
     @Slot(str, result=str)
     def readFilePreview(self, value: str) -> str:  # noqa: N802
@@ -1526,6 +1552,16 @@ class ChatBridge(QObject):
         self._preferences.sync()
         self._apply_research_config()
         self.stateChanged.emit()
+
+    @Slot(str)
+    def startUltraResearch(self, text: str) -> None:  # noqa: N802
+        """Launch an explicit multi-agent research turn from the VR ULTRA tab."""
+
+        content = str(text or "").strip()
+        if not content or self.turnRunning:
+            return
+        self.setVrMode("ultra")
+        self.sendMessage(f"/pesquisa {content}")
 
     @Slot(result=str)
     def addProject(self) -> str:  # noqa: N802

@@ -141,10 +141,23 @@ Canvas {
             ctx.lineTo(10, 17); ctx.closePath(); ctx.stroke()
             line(5, 19, 10, 17)
         } else if (kind === "auto") {
-            line(12, 3.5, 12, 7.5); line(12, 16.5, 12, 20.5)
-            line(3.5, 12, 7.5, 12); line(16.5, 12, 20.5, 12)
-            line(6, 6, 8.5, 8.5); line(15.5, 15.5, 18, 18)
-            line(18, 6, 15.5, 8.5); line(8.5, 15.5, 6, 18)
+            function sparkle(cx, cy, horizontal, vertical) {
+                ctx.beginPath()
+                ctx.moveTo(cx, cy - vertical)
+                ctx.quadraticCurveTo(cx + horizontal * 0.2, cy - vertical * 0.2,
+                    cx + horizontal, cy)
+                ctx.quadraticCurveTo(cx + horizontal * 0.2, cy + vertical * 0.2,
+                    cx, cy + vertical)
+                ctx.quadraticCurveTo(cx - horizontal * 0.2, cy + vertical * 0.2,
+                    cx - horizontal, cy)
+                ctx.quadraticCurveTo(cx - horizontal * 0.2, cy - vertical * 0.2,
+                    cx, cy - vertical)
+                ctx.closePath()
+                ctx.stroke()
+            }
+            sparkle(9.5, 12.5, 5.2, 6.3)
+            sparkle(17.3, 6.1, 2.2, 2.8)
+            sparkle(18.2, 17.7, 1.8, 2.3)
         } else if (kind === "settings") {
             ctx.beginPath(); ctx.arc(12, 12, 3.2, 0, Math.PI * 2); ctx.stroke()
             for (var tooth = 0; tooth < 8; ++tooth) {

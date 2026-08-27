@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtCore import QObject, QSettings, Qt, QUrl
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -150,6 +150,9 @@ class QmlFrontendTest(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
+            project_file = settings.root / "Cliente" / "src" / "project_file.py"
+            project_file.parent.mkdir(parents=True)
+            project_file.write_text("print('project file')", encoding="utf-8")
             bridge = self._bridge(root, initial_page="Chat VR")
             database = MaryDatabase(
                 settings.database_path,
@@ -188,11 +191,20 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
-            self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNotNone(window.findChild(QObject, "chatComposerDropArea"))
             self.assertIsNotNone(window.findChild(QObject, "chatAttachmentList"))
             self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
             new_chat_button = window.findChild(QObject, "newChatButton")
             self.assertIsNotNone(new_chat_button)
+            add_project_button = window.findChild(QObject, "addProjectButton")
+            self.assertIsNotNone(add_project_button)
+            add_project_button.click()
+            self.application.processEvents()
+            add_project_popup = window.findChild(QObject, "addProjectPopup")
+            self.assertIsNotNone(add_project_popup)
+            self.assertTrue(add_project_popup.property("visible"))
+            add_project_popup.close()
             sidebar_toggles = window.findChildren(QObject, "conversationSidebarToggle")
             self.assertEqual(len(sidebar_toggles), 1)
             surface_toggle = window.findChild(QObject, "surfaceToggleButton")
@@ -282,6 +294,24 @@ class QmlFrontendTest(unittest.TestCase):
                 len(chat_page.property("openSurfaceTabs").toVariant()), 1
             )
             self.assertEqual(chat_page.property("surfaceIndex"), 1)
+            chat_page.openSurface(3)
+            for _attempt in range(30):
+                self.application.processEvents()
+                QTest.qWait(50)
+                surface_files = chat_page.property("surfaceFiles")
+                if any(
+                    item["label"] == "Cliente/src/project_file.py"
+                    for item in surface_files
+                ):
+                    break
+            self.assertTrue(
+                any(
+                    item["label"] == "Cliente/src/project_file.py"
+                    for item in surface_files
+                ),
+                surface_files,
+            )
+            chat_page.closeSurface(3)
             surface_add.click()
             self.application.processEvents()
             self.assertTrue(surface_picker.property("visible"))
@@ -294,6 +324,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(project_selector_popup.property("visible"))
             self.assertIsNotNone(window.findChild(QObject, "newChatProjectSearch"))
             self.assertIsNotNone(window.findChild(QObject, "newChatProjectList"))
+            bridge.setCurrentPage(8)
+            self.application.processEvents()
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraPage"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraResearchInput"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSubmitButton"))
             bridge.setCurrentPage(7)
             self.application.processEvents()
             settings_navigation = window.findChild(QObject, "settingsNavigation")
@@ -1465,6 +1500,85 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.readFilePreview(str(document)), "# Instruções VR")
             self.assertIn("fora do projeto", bridge.readFilePreview(str(outside)))
 
+    def test_chat_file_surface_loads_project_files_without_a_search_term(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            expected = settings.root / "src" / "main.py"
+            expected.parent.mkdir()
+            expected.write_text("print('VR')", encoding="utf-8")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            updates: list[bool] = []
+            bridge.fileSuggestionsChanged.connect(lambda: updates.append(True))
+
+            self.assertEqual(bridge.fileSuggestions(""), [])
+            for _attempt in range(30):
+                self.application.processEvents()
+                QTest.qWait(50)
+                values = bridge.fileSuggestions("")
+                if values:
+                    break
+
+            self.assertTrue(updates)
+            selected = next(item for item in values if item["label"] == "src/main.py")
+            self.assertEqual(Path(selected["path"]), expected)
+
+    def test_chat_drop_stages_existing_local_files_without_picker(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "evidencia.png"
+            image.write_bytes(b"png")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            added = bridge.addDroppedAttachments(
+                [QUrl.fromLocalFile(str(image)), QUrl.fromLocalFile(str(image))]
+            )
+
+            self.assertEqual(added, 1)
+            self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
+
+    def test_ultra_tab_launches_an_explicit_research_turn(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            with patch.object(bridge, "sendMessage") as send:
+                bridge.startUltraResearch("compare os cenários")
+
+            self.assertEqual(bridge.vrMode, "ultra")
+            send.assert_called_once_with("/pesquisa compare os cenários")
+
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (
             MAIN_QML.parent / "pages" / "VideosPage.qml"
@@ -1693,7 +1807,7 @@ class QmlFrontendTest(unittest.TestCase):
                 1,
                 [warning.toString() for warning in engine._qml_warnings],
             )
-            for page_index in (0, 2, 3, 4, 5, 6, 7):
+            for page_index in (0, 2, 3, 4, 5, 6, 7, 8):
                 bridge.setCurrentPage(page_index)
                 self.application.processEvents()
                 self.assertEqual(bridge.currentPage, page_index)

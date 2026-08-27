@@ -74,6 +74,15 @@ Item {
                     onActivated: frontend.setCurrentPage(1)
                 }
 
+                VrNavItem {
+                    Layout.fillWidth: true
+                    title: "VR ULTRA"
+                    iconSource: frontend.navigationItems[8].icon
+                    selected: false
+                    compact: false
+                    onActivated: frontend.setCurrentPage(8)
+                }
+
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.leftMargin: 7
