@@ -6,6 +6,7 @@ import "../theme"
 
 Item {
     id: root
+    objectName: "settingsPage"
     property int tabIndex: 0
     property string pendingDeleteId: ""
 
@@ -17,13 +18,13 @@ Item {
         VrPageHeader {
             Layout.fillWidth: true
             title: "Configurações"
-            subtitle: "Provedores, aparência, projetos arquivados e preferências locais."
+            subtitle: "Provedores, agentes VR Ultra, aparência e preferências locais."
         }
 
         VrTabBar {
             objectName: "settingsTabBar"
             Layout.fillWidth: true
-            model: ["Geral", "Provedores", "Temas", "Projetos arquivados"]
+            model: ["Geral", "Provedores", "VR Ultra", "Temas", "Projetos arquivados"]
             currentIndex: root.tabIndex
             onActivated: index => root.tabIndex = index
         }
@@ -112,175 +113,6 @@ Item {
                         }
                     }
 
-                    // ------------------------------------------------ pesquisa
-                    VrCard {
-                        id: researchCard
-                        objectName: "researchSettingsCard"
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spaceMd
-                            spacing: Theme.spaceSm
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 3
-                                Text { text: "Pesquisa multiagente (VR Ultra)"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Modelos usados pelos pesquisadores paralelos. A síntese usa o modelo da conversa; a qualidade é a mesma do VR — o Ultra só acelera."
-                                    color: frontend.palette.mutedText
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.captionSize
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-
-                            Rectangle {
-                                id: researchModelList
-                                objectName: "researchModelList"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 148
-                                radius: Theme.radiusControl
-                                color: frontend.palette.background
-                                border.width: 1
-                                border.color: frontend.palette.border
-
-                                ListView {
-                                    id: researchList
-                                    anchors.fill: parent
-                                    anchors.margins: 4
-                                    clip: true
-                                    spacing: 2
-                                    model: chat.researchModelItems
-
-                                    delegate: Rectangle {
-                                        required property var modelData
-                                        width: researchList.width
-                                        height: 58
-                                        radius: Theme.radiusControl
-                                        color: researchDelegateMouse.containsMouse
-                                            ? frontend.palette.chatControl
-                                            : selected ? frontend.palette.accentSoft : "transparent"
-                                        border.width: selected ? 1 : 0
-                                        border.color: frontend.palette.brandOrange
-                                        property bool selected: chat.researchModelKeys.indexOf(modelData.key) >= 0
-
-                                        MouseArea {
-                                            id: researchDelegateMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                var keys = chat.researchModelKeys.slice()
-                                                var at = keys.indexOf(modelData.key)
-                                                if (at >= 0) keys.splice(at, 1)
-                                                else keys.push(modelData.key)
-                                                chat.setResearchModels(keys)
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: Theme.spaceSm
-                                            spacing: Theme.spaceSm
-
-                                            VrCheckBox { checked: parent.parent.selected }
-
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 2
-
-                                                RowLayout {
-                                                    spacing: Theme.spaceSm
-                                                    Text {
-                                                        Layout.fillWidth: true
-                                                        text: modelData.label
-                                                        color: frontend.palette.text
-                                                        font.family: Theme.fontFamily
-                                                        font.pixelSize: Theme.bodySize
-                                                        font.weight: Font.DemiBold
-                                                        elide: Text.ElideRight
-                                                    }
-                                                    Rectangle {
-                                                        radius: 8
-                                                        implicitWidth: providerBadge.implicitWidth + 14
-                                                        implicitHeight: 18
-                                                        color: frontend.palette.chatControl
-                                                        Text {
-                                                            id: providerBadge
-                                                            anchors.centerIn: parent
-                                                            text: modelData.provider.toUpperCase()
-                                                            color: frontend.palette.mutedText
-                                                            font.family: Theme.fontFamily
-                                                            font.pixelSize: Theme.captionSize
-                                                            font.weight: Font.DemiBold
-                                                        }
-                                                    }
-                                                }
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: modelData.description || modelData.value
-                                                    color: frontend.palette.mutedText
-                                                    font.family: Theme.fontFamily
-                                                    font.pixelSize: Theme.captionSize
-                                                    elide: Text.ElideRight
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        visible: chat.researchModelItems.length === 0
-                                        text: "Nenhum modelo disponível.\nVerifique os provedores na aba ao lado."
-                                        horizontalAlignment: Text.AlignHCenter
-                                        color: frontend.palette.mutedText
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.bodySize
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: Theme.spaceMd
-
-                                Text {
-                                    text: chat.researchModelKeys.length
-                                        + (chat.researchModelKeys.length === 1
-                                           ? " modelo selecionado"
-                                           : " modelos selecionados")
-                                    color: frontend.palette.mutedText
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.captionSize
-                                }
-                                Item { Layout.fillWidth: true }
-
-                                ColumnLayout {
-                                    spacing: 2
-                                    Text { text: "Disparo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                                    VrComboBox {
-                                        Layout.preferredWidth: 180
-                                        model: ["Automático", "Somente /pesquisa"]
-                                        currentIndex: chat.researchTrigger === "manual" ? 1 : 0
-                                        onActivated: index => chat.setResearchTrigger(index === 1 ? "manual" : "auto")
-                                    }
-                                }
-                                ColumnLayout {
-                                    spacing: 2
-                                    Text { text: "Simultâneos"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                                    VrComboBox {
-                                        Layout.preferredWidth: 160
-                                        model: ["1 (sequencial)", "2", "3 (padrão)"]
-                                        currentIndex: chat.researchMaxParallel - 1
-                                        onActivated: index => chat.setResearchMaxParallel(index + 1)
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     Item { Layout.fillHeight: true }
                 }
@@ -332,6 +164,9 @@ Item {
                     Item { Layout.fillHeight: true }
                 }
             }
+
+            // --------------------------------------------------------- VR Ultra
+            VRUltraSettingsPage { }
 
             // ------------------------------------------------------------ Temas
             Item {

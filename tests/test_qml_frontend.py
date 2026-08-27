@@ -324,13 +324,15 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(project_selector_popup.property("visible"))
             self.assertIsNotNone(window.findChild(QObject, "newChatProjectSearch"))
             self.assertIsNotNone(window.findChild(QObject, "newChatProjectList"))
-            bridge.setCurrentPage(8)
-            self.application.processEvents()
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraPage"))
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraResearchInput"))
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraSubmitButton"))
             bridge.setCurrentPage(7)
             self.application.processEvents()
+            settings_page = window.findChild(QObject, "settingsPage")
+            self.assertIsNotNone(settings_page)
+            settings_page.setProperty("tabIndex", 2)
+            self.application.processEvents()
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsPage"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentSearch"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
             settings_navigation = window.findChild(QObject, "settingsNavigation")
             self.assertIsNotNone(settings_navigation)
             self.assertEqual(
@@ -1558,7 +1560,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(added, 1)
             self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
 
-    def test_ultra_tab_launches_an_explicit_research_turn(self):
+    def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
@@ -1573,11 +1575,34 @@ class QmlFrontendTest(unittest.TestCase):
                 QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
             )
 
-            with patch.object(bridge, "sendMessage") as send:
-                bridge.startUltraResearch("compare os cenários")
+            bridge._model_items = [
+                {"key": "codex:a", "provider": "codex", "value": "a", "label": "A"},
+                {"key": "claude:b", "provider": "claude", "value": "b", "label": "B"},
+                {"key": "opencode:c", "provider": "opencode", "value": "c", "label": "C"},
+                {"key": "codex:d", "provider": "codex", "value": "d", "label": "D"},
+            ]
 
-            self.assertEqual(bridge.vrMode, "ultra")
-            send.assert_called_once_with("/pesquisa compare os cenários")
+            with patch.object(bridge, "refresh"):
+                bridge.setModel(1)
+            bridge.setResearchModels(
+                ["codex:a", "opencode:c", "codex:d", "claude:b", "codex:a"]
+            )
+
+            self.assertEqual((bridge._provider, bridge._model), ("claude", "b"))
+            self.assertEqual(
+                bridge.researchModelKeys,
+                ["codex:a", "opencode:c", "codex:d"],
+            )
+
+    def test_model_picker_keeps_provider_filters_without_hover_dialogs(self):
+        picker_qml = (
+            MAIN_QML.parent / "components" / "VrModelPicker.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('property string providerFilter: "all"', picker_qml)
+        self.assertIn('{key: "favorites"', picker_qml)
+        self.assertIn('{key: "codex"', picker_qml)
+        self.assertNotIn("ToolTip.visible", picker_qml)
 
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (
@@ -1750,7 +1775,7 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
-            self.assertEqual(tab_bar.property("count"), 4)
+            self.assertEqual(tab_bar.property("count"), 5)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             self.assertIsNotNone(window.findChild(QObject, "uiScaleCombo"))
 
@@ -1807,7 +1832,7 @@ class QmlFrontendTest(unittest.TestCase):
                 1,
                 [warning.toString() for warning in engine._qml_warnings],
             )
-            for page_index in (0, 2, 3, 4, 5, 6, 7, 8):
+            for page_index in (0, 2, 3, 4, 5, 6, 7):
                 bridge.setCurrentPage(page_index)
                 self.application.processEvents()
                 self.assertEqual(bridge.currentPage, page_index)

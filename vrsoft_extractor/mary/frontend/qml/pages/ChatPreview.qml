@@ -101,15 +101,6 @@ Item {
                     onBrandActivated: frontend.setCurrentPage(1)
                 }
 
-                VrNavItem {
-                    Layout.fillWidth: true
-                    title: "VR ULTRA"
-                    iconSource: frontend.navigationItems[8].icon
-                    selected: false
-                    compact: false
-                    onActivated: frontend.setCurrentPage(8)
-                }
-
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 5
@@ -904,7 +895,7 @@ Item {
                                     : parent.hovered ? frontend.palette.chatControl : "transparent"
                             border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
                             border.color: chat.vrMode === "ultra"
-                                ? "#FFC896"
+                                ? frontend.palette.brandOrange
                                 : parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
                         }
                         onClicked: chat.cycleVrMode()
@@ -939,49 +930,54 @@ Item {
                 }
             }
 
-            // VR Ultra: rainbow contínuo, legível em ambos os temas e estático
-            // quando a preferência de movimento reduzido estiver ativa.
+            // VR Ultra keeps the institutional orange as the dominant accent.
+            // A thin moving spectrum identifies multi-agent execution without
+            // covering the composer or producing broken corner segments.
             Rectangle {
                 id: ultraGlowOuter
                 visible: chat.vrMode === "ultra"
                 anchors.centerIn: composerCard
-                width: composerCard.width + 26
-                height: composerCard.height + 26
-                radius: 34
+                width: composerCard.width + 16
+                height: composerCard.height + 16
+                radius: 30
                 color: "transparent"
-                border.width: 7
-                border.color: Qt.rgba(0.55, 0.28, 1.0, 0.16)
-                opacity: 0.72
+                border.width: 5
+                border.color: Qt.rgba(1.0, 0.45, 0.0, 0.18)
+                opacity: 0.78
                 SequentialAnimation on opacity {
                     running: ultraGlowOuter.visible && !frontend.reduceMotion
                     loops: Animation.Infinite
-                    NumberAnimation { from: 0.42; to: 0.86; duration: 1300; easing.type: Easing.InOutSine }
-                    NumberAnimation { from: 0.86; to: 0.42; duration: 1300; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.55; to: 0.86; duration: 1400; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.86; to: 0.55; duration: 1400; easing.type: Easing.InOutSine }
                 }
             }
             Canvas {
                 id: ultraArc
                 visible: chat.vrMode === "ultra"
                 anchors.centerIn: composerCard
-                width: composerCard.width + 12
-                height: composerCard.height + 12
+                width: composerCard.width + 8
+                height: composerCard.height + 8
                 property real sweep: 0
                 onSweepChanged: requestPaint()
                 onVisibleChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
 
-                function traceRoundRect(ctx, w, h, r) {
+                function traceRoundRect(ctx, inset, radius) {
+                    var left = inset
+                    var top = inset
+                    var right = width - inset
+                    var bottom = height - inset
                     ctx.beginPath()
-                    ctx.moveTo(r, 2)
-                    ctx.lineTo(w - r, 2)
-                    ctx.arc(w - r - 2, r, r - 2, -Math.PI / 2, 0, false)
-                    ctx.lineTo(w - 2, h - r - 2)
-                    ctx.arc(w - r - 2, h - r - 2, r - 2, 0, Math.PI / 2, false)
-                    ctx.lineTo(r + 2, h - 2)
-                    ctx.arc(r + 2, h - r - 2, r - 2, Math.PI / 2, Math.PI, false)
-                    ctx.lineTo(2, r)
-                    ctx.arc(r + 2, r + 2, r - 2, Math.PI, 3 * Math.PI / 2, false)
+                    ctx.moveTo(left + radius, top)
+                    ctx.lineTo(right - radius, top)
+                    ctx.quadraticCurveTo(right, top, right, top + radius)
+                    ctx.lineTo(right, bottom - radius)
+                    ctx.quadraticCurveTo(right, bottom, right - radius, bottom)
+                    ctx.lineTo(left + radius, bottom)
+                    ctx.quadraticCurveTo(left, bottom, left, bottom - radius)
+                    ctx.lineTo(left, top + radius)
+                    ctx.quadraticCurveTo(left, top, left + radius, top)
                     ctx.closePath()
                 }
 
@@ -989,29 +985,28 @@ Item {
                     var ctx = getContext("2d")
                     ctx.reset()
                     ctx.lineCap = "round"
-                    var gradient = ctx.createLinearGradient(0, 0, width, height)
-                    gradient.addColorStop(0.00, "#FF4D6D")
-                    gradient.addColorStop(0.16, "#FF9F1C")
-                    gradient.addColorStop(0.32, "#FFE66D")
-                    gradient.addColorStop(0.48, "#35E5A1")
-                    gradient.addColorStop(0.64, "#38BDF8")
-                    gradient.addColorStop(0.80, "#8B5CF6")
-                    gradient.addColorStop(1.00, "#F472B6")
                     ctx.lineWidth = 2.2
-                    ctx.globalAlpha = 0.42
-                    traceRoundRect(ctx, width, height, 28)
-                    ctx.strokeStyle = gradient
+                    ctx.globalAlpha = 0.92
+                    traceRoundRect(ctx, 2, 27)
+                    ctx.strokeStyle = frontend.palette.brandOrange
                     ctx.setLineDash([])
                     ctx.stroke()
 
-                    ctx.lineWidth = 4.0
+                    var spectrum = ctx.createLinearGradient(0, 0, width, 0)
+                    spectrum.addColorStop(0.00, "#FF7200")
+                    spectrum.addColorStop(0.25, "#FCBD0F")
+                    spectrum.addColorStop(0.48, "#42D392")
+                    spectrum.addColorStop(0.68, "#38BDF8")
+                    spectrum.addColorStop(0.84, "#8B5CF6")
+                    spectrum.addColorStop(1.00, "#FF7200")
+                    ctx.lineWidth = 3.0
                     ctx.lineCap = "round"
                     var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
-                    traceRoundRect(ctx, width, height, 28)
+                    traceRoundRect(ctx, 2, 27)
                     ctx.globalAlpha = 1.0
-                    ctx.strokeStyle = gradient
-                    ctx.setLineDash([perimeter * 0.36, perimeter * 0.08,
-                        perimeter * 0.14, perimeter * 0.42])
+                    ctx.strokeStyle = spectrum
+                    ctx.setLineDash([perimeter * 0.16, perimeter * 0.06,
+                        perimeter * 0.08, perimeter * 0.70])
                     ctx.lineDashOffset = -sweep * perimeter
                     ctx.stroke()
                     ctx.setLineDash([])
@@ -1019,7 +1014,7 @@ Item {
                 SequentialAnimation on sweep {
                     running: ultraArc.visible && !frontend.reduceMotion
                     loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: 1; duration: 4800; easing.type: Easing.Linear }
+                    NumberAnimation { from: 0; to: 1; duration: 4200; easing.type: Easing.Linear }
                 }
             }
         }

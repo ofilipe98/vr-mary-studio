@@ -1520,9 +1520,14 @@ class ChatBridge(QObject):
 
     @Slot("QVariantList")
     def setResearchModels(self, keys: list) -> None:  # noqa: N802
-        self._research_model_keys = [
-            str(item) for item in keys if str(item or "").strip()
-        ]
+        selected: list[str] = []
+        for item in keys:
+            key = str(item or "").strip()
+            if key and key not in selected:
+                selected.append(key)
+            if len(selected) == 3:
+                break
+        self._research_model_keys = selected
         self._preferences.setValue(
             "research/model_pool",
             json.dumps(self._research_model_keys),
@@ -1552,16 +1557,6 @@ class ChatBridge(QObject):
         self._preferences.sync()
         self._apply_research_config()
         self.stateChanged.emit()
-
-    @Slot(str)
-    def startUltraResearch(self, text: str) -> None:  # noqa: N802
-        """Launch an explicit multi-agent research turn from the VR ULTRA tab."""
-
-        content = str(text or "").strip()
-        if not content or self.turnRunning:
-            return
-        self.setVrMode("ultra")
-        self.sendMessage(f"/pesquisa {content}")
 
     @Slot(result=str)
     def addProject(self) -> str:  # noqa: N802

@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-width", type=int, default=1480)
     parser.add_argument("--screenshot-height", type=int, default=900)
     parser.add_argument("--screenshot-scale", default="")
+    parser.add_argument("--screenshot-settings-tab", type=int, default=-1)
     parser.add_argument(
         "--screenshot-popup",
         choices=("", "add-project", "model", "permission"),
@@ -190,6 +191,10 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         def open_capture_popup() -> None:
+            if args.screenshot_settings_tab >= 0:
+                settings_page = window.findChild(QObject, "settingsPage")
+                if settings_page is not None:
+                    settings_page.setProperty("tabIndex", args.screenshot_settings_tab)
             object_name = popup_targets.get(args.screenshot_popup, "")
             if not object_name:
                 return
