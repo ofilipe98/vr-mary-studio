@@ -8,6 +8,15 @@ from vrsoft_extractor.utils import classify_media_url, output_base_path, sanitiz
 
 
 class UtilsTest(unittest.TestCase):
+    def test_windows_launcher_uses_relocatable_python_module_entrypoint(self):
+        root = Path(__file__).parents[1]
+        launcher = (root / "Start-VRStudio.bat").read_text(encoding="utf-8")
+
+        self.assertIn(r".venv\Scripts\python.exe", launcher)
+        self.assertIn("-m vrsoft_extractor.mary.ui", launcher)
+        self.assertNotIn("vr-norte-studio.exe", launcher)
+        self.assertNotIn("vr-mary-studio.exe", launcher)
+
     def test_version_is_synchronized_across_source_and_installer(self):
         root = Path(__file__).parents[1]
         project_version = tomllib.loads(
