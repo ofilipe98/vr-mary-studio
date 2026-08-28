@@ -46,19 +46,19 @@ Button {
             text: control.symbol
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: Theme.fontSize(15)
         }
         Text {
             text: control.currentItem[control.textRole] || "Selecionar"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         Text {
             text: "⌄"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
     }
 
@@ -113,14 +113,14 @@ Button {
                         text: modelData[control.textRole] || modelData
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                     }
                     Text {
                         visible: control.currentIndex === index
                         text: "✓"
                         color: frontend.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                     }
                 }
                 HoverHandler { id: optionHover }

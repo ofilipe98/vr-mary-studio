@@ -47,7 +47,7 @@ Button {
             text: control.symbol
             color: control.foreground
             font.family: Theme.fontFamily
-            font.pixelSize: 17
+            font.pixelSize: Theme.fontSize(17)
             font.weight: Font.DemiBold
         }
     }

@@ -47,7 +47,7 @@ Button {
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
@@ -201,7 +201,7 @@ Button {
                             placeholderTextColor: frontend.palette.mutedText
                             selectionColor: frontend.palette.selection
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                             background: Item { }
                             onTextChanged: modelList.positionViewAtBeginning()
                         }
@@ -268,7 +268,7 @@ Button {
                                     text: modelData.displayName || modelData.label
                                     color: frontend.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.fontSize(13)
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -277,7 +277,7 @@ Button {
                                     text: modelData.providerLabel || modelData.provider || ""
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSize(11)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -292,7 +292,7 @@ Button {
                                     text: "Ctrl+" + (modelRow.index + 1)
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                             VrIconButton {
@@ -322,7 +322,7 @@ Button {
                             ? "Nenhum modelo favorito" : "Nenhum modelo encontrado"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontSize(12)
                     }
                 }
             }

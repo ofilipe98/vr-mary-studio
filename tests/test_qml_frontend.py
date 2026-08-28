@@ -114,7 +114,7 @@ class QmlFrontendTest(unittest.TestCase):
             settings = self._settings(root)
             bridge = FrontendBridge(settings, preferences)
 
-            self.assertEqual(bridge.uiScale, "125")
+            self.assertEqual(bridge.uiScale, "100")
             bridge.setUiScale("110")
             self.assertEqual(bridge.uiScale, "110")
             self.assertEqual(preferences.value("appearance/ui_scale"), "110")
@@ -134,7 +134,7 @@ class QmlFrontendTest(unittest.TestCase):
             os.environ.pop("QT_SCALE_FACTOR", None)
 
             app_module.apply_ui_scale_environment(preferences)
-            self.assertEqual(os.environ.get("QT_SCALE_FACTOR"), "1.25")
+            self.assertNotIn("QT_SCALE_FACTOR", os.environ)
 
             os.environ.pop("QT_SCALE_FACTOR", None)
             preferences.setValue("appearance/ui_scale", "100")
@@ -145,7 +145,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences.setValue("appearance/ui_scale", "150")
             preferences.sync()
             app_module.apply_ui_scale_environment(preferences)
-            self.assertEqual(os.environ.get("QT_SCALE_FACTOR"), "1.50")
+            self.assertNotIn("QT_SCALE_FACTOR", os.environ)
 
             os.environ["QT_SCALE_FACTOR"] = "2.0"
             app_module.apply_ui_scale_environment(preferences)
@@ -1998,7 +1998,17 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(tab_bar)
             self.assertEqual(tab_bar.property("count"), 5)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
-            self.assertIsNotNone(window.findChild(QObject, "uiScaleCombo"))
+            ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
+            self.assertIsNotNone(ui_scale_combo)
+            scale_preview = window.findChild(QObject, "uiScalePreviewText")
+            self.assertIsNotNone(scale_preview)
+            initial_pixel_size = scale_preview.property("font").pixelSize()
+            ui_scale_combo.activated.emit(3)
+            self.application.processEvents()
+            self.assertEqual(bridge.uiScale, "150")
+            self.assertGreater(
+                scale_preview.property("font").pixelSize(), initial_pixel_size
+            )
 
             tab_bar.activate(2)
             self.application.processEvents()

@@ -49,7 +49,7 @@ Button {
                 text: control.title
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: Theme.fontSize(14)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -58,7 +58,7 @@ Button {
                 text: control.description
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 font.weight: Font.Normal
                 wrapMode: Text.WordWrap
             }

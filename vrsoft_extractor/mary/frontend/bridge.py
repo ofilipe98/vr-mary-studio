@@ -45,7 +45,7 @@ def _stored_bool(value: object, default: bool = False) -> bool:
 UI_SCALE_OPTIONS = ("100", "110", "125", "150")
 
 
-def normalized_ui_scale(value: object, default: str = "125") -> str:
+def normalized_ui_scale(value: object, default: str = "100") -> str:
     """Return a supported interface scale percentage (no percent sign)."""
     text = str(value or "").strip().rstrip("%").strip()
     return text if text in UI_SCALE_OPTIONS else default
@@ -90,7 +90,7 @@ class FrontendBridge(QObject):
             self._preferences.value("appearance/reduce_motion", False)
         )
         self._ui_scale = normalized_ui_scale(
-            self._preferences.value("appearance/ui_scale", "125")
+            self._preferences.value("appearance/ui_scale", "100")
         )
         self._palette_cache: dict[str, str] | None = None
         page_names = [title for title, _icon in NAVIGATION_ITEMS]
@@ -163,6 +163,10 @@ class FrontendBridge(QObject):
     @Property(str, notify=uiScaleChanged)
     def uiScale(self) -> str:  # noqa: N802 - QML property naming
         return self._ui_scale
+
+    @Property(float, notify=uiScaleChanged)
+    def uiScaleFactor(self) -> float:  # noqa: N802 - QML property naming
+        return int(self._ui_scale) / 100.0
 
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:  # noqa: N802

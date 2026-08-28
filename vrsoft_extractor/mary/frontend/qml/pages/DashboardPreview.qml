@@ -48,27 +48,27 @@ Item {
                             text: modelData.name
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: 16
+                            font.pixelSize: Theme.fontSize(16)
                             font.weight: Font.DemiBold
                         }
                         Text {
                             text: modelData.description
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                         }
                         Text {
                             text: modelData.count
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: 29
+                            font.pixelSize: Theme.fontSize(29)
                             font.weight: Font.DemiBold
                         }
                         Text {
                             text: modelData.status
                             color: modelData.good ? frontend.palette.success : frontend.palette.warning
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                             font.weight: Font.DemiBold
                         }
                         Text {
@@ -77,7 +77,7 @@ Item {
                             text: modelData.detail
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontSize(12)
                             wrapMode: Text.WordWrap
                         }
                         VrButton {
@@ -97,7 +97,7 @@ Item {
             text: "Resumo VR"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: Theme.fontSize(15)
             font.weight: Font.DemiBold
         }
 
@@ -123,8 +123,8 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 6
-                        Text { text: modelData.label; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                        Text { text: modelData.value; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 26; font.weight: Font.DemiBold }
+                        Text { text: modelData.label; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                        Text { text: modelData.value; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(26); font.weight: Font.DemiBold }
                     }
                 }
             }

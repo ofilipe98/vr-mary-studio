@@ -49,13 +49,13 @@ Button {
             text: "✦"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 14
+            font.pixelSize: Theme.fontSize(14)
         }
         Text {
             text: control.compactLabel || "Medium"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         VrLineIcon {
             Layout.preferredWidth: 13
@@ -106,7 +106,7 @@ Button {
                 text: "Raciocínio"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -130,7 +130,7 @@ Button {
                             text: modelData.label
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                             font.weight: control.currentEffortIndex === index ? Font.DemiBold : Font.Normal
                         }
                         Rectangle {
@@ -145,7 +145,7 @@ Button {
                                 text: "Padrão"
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.fontSize(9)
                             }
                         }
                     }
@@ -176,7 +176,7 @@ Button {
                 text: "Service Tier"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -203,7 +203,7 @@ Button {
                                 text: modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: control.currentTierIndex === index ? Font.DemiBold : Font.Normal
                             }
                             Rectangle {
@@ -218,7 +218,7 @@ Button {
                                     text: "Padrão"
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                         }
@@ -228,7 +228,7 @@ Button {
                             text: modelData.description || ""
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontSize(10)
                             elide: Text.ElideRight
                         }
                     }

@@ -17,7 +17,7 @@ from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import load_vr_settings
 from ..workspace import initialize_workspace
-from .bridge import FrontendBridge, normalized_ui_scale
+from .bridge import FrontendBridge
 from .chat import ChatBridge
 from .studio import StudioBridge
 
@@ -27,17 +27,13 @@ MAIN_QML = QML_DIR / "Main.qml"
 
 
 def apply_ui_scale_environment(preferences: QSettings) -> None:
-    """Apply the saved interface scale before the QGuiApplication exists.
+    """Keep legacy startup calls while QML applies text scale live.
 
-    QHD and 4K monitors often run at 100% system scaling, where the default
-    density feels small. The preference multiplies the whole render through
-    QT_SCALE_FACTOR and must be set before Qt reads the environment.
+    QT_SCALE_FACTOR enlarged the complete window geometry and made the Studio
+    disproportionate to T3 Code. The saved preference is now consumed by the
+    Theme singleton, so changing it updates typography without a restart.
     """
-    scale = normalized_ui_scale(str(preferences.value("appearance/ui_scale", "") or ""))
-    if scale == "100":
-        return
-    if "QT_SCALE_FACTOR" not in os.environ:
-        os.environ["QT_SCALE_FACTOR"] = f"{int(scale) / 100:.2f}"
+    del preferences
 
 
 def build_parser() -> argparse.ArgumentParser:

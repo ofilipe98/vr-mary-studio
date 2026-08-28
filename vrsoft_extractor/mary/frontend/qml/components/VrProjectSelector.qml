@@ -47,7 +47,7 @@ Button {
             text: control.currentItem.label || "Todos os projetos"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSize(11)
             font.weight: Font.DemiBold
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
@@ -127,7 +127,7 @@ Button {
                         text: projectRow.modelData.label
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSize(11)
                         font.weight: projectRow.selected ? Font.DemiBold : Font.Normal
                         elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter

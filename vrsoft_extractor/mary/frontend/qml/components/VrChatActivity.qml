@@ -54,7 +54,7 @@ Rectangle {
                     text: root.headerText()
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                     font.weight: root.running ? Font.DemiBold : Font.Normal
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
@@ -64,7 +64,7 @@ Rectangle {
                     text: root.completedItemCount() + "/" + root.items.length
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.fontSize(9)
                 }
                 VrLineIcon {
                     Layout.preferredWidth: 12
@@ -99,7 +99,7 @@ Rectangle {
                 textFormat: Text.PlainText
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 lineHeightMode: Text.ProportionalHeight
                 lineHeight: 1.35
                 horizontalAlignment: Text.AlignLeft
@@ -130,7 +130,7 @@ Rectangle {
                         text: "+" + root.hiddenCount + " entradas anteriores de log"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                     }
                 }
 
@@ -174,7 +174,8 @@ Rectangle {
                                 ? frontend.palette.text : frontend.palette.mutedText
                             font.family: activityItem.commandLine.length > 0
                                 ? "Cascadia Mono" : Theme.fontFamily
-                            font.pixelSize: activityItem.commandLine.length > 0 ? 9 : 10
+                            font.pixelSize: Theme.fontSize(
+                                activityItem.commandLine.length > 0 ? 9 : 10)
                             font.weight: activityItem.modelData.state === "running"
                                 && activityItem.commandLine.length === 0
                                 ? Font.DemiBold : Font.Normal
@@ -186,7 +187,7 @@ Rectangle {
                             text: root.stateLabel(activityItem.modelData.state)
                             color: root.stateColor(activityItem.modelData.state)
                             font.family: Theme.fontFamily
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.fontSize(9)
                         }
                         VrLineIcon {
                             visible: String(activityItem.modelData.detail || "").length > 0
@@ -221,7 +222,7 @@ Rectangle {
                             text: activityItem.modelData.detail || ""
                             color: frontend.palette.mutedText
                             font.family: "Cascadia Mono"
-                            font.pixelSize: 9
+                            font.pixelSize: Theme.fontSize(9)
                             wrapMode: Text.WrapAnywhere
                         }
                     }

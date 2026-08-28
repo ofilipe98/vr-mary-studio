@@ -64,7 +64,7 @@ Item {
                 color: projectSettingsBack.hovered
                     ? frontend.palette.text : frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontSize(12)
                 verticalAlignment: Text.AlignVCenter
             }
             background: Item { }
@@ -73,14 +73,14 @@ Item {
             text: "/"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontSize(12)
         }
         Text {
             Layout.fillWidth: true
             text: control.projectName
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             font.weight: Font.DemiBold
             elide: Text.ElideRight
         }
@@ -119,7 +119,7 @@ Item {
                 text: "Projeto"
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: 17
+                font.pixelSize: Theme.fontSize(17)
                 font.weight: Font.DemiBold
             }
 
@@ -130,8 +130,8 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
-                    Text { text: "Nome"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { Layout.fillWidth: true; text: "Nome compartilhado na lista de projetos e nas conversas."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { text: "Nome"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Nome compartilhado na lista de projetos e nas conversas."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
                 }
                 VrTextField {
                     id: projectNameField
@@ -155,8 +155,8 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
-                    Text { text: "Ícone do projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { text: control.projectIconPath.length ? "Personalizado" : "Automático"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "Ícone do projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { text: control.projectIconPath.length ? "Personalizado" : "Automático"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
                 RowLayout {
                     Layout.preferredWidth: 256
@@ -185,7 +185,7 @@ Item {
                 text: "Novas conversas"
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: 17
+                font.pixelSize: Theme.fontSize(17)
                 font.weight: Font.DemiBold
             }
 
@@ -198,10 +198,10 @@ Item {
                     spacing: 3
                     RowLayout {
                         spacing: 5
-                        Text { text: "Modelo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                        Text { text: "↶"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+                        Text { text: "Modelo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                        Text { text: "↶"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                     }
-                    Text { Layout.fillWidth: true; text: "Novas conversas desta pasta começam com este modelo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: "Novas conversas desta pasta começam com este modelo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
                 }
                 RowLayout {
                     Layout.preferredWidth: 256
@@ -239,8 +239,8 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
-                    Text { text: "Workspace"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { Layout.fillWidth: true; text: "Onde as novas conversas deste projeto começam. Substitui o padrão global e se aplica a cada checkout deste grupo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { text: "Workspace"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Onde as novas conversas deste projeto começam. Substitui o padrão global e se aplica a cada checkout deste grupo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
                 }
                 VrComboBox {
                     Layout.preferredWidth: 202
@@ -260,7 +260,7 @@ Item {
                     text: "Checkout"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 17
+                    font.pixelSize: Theme.fontSize(17)
                     font.weight: Font.DemiBold
                 }
                 VrComboBox {
@@ -288,7 +288,7 @@ Item {
                         text: control.projectPath
                         color: pathHover.hovered ? frontend.palette.text : frontend.palette.mutedText
                         font.family: "Consolas"
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                         elide: Text.ElideMiddle
                         HoverHandler { id: pathHover }
                         TapHandler { onTapped: control.openFolderRequested() }
@@ -302,7 +302,7 @@ Item {
                         ToolTip.text: "Copiar caminho"
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: frontend.palette.chatDivider }
-                    Text { text: control.threadLabel(); color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: control.threadLabel(); color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
             }
 
@@ -314,8 +314,8 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
-                    Text { text: "Agrupamento do projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { Layout.fillWidth: true; text: "Define como esta pasta aparece nos grupos da barra lateral."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { text: "Agrupamento do projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Define como esta pasta aparece nos grupos da barra lateral."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
                 }
                 VrComboBox {
                     Layout.preferredWidth: 222
@@ -333,8 +333,8 @@ Item {
                 ColumnLayout {
                     Layout.preferredWidth: 520
                     spacing: 3
-                    Text { text: "Ações"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { text: "Salvas e executadas apenas nesta pasta."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "Ações"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { text: "Salvas e executadas apenas nesta pasta."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
                 Item { Layout.fillWidth: true }
                 VrButton {
@@ -351,7 +351,7 @@ Item {
                 text: "Nenhuma ação configurada para esta pasta."
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
             }
 
             Text {
@@ -361,7 +361,7 @@ Item {
                 text: "Perigo"
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: 17
+                font.pixelSize: Theme.fontSize(17)
                 font.weight: Font.DemiBold
             }
 
@@ -372,8 +372,8 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
-                    Text { text: "Remover projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                    Text { Layout.fillWidth: true; text: "Remove a pasta da lista. Os arquivos no disco não são alterados."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
+                    Text { text: "Remover projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Remove a pasta da lista. Os arquivos no disco não são alterados."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
                 }
                 Button {
                     implicitWidth: 150
@@ -385,7 +385,7 @@ Item {
                         spacing: 7
                         Item { Layout.fillWidth: true }
                         VrLineIcon { Layout.preferredWidth: 15; Layout.preferredHeight: 15; kind: "trash"; foreground: frontend.palette.danger; strokeWidth: 1.55 }
-                        Text { text: "Remover projeto"; color: frontend.palette.danger; font.family: Theme.fontFamily; font.pixelSize: 11; font.weight: Font.DemiBold }
+                        Text { text: "Remover projeto"; color: frontend.palette.danger; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
                         Item { Layout.fillWidth: true }
                     }
                     background: Rectangle {

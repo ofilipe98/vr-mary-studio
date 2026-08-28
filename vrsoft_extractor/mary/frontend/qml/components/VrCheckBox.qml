@@ -23,7 +23,7 @@ CheckBox {
             text: "✓"
             visible: control.checked
             color: "#FFFFFF"
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             font.weight: Font.Bold
         }
     }

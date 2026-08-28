@@ -244,7 +244,7 @@ Item {
                         text: "Conversas"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                     }
                     Rectangle {
                         Layout.fillWidth: true
@@ -303,14 +303,14 @@ Item {
                                     text: conversationItem.projectLabel
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
                                 }
                                 Text {
                                     text: root.relativeAge(conversationItem.updatedAt)
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                             Text {
@@ -318,7 +318,7 @@ Item {
                                 text: conversationItem.title
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
@@ -330,7 +330,7 @@ Item {
                                     text: conversationItem.modelName
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
@@ -370,7 +370,7 @@ Item {
                         text: conversationSearch.text ? "Nenhuma conversa encontrada." : "Nenhum chat iniciado."
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                     }
@@ -428,9 +428,9 @@ Item {
                             border.color: frontend.palette.focus
                         }
                     }
-                    Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                    Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                    Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                    Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                    Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold; elide: Text.ElideRight }
                     VrButton {
                         visible: chat.agentItems.length > 0
                         implicitHeight: 30
@@ -580,7 +580,7 @@ Item {
                                 color: frontend.palette.text
                                 horizontalAlignment: Text.AlignLeft
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.fontSize(14)
                                 onLinkActivated: link => {
                                     if (studio) studio.openExternalUrl(link)
                                 }
@@ -626,7 +626,7 @@ Item {
                                         text: modelData.label || ""
                                         color: frontend.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fontSize(12)
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -652,7 +652,7 @@ Item {
                             color: frontend.palette.text
                             horizontalAlignment: Text.AlignLeft
                             font.family: Theme.fontFamily
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fontSize(14)
                             onLinkActivated: link => {
                                 if (studio) studio.openExternalUrl(link)
                             }
@@ -690,7 +690,7 @@ Item {
                     text: "O que vamos construir com a VR?"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 28
+                    font.pixelSize: Theme.fontSize(28)
                     font.weight: Font.Normal
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -699,7 +699,7 @@ Item {
                     text: "Descreva o problema ou treinamento. Ative VR para consultar a base local; desative para conversar diretamente com a LLM."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontSize(13)
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }
@@ -747,7 +747,7 @@ Item {
                         text: "Ir para o fim"
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSize(11)
                     }
                     VrLineIcon {
                         anchors.verticalCenter: parent.verticalCenter
@@ -856,7 +856,7 @@ Item {
                                 elide: Text.ElideMiddle
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                             }
                             VrIconButton {
                                 width: 22
@@ -1151,7 +1151,7 @@ Item {
                                             text: surfaceTab.modelData.title
                                             color: frontend.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fontSize(11)
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
@@ -1268,13 +1268,13 @@ Item {
                                         text: modelData.title
                                         color: frontend.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fontSize(12)
                                     }
                                     Text {
                                         text: modelData.title.charAt(0)
                                         color: frontend.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 10
+                                        font.pixelSize: Theme.fontSize(10)
                                     }
                                 }
                                 HoverHandler { id: surfaceChoiceHover }
@@ -1351,7 +1351,7 @@ Item {
                                     text: "Abrir uma superfície"
                                     color: frontend.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 15
+                                    font.pixelSize: Theme.fontSize(15)
                                     font.weight: Font.DemiBold
                                     horizontalAlignment: Text.AlignHCenter
                                 }
@@ -1360,7 +1360,7 @@ Item {
                                     text: "Escolha o que exibir no painel direito."
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSize(11)
                                     horizontalAlignment: Text.AlignHCenter
                                 }
                                 GridLayout {
@@ -1444,7 +1444,7 @@ Item {
                                         + frontend.projectPath + ">"
                                     color: frontend.palette.text
                                     font.family: "Cascadia Mono"
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fontSize(12)
                                 }
                                 TextField {
                                     id: terminalCommandInput
@@ -1455,7 +1455,7 @@ Item {
                                     selectionColor: frontend.palette.focus
                                     selectedTextColor: frontend.palette.text
                                     font.family: "Cascadia Mono"
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fontSize(12)
                                     leftPadding: 0
                                     rightPadding: 0
                                     placeholderText: ""
@@ -1491,7 +1491,7 @@ Item {
                                     color: frontend.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                             }
                         }
                     }
@@ -1528,7 +1528,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
-                            Text { Layout.fillWidth: true; text: root.surfaceFilePath; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideMiddle }
+                            Text { Layout.fillWidth: true; text: root.surfaceFilePath; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideMiddle }
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: studio.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
@@ -1549,7 +1549,7 @@ Item {
                                     color: frontend.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSize(11)
                             }
                         }
                     }
@@ -1581,8 +1581,8 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     spacing: 3
-                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: modelData.excerpt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: modelData.excerpt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
                                 TapHandler { onTapped: root.insertReference(modelData.reference) }
@@ -1599,7 +1599,7 @@ Item {
                                 : ""
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSize(11)
                             wrapMode: Text.WordWrap
                         }
                         ListView {
@@ -1632,13 +1632,13 @@ Item {
                                             : modelData.status === "falhou" ? frontend.palette.danger
                                             : modelData.status === "executando" ? frontend.palette.brandOrange
                                             : frontend.palette.mutedText
-                                        font.pixelSize: 14
+                                        font.pixelSize: Theme.fontSize(14)
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
-                                        Text { Layout.fillWidth: true; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                                     }
                                 }
                                 HoverHandler { id: agentHover }
@@ -1660,7 +1660,7 @@ Item {
                                 color: frontend.palette.text
                                 background: Item { }
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                             }
                         }
                     }
@@ -1718,8 +1718,8 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 9
                     anchors.rightMargin: 9
-                    Text { Layout.preferredWidth: 140; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideRight }
+                    Text { Layout.preferredWidth: 140; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                 }
                 HoverHandler { id: assistHover }
                 TapHandler { onTapped: root.chooseComposerSuggestion(modelData) }
@@ -1813,7 +1813,7 @@ Item {
                 text: "Projetos"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontSize(10)
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignLeft
             }
@@ -1860,7 +1860,7 @@ Item {
                                 text: newProjectItem.modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
                                 horizontalAlignment: Text.AlignLeft
                                 elide: Text.ElideRight
@@ -1872,7 +1872,7 @@ Item {
                                     : "Espaço gerenciado VR"
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                                 horizontalAlignment: Text.AlignLeft
                                 elide: Text.ElideMiddle
                             }
@@ -1881,7 +1881,7 @@ Item {
                             text: newProjectItem.modelData.shortcut
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontSize(10)
                         }
                     }
                     HoverHandler {
@@ -1899,7 +1899,7 @@ Item {
                     text: "Nenhum projeto encontrado"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                 }
             }
 
@@ -1914,11 +1914,11 @@ Item {
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
                     spacing: 10
-                    Text { text: "↑ ↓  Navegar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
-                    Text { text: "Enter  Selecionar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
-                    Text { text: "Backspace  Voltar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "↑ ↓  Navegar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Enter  Selecionar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Backspace  Voltar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                     Item { Layout.fillWidth: true }
-                    Text { text: "Esc  Fechar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "Esc  Fechar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
             }
         }
@@ -1984,7 +1984,7 @@ Item {
                 text: "Sources"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 font.weight: Font.DemiBold
             }
             ListView {
@@ -2027,7 +2027,7 @@ Item {
                                 text: modelData.title
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: modelData.key === "local" ? Font.DemiBold : Font.Normal
                                 elide: Text.ElideRight
                             }
@@ -2036,7 +2036,7 @@ Item {
                                 text: modelData.description
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                                 elide: Text.ElideRight
                             }
                         }
@@ -2054,7 +2054,7 @@ Item {
                                 text: modelData.badge
                                 color: frontend.palette.warning
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.fontSize(9)
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -2075,7 +2075,7 @@ Item {
                     text: "Nenhuma fonte encontrada"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                 }
             }
             Rectangle {
@@ -2089,7 +2089,7 @@ Item {
                     text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
             }
             }
@@ -2139,7 +2139,7 @@ Item {
                     text: "Arquivar conversa"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.DemiBold
                 }
             }
@@ -2172,7 +2172,7 @@ Item {
             spacing: 8
             RowLayout {
                 Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                 VrButton { text: chat.extensionsLoading ? "Carregando…" : "Atualizar"; enabled: !chat.extensionsLoading; onClicked: chat.refreshExtensions() }
             }
             Rectangle {

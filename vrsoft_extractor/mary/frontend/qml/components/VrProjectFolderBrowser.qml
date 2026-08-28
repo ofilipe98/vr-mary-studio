@@ -82,7 +82,7 @@ Item {
                     text: "Ctrl Enter"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 9
+                    font.pixelSize: Theme.fontSize(9)
                 }
             }
         }
@@ -98,7 +98,7 @@ Item {
             text: "Diretórios"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSize(11)
             font.weight: Font.DemiBold
         }
 
@@ -152,7 +152,7 @@ Item {
                         text: folderRow.modelData.label
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                         elide: Text.ElideRight
                     }
                 }
@@ -164,7 +164,7 @@ Item {
                 text: "Nenhuma subpasta disponível"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontSize(12)
             }
         }
 
@@ -183,7 +183,7 @@ Item {
                     text: "↑↓  Navegar    Enter  Abrir    Backspace  Voltar    Esc  Fechar"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
                 Item { Layout.fillWidth: true }
                 Button {
@@ -194,7 +194,7 @@ Item {
                         text: parent.text
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }

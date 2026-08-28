@@ -49,7 +49,7 @@ Button {
             text: control.currentItem.label || "Auto"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         VrLineIcon {
             Layout.preferredWidth: 13
@@ -127,7 +127,7 @@ Button {
                                 text: modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
                             }
                             Text {
@@ -135,7 +135,7 @@ Button {
                                 text: modelData.description || ""
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                                 wrapMode: Text.WordWrap
                             }
                         }

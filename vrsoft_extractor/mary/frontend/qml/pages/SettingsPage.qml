@@ -233,8 +233,8 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 3
-                                Text { text: "Escala da interface"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
-                                Text { text: "Aumenta textos e controles em monitores QHD e 4K. A alteração é aplicada ao reiniciar o Studio e se soma à escala do Windows."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
+                                Text { objectName: "uiScalePreviewText"; text: "Escala da interface"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                                Text { text: "Ajusta a tipografia imediatamente, sem alterar as proporções de painéis e controles."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
                             }
                             VrComboBox {
                                 id: uiScaleCombo

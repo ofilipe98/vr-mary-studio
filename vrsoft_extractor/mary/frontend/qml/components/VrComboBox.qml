@@ -34,7 +34,7 @@ ComboBox {
         text: "▾"
         color: frontend.palette.mutedText
         font.family: Theme.fontFamily
-        font.pixelSize: 14
+        font.pixelSize: Theme.fontSize(14)
     }
 
     background: Rectangle {

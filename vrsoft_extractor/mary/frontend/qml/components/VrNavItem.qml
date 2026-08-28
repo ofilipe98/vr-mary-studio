@@ -82,7 +82,7 @@ Item {
             text: root.title
             color: root.selected ? "#FFFFFF" : frontend.palette.navText
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             font.weight: root.selected ? Font.DemiBold : Font.Medium
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
