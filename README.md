@@ -302,7 +302,10 @@ distribuí-lo. Credenciais e CLIs de provedores de chat não são incorporados.
 ## Fluxo de versões
 
 - `main` contém apenas a versão estável aprovada.
-- Logo após cada promoção, `dev` avança para o número da próxima versão.
+- O ciclo `0.4` usa uma versão-base estável sem sufixo e revisões incrementais
+  com hífen: `0.4`, `0.4-1`, `0.4-2` e assim sucessivamente.
+- Logo após cada promoção, `dev` avança para a próxima revisão desse ciclo. Por
+  exemplo: após promover `0.4-1`, abra `0.4-2` em `dev`.
 - Toda melhoria, correção ou alteração nova entra primeiro em `dev`.
 - A build `dev` é entregue para homologação e permanece identificada pelo commit.
 - Depois da aprovação explícita, integre a versão validada de `dev` em `main`,
