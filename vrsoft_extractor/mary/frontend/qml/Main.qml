@@ -16,6 +16,9 @@ ApplicationWindow {
     title: frontend.appName
     color: frontend.palette.background
 
+    Binding { target: Theme; property: "viewportWidth"; value: window.width }
+    Binding { target: Theme; property: "viewportHeight"; value: window.height }
+
     // Pages stay alive after the first visit: recreating ChatPreview on every
     // switch was the dominant tab-change cost (measured at 40-110 ms).
     property bool chatVisited: frontend.currentPage === 1

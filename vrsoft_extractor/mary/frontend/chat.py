@@ -267,6 +267,10 @@ class ChatBridge(QObject):
         self._model = str(
             self._preferences.value(f"chat/last_model/{self._provider}", "") or ""
         )
+        if self._provider == "codex" and self._model == "gpt-5.6":
+            self._model = "gpt-5.6-sol"
+            self._preferences.setValue("chat/last_model/codex", self._model)
+            self._preferences.sync()
         self._model_items: list[dict[str, Any]] = []
         self._favorite_model_keys = self._load_favorite_model_keys()
         self._model_catalog_loading = False
@@ -818,12 +822,13 @@ class ChatBridge(QObject):
         provider = self._provider if self._provider in enabled else enabled[0]
         self._provider = provider
         label = self._model or PROVIDER_LABELS.get(provider, provider.title())
+        provider_label = PROVIDER_LABELS.get(provider, provider.title())
         self._model_items = [{
             "label": label,
             "displayName": label,
             "value": self._model,
             "provider": provider,
-            "providerLabel": PROVIDER_LABELS.get(provider, provider.title()),
+            "providerLabel": provider_label,
             "description": "Última seleção disponível",
             "key": f"{provider}:{self._model or '__default__'}",
         }]

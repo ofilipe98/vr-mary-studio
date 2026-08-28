@@ -114,15 +114,33 @@ class QmlFrontendTest(unittest.TestCase):
             settings = self._settings(root)
             bridge = FrontendBridge(settings, preferences)
 
-            self.assertEqual(bridge.uiScale, "100")
-            bridge.setUiScale("110")
-            self.assertEqual(bridge.uiScale, "110")
-            self.assertEqual(preferences.value("appearance/ui_scale"), "110")
+            self.assertEqual(bridge.uiScale, "auto")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "auto")
+            self.assertEqual(
+                int(preferences.value("appearance/ui_scale_version")), 2
+            )
+            bridge.setUiScale("105")
+            self.assertEqual(bridge.uiScale, "105")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "105")
             bridge.setUiScale("999")
             bridge.setUiScale("abc")
-            self.assertEqual(bridge.uiScale, "110")
+            self.assertEqual(bridge.uiScale, "105")
             bridge.setUiScale("150%")
             self.assertEqual(bridge.uiScale, "150")
+
+    def test_legacy_ui_scale_is_migrated_to_automatic(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("appearance/ui_scale", "110")
+            preferences.sync()
+
+            bridge = FrontendBridge(self._settings(root), preferences)
+
+            self.assertEqual(bridge.uiScale, "auto")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "auto")
 
     def test_startup_applies_saved_ui_scale_to_qt_environment(self):
         from vrsoft_extractor.mary.frontend import app as app_module
@@ -653,6 +671,33 @@ class QmlFrontendTest(unittest.TestCase):
             bridge.copyMessage(0)
             self.assertEqual(
                 self.application.clipboard().text(), "Como configurar a NFC-e?"
+            )
+
+    def test_legacy_codex_model_is_hidden_and_migrated_to_sol(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("chat/last_provider", "codex")
+            preferences.setValue("chat/last_model/codex", "gpt-5.6")
+            preferences.sync()
+
+            bridge = ChatBridge(settings, database, preferences)
+            selected_model = bridge.modelItems[bridge.modelIndex]
+
+            self.assertEqual(selected_model["value"], "gpt-5.6-sol")
+            self.assertFalse(
+                any(item["value"] == "gpt-5.6" for item in bridge.modelItems)
+            )
+            self.assertEqual(
+                preferences.value("chat/last_model/codex"), "gpt-5.6-sol"
             )
 
     def test_chat_model_favorites_are_exposed_and_persisted(self):
@@ -2002,12 +2047,29 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(ui_scale_combo)
             scale_preview = window.findChild(QObject, "uiScalePreviewText")
             self.assertIsNotNone(scale_preview)
-            initial_pixel_size = scale_preview.property("font").pixelSize()
-            ui_scale_combo.activated.emit(3)
+            scale_description = window.findChild(QObject, "uiScaleDescription")
+            self.assertIsNotNone(scale_description)
+            self.assertIn("Automática ativa", scale_description.property("text"))
+
+            window.setProperty("width", 1120)
+            window.setProperty("height", 700)
             self.application.processEvents()
-            self.assertEqual(bridge.uiScale, "150")
+            small_window_pixel_size = scale_preview.property("font").pixelSize()
+            window.setProperty("width", 3840)
+            window.setProperty("height", 2160)
+            self.application.processEvents()
             self.assertGreater(
-                scale_preview.property("font").pixelSize(), initial_pixel_size
+                scale_preview.property("font").pixelSize(), small_window_pixel_size
+            )
+
+            ui_scale_combo.activated.emit(1)
+            self.application.processEvents()
+            manual_100_pixel_size = scale_preview.property("font").pixelSize()
+            ui_scale_combo.activated.emit(2)
+            self.application.processEvents()
+            self.assertEqual(bridge.uiScale, "105")
+            self.assertGreater(
+                scale_preview.property("font").pixelSize(), manual_100_pixel_size
             )
 
             tab_bar.activate(2)

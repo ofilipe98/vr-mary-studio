@@ -234,18 +234,24 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 3
                                 Text { objectName: "uiScalePreviewText"; text: "Escala da interface"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
-                                Text { text: "Ajusta a tipografia imediatamente, sem alterar as proporções de painéis e controles."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap }
+                                Text {
+                                    objectName: "uiScaleDescription"
+                                    text: frontend.uiScale === "auto"
+                                        ? "Automática ativa: " + Theme.automaticScalePercent + "%. Acompanha a janela sem alterar painéis e controles."
+                                        : "Ajusta a tipografia imediatamente, sem alterar as proporções de painéis e controles."
+                                    color: frontend.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.captionSize
+                                    wrapMode: Text.WordWrap
+                                }
                             }
                             VrComboBox {
                                 id: uiScaleCombo
                                 objectName: "uiScaleCombo"
                                 Layout.preferredWidth: 210
-                                model: ["100%", "110%", "125%", "150%"]
-                                property var values: ["100", "110", "125", "150"]
-                                Component.onCompleted: {
-                                    var found = values.indexOf(frontend.uiScale)
-                                    currentIndex = found >= 0 ? found : 0
-                                }
+                                model: ["Automática", "100%", "105%", "110%", "125%", "150%"]
+                                property var values: ["auto", "100", "105", "110", "125", "150"]
+                                currentIndex: Math.max(0, values.indexOf(frontend.uiScale))
                                 onActivated: index => frontend.setUiScale(values[index])
                             }
                         }
