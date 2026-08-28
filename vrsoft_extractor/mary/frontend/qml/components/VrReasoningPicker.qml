@@ -10,6 +10,8 @@ Button {
     property var tierModel: []
     property int currentEffortIndex: 0
     property int currentTierIndex: 0
+    property bool popupAbove: true
+    property bool outlined: false
     readonly property var currentEffort: currentEffortIndex >= 0
         && currentEffortIndex < effortModel.length ? effortModel[currentEffortIndex] : ({})
     readonly property var currentTier: currentTierIndex >= 0
@@ -31,7 +33,14 @@ Button {
     rightPadding: 7
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
-    onClicked: optionsPopup.open()
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
+    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         id: compactRow
@@ -40,13 +49,13 @@ Button {
             text: "✦"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 14
+            font.pixelSize: Theme.fontSize(14)
         }
         Text {
             text: control.compactLabel || "Medium"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         VrLineIcon {
             Layout.preferredWidth: 13
@@ -58,10 +67,14 @@ Button {
 
     background: Rectangle {
         radius: 8
-        color: control.down || control.hovered || optionsPopup.opened
+        color: control.down || control.hovered || optionsPopup.opened || control.outlined
             ? frontend.palette.chatControl : "transparent"
-        border.width: control.activeFocus ? 1 : 0
-        border.color: frontend.palette.focus
+        border.width: control.outlined || control.activeFocus ? 1 : 0
+        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {
@@ -69,12 +82,12 @@ Button {
         objectName: "reasoningPickerPopup"
         parent: control
         x: 0
-        y: -height - 7
+        y: control.popupAbove ? -height - 7 : control.height + 7
         width: 220
         height: 38 + control.effortModel.length * 32
             + (control.tierModel.length > 0 ? 34 + control.tierModel.length * 48 : 0)
         padding: 6
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
             color: frontend.palette.chatComposer
@@ -93,7 +106,7 @@ Button {
                 text: "Raciocínio"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -117,7 +130,7 @@ Button {
                             text: modelData.label
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                             font.weight: control.currentEffortIndex === index ? Font.DemiBold : Font.Normal
                         }
                         Rectangle {
@@ -132,7 +145,7 @@ Button {
                                 text: "Padrão"
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 9
+                                font.pixelSize: Theme.fontSize(9)
                             }
                         }
                     }
@@ -163,7 +176,7 @@ Button {
                 text: "Service Tier"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -190,7 +203,7 @@ Button {
                                 text: modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: control.currentTierIndex === index ? Font.DemiBold : Font.Normal
                             }
                             Rectangle {
@@ -205,7 +218,7 @@ Button {
                                     text: "Padrão"
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                         }
@@ -215,7 +228,7 @@ Button {
                             text: modelData.description || ""
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontSize(10)
                             elide: Text.ElideRight
                         }
                     }

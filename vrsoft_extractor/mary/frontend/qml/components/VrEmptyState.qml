@@ -23,7 +23,7 @@ ColumnLayout {
             anchors.centerIn: parent
             text: "—"
             color: frontend.palette.brandOrange
-            font.pixelSize: 22
+            font.pixelSize: Theme.fontSize(22)
         }
     }
     Text {

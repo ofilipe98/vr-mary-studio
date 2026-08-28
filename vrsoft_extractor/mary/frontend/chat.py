@@ -17,11 +17,12 @@ from PySide6.QtCore import (
     Property,
     QSettings,
     QTimer,
+    QUrl,
     Qt,
     Signal,
     Slot,
 )
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
@@ -202,6 +203,7 @@ class ChatBridge(QObject):
     selectionChanged = Signal()
     searchChanged = Signal()
     projectsChanged = Signal()
+    projectFolderChanged = Signal()
     messageCopied = Signal(str)
     stateChanged = Signal()
     approvalRequested = Signal("QVariantMap")
@@ -230,6 +232,8 @@ class ChatBridge(QObject):
         self._projects: list[dict[str, str]] = []
         self._project_scope: Path | None = None
         self._current_project_index = 0
+        self._project_folder = Path.home().resolve(strict=False)
+        self._project_folder_items: list[dict[str, str]] = []
         self._search = ""
         self._selected_index = -1
         self._selected: dict[str, Any] = {}
@@ -263,6 +267,10 @@ class ChatBridge(QObject):
         self._model = str(
             self._preferences.value(f"chat/last_model/{self._provider}", "") or ""
         )
+        if self._provider == "codex" and self._model == "gpt-5.6":
+            self._model = "gpt-5.6-sol"
+            self._preferences.setValue("chat/last_model/codex", self._model)
+            self._preferences.sync()
         self._model_items: list[dict[str, Any]] = []
         self._favorite_model_keys = self._load_favorite_model_keys()
         self._model_catalog_loading = False
@@ -334,6 +342,29 @@ class ChatBridge(QObject):
     @Property(int, notify=projectsChanged)
     def currentProjectIndex(self) -> int:  # noqa: N802
         return self._current_project_index
+
+    @Property(str, notify=projectFolderChanged)
+    def projectFolderPath(self) -> str:  # noqa: N802
+        return str(self._project_folder)
+
+    @Property(str, notify=projectFolderChanged)
+    def projectFolderDisplayPath(self) -> str:  # noqa: N802
+        home = Path.home().resolve(strict=False)
+        try:
+            relative = self._project_folder.relative_to(home)
+        except ValueError:
+            return str(self._project_folder)
+        if not relative.parts:
+            return "~/"
+        return "~/" + relative.as_posix()
+
+    @Property("QVariantList", notify=projectFolderChanged)
+    def projectFolderItems(self) -> list[dict[str, str]]:  # noqa: N802
+        return list(self._project_folder_items)
+
+    @Property(bool, notify=projectFolderChanged)
+    def projectFolderCanGoBack(self) -> bool:  # noqa: N802
+        return self._project_folder.parent != self._project_folder
 
     @Property(int, notify=conversationsChanged)
     def conversationCount(self) -> int:  # noqa: N802
@@ -791,12 +822,13 @@ class ChatBridge(QObject):
         provider = self._provider if self._provider in enabled else enabled[0]
         self._provider = provider
         label = self._model or PROVIDER_LABELS.get(provider, provider.title())
+        provider_label = PROVIDER_LABELS.get(provider, provider.title())
         self._model_items = [{
             "label": label,
             "displayName": label,
             "value": self._model,
             "provider": provider,
-            "providerLabel": PROVIDER_LABELS.get(provider, provider.title()),
+            "providerLabel": provider_label,
             "description": "Última seleção disponível",
             "key": f"{provider}:{self._model or '__default__'}",
         }]
@@ -937,16 +969,39 @@ class ChatBridge(QObject):
             str(self._project_scope or self._settings.root),
             "Arquivos suportados (*.png *.jpg *.jpeg *.webp *.gif *.md *.txt *.json *.csv *.pdf);;Todos os arquivos (*.*)",
         )
-        known = {item["path"] for item in self._attachments}
-        for raw in selected:
-            path = Path(raw).resolve(strict=False)
-            if str(path) in known:
-                continue
-            self._attachments.append({"name": path.name, "path": str(path)})
-            known.add(str(path))
-        if selected:
-            self.stateChanged.emit()
+        self._stage_attachment_paths(selected)
         return self.attachments
+
+    def _stage_attachment_paths(self, values: list[object]) -> int:
+        """Stage existing local files supplied by a picker or QML drop event."""
+
+        known = {item["path"] for item in self._attachments}
+        added = 0
+        for raw in values:
+            if isinstance(raw, QUrl):
+                local_value = raw.toLocalFile() if raw.isLocalFile() else ""
+            else:
+                text = str(raw or "").strip()
+                url = QUrl(text)
+                local_value = url.toLocalFile() if url.isLocalFile() else text
+            if not local_value:
+                continue
+            path = Path(local_value).expanduser().resolve(strict=False)
+            normalized = str(path)
+            if not path.is_file() or normalized in known:
+                continue
+            self._attachments.append({"name": path.name, "path": normalized})
+            known.add(normalized)
+            added += 1
+        if added:
+            self.stateChanged.emit()
+        return added
+
+    @Slot("QVariantList", result=int)
+    def addDroppedAttachments(self, values: list) -> int:  # noqa: N802
+        """Receive local file URLs dropped directly on the QML composer."""
+
+        return self._stage_attachment_paths(list(values or []))
 
     @Slot(int)
     def removeAttachment(self, index: int) -> None:  # noqa: N802
@@ -1006,6 +1061,7 @@ class ChatBridge(QObject):
                         continue
                     relative = str(path.relative_to(root)).replace("\\", "/")
                     entries.append({"relative": relative, "path": str(path)})
+                entries.sort(key=lambda item: item["relative"].casefold())
             except OSError:
                 entries = []
             self._fileSuggestionsReady.emit(generation, root, entries)
@@ -1032,8 +1088,9 @@ class ChatBridge(QObject):
         self._apply_pending_file_suggestions()
 
     def _apply_pending_file_suggestions(self) -> None:
-        if self._file_suggestions_query:
-            self.fileSuggestionsChanged.emit()
+        # Files can be opened with an empty search.  The asynchronous scan must
+        # still notify QML or the initial project listing remains blank.
+        self.fileSuggestionsChanged.emit()
 
     @Slot(str, result=str)
     def readFilePreview(self, value: str) -> str:  # noqa: N802
@@ -1180,11 +1237,18 @@ class ChatBridge(QObject):
         conversations: list[dict[str, Any]] = []
         for row in rows:
             workspace = self._settings.resolve_path(row["workspace"])
-            project_label = (
-                "Projeto temporário"
-                if is_managed_conversation_workspace(self._settings, workspace)
-                else (workspace.name or str(workspace))
-            )
+            if is_managed_conversation_workspace(self._settings, workspace):
+                project_label = "Projeto temporário"
+            else:
+                project_label = next(
+                    (
+                        item["label"]
+                        for item in self._projects
+                        if item["path"]
+                        and Path(item["path"]).resolve(strict=False) == workspace
+                    ),
+                    workspace.name or str(workspace),
+                )
             provider = str(row["provider"] or "codex")
             status = str(row["status"] or "idle")
             provider_label = PROVIDER_LABELS.get(provider, provider.title())
@@ -1234,6 +1298,102 @@ class ChatBridge(QObject):
         if self._draft:
             self.selectionChanged.emit()
         self._apply_filter(selected_id)
+
+    @Slot(int, str, result=bool)
+    def renameProject(self, index: int, name: str) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        label = " ".join(str(name or "").split())
+        if not label:
+            return False
+        target_path = str(Path(self._projects[index]["path"]).resolve(strict=False))
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == Path(
+                target_path
+            ):
+                item["label"] = label
+                break
+        else:
+            values.append({"path": target_path, "label": label})
+        self._store_project_entries(values)
+        self._refresh_projects()
+        self.refresh()
+        return True
+
+    @Slot(int, result=bool)
+    def openProjectFolder(self, index: int) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        path = Path(self._projects[index]["path"]).resolve(strict=False)
+        if not path.is_dir():
+            return False
+        return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
+
+    @Slot(int)
+    def copyProjectPath(self, index: int) -> None:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return
+        path = str(self._projects[index]["path"])
+        QGuiApplication.clipboard().setText(path)
+        self.messageCopied.emit(path)
+
+    @Slot(int, result=str)
+    def chooseProjectIcon(self, index: int) -> str:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return ""
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        selected, _filter = QFileDialog.getOpenFileName(
+            None,
+            "Escolher ícone do projeto",
+            str(project_path),
+            "Imagens (*.png *.jpg *.jpeg *.webp *.bmp *.ico)",
+        )
+        if not selected:
+            return ""
+        icon_path = str(Path(selected).expanduser().resolve(strict=False))
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["icon"] = icon_path
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "icon": icon_path,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return icon_path
+
+    @Slot(int, result=bool)
+    def removeProject(self, index: int) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        target = Path(self._projects[index]["path"]).resolve(strict=False)
+        hidden = self._stored_project_paths("chat/hidden_projects")
+        if target not in hidden:
+            hidden.append(target)
+            self._preferences.setValue(
+                "chat/hidden_projects",
+                json.dumps([str(path) for path in hidden], ensure_ascii=False),
+            )
+        values = [
+            item
+            for item in self._stored_project_entries()
+            if Path(item["path"]).expanduser().resolve(strict=False) != target
+        ]
+        self._store_project_entries(values)
+        self._preferences.setValue("chat/current_project", "")
+        self._preferences.sync()
+        self._refresh_projects()
+        self.refresh()
+        return True
 
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
@@ -1461,7 +1621,7 @@ class ChatBridge(QObject):
             values = []
         self._research_model_keys = [
             str(item) for item in values if str(item or "").strip()
-        ]
+        ][:1]
         trigger = str(self._preferences.value("research/trigger", "auto") or "auto")
         self._research_trigger = (
             "manual" if trigger.strip().casefold() == "manual" else "auto"
@@ -1494,9 +1654,14 @@ class ChatBridge(QObject):
 
     @Slot("QVariantList")
     def setResearchModels(self, keys: list) -> None:  # noqa: N802
-        self._research_model_keys = [
-            str(item) for item in keys if str(item or "").strip()
-        ]
+        selected: list[str] = []
+        for item in keys:
+            key = str(item or "").strip()
+            if key:
+                selected.append(key)
+            if selected:
+                break
+        self._research_model_keys = selected
         self._preferences.setValue(
             "research/model_pool",
             json.dumps(self._research_model_keys),
@@ -1536,16 +1701,69 @@ class ChatBridge(QObject):
         )
         if not selected:
             return ""
-        path = Path(selected).resolve(strict=False)
-        raw = self._preferences.value("chat/projects", "[]")
+        return self._add_project_path(Path(selected))
+
+    @Slot()
+    def beginProjectFolderBrowse(self) -> None:  # noqa: N802
+        self._set_project_folder(Path.home())
+
+    @Slot(str)
+    def browseProjectFolder(self, value: str) -> None:  # noqa: N802
+        raw = str(value or "").strip()
+        if not raw:
+            return
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self._project_folder / candidate
+        self._set_project_folder(candidate)
+
+    @Slot()
+    def browseParentProjectFolder(self) -> None:  # noqa: N802
+        self._set_project_folder(self._project_folder.parent)
+
+    @Slot(result=str)
+    def addCurrentProjectFolder(self) -> str:  # noqa: N802
+        return self._add_project_path(self._project_folder)
+
+    @Slot()
+    def openCurrentProjectFolder(self) -> None:  # noqa: N802
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._project_folder)))
+
+    def _set_project_folder(self, value: Path) -> None:
+        path = value.expanduser().resolve(strict=False)
+        if not path.is_dir():
+            return
+        items: list[dict[str, str]] = []
         try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
+            children = sorted(
+                (child for child in path.iterdir() if child.is_dir()),
+                key=lambda child: child.name.casefold(),
+            )
+        except OSError:
+            children = []
+        for child in children:
+            items.append({"label": child.name, "path": str(child)})
+        self._project_folder = path
+        self._project_folder_items = items
+        self.projectFolderChanged.emit()
+
+    def _add_project_path(self, selected: Path) -> str:
+        path = selected.expanduser().resolve(strict=False)
+        if not path.is_dir():
+            return ""
+        values = self._stored_project_entries()
         stored = [item.get("path", "") if isinstance(item, dict) else item for item in values]
         if str(path) not in stored:
             values.append({"path": str(path)})
-            self._preferences.setValue("chat/projects", json.dumps(values, ensure_ascii=False))
+            self._store_project_entries(values)
+        hidden = self._stored_project_paths("chat/hidden_projects")
+        if path in hidden:
+            self._preferences.setValue(
+                "chat/hidden_projects",
+                json.dumps(
+                    [str(item) for item in hidden if item != path], ensure_ascii=False
+                ),
+            )
             self._preferences.sync()
         self._refresh_projects()
         target = next(
@@ -1554,6 +1772,45 @@ class ChatBridge(QObject):
         )
         self.setProject(target)
         return str(path)
+
+    def _stored_project_entries(self) -> list[dict[str, str]]:
+        raw = self._preferences.value("chat/projects", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        entries: list[dict[str, str]] = []
+        for value in values:
+            if isinstance(value, dict):
+                path = str(value.get("path") or "").strip()
+                label = str(value.get("label") or "").strip()
+                icon = str(value.get("icon") or "").strip()
+            else:
+                path = str(value or "").strip()
+                label = ""
+                icon = ""
+            if path:
+                entries.append({"path": path, "label": label, "icon": icon})
+        return entries
+
+    def _stored_project_paths(self, key: str) -> list[Path]:
+        raw = self._preferences.value(key, "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        paths: list[Path] = []
+        for value in values:
+            candidate = Path(str(value or "")).expanduser().resolve(strict=False)
+            if str(value or "").strip() and candidate not in paths:
+                paths.append(candidate)
+        return paths
+
+    def _store_project_entries(self, values: list[dict[str, str]]) -> None:
+        self._preferences.setValue(
+            "chat/projects", json.dumps(values, ensure_ascii=False)
+        )
+        self._preferences.sync()
 
     @Slot(str)
     def sendMessage(self, text: str) -> None:  # noqa: N802
@@ -2608,14 +2865,25 @@ class ChatBridge(QObject):
             self._preferences.value("chat/current_project", "") or ""
         ).strip()
         candidates: list[Path] = []
+        custom_labels: dict[Path, str] = {}
+        custom_icons: dict[Path, str] = {}
+        hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
 
-        def include(value: object) -> None:
+        def include(value: object, label: object = "", icon: object = "") -> None:
             raw = str(value or "").strip()
             if not raw:
                 return
             candidate = Path(raw).expanduser().resolve(strict=False)
+            if candidate in hidden_paths:
+                return
             if candidate.is_dir() and candidate not in candidates:
                 candidates.append(candidate)
+            custom_label = " ".join(str(label or "").split())
+            if candidate.is_dir() and custom_label:
+                custom_labels[candidate] = custom_label
+            custom_icon = str(icon or "").strip()
+            if candidate.is_dir() and custom_icon:
+                custom_icons[candidate] = custom_icon
 
         include(self._settings.root)
 
@@ -2630,16 +2898,27 @@ class ChatBridge(QObject):
             except (TypeError, ValueError, json.JSONDecodeError):
                 values = []
             for value in values:
-                include(value.get("path", "") if isinstance(value, dict) else value)
+                if isinstance(value, dict):
+                    include(
+                        value.get("path", ""),
+                        value.get("label", "") if key == "chat/projects" else "",
+                        value.get("icon", "") if key == "chat/projects" else "",
+                    )
+                else:
+                    include(value)
 
         for row in self._database.list_conversations(state="all"):
             workspace = self._settings.resolve_path(row["workspace"])
             if not is_managed_conversation_workspace(self._settings, workspace):
                 include(workspace)
 
-        self._projects = [{"label": "Todos os projetos", "path": ""}]
+        self._projects = [{"label": "Todos os projetos", "path": "", "icon": ""}]
         self._projects.extend(
-            {"label": path.name or str(path), "path": str(path)}
+            {
+                "label": custom_labels.get(path) or path.name or str(path),
+                "path": str(path),
+                "icon": custom_icons.get(path, ""),
+            }
             for path in candidates[:32]
         )
         self._current_project_index = next(

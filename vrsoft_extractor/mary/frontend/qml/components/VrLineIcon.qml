@@ -15,6 +15,8 @@ Canvas {
     onStrokeWidthChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
+    onVisibleChanged: requestPaint()
+    Component.onCompleted: requestPaint()
 
     Connections {
         target: frontend
@@ -141,21 +143,45 @@ Canvas {
             ctx.lineTo(10, 17); ctx.closePath(); ctx.stroke()
             line(5, 19, 10, 17)
         } else if (kind === "auto") {
-            line(12, 3.5, 12, 7.5); line(12, 16.5, 12, 20.5)
-            line(3.5, 12, 7.5, 12); line(16.5, 12, 20.5, 12)
-            line(6, 6, 8.5, 8.5); line(15.5, 15.5, 18, 18)
-            line(18, 6, 15.5, 8.5); line(8.5, 15.5, 6, 18)
-        } else if (kind === "settings") {
-            ctx.beginPath(); ctx.arc(12, 12, 3.2, 0, Math.PI * 2); ctx.stroke()
-            for (var tooth = 0; tooth < 8; ++tooth) {
-                var gearAngle = tooth * Math.PI / 4
-                var innerX = 12 + Math.cos(gearAngle) * 6.5
-                var innerY = 12 + Math.sin(gearAngle) * 6.5
-                var outerX = 12 + Math.cos(gearAngle) * 9
-                var outerY = 12 + Math.sin(gearAngle) * 9
-                line(innerX, innerY, outerX, outerY)
+            function sparkle(cx, cy, horizontal, vertical) {
+                ctx.beginPath()
+                ctx.moveTo(cx, cy - vertical)
+                ctx.quadraticCurveTo(cx + horizontal * 0.2, cy - vertical * 0.2,
+                    cx + horizontal, cy)
+                ctx.quadraticCurveTo(cx + horizontal * 0.2, cy + vertical * 0.2,
+                    cx, cy + vertical)
+                ctx.quadraticCurveTo(cx - horizontal * 0.2, cy + vertical * 0.2,
+                    cx - horizontal, cy)
+                ctx.quadraticCurveTo(cx - horizontal * 0.2, cy - vertical * 0.2,
+                    cx, cy - vertical)
+                ctx.closePath()
+                ctx.stroke()
             }
-            ctx.beginPath(); ctx.arc(12, 12, 7, 0, Math.PI * 2); ctx.stroke()
+            sparkle(9.5, 12.5, 5.2, 6.3)
+            sparkle(17.3, 6.1, 2.2, 2.8)
+            sparkle(18.2, 17.7, 1.8, 2.3)
+        } else if (kind === "settings") {
+            var toothStep = Math.PI / 4
+            ctx.beginPath()
+            for (var tooth = 0; tooth < 8; ++tooth) {
+                var center = -Math.PI / 2 + tooth * toothStep
+                var angles = [center - 0.31, center - 0.15, center + 0.15, center + 0.31]
+                var radii = [7.2, 9.2, 9.2, 7.2]
+                for (var edge = 0; edge < angles.length; ++edge) {
+                    var gx = 12 + Math.cos(angles[edge]) * radii[edge]
+                    var gy = 12 + Math.sin(angles[edge]) * radii[edge]
+                    if (tooth === 0 && edge === 0) ctx.moveTo(gx, gy)
+                    else ctx.lineTo(gx, gy)
+                }
+            }
+            ctx.closePath(); ctx.stroke()
+            ctx.beginPath(); ctx.arc(12, 12, 2.8, 0, Math.PI * 2); ctx.stroke()
+        } else if (kind === "trash") {
+            ctx.beginPath(); ctx.moveTo(7, 8); ctx.lineTo(8, 20)
+            ctx.quadraticCurveTo(8.1, 21, 9.2, 21); ctx.lineTo(14.8, 21)
+            ctx.quadraticCurveTo(15.9, 21, 16, 20); ctx.lineTo(17, 8); ctx.stroke()
+            line(5.5, 7, 18.5, 7); line(9.5, 4, 14.5, 4)
+            line(10.5, 10, 10.8, 18); line(13.5, 10, 13.2, 18)
         }
     }
 }

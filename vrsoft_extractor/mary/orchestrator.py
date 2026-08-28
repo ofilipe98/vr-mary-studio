@@ -539,10 +539,11 @@ class ChatOrchestrator:
                         response_intent,
                         evidence_bundle,
                     )
-                    fanout_allowed = force_research or (
-                        resolved_vr_mode == "ultra"
-                        and self._research_trigger == "auto"
-                    )
+                    # The composer mode is authoritative: choosing VR Ultra
+                    # always enables the multi-agent fan-out. The legacy
+                    # trigger preference remains readable for compatibility,
+                    # but cannot silently downgrade the Ultra button to VR.
+                    fanout_allowed = force_research or resolved_vr_mode == "ultra"
                     fanout_modules = (
                         self._fanout_modules(
                             evidence_bundle,

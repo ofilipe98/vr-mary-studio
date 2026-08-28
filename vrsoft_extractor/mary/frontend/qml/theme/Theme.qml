@@ -4,6 +4,25 @@ import QtQuick
 
 QtObject {
     readonly property string fontFamily: Qt.platform.os === "windows" ? "Segoe UI" : "sans-serif"
+    readonly property real baseTextScale: 1.10
+    property real viewportWidth: 1120
+    property real viewportHeight: 700
+    readonly property real automaticScale: automaticScaleForSize(
+        viewportWidth, viewportHeight)
+    readonly property int automaticScalePercent: Math.round(automaticScale * 100)
+    readonly property real selectedScale: frontend.uiScale === "auto"
+        ? automaticScale : frontend.uiScaleFactor
+    readonly property real textScale: baseTextScale * selectedScale
+
+    function automaticScaleForSize(width, height) {
+        var relativeSize = Math.min(Number(width) / 1120, Number(height) / 700)
+        var progress = Math.max(0, Math.min(1, (relativeSize - 1) / 2.08))
+        return 1.045 + 0.105 * progress
+    }
+
+    function fontSize(pixelSize) {
+        return Math.max(1, Math.round(Number(pixelSize) * textScale))
+    }
 
     readonly property int spaceXs: 4
     readonly property int spaceSm: 8
@@ -27,11 +46,17 @@ QtObject {
     readonly property int pageSpacing: 12
     readonly property int iconSize: 18
 
-    readonly property int bodySize: 14
-    readonly property int captionSize: 12
-    readonly property int subtitleSize: 16
-    readonly property int titleSize: 26
-    readonly property int headingSize: 18
+    readonly property int bodySize: fontSize(14)
+    readonly property int captionSize: fontSize(12)
+    readonly property int subtitleSize: fontSize(16)
+    readonly property int titleSize: fontSize(26)
+    readonly property int headingSize: fontSize(18)
 
+    // Motion tokens keep interactions consistent and make it easy to honor
+    // the reduce-motion preference at each animation site.
+    readonly property int pressDuration: 90
     readonly property int fastDuration: 140
+    readonly property int motionDuration: 180
+    readonly property int pageDuration: 220
+    readonly property int motionDistance: 10
 }

@@ -10,6 +10,7 @@ Item {
     property bool conversationSidebarVisible: true
     property bool surfaceVisible: false
     property int surfaceIndex: 0
+    property int displayedSurfaceIndex: 0
     property var openSurfaceTabs: []
     property bool activityExpanded: true
     property bool taskBarExpanded: true
@@ -31,6 +32,43 @@ Item {
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
+    property bool composerDropActive: false
+    property string addProjectView: "sources"
+    property bool projectSettingsVisible: false
+    property int projectSettingsIndex: -1
+    property string projectSettingsName: ""
+    property string projectSettingsPath: ""
+    property string projectSettingsIconPath: ""
+    property real conversationSidebarWidth: conversationSidebarVisible ? 260 : 0
+    property real surfacePanelWidth: surfaceVisible ? 430 : 0
+    readonly property var addProjectSources: [
+        { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
+        { key: "git", title: "Git URL", description: "Clone from a remote URL", icon: "models", enabled: false, badge: "Em breve" },
+        { key: "github", title: "GitHub repository", description: "Clone GitHub owner/repo", icon: "models", enabled: false, badge: "Em breve" },
+        { key: "azure", title: "Azure DevOps repository", description: "Clone Azure DevOps project/repository", icon: "models", enabled: false, badge: "Configurar" },
+        { key: "bitbucket", title: "Bitbucket repository", description: "Clone Bitbucket workspace/repository", icon: "models", enabled: false, badge: "Configurar" },
+        { key: "gitlab", title: "GitLab repository", description: "Clone GitLab group/project", icon: "models", enabled: false, badge: "Configurar" }
+    ]
+
+    Behavior on conversationSidebarWidth {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+    }
+    Behavior on surfacePanelWidth {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+    }
+
+    onSurfaceIndexChanged: {
+        if (frontend.reduceMotion || !root.surfaceVisible) {
+            surfaceSwitch.stop()
+            root.displayedSurfaceIndex = root.surfaceIndex
+            surfaceStack.opacity = 1
+            surfaceShift.x = 0
+        } else {
+            surfaceSwitch.restart()
+        }
+    }
 
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
@@ -51,6 +89,9 @@ Item {
         function onMessageCopied(_content) {
             root.copyFeedbackVisible = true
             copyFeedbackTimer.restart()
+        }
+        function onProjectsChanged() {
+            root.syncOpenProjectSettings()
         }
     }
 
@@ -73,11 +114,23 @@ Item {
         Rectangle {
             id: conversationSidebar
             objectName: "conversationSidebar"
-            visible: root.conversationSidebarVisible
-            SplitView.minimumWidth: root.conversationSidebarVisible ? 220 : 0
-            SplitView.preferredWidth: root.conversationSidebarVisible ? 260 : 0
-            SplitView.maximumWidth: root.conversationSidebarVisible ? 430 : 0
+            visible: root.conversationSidebarWidth > 0.5
+            opacity: root.conversationSidebarVisible ? 1 : 0
+            SplitView.minimumWidth: 0
+            SplitView.preferredWidth: root.conversationSidebarWidth
+            SplitView.maximumWidth: root.conversationSidebarWidth > 0.5 ? 430 : 0
             color: frontend.palette.chatSidebar
+            transform: Translate {
+                x: root.conversationSidebarVisible ? 0 : -Theme.motionDistance
+                Behavior on x {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+            }
             Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: frontend.palette.chatDivider }
 
             ColumnLayout {
@@ -132,6 +185,7 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.text: "Nova conversa"
                         onClicked: {
+                            root.projectSettingsVisible = false
                             conversationSearch.clear()
                             chat.startNewChat()
                             composerInput.clear()
@@ -150,45 +204,34 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 4
-                    Item {
+                    VrProjectSelector {
+                        id: projectSelector
+                        objectName: "projectSelector"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
-
-                        VrComboBox {
-                            id: projectSelector
-                            objectName: "projectSelector"
-                            anchors.fill: parent
-                            leftPadding: 31
-                            model: chat.projectItems
-                            textRole: "label"
-                            currentIndex: chat.currentProjectIndex
-                            onActivated: index => chat.setProject(index)
-                            background: Rectangle {
-                                radius: 7
-                                color: projectSelector.hovered
-                                    ? frontend.palette.hover : "transparent"
-                                border.width: projectSelector.activeFocus ? 1 : 0
-                                border.color: frontend.palette.focus
-                            }
+                        model: chat.projectItems
+                        currentIndex: chat.currentProjectIndex
+                        popupObjectName: "projectSelectorMenu"
+                        onActivated: index => {
+                            root.projectSettingsVisible = false
+                            chat.setProject(index)
                         }
-                        VrLineIcon {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 16
-                            height: 16
-                            kind: "folder"
-                            foreground: frontend.palette.mutedText
-                        }
+                        onSettingsRequested: index => root.openProjectSettings(index)
                     }
                     VrIconButton {
+                        id: addProjectButton
+                        objectName: "addProjectButton"
                         implicitWidth: 34
                         implicitHeight: 34
                         iconKind: "plus"
                         foreground: frontend.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Adicionar projeto"
-                        onClicked: chat.addProject()
+                        onClicked: {
+                            root.addProjectView = "sources"
+                            addProjectSearch.clear()
+                            addProjectPopup.open()
+                        }
                     }
                 }
 
@@ -201,7 +244,7 @@ Item {
                         text: "Conversas"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                     }
                     Rectangle {
                         Layout.fillWidth: true
@@ -260,14 +303,14 @@ Item {
                                     text: conversationItem.projectLabel
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
                                 }
                                 Text {
                                     text: root.relativeAge(conversationItem.updatedAt)
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                             Text {
@@ -275,7 +318,7 @@ Item {
                                 text: conversationItem.title
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                                 font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
@@ -287,7 +330,7 @@ Item {
                                     text: conversationItem.modelName
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
@@ -327,7 +370,7 @@ Item {
                         text: conversationSearch.text ? "Nenhuma conversa encontrada." : "Nenhum chat iniciado."
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                     }
@@ -385,9 +428,9 @@ Item {
                             border.color: frontend.palette.focus
                         }
                     }
-                    Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                    Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                    Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                    Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                    Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold; elide: Text.ElideRight }
                     VrButton {
                         visible: chat.agentItems.length > 0
                         implicitHeight: 30
@@ -537,7 +580,7 @@ Item {
                                 color: frontend.palette.text
                                 horizontalAlignment: Text.AlignLeft
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.fontSize(14)
                                 onLinkActivated: link => {
                                     if (studio) studio.openExternalUrl(link)
                                 }
@@ -583,7 +626,7 @@ Item {
                                         text: modelData.label || ""
                                         color: frontend.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fontSize(12)
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -609,7 +652,7 @@ Item {
                             color: frontend.palette.text
                             horizontalAlignment: Text.AlignLeft
                             font.family: Theme.fontFamily
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fontSize(14)
                             onLinkActivated: link => {
                                 if (studio) studio.openExternalUrl(link)
                             }
@@ -647,7 +690,7 @@ Item {
                     text: "O que vamos construir com a VR?"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 28
+                    font.pixelSize: Theme.fontSize(28)
                     font.weight: Font.Normal
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -656,7 +699,7 @@ Item {
                     text: "Descreva o problema ou treinamento. Ative VR para consultar a base local; desative para conversar diretamente com a LLM."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontSize(13)
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }
@@ -704,7 +747,7 @@ Item {
                         text: "Ir para o fim"
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSize(11)
                     }
                     VrLineIcon {
                         anchors.verticalCenter: parent.verticalCenter
@@ -735,7 +778,27 @@ Item {
                 radius: 24
                 color: frontend.palette.chatComposer
                 border.width: 1
-                border.color: frontend.palette.chatBorder
+                border.color: root.composerDropActive
+                    ? frontend.palette.focus : frontend.palette.chatBorder
+
+                DropArea {
+                    id: composerDropArea
+                    objectName: "chatComposerDropArea"
+                    anchors.fill: parent
+                    z: 100
+                    onEntered: function(drag) {
+                        root.composerDropActive = drag.hasUrls
+                        drag.accepted = drag.hasUrls
+                    }
+                    onExited: root.composerDropActive = false
+                    onDropped: function(drop) {
+                        root.composerDropActive = false
+                        if (drop.hasUrls) {
+                            chat.addDroppedAttachments(drop.urls)
+                            drop.acceptProposedAction()
+                        }
+                    }
+                }
 
                 VrTextArea {
                     id: composerInput
@@ -793,7 +856,7 @@ Item {
                                 elide: Text.ElideMiddle
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                             }
                             VrIconButton {
                                 width: 22
@@ -816,18 +879,6 @@ Item {
                     anchors.rightMargin: 12
                     anchors.bottomMargin: 8
                     spacing: 5
-                    VrIconButton {
-                        objectName: "chatAttachButton"
-                        implicitWidth: 30
-                        implicitHeight: 30
-                        iconKind: "plus"
-                        iconSize: 15
-                        enabled: !chat.turnRunning
-                        foreground: frontend.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Anexar arquivos"
-                        onClicked: chat.chooseAttachments()
-                    }
                     VrModelPicker {
                         id: modelSelector
                         objectName: "chatModelPicker"
@@ -836,8 +887,6 @@ Item {
                         enabled: !chat.turnRunning
                         onActivated: index => chat.setModel(index)
                         onFavoriteToggled: index => chat.toggleModelFavorite(index)
-                        ToolTip.visible: hovered
-                        ToolTip.text: chat.modelCatalogLoading ? "Carregando modelos…" : "Escolher modelo e provedor"
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: frontend.palette.chatBorder }
                     VrReasoningPicker {
@@ -861,6 +910,7 @@ Item {
                     Item { Layout.fillWidth: true }
                     VrButton {
                         id: vrModeButton
+                        objectName: "vrModeButton"
                         implicitWidth: chat.vrMode === "ultra" ? 104 : 58
                         implicitHeight: 32
                         leftPadding: 7; rightPadding: 7
@@ -875,17 +925,10 @@ Item {
                                     : parent.hovered ? frontend.palette.chatControl : "transparent"
                             border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
                             border.color: chat.vrMode === "ultra"
-                                ? "#FFC896"
+                                ? frontend.palette.brandOrange
                                 : parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
                         }
                         onClicked: chat.cycleVrMode()
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: chat.vrMode === "ultra"
-                            ? "VR Ultra: pesquisa multiagente ativa — use /pesquisa para forçar (clique para desligar)"
-                            : chat.vrMode === "vr"
-                                ? "Base local ativa (clique para VR Ultra)"
-                                : "Base local desativada (clique para ativar VR)"
                     }
                     VrContextButton {
                         id: contextUsageButton
@@ -917,70 +960,108 @@ Item {
                 }
             }
 
-            // VR Ultra: arco "rainbow laranja" girando ao redor do composer.
-            QtObject {
-                id: ultraHue
-                property real value: 0.06
-            }
+            // VR Ultra uses only the institutional orange. The restrained
+            // pulse communicates activity without introducing other colors.
             Rectangle {
                 id: ultraGlowOuter
                 visible: chat.vrMode === "ultra"
                 anchors.centerIn: composerCard
-                width: composerCard.width + 26
-                height: composerCard.height + 26
-                radius: 34
+                width: composerCard.width + 16
+                height: composerCard.height + 16
+                radius: 30
                 color: "transparent"
-                border.width: 8
-                border.color: Qt.hsla(0.07, 0.9, 0.6, 0.16)
+                border.width: 5
+                border.color: Qt.rgba(1.0, 0.45, 0.0, 0.18)
+                opacity: 0.78
+                SequentialAnimation on opacity {
+                    running: ultraGlowOuter.visible && !frontend.reduceMotion
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0.55; to: 0.86; duration: 1400; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.86; to: 0.55; duration: 1400; easing.type: Easing.InOutSine }
+                }
             }
             Canvas {
                 id: ultraArc
                 visible: chat.vrMode === "ultra"
                 anchors.centerIn: composerCard
-                width: composerCard.width + 12
-                height: composerCard.height + 12
+                width: composerCard.width + 8
+                height: composerCard.height + 8
                 property real sweep: 0
                 onSweepChanged: requestPaint()
                 onVisibleChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
 
-                function traceRoundRect(ctx, w, h, r) {
+                function traceRoundRect(ctx, inset, radius) {
+                    var left = inset
+                    var top = inset
+                    var right = width - inset
+                    var bottom = height - inset
                     ctx.beginPath()
-                    ctx.moveTo(r, 2)
-                    ctx.lineTo(w - r, 2)
-                    ctx.arc(w - r - 2, r, r - 2, -Math.PI / 2, 0, false)
-                    ctx.lineTo(w - 2, h - r - 2)
-                    ctx.arc(w - r - 2, h - r - 2, r - 2, 0, Math.PI / 2, false)
-                    ctx.lineTo(r + 2, h - 2)
-                    ctx.arc(r + 2, h - r - 2, r - 2, Math.PI / 2, Math.PI, false)
-                    ctx.lineTo(2, r)
-                    ctx.arc(r + 2, r + 2, r - 2, Math.PI, 3 * Math.PI / 2, false)
+                    ctx.moveTo(left + radius, top)
+                    ctx.lineTo(right - radius, top)
+                    ctx.quadraticCurveTo(right, top, right, top + radius)
+                    ctx.lineTo(right, bottom - radius)
+                    ctx.quadraticCurveTo(right, bottom, right - radius, bottom)
+                    ctx.lineTo(left + radius, bottom)
+                    ctx.quadraticCurveTo(left, bottom, left, bottom - radius)
+                    ctx.lineTo(left, top + radius)
+                    ctx.quadraticCurveTo(left, top, left + radius, top)
                     ctx.closePath()
                 }
 
                 onPaint: {
                     var ctx = getContext("2d")
                     ctx.reset()
-                    ctx.lineWidth = 3.5
+                    ctx.lineCap = "round"
+                    ctx.lineWidth = 2.2
+                    ctx.globalAlpha = 0.92
+                    traceRoundRect(ctx, 2, 27)
+                    ctx.strokeStyle = frontend.palette.brandOrange
+                    ctx.setLineDash([])
+                    ctx.stroke()
+
+                    ctx.lineWidth = 3.0
                     ctx.lineCap = "round"
                     var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
-                    traceRoundRect(ctx, width, height, 28)
-                    ctx.strokeStyle = Qt.hsla(ultraHue.value, 0.97, 0.58, 1)
-                    ctx.setLineDash([perimeter * 0.66, perimeter])
+                    traceRoundRect(ctx, 2, 27)
+                    ctx.globalAlpha = 1.0
+                    ctx.strokeStyle = frontend.palette.brandOrange
+                    ctx.setLineDash([perimeter * 0.16, perimeter * 0.06,
+                        perimeter * 0.08, perimeter * 0.70])
                     ctx.lineDashOffset = -sweep * perimeter
-                    ctx.stroke()
-                    traceRoundRect(ctx, width, height, 28)
-                    ctx.strokeStyle = Qt.hsla(0.02, 0.95, 0.5, 0.9)
-                    ctx.setLineDash([perimeter * 0.16, perimeter])
-                    ctx.lineDashOffset = -(sweep + 0.72) * perimeter
                     ctx.stroke()
                     ctx.setLineDash([])
                 }
                 SequentialAnimation on sweep {
                     running: ultraArc.visible && !frontend.reduceMotion
                     loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: 1; duration: 3200 }
+                    NumberAnimation { from: 0; to: 1; duration: 4200; easing.type: Easing.Linear }
+                }
+            }
+
+            VrProjectSettings {
+                id: projectSettingsPage
+                objectName: "projectSettingsPage"
+                anchors.fill: parent
+                z: 50
+                visible: root.projectSettingsVisible
+                projectIndex: root.projectSettingsIndex
+                projectName: root.projectSettingsName
+                projectPath: root.projectSettingsPath
+                projectIconPath: root.projectSettingsIconPath
+                threadCount: chat.conversationCount
+                onCloseRequested: root.projectSettingsVisible = false
+                onSaveRequested: name => {
+                    if (chat.renameProject(root.projectSettingsIndex, name))
+                        root.projectSettingsName = name
+                }
+                onIconRequested: chat.chooseProjectIcon(root.projectSettingsIndex)
+                onOpenFolderRequested: chat.openProjectFolder(root.projectSettingsIndex)
+                onCopyPathRequested: chat.copyProjectPath(root.projectSettingsIndex)
+                onRemoveRequested: {
+                    if (chat.removeProject(root.projectSettingsIndex))
+                        root.projectSettingsVisible = false
                 }
             }
         }
@@ -988,13 +1069,25 @@ Item {
         Rectangle {
             id: surfacePanel
             objectName: "surfacePanel"
-            visible: root.surfaceVisible
-            SplitView.minimumWidth: root.surfaceVisible ? 320 : 0
-            SplitView.preferredWidth: root.surfaceVisible ? 430 : 0
-            SplitView.maximumWidth: root.surfaceVisible ? 720 : 0
+            visible: root.surfacePanelWidth > 0.5
+            opacity: root.surfaceVisible ? 1 : 0
+            SplitView.minimumWidth: 0
+            SplitView.preferredWidth: root.surfacePanelWidth
+            SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
             color: frontend.palette.chatSidebar
             border.width: 1
             border.color: frontend.palette.chatDivider
+            transform: Translate {
+                x: root.surfaceVisible ? 0 : Theme.motionDistance
+                Behavior on x {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+            }
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
@@ -1032,7 +1125,17 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                     padding: 0
                                     hoverEnabled: true
+                                    transformOrigin: Item.Center
+                                    scale: !frontend.reduceMotion && down ? 0.97 : 1
                                     onClicked: root.surfaceIndex = modelData.page
+
+                                    Behavior on scale {
+                                        enabled: !frontend.reduceMotion
+                                        NumberAnimation {
+                                            duration: Theme.pressDuration
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
 
                                     contentItem: RowLayout {
                                         id: tabContent
@@ -1048,7 +1151,7 @@ Item {
                                             text: surfaceTab.modelData.title
                                             color: frontend.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fontSize(11)
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
@@ -1077,6 +1180,11 @@ Item {
                                             anchors.bottom: parent.bottom
                                             height: 2
                                             color: frontend.palette.brandOrange
+                                        }
+
+                                        Behavior on color {
+                                            enabled: !frontend.reduceMotion
+                                            ColorAnimation { duration: Theme.fastDuration }
                                         }
                                     }
                                 }
@@ -1160,13 +1268,13 @@ Item {
                                         text: modelData.title
                                         color: frontend.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fontSize(12)
                                     }
                                     Text {
                                         text: modelData.title.charAt(0)
                                         color: frontend.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: 10
+                                        font.pixelSize: Theme.fontSize(10)
                                     }
                                 }
                                 HoverHandler { id: surfaceChoiceHover }
@@ -1188,9 +1296,45 @@ Item {
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: frontend.palette.chatDivider }
                 StackLayout {
+                    id: surfaceStack
+                    objectName: "surfaceContentStack"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: root.surfaceIndex
+                    currentIndex: root.displayedSurfaceIndex
+                    transform: Translate { id: surfaceShift; x: 0 }
+
+                    SequentialAnimation {
+                        id: surfaceSwitch
+                        NumberAnimation {
+                            target: surfaceStack
+                            property: "opacity"
+                            to: 0
+                            duration: Math.round(Theme.fastDuration / 2)
+                            easing.type: Easing.InQuad
+                        }
+                        ScriptAction { script: root.displayedSurfaceIndex = root.surfaceIndex }
+                        PropertyAction {
+                            target: surfaceShift
+                            property: "x"
+                            value: Theme.motionDistance
+                        }
+                        ParallelAnimation {
+                            NumberAnimation {
+                                target: surfaceStack
+                                property: "opacity"
+                                to: 1
+                                duration: Theme.motionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: surfaceShift
+                                property: "x"
+                                to: 0
+                                duration: Theme.motionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
                     Item {
                         ScrollView {
                             id: surfaceChooser
@@ -1207,7 +1351,7 @@ Item {
                                     text: "Abrir uma superfície"
                                     color: frontend.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 15
+                                    font.pixelSize: Theme.fontSize(15)
                                     font.weight: Font.DemiBold
                                     horizontalAlignment: Text.AlignHCenter
                                 }
@@ -1216,7 +1360,7 @@ Item {
                                     text: "Escolha o que exibir no painel direito."
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSize(11)
                                     horizontalAlignment: Text.AlignHCenter
                                 }
                                 GridLayout {
@@ -1300,7 +1444,7 @@ Item {
                                         + frontend.projectPath + ">"
                                     color: frontend.palette.text
                                     font.family: "Cascadia Mono"
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fontSize(12)
                                 }
                                 TextField {
                                     id: terminalCommandInput
@@ -1311,7 +1455,7 @@ Item {
                                     selectionColor: frontend.palette.focus
                                     selectedTextColor: frontend.palette.text
                                     font.family: "Cascadia Mono"
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fontSize(12)
                                     leftPadding: 0
                                     rightPadding: 0
                                     placeholderText: ""
@@ -1347,7 +1491,7 @@ Item {
                                     color: frontend.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                             }
                         }
                     }
@@ -1384,7 +1528,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
-                            Text { Layout.fillWidth: true; text: root.surfaceFilePath; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideMiddle }
+                            Text { Layout.fillWidth: true; text: root.surfaceFilePath; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideMiddle }
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: studio.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
@@ -1405,7 +1549,7 @@ Item {
                                     color: frontend.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSize(11)
                             }
                         }
                     }
@@ -1437,8 +1581,8 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     spacing: 3
-                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: modelData.excerpt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: modelData.excerpt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
                                 TapHandler { onTapped: root.insertReference(modelData.reference) }
@@ -1455,7 +1599,7 @@ Item {
                                 : ""
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSize(11)
                             wrapMode: Text.WordWrap
                         }
                         ListView {
@@ -1488,13 +1632,13 @@ Item {
                                             : modelData.status === "falhou" ? frontend.palette.danger
                                             : modelData.status === "executando" ? frontend.palette.brandOrange
                                             : frontend.palette.mutedText
-                                        font.pixelSize: 14
+                                        font.pixelSize: Theme.fontSize(14)
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
-                                        Text { Layout.fillWidth: true; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                                     }
                                 }
                                 HoverHandler { id: agentHover }
@@ -1516,7 +1660,7 @@ Item {
                                 color: frontend.palette.text
                                 background: Item { }
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                             }
                         }
                     }
@@ -1574,8 +1718,8 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: 9
                     anchors.rightMargin: 9
-                    Text { Layout.preferredWidth: 140; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight }
-                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; elide: Text.ElideRight }
+                    Text { Layout.preferredWidth: 140; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                 }
                 HoverHandler { id: assistHover }
                 TapHandler { onTapped: root.chooseComposerSuggestion(modelData) }
@@ -1669,7 +1813,7 @@ Item {
                 text: "Projetos"
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontSize(10)
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignLeft
             }
@@ -1716,7 +1860,7 @@ Item {
                                 text: newProjectItem.modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
                                 horizontalAlignment: Text.AlignLeft
                                 elide: Text.ElideRight
@@ -1728,7 +1872,7 @@ Item {
                                     : "Espaço gerenciado VR"
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                                 horizontalAlignment: Text.AlignLeft
                                 elide: Text.ElideMiddle
                             }
@@ -1737,7 +1881,7 @@ Item {
                             text: newProjectItem.modelData.shortcut
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontSize(10)
                         }
                     }
                     HoverHandler {
@@ -1755,7 +1899,7 @@ Item {
                     text: "Nenhum projeto encontrado"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                 }
             }
 
@@ -1770,11 +1914,11 @@ Item {
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
                     spacing: 10
-                    Text { text: "↑ ↓  Navegar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
-                    Text { text: "Enter  Selecionar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
-                    Text { text: "Backspace  Voltar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "↑ ↓  Navegar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Enter  Selecionar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Backspace  Voltar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                     Item { Layout.fillWidth: true }
-                    Text { text: "Esc  Fechar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
+                    Text { text: "Esc  Fechar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
             }
         }
@@ -1783,6 +1927,188 @@ Item {
             color: frontend.palette.chatSidebar
             border.width: 1
             border.color: frontend.palette.chatBorder
+        }
+    }
+
+    Popup {
+        id: addProjectPopup
+        objectName: "addProjectPopup"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(570, parent.width - 48)
+        height: Math.min(430, parent.height - 70)
+        padding: 0
+        modal: true
+        dim: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: Qt.callLater(function() {
+            if (root.addProjectView === "sources") addProjectSearch.forceActiveFocus()
+        })
+
+        contentItem: StackLayout {
+            currentIndex: root.addProjectView === "folder" ? 1 : 0
+
+            ColumnLayout {
+                spacing: 0
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 50
+                Layout.leftMargin: 8
+                Layout.rightMargin: 10
+                spacing: 4
+                VrIconButton {
+                    implicitWidth: 34
+                    implicitHeight: 34
+                    iconKind: "back"
+                    foreground: frontend.palette.mutedText
+                    onClicked: addProjectPopup.close()
+                }
+                VrTextField {
+                    id: addProjectSearch
+                    objectName: "addProjectSearch"
+                    Layout.fillWidth: true
+                    implicitHeight: 36
+                    placeholderText: "Search..."
+                    background: Item { }
+                    Keys.onEscapePressed: addProjectPopup.close()
+                }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
+            Text {
+                Layout.fillWidth: true
+                Layout.leftMargin: 18
+                Layout.rightMargin: 18
+                Layout.topMargin: 14
+                Layout.bottomMargin: 6
+                text: "Sources"
+                color: frontend.palette.mutedText
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSize(11)
+                font.weight: Font.DemiBold
+            }
+            ListView {
+                id: addProjectList
+                objectName: "addProjectSourceList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: 10
+                Layout.rightMargin: 10
+                clip: true
+                spacing: 2
+                model: root.filteredAddProjectSources(addProjectSearch.text)
+                delegate: Rectangle {
+                    id: sourceRow
+                    required property int index
+                    required property var modelData
+                    width: addProjectList.width
+                    height: 48
+                    radius: 7
+                    color: sourceHover.hovered && modelData.enabled
+                        ? frontend.palette.chatControl : "transparent"
+                    opacity: modelData.enabled ? 1.0 : 0.72
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 9
+                        anchors.rightMargin: 9
+                        spacing: 9
+                        VrLineIcon {
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            kind: modelData.icon
+                            foreground: modelData.enabled
+                                ? frontend.palette.text : frontend.palette.mutedText
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.title
+                                color: frontend.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(13)
+                                font.weight: modelData.key === "local" ? Font.DemiBold : Font.Normal
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.description
+                                color: frontend.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(10)
+                                elide: Text.ElideRight
+                            }
+                        }
+                        Rectangle {
+                            visible: modelData.badge.length > 0
+                            Layout.preferredWidth: badgeText.implicitWidth + 14
+                            Layout.preferredHeight: 24
+                            radius: 5
+                            color: frontend.palette.chatComposer
+                            border.width: 1
+                            border.color: frontend.palette.chatBorder
+                            Text {
+                                id: badgeText
+                                anchors.centerIn: parent
+                                text: modelData.badge
+                                color: frontend.palette.warning
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(9)
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                    HoverHandler { id: sourceHover }
+                    TapHandler {
+                        enabled: sourceRow.modelData.enabled
+                        onTapped: {
+                            if (sourceRow.modelData.key === "local") {
+                                root.openLocalFolderBrowser()
+                            }
+                        }
+                    }
+                }
+                Text {
+                    anchors.centerIn: parent
+                    visible: addProjectList.count === 0
+                    text: "Nenhuma fonte encontrada"
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12)
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
+                color: frontend.palette.chatComposer
+                border.width: 1
+                border.color: frontend.palette.chatDivider
+                Text {
+                    anchors.centerIn: parent
+                    text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(10)
+                }
+            }
+            }
+
+            VrProjectFolderBrowser {
+                objectName: "addProjectFolderBrowser"
+                onBackRequested: {
+                    root.addProjectView = "sources"
+                    Qt.callLater(function() { addProjectSearch.forceActiveFocus() })
+                }
+                onCloseRequested: addProjectPopup.close()
+                onProjectAdded: addProjectPopup.close()
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.chatBackground
+            border.width: 1
+            border.color: frontend.palette.chatBorder
+            radius: 18
         }
     }
 
@@ -1813,7 +2139,7 @@ Item {
                     text: "Arquivar conversa"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.DemiBold
                 }
             }
@@ -1846,7 +2172,7 @@ Item {
             spacing: 8
             RowLayout {
                 Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                 VrButton { text: chat.extensionsLoading ? "Carregando…" : "Atualizar"; enabled: !chat.extensionsLoading; onClicked: chat.refreshExtensions() }
             }
             Rectangle {
@@ -1943,6 +2269,11 @@ Item {
             nextTabs.push(root.surfaceForPage(page))
         root.openSurfaceTabs = nextTabs
         root.surfaceIndex = page
+        if (page === 3) {
+            root.surfaceFilePath = ""
+            root.surfaceFilePreview = ""
+            root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
+        }
         if (page === 5 && root.selectedAgentIndex < 0 && chat.agentItems.length)
             root.selectedAgentIndex = 0
     }
@@ -1994,11 +2325,80 @@ Item {
         return result
     }
 
+    function filteredAddProjectSources(query) {
+        var needle = String(query || "").trim().toLowerCase()
+        if (!needle.length) return root.addProjectSources
+        return root.addProjectSources.filter(function(item) {
+            return item.title.toLowerCase().indexOf(needle) >= 0
+                || item.description.toLowerCase().indexOf(needle) >= 0
+        })
+    }
+
     function chooseNewChatProject(item) {
         if (!item || item.sourceIndex === undefined) return
         chat.setProject(Number(item.sourceIndex))
         newChatProjectPopup.close()
         composerInput.forceActiveFocus()
+    }
+
+    function openProjectSelectorMenu() {
+        projectSelector.openSelectorMenu()
+    }
+
+    function clickProjectSettingsButton(index) {
+        return projectSelector.clickSettingsButton(index)
+    }
+
+    function openProjectSettings(index) {
+        var source = chat.projectItems || []
+        if (index <= 0 || index >= source.length) return
+        chat.setProject(index)
+        source = chat.projectItems || []
+        var item = source[index]
+        if (!item || !String(item.path || "").length) return
+        root.surfaceVisible = false
+        root.projectSettingsIndex = index
+        root.projectSettingsPath = String(item.path || "")
+        root.projectSettingsName = String(item.label || "")
+        root.projectSettingsIconPath = String(item.icon || "")
+        root.projectSettingsVisible = true
+        Qt.callLater(function() {
+            projectSettingsPage.forceActiveFocus()
+            projectSettingsPage.resetView()
+        })
+    }
+
+    function syncOpenProjectSettings() {
+        if (!root.projectSettingsVisible || !root.projectSettingsPath.length) return
+        var source = chat.projectItems || []
+        for (var index = 1; index < source.length; ++index) {
+            if (String(source[index].path || "") !== root.projectSettingsPath) continue
+            root.projectSettingsIndex = index
+            root.projectSettingsName = String(source[index].label || "")
+            root.projectSettingsIconPath = String(source[index].icon || "")
+            return
+        }
+        root.projectSettingsVisible = false
+    }
+
+    function projectSettingsOriginalName() {
+        var source = chat.projectItems || []
+        if (root.projectSettingsIndex <= 0 || root.projectSettingsIndex >= source.length)
+            return ""
+        return String(source[root.projectSettingsIndex].label || "")
+    }
+
+    function currentModelLabel() {
+        var models = chat.modelItems || []
+        var modelIndex = Number(chat.modelIndex)
+        var modelLabel = modelIndex >= 0 && modelIndex < models.length
+            ? String(models[modelIndex].label || models[modelIndex].value || "Modelo atual")
+            : "Modelo atual"
+        var efforts = chat.effortItems || []
+        var effortIndex = Number(chat.effortIndex)
+        var effortLabel = effortIndex >= 0 && effortIndex < efforts.length
+            ? String(efforts[effortIndex].label || "") : ""
+        return effortLabel.length ? modelLabel + " · " + effortLabel : modelLabel
     }
 
     function relativeAge(value) {
@@ -2011,6 +2411,11 @@ Item {
         if (hours < 24) return hours + "h"
         var days = Math.floor(hours / 24)
         return days < 30 ? days + "d" : Math.floor(days / 30) + "mo"
+    }
+
+    function openLocalFolderBrowser() {
+        chat.beginProjectFolderBrowse()
+        root.addProjectView = "folder"
     }
 
     function submitMessage() {

@@ -26,7 +26,7 @@ Rectangle {
             : kind === "warning" ? frontend.palette.warning
             : frontend.palette.text
         font.family: Theme.fontFamily
-        font.pixelSize: 11
+        font.pixelSize: Theme.fontSize(11)
         font.weight: Font.DemiBold
     }
 }

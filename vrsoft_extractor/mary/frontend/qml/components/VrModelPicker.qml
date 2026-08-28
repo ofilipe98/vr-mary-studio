@@ -13,6 +13,8 @@ Button {
     property var model: []
     property int currentIndex: 0
     property string providerFilter: "all"
+    property bool popupAbove: true
+    property bool outlined: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
@@ -24,7 +26,14 @@ Button {
     rightPadding: 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
-    onClicked: pickerPopup.open()
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
+    onClicked: pickerPopup.opened ? pickerPopup.close() : pickerPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         spacing: 7
@@ -38,7 +47,7 @@ Button {
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             elide: Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
@@ -52,10 +61,14 @@ Button {
 
     background: Rectangle {
         radius: 8
-        color: control.down || control.hovered || pickerPopup.opened
+        color: control.down || control.hovered || pickerPopup.opened || control.outlined
             ? frontend.palette.chatControl : "transparent"
-        border.width: control.activeFocus || pickerPopup.opened ? 1 : 0
+        border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
         border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {
@@ -63,13 +76,15 @@ Button {
         objectName: "modelPickerPopup"
         parent: control
         x: 0
-        y: -height - 8
-        width: 450
-        height: 430
+        y: control.popupAbove ? -height - 8 : control.height + 8
+        width: 420
+        height: 400
         padding: 0
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {
             searchField.clear()
+            control.providerFilter = "all"
+            modelList.positionViewAtIndex(control.currentIndex, ListView.Center)
             searchField.forceActiveFocus()
         }
 
@@ -77,7 +92,7 @@ Button {
             color: frontend.palette.chatComposer
             border.width: 1
             border.color: frontend.palette.chatBorder
-            radius: 14
+            radius: 12
         }
 
         contentItem: RowLayout {
@@ -85,7 +100,7 @@ Button {
 
             Rectangle {
                 Layout.fillHeight: true
-                Layout.preferredWidth: 58
+                Layout.preferredWidth: 48
                 color: frontend.palette.chatSidebar
                 radius: 14
                 Rectangle {
@@ -99,7 +114,7 @@ Button {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.topMargin: 10
+                    anchors.topMargin: 8
                     spacing: 4
                     Repeater {
                         model: [
@@ -111,12 +126,11 @@ Button {
                         ]
                         delegate: Button {
                             required property var modelData
-                            width: 58
-                            height: 46
+                            width: 48
+                            height: 42
                             padding: 0
                             hoverEnabled: true
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.label
+                            Accessible.name: modelData.label
                             onClicked: {
                                 control.providerFilter = modelData.key
                                 modelList.positionViewAtBeginning()
@@ -125,15 +139,15 @@ Button {
                                 VrProviderIcon {
                                     visible: modelData.key === "codex" || modelData.key === "claude" || modelData.key === "opencode"
                                     anchors.centerIn: parent
-                                    width: 21
-                                    height: 21
+                                    width: 19
+                                    height: 19
                                     provider: modelData.key
                                 }
                                 VrLineIcon {
                                     visible: modelData.kind.length > 0
                                     anchors.centerIn: parent
-                                    width: 20
-                                    height: 20
+                                    width: 18
+                                    height: 18
                                     kind: modelData.kind
                                     foreground: modelData.key === "favorites" && control.providerFilter === "favorites"
                                         ? frontend.palette.brandOrange : frontend.palette.text
@@ -148,7 +162,7 @@ Button {
                                     anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
                                     width: 3
-                                    height: 28
+                                    height: 26
                                     radius: 2
                                     color: frontend.palette.brandOrange
                                 }
@@ -180,13 +194,14 @@ Button {
                         }
                         TextField {
                             id: searchField
+                            objectName: "modelPickerSearch"
                             Layout.fillWidth: true
                             placeholderText: "Pesquisar modelos..."
                             color: frontend.palette.text
                             placeholderTextColor: frontend.palette.mutedText
                             selectionColor: frontend.palette.selection
                             font.family: Theme.fontFamily
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontSize(13)
                             background: Item { }
                             onTextChanged: modelList.positionViewAtBeginning()
                         }
@@ -204,9 +219,10 @@ Button {
 
                 ListView {
                     id: modelList
+                    objectName: "modelPickerList"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.margins: 10
+                    Layout.margins: 8
                     clip: true
                     spacing: 3
                     model: control.model
@@ -218,18 +234,18 @@ Button {
                         required property var modelData
                         readonly property bool matches: control.matches(modelData)
                         width: modelList.width
-                        height: matches ? 64 : 0
+                        height: matches ? 56 : 0
                         visible: matches
                         radius: 10
                         color: control.currentIndex === index
-                            ? frontend.palette.selection
+                            ? Qt.rgba(1.0, 0.45, 0.0, 0.14)
                             : modelHover.hovered ? frontend.palette.chatControl : "transparent"
                         Rectangle {
                             visible: control.currentIndex === modelRow.index
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             width: 3
-                            height: 38
+                            height: 34
                             radius: 2
                             color: frontend.palette.brandOrange
                         }
@@ -240,8 +256,8 @@ Button {
                             anchors.rightMargin: 7
                             spacing: 9
                             VrProviderIcon {
-                                Layout.preferredWidth: 25
-                                Layout.preferredHeight: 25
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
                                 provider: modelData.provider || "codex"
                             }
                             ColumnLayout {
@@ -252,7 +268,7 @@ Button {
                                     text: modelData.displayName || modelData.label
                                     color: frontend.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.fontSize(13)
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -261,14 +277,14 @@ Button {
                                     text: modelData.providerLabel || modelData.provider || ""
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSize(11)
                                     elide: Text.ElideRight
                                 }
                             }
                             Rectangle {
                                 visible: modelRow.index < 4
                                 Layout.preferredWidth: 42
-                                Layout.preferredHeight: 26
+                                Layout.preferredHeight: 22
                                 radius: 6
                                 color: frontend.palette.chatControl
                                 Text {
@@ -276,7 +292,7 @@ Button {
                                     text: "Ctrl+" + (modelRow.index + 1)
                                     color: frontend.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: 9
+                                    font.pixelSize: Theme.fontSize(9)
                                 }
                             }
                             VrIconButton {
@@ -285,8 +301,8 @@ Button {
                                 symbol: modelData.favorite ? "★" : "☆"
                                 foreground: modelData.favorite
                                     ? frontend.palette.brandOrange : frontend.palette.mutedText
-                                ToolTip.visible: hovered
-                                ToolTip.text: modelData.favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"
+                                Accessible.name: modelData.favorite
+                                    ? "Remover dos favoritos" : "Adicionar aos favoritos"
                                 onClicked: control.favoriteToggled(modelRow.index)
                             }
                         }
@@ -306,7 +322,7 @@ Button {
                             ? "Nenhum modelo favorito" : "Nenhum modelo encontrado"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontSize(12)
                     }
                 }
             }

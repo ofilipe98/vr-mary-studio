@@ -34,7 +34,7 @@ Item {
                     wrapMode: TextArea.Wrap
                     background: Item { }
                     font.family: Theme.fontFamily
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontSize(13)
                 }
             }
         }

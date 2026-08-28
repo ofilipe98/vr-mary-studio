@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QTimer, QUrl, Qt
+from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem, QQuickWindow  # noqa: F401 - registers QML converters
@@ -17,7 +17,7 @@ from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import load_vr_settings
 from ..workspace import initialize_workspace
-from .bridge import FrontendBridge, normalized_ui_scale
+from .bridge import FrontendBridge
 from .chat import ChatBridge
 from .studio import StudioBridge
 
@@ -27,17 +27,13 @@ MAIN_QML = QML_DIR / "Main.qml"
 
 
 def apply_ui_scale_environment(preferences: QSettings) -> None:
-    """Apply the saved interface scale before the QGuiApplication exists.
+    """Keep legacy startup calls while QML applies text scale live.
 
-    QHD and 4K monitors often run at 100% system scaling, where the default
-    density feels small. The preference multiplies the whole render through
-    QT_SCALE_FACTOR and must be set before Qt reads the environment.
+    QT_SCALE_FACTOR enlarged the complete window geometry and made the Studio
+    disproportionate to T3 Code. The saved preference is now consumed by the
+    Theme singleton, so changing it updates typography without a restart.
     """
-    scale = normalized_ui_scale(str(preferences.value("appearance/ui_scale", "") or ""))
-    if scale == "100":
-        return
-    if "QT_SCALE_FACTOR" not in os.environ:
-        os.environ["QT_SCALE_FACTOR"] = f"{int(scale) / 100:.2f}"
+    del preferences
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,6 +47,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-width", type=int, default=1480)
     parser.add_argument("--screenshot-height", type=int, default=900)
     parser.add_argument("--screenshot-scale", default="")
+    parser.add_argument("--screenshot-settings-tab", type=int, default=-1)
+    parser.add_argument(
+        "--screenshot-popup",
+        choices=(
+            "",
+            "add-project",
+            "project-folder",
+            "project-selector",
+            "project-settings",
+            "model",
+            "permission",
+            "ultra-model",
+        ),
+        default="",
+    )
+    parser.add_argument(
+        "--screenshot-vr-mode",
+        choices=("", "off", "vr", "ultra"),
+        default="",
+    )
     return parser
 
 
@@ -136,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     database = initialize_workspace(settings)
     chat_bridge = ChatBridge(settings, database, preferences)
+    if args.screenshot_vr_mode:
+        # Visual-test override only; do not persist or mutate a conversation.
+        chat_bridge._vr_mode = args.screenshot_vr_mode
     studio_bridge = StudioBridge(
         settings,
         database,
@@ -170,6 +189,57 @@ def main(argv: list[str] | None = None) -> int:
         window.setProperty("width", max(1120, args.screenshot_width))
         window.setProperty("height", max(700, args.screenshot_height))
 
+        popup_targets = {
+            "add-project": "addProjectButton",
+            "model": "chatModelPicker",
+            "permission": "chatPermissionPicker",
+            "ultra-model": "vrUltraAgentModelPicker",
+        }
+
+        def open_capture_popup() -> None:
+            if args.screenshot_settings_tab >= 0:
+                settings_page = window.findChild(QObject, "settingsPage")
+                if settings_page is not None:
+                    settings_page.setProperty("tabIndex", args.screenshot_settings_tab)
+            if args.screenshot_popup == "project-folder":
+                add_button = window.findChild(QObject, "addProjectButton")
+                chat_page = window.findChild(QObject, "chatPage")
+                if add_button is not None and hasattr(add_button, "click"):
+                    add_button.click()
+                if chat_page is not None and hasattr(chat_page, "openLocalFolderBrowser"):
+                    chat_page.openLocalFolderBrowser()
+                return
+            if args.screenshot_popup == "project-selector":
+                chat_page = window.findChild(QObject, "chatPage")
+                if chat_page is not None and hasattr(
+                    chat_page, "openProjectSelectorMenu"
+                ):
+                    chat_page.openProjectSelectorMenu()
+                return
+            if args.screenshot_popup == "project-settings":
+                chat_page = window.findChild(QObject, "chatPage")
+                project_index = next(
+                    (
+                        index
+                        for index, item in enumerate(chat_bridge.projectItems)
+                        if item.get("path")
+                    ),
+                    -1,
+                )
+                if (
+                    chat_page is not None
+                    and project_index > 0
+                    and hasattr(chat_page, "openProjectSettings")
+                ):
+                    chat_page.openProjectSettings(project_index)
+                return
+            object_name = popup_targets.get(args.screenshot_popup, "")
+            if not object_name:
+                return
+            target = window.findChild(QObject, object_name)
+            if target is not None and hasattr(target, "click"):
+                target.click()
+
         def save_capture() -> None:
             target = Path(args.screenshot).resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +253,8 @@ def main(argv: list[str] | None = None) -> int:
                 return
             app.quit()
 
-        QTimer.singleShot(1000, save_capture)
+        QTimer.singleShot(650, open_capture_popup)
+        QTimer.singleShot(1300, save_capture)
     elif args.smoke_test:
         QTimer.singleShot(600, app.quit)
 

@@ -41,7 +41,7 @@ Item {
                 text: "VR NORTE"
                 color: root.primaryColor
                 font.family: Theme.fontFamily
-                font.pixelSize: 16
+                font.pixelSize: Theme.fontSize(16)
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.05
             }
@@ -49,7 +49,7 @@ Item {
                 text: "STUDIO"
                 color: frontend.palette.brandYellow
                 font.family: Theme.fontFamily
-                font.pixelSize: 9
+                font.pixelSize: Theme.fontSize(9)
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.7
             }

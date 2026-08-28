@@ -27,7 +27,14 @@ Button {
     rightPadding: 7
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
-    onClicked: optionsPopup.open()
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
+    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         id: compactRow
@@ -42,7 +49,7 @@ Button {
             text: control.currentItem.label || "Auto"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         VrLineIcon {
             Layout.preferredWidth: 13
@@ -58,6 +65,10 @@ Button {
             ? frontend.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: frontend.palette.focus
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {
@@ -69,7 +80,7 @@ Button {
         width: 372
         height: 250
         padding: 5
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
             color: frontend.palette.chatComposer
@@ -116,7 +127,7 @@ Button {
                                 text: modelData.label
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
                             }
                             Text {
@@ -124,7 +135,7 @@ Button {
                                 text: modelData.description || ""
                                 color: frontend.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSize(10)
                                 wrapMode: Text.WordWrap
                             }
                         }

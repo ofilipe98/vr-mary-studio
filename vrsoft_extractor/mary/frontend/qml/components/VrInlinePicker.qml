@@ -22,7 +22,14 @@ Button {
     rightPadding: 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
-    onClicked: optionsPopup.open()
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.97 : 1
+    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: RowLayout {
         id: row
@@ -39,19 +46,19 @@ Button {
             text: control.symbol
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: Theme.fontSize(15)
         }
         Text {
             text: control.currentItem[control.textRole] || "Selecionar"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
         Text {
             text: "⌄"
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
         }
     }
 
@@ -61,6 +68,10 @@ Button {
             ? frontend.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: frontend.palette.focus
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Popup {
@@ -71,7 +82,7 @@ Button {
         width: Math.max(control.popupWidth, control.width)
         implicitHeight: Math.min(optionsList.contentHeight + 12, 330)
         padding: 6
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         background: Rectangle {
             color: frontend.palette.chatComposer
             border.width: 1
@@ -102,14 +113,14 @@ Button {
                         text: modelData[control.textRole] || modelData
                         color: frontend.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                     }
                     Text {
                         visible: control.currentIndex === index
                         text: "✓"
                         color: frontend.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontSize(13)
                     }
                 }
                 HoverHandler { id: optionHover }

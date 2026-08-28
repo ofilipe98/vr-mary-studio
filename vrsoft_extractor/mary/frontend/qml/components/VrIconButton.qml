@@ -16,6 +16,13 @@ Button {
     implicitHeight: Theme.controlHeight
     padding: 0
     focusPolicy: Qt.StrongFocus
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down && control.enabled ? 0.91 : 1
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: Item {
         Image {
@@ -40,7 +47,7 @@ Button {
             text: control.symbol
             color: control.foreground
             font.family: Theme.fontFamily
-            font.pixelSize: 17
+            font.pixelSize: Theme.fontSize(17)
             font.weight: Font.DemiBold
         }
     }
@@ -50,5 +57,10 @@ Button {
         color: control.down || control.hovered ? frontend.palette.hover : "transparent"
         border.width: control.activeFocus ? 2 : 0
         border.color: frontend.palette.focus
+
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 }

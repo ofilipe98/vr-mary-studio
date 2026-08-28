@@ -46,7 +46,7 @@ Item {
                     text: studio.knowledgeTotal + (studio.knowledgeTotal === 1 ? " documento encontrado" : " documentos encontrados")
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                 }
                 VrButton { text: "Pesquisar"; variant: "primary"; onClicked: runSearch() }
             }
@@ -64,11 +64,11 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 8
                 spacing: 8
-                Text { text: "Módulo:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+                Text { text: "Módulo:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
                 VrComboBox { id: moduleFilter; Layout.fillWidth: true; model: studio.moduleItems }
-                Text { text: "Fonte:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+                Text { text: "Fonte:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
                 VrComboBox { id: sourceFilter; Layout.fillWidth: true; model: studio.sourceItems }
-                Text { text: "Origem:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+                Text { text: "Origem:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
                 VrComboBox { id: originFilter; Layout.fillWidth: true; model: ["Todas", "vrwiki", "endoo", "movidesk"] }
                 VrButton {
                     text: "Limpar"
@@ -117,10 +117,10 @@ Item {
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
-                            Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: "Título"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 130; text: "Módulo"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 62; text: "Fonte"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 74; text: "Status"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
+                            Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: "Título"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { Layout.preferredWidth: 130; text: "Módulo"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { Layout.preferredWidth: 62; text: "Fonte"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { Layout.preferredWidth: 74; text: "Status"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
                         }
                     }
                     ListView {
@@ -146,10 +146,10 @@ Item {
                                 anchors.leftMargin: 4
                                 anchors.rightMargin: 4
                                 spacing: 4
-                                Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 130; text: module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 62; text: source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 74; text: status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
+                                Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { Layout.preferredWidth: 130; text: module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { Layout.preferredWidth: 62; text: source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { Layout.preferredWidth: 74; text: status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
                             }
                             TapHandler { onTapped: { knowledgeList.currentIndex = index; studio.selectKnowledge(index) } }
                         }
@@ -182,7 +182,7 @@ Item {
                         Layout.preferredHeight: 42
                         Layout.leftMargin: 10
                         Layout.rightMargin: 8
-                        Text { Layout.fillWidth: true; text: "Documento"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 15; font.weight: Font.DemiBold }
+                        Text { Layout.fillWidth: true; text: "Documento"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(15); font.weight: Font.DemiBold }
                         VrIconButton {
                             symbol: "↗"
                             enabled: studio.knowledgeLocalPath.length > 0
@@ -230,10 +230,10 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             VrButton { text: "← Anterior"; enabled: studio.knowledgeCanPrevious; onClicked: studio.previousKnowledgePage() }
-            Text { text: studio.knowledgePageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
+            Text { text: studio.knowledgePageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
             VrButton { text: "Próxima →"; enabled: studio.knowledgeCanNext; onClicked: studio.nextKnowledgePage() }
             Item { Layout.fillWidth: true }
-            Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 11 }
+            Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
         }
     }
 

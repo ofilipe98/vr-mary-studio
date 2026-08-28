@@ -139,7 +139,7 @@ modo. A sessão autenticada é salva em
 Abra `Start-VRStudio.bat` ou execute:
 
 ```powershell
-.\.venv\Scripts\vr-norte-studio.exe --project-dir .
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --project-dir .
 ```
 
 A interface Qt Quick/QML aprovada é aberta por padrão. Durante o ciclo de
@@ -147,7 +147,7 @@ estabilização da versão de desenvolvimento, a interface Qt Widgets anterior
 continua disponível apenas como rollback explícito:
 
 ```powershell
-.\.venv\Scripts\vr-norte-studio.exe --legacy-frontend --project-dir .
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --legacy-frontend --project-dir .
 ```
 
 CLI da base:
@@ -320,5 +320,5 @@ Smoke test visual:
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-.\.venv\Scripts\vr-norte-studio.exe --smoke-test
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --smoke-test
 ```

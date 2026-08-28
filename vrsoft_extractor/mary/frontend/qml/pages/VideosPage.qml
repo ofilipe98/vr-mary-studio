@@ -106,7 +106,7 @@ Item {
                     onAccepted: root.runFilter()
                 }
                 VrButton { text: (root.filtersVisible ? "▾ " : "▸ ") + "Filtros"; onClicked: root.filtersVisible = !root.filtersVisible }
-                Text { text: videoList.count + " itens"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 11 }
+                Text { text: videoList.count + " itens"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
                 VrButton { text: "Inventariar e baixar"; variant: "primary"; onClicked: studio.runVideoAction("run") }
             }
         }
@@ -159,11 +159,11 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "Classificar seleção como:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+            Text { text: "Classificar seleção como:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
             VrComboBox { id: videoModule; Layout.preferredWidth: 180; model: ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"] }
             VrButton { text: "Aplicar módulo"; onClicked: studio.applyVideoModule(root.selectedIds, videoModule.currentText) }
             Item { Layout.fillWidth: true }
-            Text { text: root.selectedIds.length ? root.selectedIds.length + " item(ns) selecionado(s)" : ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 12 }
+            Text { text: root.selectedIds.length ? root.selectedIds.length + " item(ns) selecionado(s)" : ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
         }
 
         Rectangle {
@@ -176,7 +176,7 @@ Item {
                 anchors.leftMargin: 12
                 anchors.rightMargin: 5
                 spacing: 3
-                Text { Layout.fillWidth: true; text: studio.videoSummary; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: studio.videoSummary; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                 VrIconButton {
                     implicitWidth: 26
                     implicitHeight: 26
@@ -217,13 +217,13 @@ Item {
                         anchors.leftMargin: 8
                         anchors.rightMargin: 8
                         Item { Layout.preferredWidth: 28 }
-                        Text { Layout.fillWidth: true; text: "Curso, pasta ou vídeo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 110; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 150; text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 105; text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 92; text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 72; text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 72; text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13; font.weight: Font.DemiBold }
+                        Text { Layout.fillWidth: true; text: "Curso, pasta ou vídeo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 110; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 150; text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 105; text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 92; text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 72; text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: 72; text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
                     }
                 }
                 ListView {
@@ -297,7 +297,7 @@ Item {
                                 text: videoRow.title
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontSize(12)
                                 font.weight: videoRow.depth < 2 ? Font.DemiBold : Font.Normal
                                 elide: Text.ElideRight
                                 TapHandler {
@@ -305,12 +305,12 @@ Item {
                                     onTapped: root.toggleNode(videoRow.nodeId)
                                 }
                             }
-                            Text { Layout.preferredWidth: 110; text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 150; text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 105; text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 92; text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                            Text { Layout.preferredWidth: 72; text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12 }
-                            Text { Layout.preferredWidth: 72; text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12 }
+                            Text { Layout.preferredWidth: 110; text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 150; text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 105; text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 92; text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: 72; text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: 72; text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                         }
                     }
                     Row {
@@ -357,7 +357,7 @@ Item {
                     text: studio.videoLog.length ? studio.videoLog : "O inventário, as inscrições, os downloads e eventuais falhas aparecerão aqui."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                     wrapMode: TextEdit.Wrap
                     background: Item { }
                 }

@@ -22,9 +22,16 @@ Button {
     padding: 0
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down ? 0.92 : 1
     Accessible.name: "Uso da janela de contexto"
     ToolTip.visible: hovered && !detailsPopup.opened
     ToolTip.text: "Uso da janela de contexto"
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     onClicked: {
         if (detailsPopup.opened && detailsPinned) {
@@ -88,6 +95,10 @@ Button {
             ? frontend.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: frontend.palette.focus
+        Behavior on color {
+            enabled: !frontend.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
+        }
     }
 
     Timer {
@@ -136,14 +147,14 @@ Button {
                     text: "Context Window"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: control.usageLabel
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
             }
 
@@ -161,13 +172,13 @@ Button {
                     text: "Total processado"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
                 Text {
                     text: control.totalLabel
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
             }
 
@@ -176,7 +187,7 @@ Button {
                 text: control.note
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontSize(10)
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
                 elide: Text.ElideRight

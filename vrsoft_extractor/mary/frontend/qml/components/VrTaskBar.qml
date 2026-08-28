@@ -48,14 +48,14 @@ Rectangle {
                     text: "Tarefas"
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: root.completedCount() + "/" + root.steps.length
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                 }
                 Text {
                     visible: !root.expanded
@@ -63,7 +63,7 @@ Rectangle {
                     text: root.currentStepText()
                     color: frontend.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
@@ -133,7 +133,7 @@ Rectangle {
                         color: modelData.state === "running"
                             ? frontend.palette.text : frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontSize(10)
                         font.weight: modelData.state === "running" ? Font.DemiBold : Font.Normal
                         wrapMode: Text.WordWrap
                         maximumLineCount: 2
@@ -144,7 +144,7 @@ Rectangle {
                         text: "agora"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: 9
+                        font.pixelSize: Theme.fontSize(9)
                     }
                 }
             }

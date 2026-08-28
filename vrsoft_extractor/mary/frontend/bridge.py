@@ -42,10 +42,22 @@ def _stored_bool(value: object, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
-UI_SCALE_OPTIONS = ("100", "110", "125", "150")
+UI_SCALE_OPTIONS = (
+    "auto",
+    "100",
+    "101",
+    "102",
+    "103",
+    "104",
+    "105",
+    "110",
+    "125",
+    "150",
+)
+UI_SCALE_PREFERENCE_VERSION = 2
 
 
-def normalized_ui_scale(value: object, default: str = "100") -> str:
+def normalized_ui_scale(value: object, default: str = "auto") -> str:
     """Return a supported interface scale percentage (no percent sign)."""
     text = str(value or "").strip().rstrip("%").strip()
     return text if text in UI_SCALE_OPTIONS else default
@@ -89,9 +101,20 @@ class FrontendBridge(QObject):
         self._reduce_motion = _stored_bool(
             self._preferences.value("appearance/reduce_motion", False)
         )
-        self._ui_scale = normalized_ui_scale(
-            self._preferences.value("appearance/ui_scale", "100")
+        scale_version = int(
+            self._preferences.value("appearance/ui_scale_version", 0) or 0
         )
+        if scale_version < UI_SCALE_PREFERENCE_VERSION:
+            self._ui_scale = "auto"
+            self._preferences.setValue("appearance/ui_scale", self._ui_scale)
+            self._preferences.setValue(
+                "appearance/ui_scale_version", UI_SCALE_PREFERENCE_VERSION
+            )
+            self._preferences.sync()
+        else:
+            self._ui_scale = normalized_ui_scale(
+                self._preferences.value("appearance/ui_scale", "auto")
+            )
         self._palette_cache: dict[str, str] | None = None
         page_names = [title for title, _icon in NAVIGATION_ITEMS]
         try:
@@ -163,6 +186,10 @@ class FrontendBridge(QObject):
     @Property(str, notify=uiScaleChanged)
     def uiScale(self) -> str:  # noqa: N802 - QML property naming
         return self._ui_scale
+
+    @Property(float, notify=uiScaleChanged)
+    def uiScaleFactor(self) -> float:  # noqa: N802 - QML property naming
+        return 1.0 if self._ui_scale == "auto" else int(self._ui_scale) / 100.0
 
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:  # noqa: N802
@@ -249,5 +276,8 @@ class FrontendBridge(QObject):
             return
         self._ui_scale = selected
         self._preferences.setValue("appearance/ui_scale", selected)
+        self._preferences.setValue(
+            "appearance/ui_scale_version", UI_SCALE_PREFERENCE_VERSION
+        )
         self._preferences.sync()
         self.uiScaleChanged.emit()

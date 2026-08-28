@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtCore import QObject, QSettings, Qt, QUrl
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -114,15 +114,36 @@ class QmlFrontendTest(unittest.TestCase):
             settings = self._settings(root)
             bridge = FrontendBridge(settings, preferences)
 
-            self.assertEqual(bridge.uiScale, "100")
-            bridge.setUiScale("125")
-            self.assertEqual(bridge.uiScale, "125")
-            self.assertEqual(preferences.value("appearance/ui_scale"), "125")
+            self.assertEqual(bridge.uiScale, "auto")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "auto")
+            self.assertEqual(
+                int(preferences.value("appearance/ui_scale_version")), 2
+            )
+            bridge.setUiScale("105")
+            self.assertEqual(bridge.uiScale, "105")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "105")
             bridge.setUiScale("999")
             bridge.setUiScale("abc")
-            self.assertEqual(bridge.uiScale, "125")
+            self.assertEqual(bridge.uiScale, "105")
+            for granular_scale in ("101", "102", "103", "104", "105"):
+                bridge.setUiScale(granular_scale)
+                self.assertEqual(bridge.uiScale, granular_scale)
             bridge.setUiScale("150%")
             self.assertEqual(bridge.uiScale, "150")
+
+    def test_legacy_ui_scale_is_migrated_to_automatic(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("appearance/ui_scale", "110")
+            preferences.sync()
+
+            bridge = FrontendBridge(self._settings(root), preferences)
+
+            self.assertEqual(bridge.uiScale, "auto")
+            self.assertEqual(preferences.value("appearance/ui_scale"), "auto")
 
     def test_startup_applies_saved_ui_scale_to_qt_environment(self):
         from vrsoft_extractor.mary.frontend import app as app_module
@@ -136,10 +157,16 @@ class QmlFrontendTest(unittest.TestCase):
             app_module.apply_ui_scale_environment(preferences)
             self.assertNotIn("QT_SCALE_FACTOR", os.environ)
 
+            os.environ.pop("QT_SCALE_FACTOR", None)
+            preferences.setValue("appearance/ui_scale", "100")
+            preferences.sync()
+            app_module.apply_ui_scale_environment(preferences)
+            self.assertNotIn("QT_SCALE_FACTOR", os.environ)
+
             preferences.setValue("appearance/ui_scale", "150")
             preferences.sync()
             app_module.apply_ui_scale_environment(preferences)
-            self.assertEqual(os.environ.get("QT_SCALE_FACTOR"), "1.50")
+            self.assertNotIn("QT_SCALE_FACTOR", os.environ)
 
             os.environ["QT_SCALE_FACTOR"] = "2.0"
             app_module.apply_ui_scale_environment(preferences)
@@ -150,6 +177,9 @@ class QmlFrontendTest(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
+            project_file = settings.root / "Cliente" / "src" / "project_file.py"
+            project_file.parent.mkdir(parents=True)
+            project_file.write_text("print('project file')", encoding="utf-8")
             bridge = self._bridge(root, initial_page="Chat VR")
             database = MaryDatabase(
                 settings.database_path,
@@ -180,19 +210,94 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             self.assertEqual(window.property("title"), "VR Norte Studio")
             self.assertGreaterEqual(window.property("minimumWidth"), 1120)
-            self.assertIsNotNone(window.findChild(QObject, "chatModelPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "modelPickerPopup"))
-            self.assertIsNotNone(window.findChild(QObject, "chatReasoningPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "chatPermissionPicker"))
+            model_picker = window.findChild(QObject, "chatModelPicker")
+            reasoning_picker = window.findChild(QObject, "chatReasoningPicker")
+            permission_picker = window.findChild(QObject, "chatPermissionPicker")
+            self.assertIsNotNone(model_picker)
+            self.assertIsNotNone(reasoning_picker)
+            self.assertIsNotNone(permission_picker)
+            for picker, popup_name in (
+                (model_picker, "modelPickerPopup"),
+                (reasoning_picker, "reasoningPickerPopup"),
+                (permission_picker, "permissionPickerPopup"),
+            ):
+                popup = window.findChild(QObject, popup_name)
+                self.assertIsNotNone(popup)
+                picker.click()
+                self.application.processEvents()
+                self.assertTrue(popup.property("visible"), popup_name)
+                picker.click()
+                self.application.processEvents()
+                self.assertFalse(popup.property("visible"), popup_name)
             self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
-            self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNotNone(window.findChild(QObject, "chatComposerDropArea"))
             self.assertIsNotNone(window.findChild(QObject, "chatAttachmentList"))
             self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
             new_chat_button = window.findChild(QObject, "newChatButton")
             self.assertIsNotNone(new_chat_button)
+            add_project_button = window.findChild(QObject, "addProjectButton")
+            self.assertIsNotNone(add_project_button)
+            add_project_button.click()
+            self.application.processEvents()
+            add_project_popup = window.findChild(QObject, "addProjectPopup")
+            self.assertIsNotNone(add_project_popup)
+            self.assertTrue(add_project_popup.property("visible"))
+            chat_page = window.findChild(QObject, "chatPage")
+            self.assertIsNotNone(chat_page)
+            chat_page.openLocalFolderBrowser()
+            self.application.processEvents()
+            self.assertEqual(chat_page.property("addProjectView"), "folder")
+            self.assertIsNotNone(window.findChild(QObject, "projectFolderPathField"))
+            self.assertIsNotNone(window.findChild(QObject, "projectFolderList"))
+            folder_back = window.findChild(QObject, "projectFolderBackButton")
+            self.assertIsNotNone(folder_back)
+            folder_back.click()
+            self.application.processEvents()
+            self.assertEqual(chat_page.property("addProjectView"), "sources")
+            add_project_popup.close()
+            project_index = next(
+                index
+                for index, item in enumerate(chat_bridge.projectItems)
+                if item["label"] == "Cliente"
+            )
+            chat_page.openProjectSelectorMenu()
+            self.application.processEvents()
+            QTest.qWait(50)
+            project_selector_menu = window.findChild(QObject, "projectSelectorMenu")
+            self.assertIsNotNone(project_selector_menu)
+            self.assertTrue(project_selector_menu.property("visible"))
+            chat_page.clickProjectSettingsButton(project_index)
+            self.application.processEvents()
+            project_settings_page = window.findChild(QObject, "projectSettingsPage")
+            self.assertIsNotNone(project_settings_page)
+            self.assertTrue(project_settings_page.property("visible"))
+            self.assertFalse(project_selector_menu.property("visible"))
+            self.assertEqual(
+                chat_page.property("projectSettingsPath"), str(settings.root / "Cliente")
+            )
+            self.assertIsNotNone(window.findChild(QObject, "projectSettingsName"))
+            self.assertIsNotNone(window.findChild(QObject, "projectSettingsOpenFolder"))
+            new_chat_button.click()
+            self.application.processEvents()
+            QTest.qWait(50)
+            self.assertFalse(project_settings_page.property("visible"))
+            new_chat_project_popup = window.findChild(QObject, "projectSelectorPopup")
+            self.assertIsNotNone(new_chat_project_popup)
+            self.assertTrue(new_chat_project_popup.property("visible"))
+            new_chat_project_popup.close()
+            chat_page.openProjectSettings(project_index)
+            self.application.processEvents()
+            self.assertTrue(project_settings_page.property("visible"))
+            project_settings_back = window.findChild(QObject, "projectSettingsBack")
+            self.assertIsNotNone(project_settings_back)
+            project_settings_back.click()
+            self.application.processEvents()
+            self.assertFalse(project_settings_page.property("visible"))
+            chat_bridge.setProject(0)
             sidebar_toggles = window.findChildren(QObject, "conversationSidebarToggle")
             self.assertEqual(len(sidebar_toggles), 1)
             surface_toggle = window.findChild(QObject, "surfaceToggleButton")
@@ -208,8 +313,6 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "surfacePanel"))
             conversation_menu = window.findChild(QObject, "conversationContextMenu")
             self.assertIsNotNone(conversation_menu)
-            chat_page = window.findChild(QObject, "chatPage")
-            self.assertIsNotNone(chat_page)
             chat_page.openConversationMenu(0, 50, 50)
             self.application.processEvents()
             self.assertTrue(conversation_menu.property("visible"))
@@ -282,6 +385,24 @@ class QmlFrontendTest(unittest.TestCase):
                 len(chat_page.property("openSurfaceTabs").toVariant()), 1
             )
             self.assertEqual(chat_page.property("surfaceIndex"), 1)
+            chat_page.openSurface(3)
+            for _attempt in range(30):
+                self.application.processEvents()
+                QTest.qWait(50)
+                surface_files = chat_page.property("surfaceFiles")
+                if any(
+                    item["label"] == "Cliente/src/project_file.py"
+                    for item in surface_files
+                ):
+                    break
+            self.assertTrue(
+                any(
+                    item["label"] == "Cliente/src/project_file.py"
+                    for item in surface_files
+                ),
+                surface_files,
+            )
+            chat_page.closeSurface(3)
             surface_add.click()
             self.application.processEvents()
             self.assertTrue(surface_picker.property("visible"))
@@ -296,6 +417,13 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "newChatProjectList"))
             bridge.setCurrentPage(7)
             self.application.processEvents()
+            settings_page = window.findChild(QObject, "settingsPage")
+            self.assertIsNotNone(settings_page)
+            settings_page.setProperty("tabIndex", 2)
+            self.application.processEvents()
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsPage"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
             settings_navigation = window.findChild(QObject, "settingsNavigation")
             self.assertIsNotNone(settings_navigation)
             self.assertEqual(
@@ -548,6 +676,33 @@ class QmlFrontendTest(unittest.TestCase):
                 self.application.clipboard().text(), "Como configurar a NFC-e?"
             )
 
+    def test_legacy_codex_model_is_hidden_and_migrated_to_sol(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("chat/last_provider", "codex")
+            preferences.setValue("chat/last_model/codex", "gpt-5.6")
+            preferences.sync()
+
+            bridge = ChatBridge(settings, database, preferences)
+            selected_model = bridge.modelItems[bridge.modelIndex]
+
+            self.assertEqual(selected_model["value"], "gpt-5.6-sol")
+            self.assertFalse(
+                any(item["value"] == "gpt-5.6" for item in bridge.modelItems)
+            )
+            self.assertEqual(
+                preferences.value("chat/last_model/codex"), "gpt-5.6-sol"
+            )
+
     def test_chat_model_favorites_are_exposed_and_persisted(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -627,6 +782,82 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.selectedProject, "Cliente Norte")
             self.assertEqual(
                 len(database.list_conversations(state="active")), before
+            )
+
+    def test_chat_project_name_is_saved_and_restored(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertTrue(bridge.renameProject(project_index, "  Projeto Norte  "))
+            self.assertEqual(bridge.projectItems[project_index]["label"], "Projeto Norte")
+            self.assertEqual(
+                bridge._conversations._items[0]["projectLabel"], "Projeto Norte"
+            )
+            self.assertFalse(bridge.renameProject(0, "Inválido"))
+            self.assertFalse(bridge.renameProject(project_index, "   "))
+
+            restored = ChatBridge(settings, database, preferences)
+            restored_item = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(restored_item["label"], "Projeto Norte")
+
+    def test_chat_project_can_be_removed_from_the_selector_and_added_again(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue(
+                "chat/projects", json.dumps([{"path": str(project)}])
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertTrue(bridge.removeProject(project_index))
+            self.assertFalse(
+                any(item["path"] == str(project) for item in bridge.projectItems)
+            )
+
+            self.assertEqual(bridge._add_project_path(project), str(project))
+            self.assertTrue(
+                any(item["path"] == str(project) for item in bridge.projectItems)
             )
 
     def test_new_chat_reuses_last_model_effort_tier_and_permission(self):
@@ -743,6 +974,36 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(bridge._orchestrator._research_trigger, "manual")
             self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
+
+    def test_project_folder_browser_lists_directories_and_adds_current_path(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            folder = root / "Projetos"
+            (folder / "Alpha").mkdir(parents=True)
+            (folder / "beta").mkdir()
+            (folder / "arquivo.txt").write_text("x", encoding="utf-8")
+
+            bridge.browseProjectFolder(str(folder))
+
+            self.assertEqual(bridge.projectFolderPath, str(folder.resolve()))
+            self.assertEqual(
+                [item["label"] for item in bridge.projectFolderItems],
+                ["Alpha", "beta"],
+            )
+            self.assertEqual(bridge.addCurrentProjectFolder(), str(folder.resolve()))
+            self.assertTrue(
+                any(item["path"] == str(folder.resolve()) for item in bridge.projectItems)
+            )
 
     def test_pesquisa_command_requires_vr(self):
         with TemporaryDirectory() as temporary:
@@ -1110,7 +1371,11 @@ class QmlFrontendTest(unittest.TestCase):
             conversation_id = database.create_conversation(
                 "Claude", "claude", "sonnet", settings.root
             )
-            bridge = ChatBridge(settings, database)
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
             index = next(
                 index
                 for index, item in enumerate(bridge._conversations._items)
@@ -1341,6 +1606,44 @@ class QmlFrontendTest(unittest.TestCase):
             "conversationSidebar.x + conversationSidebar.width", chat_qml
         )
 
+    def test_qml_motion_system_keeps_chat_transitions_consistent_and_accessible(self):
+        qml_root = MAIN_QML.parent
+        theme_qml = (qml_root / "theme" / "Theme.qml").read_text(encoding="utf-8")
+        main_qml = MAIN_QML.read_text(encoding="utf-8")
+        chat_qml = (qml_root / "pages" / "ChatPreview.qml").read_text(
+            encoding="utf-8"
+        )
+        components = qml_root / "components"
+
+        for token in (
+            "pressDuration",
+            "motionDuration",
+            "pageDuration",
+            "motionDistance",
+        ):
+            self.assertIn(token, theme_qml)
+
+        self.assertIn("Behavior on opacity", main_qml)
+        self.assertIn("Theme.pageDuration", main_qml)
+        self.assertIn("enabled: !frontend.reduceMotion", main_qml)
+        self.assertIn("conversationSidebarWidth", chat_qml)
+        self.assertIn("surfacePanelWidth", chat_qml)
+        self.assertIn('objectName: "surfaceContentStack"', chat_qml)
+        self.assertIn("surfaceSwitch", chat_qml)
+        self.assertIn("root.displayedSurfaceIndex = root.surfaceIndex", chat_qml)
+
+        for component_name in (
+            "VrButton.qml",
+            "VrIconButton.qml",
+            "VrModelPicker.qml",
+            "VrReasoningPicker.qml",
+            "VrPermissionPicker.qml",
+            "VrContextButton.qml",
+        ):
+            source = (components / component_name).read_text(encoding="utf-8")
+            self.assertIn("Behavior on scale", source, component_name)
+            self.assertIn("!frontend.reduceMotion", source, component_name)
+
     def test_chat_bridge_restores_latest_persisted_task_timeline(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1464,6 +1767,111 @@ class QmlFrontendTest(unittest.TestCase):
 
             self.assertEqual(bridge.readFilePreview(str(document)), "# Instruções VR")
             self.assertIn("fora do projeto", bridge.readFilePreview(str(outside)))
+
+    def test_chat_file_surface_loads_project_files_without_a_search_term(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            expected = settings.root / "src" / "main.py"
+            expected.parent.mkdir()
+            expected.write_text("print('VR')", encoding="utf-8")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            updates: list[bool] = []
+            bridge.fileSuggestionsChanged.connect(lambda: updates.append(True))
+
+            self.assertEqual(bridge.fileSuggestions(""), [])
+            for _attempt in range(30):
+                self.application.processEvents()
+                QTest.qWait(50)
+                values = bridge.fileSuggestions("")
+                if values:
+                    break
+
+            self.assertTrue(updates)
+            selected = next(item for item in values if item["label"] == "src/main.py")
+            self.assertEqual(Path(selected["path"]), expected)
+
+    def test_chat_drop_stages_existing_local_files_without_picker(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "evidencia.png"
+            image.write_bytes(b"png")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            added = bridge.addDroppedAttachments(
+                [QUrl.fromLocalFile(str(image)), QUrl.fromLocalFile(str(image))]
+            )
+
+            self.assertEqual(added, 1)
+            self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
+
+    def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            bridge._model_items = [
+                {"key": "codex:a", "provider": "codex", "value": "a", "label": "A"},
+                {"key": "claude:b", "provider": "claude", "value": "b", "label": "B"},
+                {"key": "opencode:c", "provider": "opencode", "value": "c", "label": "C"},
+                {"key": "codex:d", "provider": "codex", "value": "d", "label": "D"},
+            ]
+
+            with patch.object(bridge, "refresh"):
+                bridge.setModel(1)
+            bridge.setResearchModels(
+                ["codex:a", "opencode:c", "codex:d", "claude:b", "codex:a"]
+            )
+
+            self.assertEqual((bridge._provider, bridge._model), ("claude", "b"))
+            self.assertEqual(bridge.researchModelKeys, ["codex:a"])
+
+    def test_model_picker_keeps_provider_filters_without_hover_dialogs(self):
+        picker_qml = (
+            MAIN_QML.parent / "components" / "VrModelPicker.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('property string providerFilter: "all"', picker_qml)
+        self.assertIn('{key: "favorites"', picker_qml)
+        self.assertIn('{key: "codex"', picker_qml)
+        self.assertNotIn("ToolTip.visible", picker_qml)
+        self.assertIn("CloseOnPressOutsideParent", picker_qml)
+
+        chat_qml = (
+            MAIN_QML.parent / "pages" / "ChatPreview.qml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("createLinearGradient", chat_qml)
 
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (
@@ -1636,9 +2044,36 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
-            self.assertEqual(tab_bar.property("count"), 4)
+            self.assertEqual(tab_bar.property("count"), 5)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
-            self.assertIsNotNone(window.findChild(QObject, "uiScaleCombo"))
+            ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
+            self.assertIsNotNone(ui_scale_combo)
+            scale_preview = window.findChild(QObject, "uiScalePreviewText")
+            self.assertIsNotNone(scale_preview)
+            scale_description = window.findChild(QObject, "uiScaleDescription")
+            self.assertIsNotNone(scale_description)
+            self.assertIn("Automática ativa", scale_description.property("text"))
+
+            window.setProperty("width", 1120)
+            window.setProperty("height", 700)
+            self.application.processEvents()
+            small_window_pixel_size = scale_preview.property("font").pixelSize()
+            window.setProperty("width", 3840)
+            window.setProperty("height", 2160)
+            self.application.processEvents()
+            self.assertGreater(
+                scale_preview.property("font").pixelSize(), small_window_pixel_size
+            )
+
+            ui_scale_combo.activated.emit(1)
+            self.application.processEvents()
+            manual_100_pixel_size = scale_preview.property("font").pixelSize()
+            ui_scale_combo.activated.emit(6)
+            self.application.processEvents()
+            self.assertEqual(bridge.uiScale, "105")
+            self.assertGreater(
+                scale_preview.property("font").pixelSize(), manual_100_pixel_size
+            )
 
             tab_bar.activate(2)
             self.application.processEvents()

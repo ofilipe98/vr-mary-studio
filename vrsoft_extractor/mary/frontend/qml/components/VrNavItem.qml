@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import "../theme"
 
 Item {
@@ -15,11 +16,18 @@ Item {
     implicitWidth: compact ? 42 : navLabel.implicitWidth + 70
     focus: false
     activeFocusOnTab: true
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && navTap.pressed ? 0.975 : 1
     Accessible.role: Accessible.Button
     Accessible.name: "Abrir " + title
     Keys.onReturnPressed: activated()
     Keys.onEnterPressed: activated()
     Keys.onSpacePressed: activated()
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -30,6 +38,7 @@ Item {
         border.color: frontend.palette.brandYellow
 
         Behavior on color {
+            enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
         }
     }
@@ -44,6 +53,8 @@ Item {
             height: parent.height
 
             Image {
+                id: navIconSource
+                visible: false
                 anchors.centerIn: parent
                 width: Theme.iconSize
                 height: Theme.iconSize
@@ -51,7 +62,15 @@ Item {
                 sourceSize.width: 24
                 sourceSize.height: 24
                 fillMode: Image.PreserveAspectFit
-                opacity: root.selected ? 1 : 0.82
+            }
+            MultiEffect {
+                anchors.centerIn: parent
+                width: Theme.iconSize
+                height: Theme.iconSize
+                source: navIconSource
+                colorization: 1.0
+                colorizationColor: root.selected ? "#FFFFFF" : frontend.palette.navText
+                opacity: root.selected ? 1 : 0.88
             }
         }
 
@@ -63,7 +82,7 @@ Item {
             text: root.title
             color: root.selected ? "#FFFFFF" : frontend.palette.navText
             font.family: Theme.fontFamily
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontSize(13)
             font.weight: root.selected ? Font.DemiBold : Font.Medium
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
@@ -72,6 +91,7 @@ Item {
 
     HoverHandler { id: pointer }
     TapHandler {
+        id: navTap
         onTapped: {
             root.forceActiveFocus()
             root.activated()

@@ -13,6 +13,13 @@ Button {
     leftPadding: 14
     rightPadding: 14
     focusPolicy: Qt.StrongFocus
+    transformOrigin: Item.Center
+    scale: !frontend.reduceMotion && control.down && control.enabled ? 0.965 : 1
+
+    Behavior on scale {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: Theme.pressDuration; easing.type: Easing.OutCubic }
+    }
 
     contentItem: Text {
         text: control.text
@@ -47,6 +54,7 @@ Button {
             : frontend.palette.border
 
         Behavior on color {
+            enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
         }
     }

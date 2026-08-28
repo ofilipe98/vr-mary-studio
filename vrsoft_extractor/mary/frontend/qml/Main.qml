@@ -16,6 +16,9 @@ ApplicationWindow {
     title: frontend.appName
     color: frontend.palette.background
 
+    Binding { target: Theme; property: "viewportWidth"; value: window.width }
+    Binding { target: Theme; property: "viewportHeight"; value: window.height }
+
     // Pages stay alive after the first visit: recreating ChatPreview on every
     // switch was the dominant tab-change cost (measured at 40-110 ms).
     property bool chatVisited: frontend.currentPage === 1
@@ -45,17 +48,45 @@ ApplicationWindow {
     }
 
     Loader {
+        id: chatLoader
         anchors.fill: parent
         active: window.chatVisited
-        visible: frontend.currentPage === 1
+        visible: active && frontend.currentPage === 1
+        opacity: frontend.currentPage === 1 ? 1 : 0.72
         sourceComponent: chatComponent
+
+        transform: Translate {
+            y: frontend.currentPage === 1 ? 0 : Theme.motionDistance
+            Behavior on y {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+            }
+        }
+        Behavior on opacity {
+            enabled: !frontend.reduceMotion
+            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+        }
     }
 
     Loader {
+        id: hubLoader
         anchors.fill: parent
         active: window.hubVisited
-        visible: frontend.currentPage !== 1
+        visible: active && frontend.currentPage !== 1
+        opacity: frontend.currentPage !== 1 ? 1 : 0.72
         sourceComponent: settingsHubComponent
+
+        transform: Translate {
+            y: frontend.currentPage !== 1 ? 0 : Theme.motionDistance
+            Behavior on y {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+            }
+        }
+        Behavior on opacity {
+            enabled: !frontend.reduceMotion
+            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+        }
     }
 
     Popup {

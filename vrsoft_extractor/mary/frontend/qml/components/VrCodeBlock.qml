@@ -76,7 +76,7 @@ Rectangle {
                     text: root.badge
                     color: frontend.themeId === "dark_orange" ? "#C9C9D3" : "#3F3F46"
                     font.family: Theme.fontFamily
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontSize(10)
                     font.weight: Font.DemiBold
                 }
             }
@@ -129,7 +129,7 @@ Rectangle {
             wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
             color: frontend.themeId === "dark_orange" ? "#E4E4E7" : "#27272A"
             font.family: "Consolas"
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontSize(12)
         }
     }
 }

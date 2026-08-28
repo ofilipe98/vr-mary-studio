@@ -33,7 +33,7 @@ Item {
                     text: studio.syncRunning ? "Em andamento" : "Nenhuma execução"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSize(11)
                 }
                 VrButton { text: "Sincronizar tudo"; variant: "primary"; enabled: !studio.syncRunning; onClicked: studio.runSync("all") }
             }
@@ -52,7 +52,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            Text { text: "Arquivo do Schema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 13 }
+            Text { text: "Arquivo do Schema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
             VrTextField { Layout.fillWidth: true; text: studio.schemaPath; readOnly: true }
             VrButton { text: "Escolher arquivo…"; onClicked: studio.chooseSchemaFile() }
         }
@@ -68,7 +68,7 @@ Item {
                 text: studio.syncStatus
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: 13
+                font.pixelSize: Theme.fontSize(13)
                 font.weight: Font.DemiBold
                 verticalAlignment: Text.AlignVCenter
             }
@@ -95,7 +95,7 @@ Item {
                     color: frontend.palette.text
                     background: Item { }
                     font.family: "Cascadia Mono"
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontSize(12)
                 }
             }
 

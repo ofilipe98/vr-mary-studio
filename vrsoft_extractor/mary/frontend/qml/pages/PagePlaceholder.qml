@@ -21,7 +21,7 @@ Item {
             text: root.pageTitle
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: 24
+            font.pixelSize: Theme.fontSize(24)
             font.weight: Font.DemiBold
         }
         Text {
