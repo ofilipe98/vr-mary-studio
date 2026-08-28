@@ -1232,11 +1232,18 @@ class ChatBridge(QObject):
         conversations: list[dict[str, Any]] = []
         for row in rows:
             workspace = self._settings.resolve_path(row["workspace"])
-            project_label = (
-                "Projeto temporário"
-                if is_managed_conversation_workspace(self._settings, workspace)
-                else (workspace.name or str(workspace))
-            )
+            if is_managed_conversation_workspace(self._settings, workspace):
+                project_label = "Projeto temporário"
+            else:
+                project_label = next(
+                    (
+                        item["label"]
+                        for item in self._projects
+                        if item["path"]
+                        and Path(item["path"]).resolve(strict=False) == workspace
+                    ),
+                    workspace.name or str(workspace),
+                )
             provider = str(row["provider"] or "codex")
             status = str(row["status"] or "idle")
             provider_label = PROVIDER_LABELS.get(provider, provider.title())
@@ -1286,6 +1293,38 @@ class ChatBridge(QObject):
         if self._draft:
             self.selectionChanged.emit()
         self._apply_filter(selected_id)
+
+    @Slot(int, str, result=bool)
+    def renameProject(self, index: int, name: str) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        label = " ".join(str(name or "").split())
+        if not label:
+            return False
+        target_path = str(Path(self._projects[index]["path"]).resolve(strict=False))
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == Path(
+                target_path
+            ):
+                item["label"] = label
+                break
+        else:
+            values.append({"path": target_path, "label": label})
+        self._store_project_entries(values)
+        self._refresh_projects()
+        self.refresh()
+        return True
+
+    @Slot(int, result=bool)
+    def openProjectFolder(self, index: int) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        path = Path(self._projects[index]["path"]).resolve(strict=False)
+        if not path.is_dir():
+            return False
+        return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
 
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
@@ -1643,16 +1682,11 @@ class ChatBridge(QObject):
         path = selected.expanduser().resolve(strict=False)
         if not path.is_dir():
             return ""
-        raw = self._preferences.value("chat/projects", "[]")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
+        values = self._stored_project_entries()
         stored = [item.get("path", "") if isinstance(item, dict) else item for item in values]
         if str(path) not in stored:
             values.append({"path": str(path)})
-            self._preferences.setValue("chat/projects", json.dumps(values, ensure_ascii=False))
-            self._preferences.sync()
+            self._store_project_entries(values)
         self._refresh_projects()
         target = next(
             (index for index, item in enumerate(self._projects) if item["path"] == str(path)),
@@ -1660,6 +1694,30 @@ class ChatBridge(QObject):
         )
         self.setProject(target)
         return str(path)
+
+    def _stored_project_entries(self) -> list[dict[str, str]]:
+        raw = self._preferences.value("chat/projects", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        entries: list[dict[str, str]] = []
+        for value in values:
+            if isinstance(value, dict):
+                path = str(value.get("path") or "").strip()
+                label = str(value.get("label") or "").strip()
+            else:
+                path = str(value or "").strip()
+                label = ""
+            if path:
+                entries.append({"path": path, "label": label})
+        return entries
+
+    def _store_project_entries(self, values: list[dict[str, str]]) -> None:
+        self._preferences.setValue(
+            "chat/projects", json.dumps(values, ensure_ascii=False)
+        )
+        self._preferences.sync()
 
     @Slot(str)
     def sendMessage(self, text: str) -> None:  # noqa: N802
@@ -2714,14 +2772,18 @@ class ChatBridge(QObject):
             self._preferences.value("chat/current_project", "") or ""
         ).strip()
         candidates: list[Path] = []
+        custom_labels: dict[Path, str] = {}
 
-        def include(value: object) -> None:
+        def include(value: object, label: object = "") -> None:
             raw = str(value or "").strip()
             if not raw:
                 return
             candidate = Path(raw).expanduser().resolve(strict=False)
             if candidate.is_dir() and candidate not in candidates:
                 candidates.append(candidate)
+            custom_label = " ".join(str(label or "").split())
+            if candidate.is_dir() and custom_label:
+                custom_labels[candidate] = custom_label
 
         include(self._settings.root)
 
@@ -2736,7 +2798,13 @@ class ChatBridge(QObject):
             except (TypeError, ValueError, json.JSONDecodeError):
                 values = []
             for value in values:
-                include(value.get("path", "") if isinstance(value, dict) else value)
+                if isinstance(value, dict):
+                    include(
+                        value.get("path", ""),
+                        value.get("label", "") if key == "chat/projects" else "",
+                    )
+                else:
+                    include(value)
 
         for row in self._database.list_conversations(state="all"):
             workspace = self._settings.resolve_path(row["workspace"])
@@ -2745,7 +2813,10 @@ class ChatBridge(QObject):
 
         self._projects = [{"label": "Todos os projetos", "path": ""}]
         self._projects.extend(
-            {"label": path.name or str(path), "path": str(path)}
+            {
+                "label": custom_labels.get(path) or path.name or str(path),
+                "path": str(path),
+            }
             for path in candidates[:32]
         )
         self._current_project_index = next(

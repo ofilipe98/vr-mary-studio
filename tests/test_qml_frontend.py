@@ -232,6 +232,27 @@ class QmlFrontendTest(unittest.TestCase):
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "sources")
             add_project_popup.close()
+            project_index = next(
+                index
+                for index, item in enumerate(chat_bridge.projectItems)
+                if item["label"] == "Cliente"
+            )
+            chat_page.openProjectSettings(project_index)
+            self.application.processEvents()
+            project_settings_page = window.findChild(QObject, "projectSettingsPage")
+            self.assertIsNotNone(project_settings_page)
+            self.assertTrue(project_settings_page.property("visible"))
+            self.assertEqual(
+                chat_page.property("projectSettingsPath"), str(settings.root / "Cliente")
+            )
+            self.assertIsNotNone(window.findChild(QObject, "projectSettingsName"))
+            self.assertIsNotNone(window.findChild(QObject, "projectSettingsOpenFolder"))
+            project_settings_back = window.findChild(QObject, "projectSettingsBack")
+            self.assertIsNotNone(project_settings_back)
+            project_settings_back.click()
+            self.application.processEvents()
+            self.assertFalse(project_settings_page.property("visible"))
+            chat_bridge.setProject(0)
             sidebar_toggles = window.findChildren(QObject, "conversationSidebarToggle")
             self.assertEqual(len(sidebar_toggles), 1)
             surface_toggle = window.findChild(QObject, "surfaceToggleButton")
@@ -690,6 +711,47 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(
                 len(database.list_conversations(state="active")), before
             )
+
+    def test_chat_project_name_is_saved_and_restored(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertTrue(bridge.renameProject(project_index, "  Projeto Norte  "))
+            self.assertEqual(bridge.projectItems[project_index]["label"], "Projeto Norte")
+            self.assertEqual(
+                bridge._conversations._items[0]["projectLabel"], "Projeto Norte"
+            )
+            self.assertFalse(bridge.renameProject(0, "Inválido"))
+            self.assertFalse(bridge.renameProject(project_index, "   "))
+
+            restored = ChatBridge(settings, database, preferences)
+            restored_item = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(restored_item["label"], "Projeto Norte")
 
     def test_new_chat_reuses_last_model_effort_tier_and_permission(self):
         with TemporaryDirectory() as temporary:
@@ -1202,7 +1264,11 @@ class QmlFrontendTest(unittest.TestCase):
             conversation_id = database.create_conversation(
                 "Claude", "claude", "sonnet", settings.root
             )
-            bridge = ChatBridge(settings, database)
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
             index = next(
                 index
                 for index, item in enumerate(bridge._conversations._items)

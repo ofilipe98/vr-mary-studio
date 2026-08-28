@@ -54,7 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--screenshot-settings-tab", type=int, default=-1)
     parser.add_argument(
         "--screenshot-popup",
-        choices=("", "add-project", "project-folder", "model", "permission", "ultra-model"),
+        choices=(
+            "",
+            "add-project",
+            "project-folder",
+            "project-selector",
+            "project-settings",
+            "model",
+            "permission",
+            "ultra-model",
+        ),
         default="",
     )
     parser.add_argument(
@@ -203,6 +212,30 @@ def main(argv: list[str] | None = None) -> int:
                     add_button.click()
                 if chat_page is not None and hasattr(chat_page, "openLocalFolderBrowser"):
                     chat_page.openLocalFolderBrowser()
+                return
+            if args.screenshot_popup == "project-selector":
+                chat_page = window.findChild(QObject, "chatPage")
+                if chat_page is not None and hasattr(
+                    chat_page, "openProjectSelectorMenu"
+                ):
+                    chat_page.openProjectSelectorMenu()
+                return
+            if args.screenshot_popup == "project-settings":
+                chat_page = window.findChild(QObject, "chatPage")
+                project_index = next(
+                    (
+                        index
+                        for index, item in enumerate(chat_bridge.projectItems)
+                        if item.get("path")
+                    ),
+                    -1,
+                )
+                if (
+                    chat_page is not None
+                    and project_index > 0
+                    and hasattr(chat_page, "openProjectSettings")
+                ):
+                    chat_page.openProjectSettings(project_index)
                 return
             object_name = popup_targets.get(args.screenshot_popup, "")
             if not object_name:
