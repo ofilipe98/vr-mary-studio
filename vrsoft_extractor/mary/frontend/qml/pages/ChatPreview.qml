@@ -203,42 +203,19 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 4
-                    Item {
+                    VrProjectSelector {
+                        id: projectSelector
+                        objectName: "projectSelector"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
-
-                        VrComboBox {
-                            id: projectSelector
-                            objectName: "projectSelector"
-                            anchors.fill: parent
-                            leftPadding: 31
-                            model: chat.projectItems
-                            textRole: "label"
-                            currentIndex: chat.currentProjectIndex
-                            showSettingsAction: true
-                            popupObjectName: "projectSelectorMenu"
-                            onActivated: index => {
-                                root.projectSettingsVisible = false
-                                chat.setProject(index)
-                            }
-                            onItemSettingsRequested: index => root.openProjectSettings(index)
-                            background: Rectangle {
-                                radius: 9
-                                color: projectSelector.hovered
-                                    ? frontend.palette.hover : "transparent"
-                                border.width: projectSelector.activeFocus ? 1 : 0
-                                border.color: frontend.palette.focus
-                            }
+                        model: chat.projectItems
+                        currentIndex: chat.currentProjectIndex
+                        popupObjectName: "projectSelectorMenu"
+                        onActivated: index => {
+                            root.projectSettingsVisible = false
+                            chat.setProject(index)
                         }
-                        VrLineIcon {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 16
-                            height: 16
-                            kind: "folder"
-                            foreground: frontend.palette.mutedText
-                        }
+                        onSettingsRequested: index => root.openProjectSettings(index)
                     }
                     VrIconButton {
                         id: addProjectButton
@@ -2364,7 +2341,11 @@ Item {
     }
 
     function openProjectSelectorMenu() {
-        projectSelector.popup.open()
+        projectSelector.openSelectorMenu()
+    }
+
+    function clickProjectSettingsButton(index) {
+        return projectSelector.clickSettingsButton(index)
     }
 
     function openProjectSettings(index) {
