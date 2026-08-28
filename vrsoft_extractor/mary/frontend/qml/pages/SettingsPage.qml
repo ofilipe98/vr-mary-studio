@@ -249,8 +249,8 @@ Item {
                                 id: uiScaleCombo
                                 objectName: "uiScaleCombo"
                                 Layout.preferredWidth: 210
-                                model: ["Automática", "100%", "105%", "110%", "125%", "150%"]
-                                property var values: ["auto", "100", "105", "110", "125", "150"]
+                                model: ["Automática", "100%", "101%", "102%", "103%", "104%", "105%", "110%", "125%", "150%"]
+                                property var values: ["auto", "100", "101", "102", "103", "104", "105", "110", "125", "150"]
                                 currentIndex: Math.max(0, values.indexOf(frontend.uiScale))
                                 onActivated: index => frontend.setUiScale(values[index])
                             }

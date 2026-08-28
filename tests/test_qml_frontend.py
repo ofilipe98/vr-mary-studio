@@ -125,6 +125,9 @@ class QmlFrontendTest(unittest.TestCase):
             bridge.setUiScale("999")
             bridge.setUiScale("abc")
             self.assertEqual(bridge.uiScale, "105")
+            for granular_scale in ("101", "102", "103", "104", "105"):
+                bridge.setUiScale(granular_scale)
+                self.assertEqual(bridge.uiScale, granular_scale)
             bridge.setUiScale("150%")
             self.assertEqual(bridge.uiScale, "150")
 
@@ -2065,7 +2068,7 @@ class QmlFrontendTest(unittest.TestCase):
             ui_scale_combo.activated.emit(1)
             self.application.processEvents()
             manual_100_pixel_size = scale_preview.property("font").pixelSize()
-            ui_scale_combo.activated.emit(2)
+            ui_scale_combo.activated.emit(6)
             self.application.processEvents()
             self.assertEqual(bridge.uiScale, "105")
             self.assertGreater(

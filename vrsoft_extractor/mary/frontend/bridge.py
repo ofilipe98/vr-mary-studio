@@ -42,7 +42,18 @@ def _stored_bool(value: object, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
-UI_SCALE_OPTIONS = ("auto", "100", "105", "110", "125", "150")
+UI_SCALE_OPTIONS = (
+    "auto",
+    "100",
+    "101",
+    "102",
+    "103",
+    "104",
+    "105",
+    "110",
+    "125",
+    "150",
+)
 UI_SCALE_PREFERENCE_VERSION = 2
 
 
