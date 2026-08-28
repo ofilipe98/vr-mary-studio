@@ -10,6 +10,8 @@ Button {
     property var tierModel: []
     property int currentEffortIndex: 0
     property int currentTierIndex: 0
+    property bool popupAbove: true
+    property bool outlined: false
     readonly property var currentEffort: currentEffortIndex >= 0
         && currentEffortIndex < effortModel.length ? effortModel[currentEffortIndex] : ({})
     readonly property var currentTier: currentTierIndex >= 0
@@ -65,10 +67,10 @@ Button {
 
     background: Rectangle {
         radius: 8
-        color: control.down || control.hovered || optionsPopup.opened
+        color: control.down || control.hovered || optionsPopup.opened || control.outlined
             ? frontend.palette.chatControl : "transparent"
-        border.width: control.activeFocus ? 1 : 0
-        border.color: frontend.palette.focus
+        border.width: control.outlined || control.activeFocus ? 1 : 0
+        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -80,7 +82,7 @@ Button {
         objectName: "reasoningPickerPopup"
         parent: control
         x: 0
-        y: -height - 7
+        y: control.popupAbove ? -height - 7 : control.height + 7
         width: 220
         height: 38 + control.effortModel.length * 32
             + (control.tierModel.length > 0 ? 34 + control.tierModel.length * 48 : 0)

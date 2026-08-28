@@ -14,6 +14,7 @@ Button {
     property int currentIndex: 0
     property string providerFilter: "all"
     property bool popupAbove: true
+    property bool outlined: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
@@ -60,9 +61,9 @@ Button {
 
     background: Rectangle {
         radius: 8
-        color: control.down || control.hovered || pickerPopup.opened
+        color: control.down || control.hovered || pickerPopup.opened || control.outlined
             ? frontend.palette.chatControl : "transparent"
-        border.width: control.activeFocus || pickerPopup.opened ? 1 : 0
+        border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
         border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
         Behavior on color {
             enabled: !frontend.reduceMotion

@@ -38,6 +38,7 @@ Item {
     property int projectSettingsIndex: -1
     property string projectSettingsName: ""
     property string projectSettingsPath: ""
+    property string projectSettingsIconPath: ""
     property real conversationSidebarWidth: conversationSidebarVisible ? 260 : 0
     property real surfacePanelWidth: surfaceVisible ? 430 : 0
     readonly property var addProjectSources: [
@@ -1061,283 +1062,28 @@ Item {
                 }
             }
 
-            Rectangle {
+            VrProjectSettings {
                 id: projectSettingsPage
                 objectName: "projectSettingsPage"
                 anchors.fill: parent
                 z: 50
                 visible: root.projectSettingsVisible
-                opacity: visible ? 1 : 0
-                color: frontend.palette.chatBackground
-                focus: visible
-                Keys.onEscapePressed: root.projectSettingsVisible = false
-
-                Behavior on opacity {
-                    enabled: !frontend.reduceMotion
-                    NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
+                projectIndex: root.projectSettingsIndex
+                projectName: root.projectSettingsName
+                projectPath: root.projectSettingsPath
+                projectIconPath: root.projectSettingsIconPath
+                threadCount: chat.conversationCount
+                onCloseRequested: root.projectSettingsVisible = false
+                onSaveRequested: name => {
+                    if (chat.renameProject(root.projectSettingsIndex, name))
+                        root.projectSettingsName = name
                 }
-
-                RowLayout {
-                    id: projectSettingsHeader
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: Theme.chatHeaderHeight
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 18
-                    spacing: 8
-
-                    VrIconButton {
-                        id: projectSettingsBack
-                        objectName: "projectSettingsBack"
-                        implicitWidth: 34
-                        implicitHeight: 34
-                        iconKind: "back"
-                        foreground: frontend.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Voltar ao chat"
-                        Accessible.name: ToolTip.text
-                        onClicked: root.projectSettingsVisible = false
-                        background: Rectangle {
-                            radius: 8
-                            color: parent.down || parent.hovered
-                                ? frontend.palette.chatControl : "transparent"
-                        }
-                    }
-                    Text {
-                        text: "Projetos"
-                        color: frontend.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                    }
-                    Text {
-                        text: "/"
-                        color: frontend.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 12
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.projectSettingsName
-                        color: frontend.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 13
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                    }
-                    VrLineIcon {
-                        Layout.preferredWidth: 18
-                        Layout.preferredHeight: 18
-                        kind: "settings"
-                        foreground: frontend.palette.mutedText
-                    }
-                }
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: projectSettingsHeader.bottom
-                    height: 1
-                    color: frontend.palette.chatDivider
-                }
-
-                Flickable {
-                    id: projectSettingsFlickable
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: projectSettingsHeader.bottom
-                    anchors.bottom: parent.bottom
-                    clip: true
-                    contentWidth: width
-                    contentHeight: projectSettingsContent.implicitHeight + 64
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                    ColumnLayout {
-                        id: projectSettingsContent
-                        x: Math.max(28, (projectSettingsFlickable.width - width) / 2)
-                        y: 30
-                        width: Math.min(860, projectSettingsFlickable.width - 56)
-                        spacing: 0
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: "Configuração do projeto"
-                            color: frontend.palette.text
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 20
-                            font.weight: Font.DemiBold
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 5
-                            text: "Personalize como esta pasta aparece e confira o contexto usado no Chat VR."
-                            color: frontend.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 11
-                            wrapMode: Text.WordWrap
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 30
-                            Layout.bottomMargin: 18
-                            text: "Projeto"
-                            color: frontend.palette.text
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 30
-                            ColumnLayout {
-                                Layout.preferredWidth: projectSettingsContent.width * 0.43
-                                spacing: 3
-                                Text { text: "Nome"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Text { Layout.fillWidth: true; text: "Nome exibido na lista de projetos e nas conversas."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-                                VrTextField {
-                                    id: projectSettingsNameField
-                                    objectName: "projectSettingsName"
-                                    Layout.fillWidth: true
-                                    implicitHeight: 36
-                                    text: root.projectSettingsName
-                                    selectByMouse: true
-                                    onTextEdited: root.projectSettingsName = text
-                                }
-                                VrButton {
-                                    id: projectSettingsSave
-                                    objectName: "projectSettingsSave"
-                                    implicitHeight: 36
-                                    text: "Salvar"
-                                    variant: "primary"
-                                    enabled: root.projectSettingsName.trim().length > 0
-                                        && root.projectSettingsName.trim() !== root.projectSettingsOriginalName()
-                                    onClicked: {
-                                        var savedName = root.projectSettingsName.trim()
-                                        if (chat.renameProject(root.projectSettingsIndex, savedName))
-                                            root.projectSettingsName = savedName
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle { Layout.fillWidth: true; Layout.topMargin: 18; Layout.bottomMargin: 18; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 30
-                            ColumnLayout {
-                                Layout.preferredWidth: projectSettingsContent.width * 0.43
-                                spacing: 3
-                                Text { text: "Ícone do projeto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Text { text: "Gerado automaticamente para pastas locais."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10 }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 9
-                                Rectangle {
-                                    Layout.preferredWidth: 34
-                                    Layout.preferredHeight: 34
-                                    radius: 9
-                                    color: frontend.palette.chatControl
-                                    VrLineIcon { anchors.centerIn: parent; width: 17; height: 17; kind: "folder"; foreground: frontend.palette.mutedText }
-                                }
-                                Text { text: "Automático"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 11 }
-                            }
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 34
-                            Layout.bottomMargin: 18
-                            text: "Novas conversas"
-                            color: frontend.palette.text
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 30
-                            ColumnLayout {
-                                Layout.preferredWidth: projectSettingsContent.width * 0.43
-                                spacing: 3
-                                Text { text: "Modelo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Text { Layout.fillWidth: true; text: "Novos chats usam a seleção atual do Chat VR."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                            }
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: projectSettingsContent.width * 0.5
-                                Layout.minimumWidth: 260
-                                Layout.preferredHeight: 36
-                                radius: 9
-                                color: frontend.palette.chatControl
-                                border.width: 1
-                                border.color: frontend.palette.chatDivider
-                                Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: root.currentModelLabel(); color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 11 }
-                            }
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.topMargin: 34
-                            Layout.bottomMargin: 18
-                            text: "Pasta"
-                            color: frontend.palette.text
-                            font.family: Theme.fontFamily
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 30
-                            ColumnLayout {
-                                Layout.preferredWidth: projectSettingsContent.width * 0.43
-                                spacing: 3
-                                Text { text: "Workspace"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Text { Layout.fillWidth: true; text: "Arquivos e comandos desta pasta formam o contexto do projeto."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: 10; wrapMode: Text.WordWrap }
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: projectSettingsContent.width * 0.5
-                                Layout.minimumWidth: 260
-                                spacing: 8
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    radius: 10
-                                    color: frontend.palette.chatControl
-                                    border.width: 1
-                                    border.color: frontend.palette.chatDivider
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 11
-                                        anchors.rightMargin: 11
-                                        spacing: 8
-                                        VrLineIcon { Layout.preferredWidth: 15; Layout.preferredHeight: 15; kind: "folder"; foreground: frontend.palette.mutedText }
-                                        Text { Layout.fillWidth: true; text: root.projectSettingsPath; color: frontend.palette.mutedText; font.family: Theme.monoFontFamily; font.pixelSize: 10; elide: Text.ElideMiddle }
-                                    }
-                                }
-                                VrButton {
-                                    id: projectSettingsOpenFolder
-                                    objectName: "projectSettingsOpenFolder"
-                                    Layout.alignment: Qt.AlignRight
-                                    implicitHeight: 34
-                                    text: "Abrir pasta"
-                                    variant: "ghost"
-                                    onClicked: chat.openProjectFolder(root.projectSettingsIndex)
-                                }
-                            }
-                        }
-                    }
+                onIconRequested: chat.chooseProjectIcon(root.projectSettingsIndex)
+                onOpenFolderRequested: chat.openProjectFolder(root.projectSettingsIndex)
+                onCopyPathRequested: chat.copyProjectPath(root.projectSettingsIndex)
+                onRemoveRequested: {
+                    if (chat.removeProject(root.projectSettingsIndex))
+                        root.projectSettingsVisible = false
                 }
             }
         }
@@ -2632,9 +2378,11 @@ Item {
         root.projectSettingsIndex = index
         root.projectSettingsPath = String(item.path || "")
         root.projectSettingsName = String(item.label || "")
+        root.projectSettingsIconPath = String(item.icon || "")
         root.projectSettingsVisible = true
         Qt.callLater(function() {
             projectSettingsPage.forceActiveFocus()
+            projectSettingsPage.resetView()
         })
     }
 
@@ -2645,6 +2393,7 @@ Item {
             if (String(source[index].path || "") !== root.projectSettingsPath) continue
             root.projectSettingsIndex = index
             root.projectSettingsName = String(source[index].label || "")
+            root.projectSettingsIconPath = String(source[index].icon || "")
             return
         }
         root.projectSettingsVisible = false

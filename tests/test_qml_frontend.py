@@ -753,6 +753,41 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(restored_item["label"], "Projeto Norte")
 
+    def test_chat_project_can_be_removed_from_the_selector_and_added_again(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue(
+                "chat/projects", json.dumps([{"path": str(project)}])
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertTrue(bridge.removeProject(project_index))
+            self.assertFalse(
+                any(item["path"] == str(project) for item in bridge.projectItems)
+            )
+
+            self.assertEqual(bridge._add_project_path(project), str(project))
+            self.assertTrue(
+                any(item["path"] == str(project) for item in bridge.projectItems)
+            )
+
     def test_new_chat_reuses_last_model_effort_tier_and_permission(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

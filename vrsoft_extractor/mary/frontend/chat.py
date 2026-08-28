@@ -1326,6 +1326,70 @@ class ChatBridge(QObject):
             return False
         return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
 
+    @Slot(int)
+    def copyProjectPath(self, index: int) -> None:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return
+        path = str(self._projects[index]["path"])
+        QGuiApplication.clipboard().setText(path)
+        self.messageCopied.emit(path)
+
+    @Slot(int, result=str)
+    def chooseProjectIcon(self, index: int) -> str:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return ""
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        selected, _filter = QFileDialog.getOpenFileName(
+            None,
+            "Escolher ícone do projeto",
+            str(project_path),
+            "Imagens (*.png *.jpg *.jpeg *.webp *.bmp *.ico)",
+        )
+        if not selected:
+            return ""
+        icon_path = str(Path(selected).expanduser().resolve(strict=False))
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["icon"] = icon_path
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "icon": icon_path,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return icon_path
+
+    @Slot(int, result=bool)
+    def removeProject(self, index: int) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        target = Path(self._projects[index]["path"]).resolve(strict=False)
+        hidden = self._stored_project_paths("chat/hidden_projects")
+        if target not in hidden:
+            hidden.append(target)
+            self._preferences.setValue(
+                "chat/hidden_projects",
+                json.dumps([str(path) for path in hidden], ensure_ascii=False),
+            )
+        values = [
+            item
+            for item in self._stored_project_entries()
+            if Path(item["path"]).expanduser().resolve(strict=False) != target
+        ]
+        self._store_project_entries(values)
+        self._preferences.setValue("chat/current_project", "")
+        self._preferences.sync()
+        self._refresh_projects()
+        self.refresh()
+        return True
+
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
         self._remember_current_chat_options()
@@ -1687,6 +1751,15 @@ class ChatBridge(QObject):
         if str(path) not in stored:
             values.append({"path": str(path)})
             self._store_project_entries(values)
+        hidden = self._stored_project_paths("chat/hidden_projects")
+        if path in hidden:
+            self._preferences.setValue(
+                "chat/hidden_projects",
+                json.dumps(
+                    [str(item) for item in hidden if item != path], ensure_ascii=False
+                ),
+            )
+            self._preferences.sync()
         self._refresh_projects()
         target = next(
             (index for index, item in enumerate(self._projects) if item["path"] == str(path)),
@@ -1706,12 +1779,27 @@ class ChatBridge(QObject):
             if isinstance(value, dict):
                 path = str(value.get("path") or "").strip()
                 label = str(value.get("label") or "").strip()
+                icon = str(value.get("icon") or "").strip()
             else:
                 path = str(value or "").strip()
                 label = ""
+                icon = ""
             if path:
-                entries.append({"path": path, "label": label})
+                entries.append({"path": path, "label": label, "icon": icon})
         return entries
+
+    def _stored_project_paths(self, key: str) -> list[Path]:
+        raw = self._preferences.value(key, "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        paths: list[Path] = []
+        for value in values:
+            candidate = Path(str(value or "")).expanduser().resolve(strict=False)
+            if str(value or "").strip() and candidate not in paths:
+                paths.append(candidate)
+        return paths
 
     def _store_project_entries(self, values: list[dict[str, str]]) -> None:
         self._preferences.setValue(
@@ -2773,17 +2861,24 @@ class ChatBridge(QObject):
         ).strip()
         candidates: list[Path] = []
         custom_labels: dict[Path, str] = {}
+        custom_icons: dict[Path, str] = {}
+        hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
 
-        def include(value: object, label: object = "") -> None:
+        def include(value: object, label: object = "", icon: object = "") -> None:
             raw = str(value or "").strip()
             if not raw:
                 return
             candidate = Path(raw).expanduser().resolve(strict=False)
+            if candidate in hidden_paths:
+                return
             if candidate.is_dir() and candidate not in candidates:
                 candidates.append(candidate)
             custom_label = " ".join(str(label or "").split())
             if candidate.is_dir() and custom_label:
                 custom_labels[candidate] = custom_label
+            custom_icon = str(icon or "").strip()
+            if candidate.is_dir() and custom_icon:
+                custom_icons[candidate] = custom_icon
 
         include(self._settings.root)
 
@@ -2802,6 +2897,7 @@ class ChatBridge(QObject):
                     include(
                         value.get("path", ""),
                         value.get("label", "") if key == "chat/projects" else "",
+                        value.get("icon", "") if key == "chat/projects" else "",
                     )
                 else:
                     include(value)
@@ -2811,11 +2907,12 @@ class ChatBridge(QObject):
             if not is_managed_conversation_workspace(self._settings, workspace):
                 include(workspace)
 
-        self._projects = [{"label": "Todos os projetos", "path": ""}]
+        self._projects = [{"label": "Todos os projetos", "path": "", "icon": ""}]
         self._projects.extend(
             {
                 "label": custom_labels.get(path) or path.name or str(path),
                 "path": str(path),
+                "icon": custom_icons.get(path, ""),
             }
             for path in candidates[:32]
         )

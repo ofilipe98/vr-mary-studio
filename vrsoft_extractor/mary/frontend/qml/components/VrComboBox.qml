@@ -50,15 +50,15 @@ ComboBox {
         required property var modelData
 
         width: ListView.view ? ListView.view.width : control.width
-        height: 40
+        height: control.showSettingsAction ? 32 : 40
         highlighted: control.highlightedIndex === index
 
         contentItem: RowLayout {
             spacing: 8
             VrLineIcon {
                 visible: control.showSettingsAction
-                Layout.preferredWidth: visible ? 15 : 0
-                Layout.preferredHeight: 15
+                Layout.preferredWidth: visible ? 14 : 0
+                Layout.preferredHeight: 14
                 kind: "folder"
                 foreground: frontend.palette.mutedText
             }
@@ -77,13 +77,14 @@ ComboBox {
                 objectName: "projectSettingsButton"
                 visible: control.showSettingsAction
                     && String(optionDelegate.modelData[control.settingsPathRole] || "").length > 0
-                Layout.preferredWidth: visible ? 28 : 0
-                Layout.preferredHeight: 28
+                Layout.preferredWidth: visible ? 22 : 0
+                Layout.preferredHeight: 30
                 VrLineIcon {
                     anchors.centerIn: parent
-                    width: 15
-                    height: 15
+                    width: 13
+                    height: 13
                     kind: "settings"
+                    strokeWidth: 1.55
                     foreground: settingsMouse.containsMouse
                         ? frontend.palette.text : frontend.palette.mutedText
                 }
@@ -102,7 +103,7 @@ ComboBox {
             }
         }
         background: Rectangle {
-            radius: 8
+            radius: control.showSettingsAction ? 6 : 8
             color: parent.highlighted ? frontend.palette.selection : frontend.palette.surface
         }
     }
@@ -111,13 +112,13 @@ ComboBox {
         objectName: control.popupObjectName
         y: control.height + 4
         width: control.width
-        implicitHeight: Math.min(contentItem.implicitHeight + 12, 320)
-        padding: 6
+        implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)
+        padding: control.showSettingsAction ? 4 : 6
 
         contentItem: ListView {
             clip: true
             implicitHeight: contentHeight
-            spacing: 2
+            spacing: control.showSettingsAction ? 1 : 2
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             ScrollIndicator.vertical: ScrollIndicator { }
