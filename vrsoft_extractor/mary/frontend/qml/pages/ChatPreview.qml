@@ -185,6 +185,7 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.text: "Nova conversa"
                         onClicked: {
+                            root.projectSettingsVisible = false
                             conversationSearch.clear()
                             chat.startNewChat()
                             composerInput.clear()
