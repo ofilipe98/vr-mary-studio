@@ -30,6 +30,7 @@ from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
 from .text_rendering import FENCE_RE, code_language_badge
 from ..config import MarySettings
 from ..db import MaryDatabase
+from ..erp_releases import ErpReleaseCatalog
 from ..models import ModelRef, RuntimeEvent
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
@@ -289,6 +290,7 @@ class ChatBridge(QObject):
         self._research_max_parallel = 3
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
+        self._code_analysis_release_items: list[dict[str, Any]] = []
         self._senior_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
@@ -469,6 +471,10 @@ class ChatBridge(QObject):
     @Property(str, notify=stateChanged)
     def codeAnalysisRelease(self) -> str:  # noqa: N802
         return self._code_analysis_release
+
+    @Property("QVariantList", notify=stateChanged)
+    def codeAnalysisReleaseItems(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._code_analysis_release_items]
 
     @Property(bool, notify=stateChanged)
     def seniorProfileEnabled(self) -> bool:  # noqa: N802
@@ -1493,6 +1499,7 @@ class ChatBridge(QObject):
         self._research_max_parallel = 3
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
+        self._code_analysis_release_items = []
         self._senior_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
@@ -1683,10 +1690,21 @@ class ChatBridge(QObject):
             self._preferences.value("research/code_analysis_enabled", False),
             False,
         )
-        self._code_analysis_release = str(
+        requested_release = str(
             self._preferences.value("research/code_analysis_release", "current")
             or "current"
         ).strip() or "current"
+        self._code_analysis_release = requested_release
+        self._refresh_code_analysis_releases()
+        if self._code_analysis_release != requested_release:
+            self._preferences.setValue(
+                "research/code_analysis_release",
+                self._code_analysis_release,
+            )
+        if not self._code_analysis_release_items and self._code_analysis_enabled:
+            self._code_analysis_enabled = False
+            self._preferences.setValue("research/code_analysis_enabled", False)
+        self._preferences.sync()
         self._senior_profile_enabled = self._stored_bool(
             self._preferences.value("research/senior_profile_enabled", False),
             False,
@@ -1747,7 +1765,9 @@ class ChatBridge(QObject):
 
     @Slot(bool)
     def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
-        self._code_analysis_enabled = bool(enabled)
+        self._code_analysis_enabled = bool(
+            enabled and self._code_analysis_release_items
+        )
         self._preferences.setValue(
             "research/code_analysis_enabled", self._code_analysis_enabled
         )
@@ -1757,11 +1777,74 @@ class ChatBridge(QObject):
     @Slot(str)
     def setCodeAnalysisRelease(self, release_id: str) -> None:  # noqa: N802
         selected = str(release_id or "").strip()
-        if not selected or selected == self._code_analysis_release:
+        available = {
+            str(item.get("releaseId") or "")
+            for item in self._code_analysis_release_items
+        }
+        if (
+            not selected
+            or selected not in available
+            or selected == self._code_analysis_release
+        ):
             return
         self._code_analysis_release = selected
         self._preferences.setValue("research/code_analysis_release", selected)
         self._preferences.sync()
+        self.stateChanged.emit()
+
+    def _refresh_code_analysis_releases(self) -> None:
+        try:
+            statuses = ErpReleaseCatalog(self._settings.root).list_statuses()
+        except (OSError, ValueError):
+            statuses = []
+        items: list[dict[str, Any]] = []
+        for status in statuses[:3]:
+            release_id = str(status.get("release_id") or "").strip()
+            if not release_id or status.get("state") == "failed":
+                continue
+            freshness = str(status.get("freshness") or "unknown")
+            jar_count = int(status.get("jar_count") or 0)
+            freshness_label = {
+                "fresh": "atualizado",
+                "stale": "desatualizado",
+                "missing": "origem ausente",
+            }.get(freshness, "frescor desconhecido")
+            items.append(
+                {
+                    "releaseId": release_id,
+                    "label": f"{release_id} · {jar_count} JARs · {freshness_label}",
+                    "freshness": freshness,
+                    "state": str(status.get("state") or "incomplete"),
+                    "warning": " ".join(str(item) for item in status.get("warnings") or []),
+                }
+            )
+        self._code_analysis_release_items = items
+        available = {str(item["releaseId"]) for item in items}
+        if self._code_analysis_release not in available:
+            self._code_analysis_release = str(items[0]["releaseId"]) if items else ""
+
+    @Slot()
+    def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
+        previous = self._code_analysis_release
+        was_enabled = self._code_analysis_enabled
+        preferences_changed = False
+        self._refresh_code_analysis_releases()
+        if not self._code_analysis_release_items:
+            self._code_analysis_enabled = False
+        if self._code_analysis_release != previous:
+            self._preferences.setValue(
+                "research/code_analysis_release",
+                self._code_analysis_release,
+            )
+            preferences_changed = True
+        if self._code_analysis_enabled != was_enabled:
+            self._preferences.setValue(
+                "research/code_analysis_enabled",
+                self._code_analysis_enabled,
+            )
+            preferences_changed = True
+        if preferences_changed:
+            self._preferences.sync()
         self.stateChanged.emit()
 
     @staticmethod
@@ -2057,7 +2140,10 @@ class ChatBridge(QObject):
                 image_paths=image_paths,
                 vr_mode=self._vr_mode,
                 force_research=force_research,
-                code_analysis_enabled=self._code_analysis_enabled,
+                code_analysis_enabled=(
+                    self._code_analysis_enabled
+                    and bool(self._code_analysis_release)
+                ),
                 code_analysis_release=self._code_analysis_release,
                 response_mode=(
                     self._vr_response_mode

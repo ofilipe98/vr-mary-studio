@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary import brand
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
 from vrsoft_extractor.mary.frontend.chat import ChatBridge, markdown_for_display
@@ -51,6 +53,19 @@ class QmlFrontendTest(unittest.TestCase):
             theme_override=theme,
             initial_page=initial_page,
         )
+
+    def _import_release(
+        self,
+        settings: MarySettings,
+        release_id: str,
+        marker: bytes = b"release",
+    ) -> None:
+        jar = settings.root / "ERP" / "releases" / release_id / "jars" / "ERP.jar"
+        jar.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(jar, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
+            archive.writestr("br/vr/App.class", marker)
+        ErpReleaseCatalog(settings.root, expected_jar_count=1).import_release(release_id)
 
     def test_brand_palette_keeps_existing_vr_identity(self):
         light = brand.brand_palette("light")
@@ -984,6 +999,8 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            self._import_release(settings, "current", b"current")
+            self._import_release(settings, "2026.08.29", b"new")
             bridge = ChatBridge(settings, database, preferences)
 
             self.assertFalse(bridge.codeAnalysisEnabled)
@@ -1000,6 +1017,59 @@ class QmlFrontendTest(unittest.TestCase):
             reopened = ChatBridge(settings, database, preferences)
             self.assertTrue(reopened.codeAnalysisEnabled)
             self.assertEqual(reopened.codeAnalysisRelease, "2026.08.29")
+            self.assertEqual(
+                [item["releaseId"] for item in reopened.codeAnalysisReleaseItems],
+                ["2026.08.29", "current"],
+            )
+
+    def test_code_analysis_release_selector_rejects_unknown_and_marks_stale(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertEqual(bridge.codeAnalysisRelease, "r1")
+            bridge.setCodeAnalysisRelease("release-inexistente")
+            self.assertEqual(bridge.codeAnalysisRelease, "r1")
+
+            jar = settings.root / "ERP" / "releases" / "r1" / "jars" / "ERP.jar"
+            with zipfile.ZipFile(jar, "a") as archive:
+                archive.writestr("br/vr/Nova.class", b"changed")
+            bridge.refreshCodeAnalysisReleases()
+
+            self.assertEqual(
+                bridge.codeAnalysisReleaseItems[0]["freshness"], "stale"
+            )
+            self.assertIn("desatualizado", bridge.codeAnalysisReleaseItems[0]["label"])
+
+    def test_code_analysis_cannot_be_enabled_without_inventoried_release(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            bridge.setCodeAnalysisEnabled(True)
+
+            self.assertFalse(bridge.codeAnalysisEnabled)
+            self.assertEqual(bridge.codeAnalysisRelease, "")
+            self.assertEqual(bridge.codeAnalysisReleaseItems, [])
 
     def test_senior_profile_unlocks_and_persists_explicit_response_mode(self):
         with TemporaryDirectory() as temporary:

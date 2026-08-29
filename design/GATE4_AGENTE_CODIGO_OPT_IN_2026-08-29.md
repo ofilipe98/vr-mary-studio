@@ -51,6 +51,6 @@ Implantação e Treinamento.
 - validar chamados reais cuja causa conhecida estava no código, ligado versus
   desligado;
 - adicionar embeddings ao AST tolerante e ao grafo sintático entregues no Gate 5;
-- criar seletor de releases inventariadas em vez de entrada textual;
+- seletor de releases inventariadas entregue no Gate 7;
 - medir tokens e latência do quarto agente por perfil de usuário;
 - validar em uso real o perfil sênior e os modos formalizados no Gate 6.

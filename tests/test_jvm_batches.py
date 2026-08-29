@@ -11,6 +11,7 @@ from vrsoft_extractor.mary.jvm_batches import (
     DecompilationBatchExecutor,
     DecompilationBatchPlanner,
     DecompilationBatchStore,
+    _class_family,
 )
 from vrsoft_extractor.mary.jvm_toolchain import DecompileRequest, DecompileResult
 
@@ -102,6 +103,22 @@ def test_planner_is_deterministic_deduplicates_content_and_keeps_provenance(
         "r1", ("B.jar", "A.jar"), max_classes=1, max_bytes=1024
     )
     assert reversed_order["plan_id"] == first["plan_id"]
+
+
+def test_class_family_preserves_legal_leading_dollar_names() -> None:
+    known = {
+        "com.google.gson.internal.$Gson$Preconditions",
+        "com.google.gson.internal.$Gson$Types",
+        "com.google.gson.internal.$Gson$Types$GenericArrayTypeImpl",
+    }
+
+    assert _class_family(
+        "com.google.gson.internal.$Gson$Preconditions", known
+    ) == "com.google.gson.internal.$Gson$Preconditions"
+    assert _class_family(
+        "com.google.gson.internal.$Gson$Types$GenericArrayTypeImpl", known
+    ) == "com.google.gson.internal.$Gson$Types"
+    assert _class_family("br.vr.Outer$Inner", known) == "br.vr.Outer"
 
 
 def test_executor_marks_success_and_reuses_completed_content(tmp_path: Path) -> None:

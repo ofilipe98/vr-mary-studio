@@ -426,10 +426,17 @@ class DecompilationBatchPlanner:
 
             batches: list[tuple[str, str, list[sqlite3.Row]]] = []
             for relative_path, artifact in selected:
+                known_names = {
+                    str(row["logical_name"])
+                    for row in by_artifact[relative_path]
+                }
                 families: list[list[sqlite3.Row]] = []
                 current_key: tuple[int, str] | None = None
                 for row in by_artifact[relative_path]:
-                    key = (int(row["class_version"]), _class_family(row["logical_name"]))
+                    key = (
+                        int(row["class_version"]),
+                        _class_family(row["logical_name"], known_names),
+                    )
                     if key != current_key:
                         families.append([])
                         current_key = key
@@ -667,8 +674,13 @@ class DecompilationBatchExecutor:
         if not pending:
             return self._finish_completed(batch, "reused", "", [], expected=0, actual=0)
 
+        # Preserve the full batch namespace when resuming partially reused work:
+        # the outer class may already be completed while one of its nested
+        # classes is still pending.
+        known_names = {str(row["logical_name"]) for row in members}
         expected_paths = {
-            _class_family(str(row["logical_name"])).replace(".", "/") + ".java"
+            _class_family(str(row["logical_name"]), known_names).replace(".", "/")
+            + ".java"
             for row in pending
         }
         expected_sources = len(expected_paths)
@@ -901,9 +913,28 @@ class DecompilationBatchExecutor:
             connection.commit()
 
 
-def _class_family(logical_name: str) -> str:
+def _class_family(
+    logical_name: str,
+    known_names: Iterable[str] = (),
+) -> str:
     package, separator, simple = str(logical_name).rpartition(".")
-    outer = simple.split("$", 1)[0]
+    if simple.startswith("$"):
+        known = {str(item) for item in known_names}
+        candidates = [
+            simple[:index]
+            for index, character in enumerate(simple)
+            if character == "$" and index > 0
+        ]
+        outer = next(
+            (
+                candidate
+                for candidate in reversed(candidates)
+                if (f"{package}.{candidate}" if separator else candidate) in known
+            ),
+            simple,
+        )
+    else:
+        outer = simple.split("$", 1)[0]
     return f"{package}.{outer}" if separator else outer
 
 

@@ -257,6 +257,7 @@ Item {
                         objectName: "vrUltraCodeAnalysisToggle"
                         text: "Ativo"
                         checked: chat.codeAnalysisEnabled
+                        enabled: chat.codeAnalysisReleaseItems.length > 0
                         onToggled: chat.setCodeAnalysisEnabled(checked)
                     }
                 }
@@ -269,12 +270,26 @@ Item {
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.captionSize
                     }
-                    VrTextField {
+                    VrComboBox {
+                        id: codeReleasePicker
                         objectName: "vrUltraCodeAnalysisRelease"
                         Layout.fillWidth: true
-                        text: chat.codeAnalysisRelease
-                        placeholderText: "current"
-                        onEditingFinished: chat.setCodeAnalysisRelease(text)
+                        enabled: chat.codeAnalysisReleaseItems.length > 0
+                        model: chat.codeAnalysisReleaseItems.length
+                            ? chat.codeAnalysisReleaseItems
+                            : [{"label": "Nenhuma release inventariada", "releaseId": ""}]
+                        textRole: "label"
+                        currentIndex: {
+                            for (var index = 0; index < chat.codeAnalysisReleaseItems.length; ++index) {
+                                if (chat.codeAnalysisReleaseItems[index].releaseId === chat.codeAnalysisRelease)
+                                    return index
+                            }
+                            return 0
+                        }
+                        onActivated: index => {
+                            if (index < chat.codeAnalysisReleaseItems.length)
+                                chat.setCodeAnalysisRelease(chat.codeAnalysisReleaseItems[index].releaseId)
+                        }
                     }
                 }
             }
@@ -283,5 +298,8 @@ Item {
         Item { Layout.fillHeight: true }
     }
 
-    Component.onCompleted: chat.refreshModels()
+    Component.onCompleted: {
+        chat.refreshModels()
+        chat.refreshCodeAnalysisReleases()
+    }
 }
