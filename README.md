@@ -238,6 +238,33 @@ release, JAR, classe, linhas, hashes e o frescor atual da release.
   --root VRProject search-erp-code VendaVO --release current --limit 5
 ```
 
+Para ampliar a cobertura sem criar um plano monolítico para cerca de 1,3 milhão
+de ocorrências de classe, use o fluxo incremental. O status diferencia os JARs
+apenas inventariados dos efetivamente processados, projeta o consumo com a
+reserva conservadora de 10× e mostra planos antigos sem tratá-los como ativos.
+
+```powershell
+# Conferir cobertura, capacidade, frescor e planos antes de gravar dados
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject status-erp-code-coverage current
+
+# Avançar o menor JAR pendente; repita para retomar o mesmo plano até concluí-lo
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject advance-erp-code-coverage current `
+  --limit 10 --approve-processing
+
+# Seleção manual continua disponível para um módulo prioritário
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject advance-erp-code-coverage current `
+  --jar VRMaster.jar --limit 1 --approve-processing
+```
+
+Sem `--jar`, um novo plano começa pelos menores JARs pendentes para produzir
+resultados verificáveis cedo; um plano atual já iniciado sempre é retomado antes
+de selecionar outro. A execução continua serial, indexa somente lotes concluídos
+e para diante de falha/saída parcial. O comando não remove planos antigos nem
+fontes fornecidas pelo usuário.
+
 O índice atual combina correspondência exata de símbolos, FTS5 sobre nomes e
 corpo e relações estruturais (`import`, `extends`, `implements`). A evolução
 para AST completo e embeddings deve complementar essa base sem retirar sua
@@ -249,6 +276,8 @@ base delimitam primeiro o assunto; só então o worker de código consulta até
 oito fontes candidatas do índice, analisa os trechos em contexto isolado e os
 entrega à síntese. Se o índice ou o worker falhar, o VR Ultra continua com
 Schema/Wiki/KB e registra a degradação na trilha da execução.
+O seletor mostra cobertura efetiva, por exemplo `3/46 JARs indexados`, separada
+do inventário completo da release.
 
 ### Benchmark pareado do Agente de Código
 

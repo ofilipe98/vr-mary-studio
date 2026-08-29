@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import queue
 import re
+import sqlite3
 import threading
 import time
 from datetime import datetime
@@ -28,9 +29,11 @@ from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
 from .text_rendering import FENCE_RE, code_language_badge
+from ..code_index import JavaCodeIndex
 from ..config import MarySettings
 from ..db import MaryDatabase
-from ..erp_releases import ErpReleaseCatalog
+from ..erp_releases import ErpReleaseCatalog, ErpReleaseError
+from ..jvm_batches import DecompilationBatchError
 from ..models import ModelRef, RuntimeEvent
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
@@ -211,8 +214,6 @@ class ChatBridge(QObject):
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     conversationArchived = Signal(str)
-    _modelsLoaded = Signal(object)
-    _extensionsLoaded = Signal(object)
 
     def __init__(
         self,
@@ -275,6 +276,9 @@ class ChatBridge(QObject):
         self._model_items: list[dict[str, Any]] = []
         self._favorite_model_keys = self._load_favorite_model_keys()
         self._model_catalog_loading = False
+        self._model_catalog_results: queue.SimpleQueue[list[dict[str, Any]]] = (
+            queue.SimpleQueue()
+        )
         self._effort = str(
             self._preferences.value("chat/last_effort", settings.default_effort)
             or settings.default_effort
@@ -300,6 +304,9 @@ class ChatBridge(QObject):
         self._selected_extension_keys: set[str] = set()
         self._extensions_loading = False
         self._extensions_generation = 0
+        self._extension_catalog_results: queue.SimpleQueue[dict[str, Any]] = (
+            queue.SimpleQueue()
+        )
         self._file_suggestions_cache: list[dict[str, str]] = []
         self._file_suggestions_root: Path | None = None
         self._file_suggestions_generation = 0
@@ -309,9 +316,15 @@ class ChatBridge(QObject):
         self._file_suggestions_results: queue.SimpleQueue[
             tuple[int, Path, list[dict[str, str]]]
         ] = queue.SimpleQueue()
-        self._modelsLoaded.connect(self._apply_model_catalog)
-        self._extensionsLoaded.connect(self._apply_extension_catalog)
         self._runtimeEvent.connect(self._on_runtime_event)
+        self._model_catalog_poll_timer = QTimer(self)
+        self._model_catalog_poll_timer.setInterval(25)
+        self._model_catalog_poll_timer.timeout.connect(self._poll_model_catalog)
+        self._extension_catalog_poll_timer = QTimer(self)
+        self._extension_catalog_poll_timer.setInterval(25)
+        self._extension_catalog_poll_timer.timeout.connect(
+            self._poll_extension_catalog
+        )
         self._file_suggestions_timer = QTimer(self)
         self._file_suggestions_timer.setSingleShot(True)
         self._file_suggestions_timer.setInterval(500)
@@ -715,6 +728,8 @@ class ChatBridge(QObject):
         for timer in (
             self._file_suggestions_timer,
             self._file_suggestions_poll_timer,
+            self._model_catalog_poll_timer,
+            self._extension_catalog_poll_timer,
             self._stream_timer,
             self._activity_clock,
             self._state_update_timer,
@@ -868,11 +883,14 @@ class ChatBridge(QObject):
             return
         self._model_catalog_loading = True
         self.stateChanged.emit()
+        enabled_providers = tuple(self._enabled_provider_names())
+        providers = dict(self._orchestrator.providers)
+        results = self._model_catalog_results
 
         def load() -> None:
             items: list[dict[str, Any]] = []
-            for provider_name in self._enabled_provider_names():
-                provider = self._orchestrator.providers.get(provider_name)
+            for provider_name in enabled_providers:
+                provider = providers.get(provider_name)
                 if provider is None:
                     continue
                 provider_label = PROVIDER_LABELS.get(provider_name, provider_name.title())
@@ -896,9 +914,26 @@ class ChatBridge(QObject):
                         "efforts": raw.get("supportedReasoningEfforts") or raw.get("supported_reasoning_efforts") or [],
                         "serviceTiers": raw.get("serviceTiers") or raw.get("service_tiers") or [],
                     })
-            self._modelsLoaded.emit(items)
+            results.put(items)
 
+        self._model_catalog_poll_timer.start()
         threading.Thread(target=load, daemon=True).start()
+
+    @Slot()
+    def _poll_model_catalog(self) -> None:
+        latest: list[dict[str, Any]] | None = None
+        while True:
+            try:
+                latest = self._model_catalog_results.get_nowait()
+            except queue.Empty:
+                break
+        if latest is None:
+            if not self._model_catalog_loading:
+                self._model_catalog_poll_timer.stop()
+            return
+        self._apply_model_catalog(latest)
+        if not self._model_catalog_loading:
+            self._model_catalog_poll_timer.stop()
 
     @Slot(object)
     def _apply_model_catalog(self, values: object) -> None:
@@ -1201,11 +1236,13 @@ class ChatBridge(QObject):
         self.stateChanged.emit()
         provider_name = self._provider
         workspace = (self._project_scope or self._settings.root).resolve(strict=False)
+        orchestrator = self._orchestrator
+        results = self._extension_catalog_results
 
         def load() -> None:
             values: list[dict[str, Any]] = []
             try:
-                skill_result = self._orchestrator.skills(provider_name, workspace)
+                skill_result = orchestrator.skills(provider_name, workspace)
             except Exception:
                 skill_result = {"skills": []}
             for item in skill_result.get("skills", []):
@@ -1220,7 +1257,7 @@ class ChatBridge(QObject):
                     "payload": dict(item),
                 })
             try:
-                tools = self._orchestrator.mcp_tools(provider_name)
+                tools = orchestrator.mcp_tools(provider_name)
             except Exception:
                 tools = []
             for item in tools:
@@ -1235,7 +1272,7 @@ class ChatBridge(QObject):
                     "description": str(item.get("description") or item.get("serverDescription") or "MCP"),
                     "payload": {"server": server, "tool": tool},
                 })
-            self._extensionsLoaded.emit(
+            results.put(
                 {
                     "generation": generation,
                     "provider": provider_name,
@@ -1244,7 +1281,24 @@ class ChatBridge(QObject):
                 }
             )
 
+        self._extension_catalog_poll_timer.start()
         threading.Thread(target=load, daemon=True).start()
+
+    @Slot()
+    def _poll_extension_catalog(self) -> None:
+        latest: dict[str, Any] | None = None
+        while True:
+            try:
+                latest = self._extension_catalog_results.get_nowait()
+            except queue.Empty:
+                break
+        if latest is None:
+            if not self._extensions_loading:
+                self._extension_catalog_poll_timer.stop()
+            return
+        self._apply_extension_catalog(latest)
+        if not self._extensions_loading:
+            self._extension_catalog_poll_timer.stop()
 
     @Slot(object)
     def _apply_extension_catalog(self, values: object) -> None:
@@ -1798,12 +1852,24 @@ class ChatBridge(QObject):
         except (OSError, ValueError):
             statuses = []
         items: list[dict[str, Any]] = []
+        code_index = JavaCodeIndex(self._settings.root)
         for status in statuses[:3]:
             release_id = str(status.get("release_id") or "").strip()
             if not release_id or status.get("state") == "failed":
                 continue
             freshness = str(status.get("freshness") or "unknown")
             jar_count = int(status.get("jar_count") or 0)
+            try:
+                coverage = code_index.coverage(release_id)
+            except (
+                DecompilationBatchError,
+                ErpReleaseError,
+                OSError,
+                ValueError,
+                sqlite3.Error,
+            ):
+                coverage = {}
+            covered_jar_count = int(coverage.get("covered_jar_count") or 0)
             freshness_label = {
                 "fresh": "atualizado",
                 "stale": "desatualizado",
@@ -1812,9 +1878,14 @@ class ChatBridge(QObject):
             items.append(
                 {
                     "releaseId": release_id,
-                    "label": f"{release_id} · {jar_count} JARs · {freshness_label}",
+                    "label": (
+                        f"{release_id} · {covered_jar_count}/{jar_count} JARs "
+                        f"indexados · {freshness_label}"
+                    ),
                     "freshness": freshness,
                     "state": str(status.get("state") or "incomplete"),
+                    "coveredJarCount": covered_jar_count,
+                    "jarCount": jar_count,
                     "warning": " ".join(str(item) for item in status.get("warnings") or []),
                 }
             )

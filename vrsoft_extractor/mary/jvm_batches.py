@@ -39,14 +39,21 @@ class DecompilationBatchStore:
         self.work_dir = self.code_index / "decompilation"
         self.lock_path = self.code_index / "decompilation.lock"
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         self.code_index.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         self._initialize(connection)
-        return connection
+        try:
+            yield connection
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @staticmethod
     def _initialize(connection: sqlite3.Connection) -> None:

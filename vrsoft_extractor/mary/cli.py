@@ -11,6 +11,7 @@ from .code_analysis_benchmark import (
     benchmark_template,
     execute_benchmark_suite,
 )
+from .code_coverage import CodeCoverageError, ErpCodeCoverage
 from .code_index import JavaCodeIndex
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
@@ -206,6 +207,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mostra cobertura do índice pesquisável de código",
     )
     code_status.add_argument("release_id", nargs="?", default="")
+    coverage_status = sub.add_parser(
+        "status-erp-code-coverage",
+        help="Mostra progresso e capacidade para cobrir os JARs de uma release",
+    )
+    coverage_status.add_argument("release_id")
+    coverage_advance = sub.add_parser(
+        "advance-erp-code-coverage",
+        help="Planeja, decompila e indexa incrementalmente os próximos JARs",
+    )
+    coverage_advance.add_argument("release_id")
+    coverage_advance.add_argument("--jar", action="append", default=[])
+    coverage_advance.add_argument("--jars-per-plan", type=int, default=1)
+    coverage_advance.add_argument("--limit", type=int, default=1)
+    coverage_advance.add_argument("--max-classes", type=int, default=DEFAULT_MAX_CLASSES)
+    coverage_advance.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    coverage_advance.add_argument("--heap-mb", type=int, default=2048)
+    coverage_advance.add_argument("--timeout", type=int, default=300)
+    coverage_advance.add_argument(
+        "--approve-processing",
+        action="store_true",
+        help="Confirma consumo de CPU, disco e execução dos decompiladores",
+    )
     code_callers = sub.add_parser(
         "callers-erp-code",
         help="Lista chamadas sintáticas a um método ou construtor indexado",
@@ -272,6 +295,20 @@ def main(argv: list[str] | None = None) -> int:
                     "error": (
                         "O benchmark faz duas execuções VR Ultra por caso. "
                         "Repita com --approve-model-usage após revisar custo e dados."
+                    )
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
+    if args.command == "advance-erp-code-coverage" and not args.approve_processing:
+        print(
+            json.dumps(
+                {
+                    "error": (
+                        "O avanço executa decompiladores e grava o índice. Repita com "
+                        "--approve-processing após revisar capacidade e release."
                     )
                 },
                 ensure_ascii=False,
@@ -518,6 +555,33 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status-erp-code":
         result = JavaCodeIndex(settings.root).status(args.release_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "status-erp-code-coverage":
+        try:
+            result = ErpCodeCoverage(settings.root).status(args.release_id)
+        except (CodeCoverageError, DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "advance-erp-code-coverage":
+        try:
+            result = ErpCodeCoverage(settings.root).advance(
+                args.release_id,
+                approved=args.approve_processing,
+                relative_jars=args.jar,
+                jars_per_plan=args.jars_per_plan,
+                batch_limit=args.limit,
+                max_classes=args.max_classes,
+                max_bytes=args.max_bytes,
+                max_heap_mb=args.heap_mb,
+                timeout_seconds=args.timeout,
+            )
+        except (CodeCoverageError, DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if all(
+            item.get("state") == "completed" for item in result["executed"]
+        ) else 2
     elif args.command == "callers-erp-code":
         try:
             result = JavaCodeIndex(settings.root).callers(

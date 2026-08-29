@@ -592,6 +592,55 @@ class JavaCodeIndex:
             "indexed_at": row["indexed_at"] or "",
         }
 
+    def coverage(self, release_id: str) -> dict[str, Any]:
+        """Return JAR-level processing coverage without expensive symbol counts."""
+
+        self.initialize()
+        manifest = self.catalog.load_manifest(release_id)
+        release_hash = str(manifest.get("release_manifest_sha256") or "")
+        manifest_jars = {
+            str(item.get("relative_path") or "")
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict) and item.get("relative_path")
+        }
+        with self.store.connect() as connection:
+            indexed_jars = {
+                str(item["jar_relative_path"])
+                for item in connection.execute(
+                    """SELECT DISTINCT jar_relative_path FROM code_sources
+                       WHERE release_id = ? ORDER BY jar_relative_path COLLATE NOCASE""",
+                    (release_id,),
+                )
+            }
+            completed_jars = {
+                str(item["relative_path"])
+                for item in connection.execute(
+                    """SELECT DISTINCT a.relative_path
+                       FROM plan_artifacts a
+                       JOIN decompilation_plans p ON p.plan_id = a.plan_id
+                       WHERE p.release_id = ? AND p.release_hash = ?
+                         AND p.schema_version = ? AND p.state = 'completed'""",
+                    (release_id, release_hash, PROCESSING_SCHEMA_VERSION),
+                )
+            }
+        # Searchable rows from a partially completed plan do not prove that its
+        # JAR is fully covered. Only a completed current-schema plan does.
+        covered = completed_jars & manifest_jars
+        remaining = manifest_jars - covered
+        total = len(manifest_jars)
+        return {
+            "release_id": release_id,
+            "release_manifest_sha256": release_hash,
+            "expected_jar_count": total,
+            "covered_jar_count": len(covered),
+            "coverage_ratio": round(len(covered) / total, 6) if total else 0.0,
+            "covered_jars": sorted(covered, key=str.casefold),
+            "remaining_jar_count": len(remaining),
+            "remaining_jars": sorted(remaining, key=str.casefold),
+            "indexed_source_jar_count": len(indexed_jars),
+            "indexed_source_jars": sorted(indexed_jars, key=str.casefold),
+        }
+
     def callers(
         self,
         target: str,
