@@ -190,9 +190,36 @@ bytecode em um conjunto representativo de JARs:
   --jar lib/VRLib.jar --jar lib/VRCore.jar
 ```
 
-O processamento definitivo deve ser feito em lotes resumíveis de classes. Um
-JAR completo não pode monopolizar memória nem ser considerado concluído quando
-o decompilador expira ou deixa somente uma saída parcial.
+O processamento definitivo usa lotes retomáveis de famílias de classes,
+deduplicados pelo SHA-256 do bytecode. O estado fica separado em
+`indice/codigo/processing.sqlite`; um lock global permite somente um
+decompilador por vez. Cada tentativa preserva entrada, saída e `attempt.json`
+com release, hashes, ferramenta e cobertura. Um lote só fica `completed` se o
+processo terminar normalmente e gerar todas as famílias Java esperadas.
+
+```powershell
+# Planejar: repita --jar para restringir o escopo; sem ele, usa os 46 JARs
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject plan-erp-decompilation current `
+  --jar VRPdv.jar --max-classes 500 --max-bytes 8388608
+
+# Consultar o progresso pelo identificador retornado no planejamento
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject status-erp-decompilation plan-<id>
+
+# Executar um lote por vez; Vineflower é primário e CFR é fallback
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject run-erp-decompilation plan-<id> `
+  --limit 1 --heap-mb 2048 --timeout 300
+
+# Uma falha nunca é ocultada; o reenvio exige uma ação explícita
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject retry-erp-decompilation batch-<id>
+```
+
+Se o Studio for interrompido, o lock exclusivo garante que um lote deixado em
+`running` só volte a `pending` quando não houver outro executor ativo. Saídas
+parciais ficam preservadas e não entram como conteúdo pronto.
 
 CLI da base:
 

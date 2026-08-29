@@ -83,6 +83,10 @@ class MarySettings:
         return self.root / "tools" / "code-analysis"
 
     @property
+    def code_processing_database_path(self) -> Path:
+        return self.code_index_dir / "processing.sqlite"
+
+    @property
     def work_dir(self) -> Path:
         return self.root / "TrabalhoVR"
 

@@ -14,6 +14,14 @@ from .movidesk import MovideskSync
 from .portable_export import audit_portable_project, export_portable_project
 from .portable_project import ensure_portable_project
 from .indexer import export_catalog
+from .jvm_batches import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_CLASSES,
+    DecompilationBatchError,
+    DecompilationBatchExecutor,
+    DecompilationBatchPlanner,
+    DecompilationBatchStore,
+)
 from .jvm_toolchain import JvmToolchain
 from .wiki import WikiSync
 from .schema_sync import SchemaSync
@@ -144,6 +152,37 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor-code-analysis",
         help="Verifica Java 17 isolado, Vineflower e CFR sem alterar o sistema",
     )
+    batch_plan = sub.add_parser(
+        "plan-erp-decompilation",
+        help="Planeja lotes determinísticos e retomáveis para decompilar uma release",
+    )
+    batch_plan.add_argument("release_id")
+    batch_plan.add_argument(
+        "--jar",
+        action="append",
+        default=[],
+        help="Caminho relativo de um JAR; pode ser repetido. Sem opção, usa todos.",
+    )
+    batch_plan.add_argument("--max-classes", type=int, default=DEFAULT_MAX_CLASSES)
+    batch_plan.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    batch_run = sub.add_parser(
+        "run-erp-decompilation",
+        help="Executa serialmente os próximos lotes pendentes de um plano",
+    )
+    batch_run.add_argument("plan_id")
+    batch_run.add_argument("--limit", type=int, default=1)
+    batch_run.add_argument("--heap-mb", type=int, default=2048)
+    batch_run.add_argument("--timeout", type=int, default=300)
+    batch_status = sub.add_parser(
+        "status-erp-decompilation",
+        help="Mostra o progresso de um ou de todos os planos de decompilação",
+    )
+    batch_status.add_argument("plan_id", nargs="?", default="")
+    batch_retry = sub.add_parser(
+        "retry-erp-decompilation",
+        help="Reenfileira explicitamente um lote com falha ou saída parcial",
+    )
+    batch_retry.add_argument("batch_id")
     return parser
 
 
@@ -325,6 +364,47 @@ def main(argv: list[str] | None = None) -> int:
         result = JvmToolchain(settings.root).doctor()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready"] else 2
+    elif args.command == "plan-erp-decompilation":
+        try:
+            result = DecompilationBatchPlanner(settings.root).plan(
+                args.release_id,
+                args.jar,
+                max_classes=args.max_classes,
+                max_bytes=args.max_bytes,
+            )
+        except (DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "run-erp-decompilation":
+        try:
+            result = DecompilationBatchExecutor(settings.root).run(
+                args.plan_id,
+                limit=args.limit,
+                max_heap_mb=args.heap_mb,
+                timeout_seconds=args.timeout,
+            )
+        except (DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if all(
+            item.get("state") == "completed" for item in result["executed"]
+        ) else 2
+    elif args.command == "status-erp-decompilation":
+        try:
+            result = DecompilationBatchStore(settings.root).status(args.plan_id)
+        except DecompilationBatchError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "retry-erp-decompilation":
+        try:
+            result = DecompilationBatchExecutor(settings.root).retry(args.batch_id)
+        except DecompilationBatchError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
