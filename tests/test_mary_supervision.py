@@ -24,6 +24,7 @@ from vrsoft_extractor.mary.supervision import (
     SupervisorAssessment,
     _internal_leaks,
     analyze_response_intent,
+    apply_response_mode,
     build_controlled_failure,
     build_response_contract,
     combine_final_validations,
@@ -83,6 +84,39 @@ def test_complete_flow_request_creates_a_step_by_step_contract() -> None:
     assert intent.requires_step_by_step is True
     assert contract.minimum_steps >= 3
     assert "passo a passo" in contract.must_include
+
+
+def test_implementation_intent_has_mapping_diff_risk_and_validation_contract() -> None:
+    request = "Planeje a implantação com migração e mapeamento de dados."
+    intent = analyze_response_intent(request, _profile(request))
+    contract = build_response_contract(intent)
+
+    assert intent.purpose == "implementation"
+    assert intent.audience == "implementation_team"
+    assert intent.requires_step_by_step is True
+    assert contract.minimum_steps == 5
+    assert "mapeamento de dados" in contract.must_include
+    assert "diferenças de schema ou configuração" in contract.must_include
+    assert "riscos e plano de reversão" in contract.must_include
+
+
+def test_explicit_senior_response_modes_override_presentation_not_sources() -> None:
+    base = analyze_response_intent("Como funciona a venda?", _profile("venda"))
+
+    training = apply_response_mode(base, "training")
+    support = apply_response_mode(base, "support")
+    implementation = apply_response_mode(base, "implementation")
+
+    assert training.purpose == "training_manual"
+    assert training.audience == "beginner"
+    assert support.purpose == "troubleshooting"
+    assert support.technical_level == "high"
+    assert implementation.purpose == "implementation"
+    assert implementation.audience == "implementation_team"
+    assert all(
+        item.requires_sources for item in (training, support, implementation)
+    )
+    assert apply_response_mode(base, "invalid") == base
 
 
 def test_deterministic_supervisor_rejects_ungrounded_structured_fact() -> None:

@@ -1001,6 +1001,37 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(reopened.codeAnalysisEnabled)
             self.assertEqual(reopened.codeAnalysisRelease, "2026.08.29")
 
+    def test_senior_profile_unlocks_and_persists_explicit_response_mode(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertFalse(bridge.seniorProfileEnabled)
+            self.assertEqual(bridge.vrResponseMode, "auto")
+            bridge.setVrResponseMode("support")
+            self.assertEqual(bridge.vrResponseMode, "auto")
+
+            bridge.setSeniorProfileEnabled(True)
+            bridge.setVrResponseMode("implementation")
+            self.assertTrue(bridge.seniorProfileEnabled)
+            self.assertEqual(bridge.vrResponseMode, "implementation")
+
+            reopened = ChatBridge(settings, database, preferences)
+            self.assertTrue(reopened.seniorProfileEnabled)
+            self.assertEqual(reopened.vrResponseMode, "implementation")
+
+            reopened.setSeniorProfileEnabled(False)
+            self.assertEqual(reopened.vrResponseMode, "auto")
+
     def test_project_folder_browser_lists_directories_and_adds_current_path(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

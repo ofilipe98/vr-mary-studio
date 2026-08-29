@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from typing import Any, Iterable
 
@@ -155,7 +155,7 @@ def decide_adaptive_effort(
     floor_base = "medium" if auto else base
     target = 1  # medium
     reasons: list[str] = []
-    if intent.purpose in {"troubleshooting", "training_manual"}:
+    if intent.purpose in {"troubleshooting", "training_manual", "implementation"}:
         target = max(target, 2)
         reasons.append(f"propósito {intent.purpose}")
     elif intent.purpose == "technical_explanation":
@@ -220,6 +220,63 @@ class ResponseIntent:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+VALID_RESPONSE_MODES = {"auto", "training", "support", "implementation"}
+
+
+def normalize_response_mode(value: object) -> str:
+    mode = str(value or "auto").strip().casefold()
+    return mode if mode in VALID_RESPONSE_MODES else "auto"
+
+
+def apply_response_mode(intent: ResponseIntent, mode: object) -> ResponseIntent:
+    """Apply an explicit presentation mode without treating it as authorization."""
+
+    selected = normalize_response_mode(mode)
+    if selected == "auto":
+        return intent
+    if selected == "training":
+        return replace(
+            intent,
+            user_goal="learn_procedure",
+            audience="beginner",
+            purpose="training_manual",
+            requested_detail=(
+                intent.requested_detail
+                if intent.requested_detail == "very_high"
+                else "high"
+            ),
+            technical_level="low_to_medium",
+            requires_step_by_step=True,
+        )
+    if selected == "support":
+        return replace(
+            intent,
+            user_goal="resolve_problem",
+            audience="technical_user",
+            purpose="troubleshooting",
+            requested_detail=(
+                intent.requested_detail
+                if intent.requested_detail in {"high", "very_high"}
+                else "high"
+            ),
+            technical_level="high",
+            requires_step_by_step=False,
+        )
+    return replace(
+        intent,
+        user_goal="plan_implementation",
+        audience="implementation_team",
+        purpose="implementation",
+        requested_detail=(
+            intent.requested_detail
+            if intent.requested_detail in {"high", "very_high"}
+            else "high"
+        ),
+        technical_level="high",
+        requires_step_by_step=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -444,11 +501,23 @@ def analyze_response_intent(
         intent_text,
         ("erro", "falha", "nao funciona", "divergencia", "corrigir"),
     )
+    implementation = _contains_any(
+        intent_text,
+        (
+            "implantacao",
+            "implantar",
+            "migracao",
+            "migrar dados",
+            "mapeamento de dados",
+            "diff de schema",
+            "virada de sistema",
+        ),
+    )
     technical = profile.answer_type == "technical_schema" or _contains_any(
         intent_text,
         ("sql", "schema", "tabela", "trigger", "log", "api", "codigo"),
     )
-    requires_steps = training or _contains_any(
+    requires_steps = training or implementation or _contains_any(
         intent_text,
         (
             "passo a passo",
@@ -468,6 +537,9 @@ def analyze_response_intent(
     elif troubleshooting:
         purpose = "troubleshooting"
         user_goal = "resolve_problem"
+    elif implementation:
+        purpose = "implementation"
+        user_goal = "plan_implementation"
     elif technical:
         purpose = "technical_explanation"
         user_goal = "understand_technical_behavior"
@@ -487,6 +559,9 @@ def analyze_response_intent(
     if _contains_any(normalized, ("iniciante", "leigo", "primeiro acesso", "nunca usei")):
         audience = "beginner"
         technical_level = "low"
+    elif implementation:
+        audience = "implementation_team"
+        technical_level = "high"
     elif technical:
         audience = "technical_user"
         technical_level = "high"
@@ -530,6 +605,19 @@ def build_response_contract(intent: ResponseIntent) -> ResponseContract:
         )
         minimum_steps = 6
         minimum_words = 280
+    elif intent.purpose == "implementation":
+        must_include.extend(
+            (
+                "escopo e premissas da implantação",
+                "mapeamento de dados",
+                "diferenças de schema ou configuração",
+                "sequência de execução",
+                "riscos e plano de reversão",
+                "checklist de validação",
+            )
+        )
+        minimum_steps = 5
+        minimum_words = 220
     elif intent.requires_step_by_step:
         must_include.extend(
             (
@@ -1421,7 +1509,7 @@ def should_use_semantic_final_validation(
 ) -> bool:
     return (
         contract.detail_level in {"high", "very_high"}
-        or contract.purpose in {"training_manual", "troubleshooting"}
+        or contract.purpose in {"training_manual", "troubleshooting", "implementation"}
     )
 
 

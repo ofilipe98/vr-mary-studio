@@ -204,6 +204,25 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert row and "Resposta Ultra" in row[-1]["content"]
 
 
+def test_explicit_response_mode_is_applied_before_contract_and_fanout(tmp_path: Path) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+
+    _run_send(orchestrator, cid, events, response_mode="implementation")
+
+    intent_event = [
+        event for event in events if event.kind == "intent_analysis_completed"
+    ][-1]
+    contract_event = [
+        event for event in events if event.kind == "response_contract_created"
+    ][-1]
+    assert intent_event.payload["response_mode"] == "implementation"
+    assert intent_event.payload["intent"]["purpose"] == "implementation"
+    assert contract_event.payload["contract"]["purpose"] == "implementation"
+    assert "mapeamento de dados" in contract_event.payload["contract"]["must_include"]
+
+
 def test_vr_mode_never_triggers_fanout(tmp_path: Path) -> None:
     settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "vr")
     _run_send(orchestrator, cid, events)

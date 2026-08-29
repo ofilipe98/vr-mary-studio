@@ -74,10 +74,12 @@ from .supervision import (
     ResponseViolation,
     WorkerReport,
     analyze_response_intent,
+    apply_response_mode,
     build_controlled_failure,
     build_response_contract,
     build_rewrite_prompt,
     decide_adaptive_effort,
+    normalize_response_mode,
     parse_final_draft,
     render_sources,
     strip_internal_leaks,
@@ -287,6 +289,7 @@ class ChatOrchestrator:
         force_research: bool = False,
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
+        response_mode: str = "auto",
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
@@ -448,6 +451,11 @@ class ChatOrchestrator:
                                 existing_messages
                             ),
                         )
+                        effective_response_mode = normalize_response_mode(response_mode)
+                        response_intent = apply_response_mode(
+                            response_intent,
+                            effective_response_mode,
+                        )
                         response_contract = build_response_contract(
                             response_intent
                         )
@@ -464,7 +472,10 @@ class ChatOrchestrator:
                             conversation_id,
                             "intent_analysis_completed",
                             "Intenção da resposta definida.",
-                            {"intent": response_intent.to_dict()},
+                            {
+                                "intent": response_intent.to_dict(),
+                                "response_mode": effective_response_mode,
+                            },
                         )
                         self._emit_orchestration_event(
                             conversation_id,
@@ -723,7 +734,7 @@ class ChatOrchestrator:
             for item in bundle.module_routing
             if item.selected
         ]
-        deep_request = (
+        deep_request = intent.purpose == "implementation" or (
             intent.requested_detail == "very_high"
             and intent.purpose in {"troubleshooting", "training_manual"}
         )

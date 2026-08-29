@@ -73,6 +73,71 @@ Item {
         }
 
         Rectangle {
+            objectName: "vrUltraSeniorProfileCard"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 146
+            radius: Theme.radiusCard
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.border
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceSm
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Perfil especialista sênior"
+                            color: frontend.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.bodySize
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Libera no Chat VR e VR Ultra a escolha manual do formato. É preferência de trabalho, não autorização."
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    VrCheckBox {
+                        objectName: "vrUltraSeniorProfileToggle"
+                        text: "Ativo"
+                        checked: chat.seniorProfileEnabled
+                        onToggled: chat.setSeniorProfileEnabled(checked)
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "Modo de resposta"
+                        color: frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                    }
+                    VrComboBox {
+                        id: responseModePicker
+                        objectName: "vrUltraResponseModePicker"
+                        Layout.fillWidth: true
+                        enabled: chat.seniorProfileEnabled
+                        model: ["Automático", "Treinamento", "Suporte", "Implantação"]
+                        property var values: ["auto", "training", "support", "implementation"]
+                        currentIndex: Math.max(0, values.indexOf(chat.vrResponseMode))
+                        onActivated: index => chat.setVrResponseMode(values[index])
+                    }
+                }
+            }
+        }
+
+        Rectangle {
             objectName: "vrUltraAgentPool"
             Layout.fillWidth: true
             Layout.preferredHeight: 152

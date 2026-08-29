@@ -289,6 +289,8 @@ class ChatBridge(QObject):
         self._research_max_parallel = 3
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
+        self._senior_profile_enabled = False
+        self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
         self._attachments: list[dict[str, str]] = []
@@ -467,6 +469,14 @@ class ChatBridge(QObject):
     @Property(str, notify=stateChanged)
     def codeAnalysisRelease(self) -> str:  # noqa: N802
         return self._code_analysis_release
+
+    @Property(bool, notify=stateChanged)
+    def seniorProfileEnabled(self) -> bool:  # noqa: N802
+        return self._senior_profile_enabled
+
+    @Property(str, notify=stateChanged)
+    def vrResponseMode(self) -> str:  # noqa: N802
+        return self._vr_response_mode
 
     @Property("QVariantList", notify=stateChanged)
     def modelItems(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1483,6 +1493,8 @@ class ChatBridge(QObject):
         self._research_max_parallel = 3
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
+        self._senior_profile_enabled = False
+        self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
         self._attachments = []
@@ -1675,6 +1687,14 @@ class ChatBridge(QObject):
             self._preferences.value("research/code_analysis_release", "current")
             or "current"
         ).strip() or "current"
+        self._senior_profile_enabled = self._stored_bool(
+            self._preferences.value("research/senior_profile_enabled", False),
+            False,
+        )
+        saved_mode = self._normalize_response_mode(
+            self._preferences.value("research/response_mode", "auto")
+        )
+        self._vr_response_mode = saved_mode if self._senior_profile_enabled else "auto"
 
     def _apply_research_config(self) -> None:
         wanted = set(self._research_model_keys)
@@ -1741,6 +1761,40 @@ class ChatBridge(QObject):
             return
         self._code_analysis_release = selected
         self._preferences.setValue("research/code_analysis_release", selected)
+        self._preferences.sync()
+        self.stateChanged.emit()
+
+    @staticmethod
+    def _normalize_response_mode(value: object) -> str:
+        selected = str(value or "auto").strip().casefold()
+        return (
+            selected
+            if selected in {"auto", "training", "support", "implementation"}
+            else "auto"
+        )
+
+    @Slot(bool)
+    def setSeniorProfileEnabled(self, enabled: bool) -> None:  # noqa: N802
+        self._senior_profile_enabled = bool(enabled)
+        if not self._senior_profile_enabled:
+            self._vr_response_mode = "auto"
+            self._preferences.setValue("research/response_mode", "auto")
+        self._preferences.setValue(
+            "research/senior_profile_enabled",
+            self._senior_profile_enabled,
+        )
+        self._preferences.sync()
+        self.stateChanged.emit()
+
+    @Slot(str)
+    def setVrResponseMode(self, mode: str) -> None:  # noqa: N802
+        selected = self._normalize_response_mode(mode)
+        if not self._senior_profile_enabled:
+            selected = "auto"
+        if selected == self._vr_response_mode:
+            return
+        self._vr_response_mode = selected
+        self._preferences.setValue("research/response_mode", selected)
         self._preferences.sync()
         self.stateChanged.emit()
 
@@ -2005,6 +2059,11 @@ class ChatBridge(QObject):
                 force_research=force_research,
                 code_analysis_enabled=self._code_analysis_enabled,
                 code_analysis_release=self._code_analysis_release,
+                response_mode=(
+                    self._vr_response_mode
+                    if self._senior_profile_enabled
+                    else "auto"
+                ),
             )
             self._attachments = []
             self._selected_extension_keys = set()
