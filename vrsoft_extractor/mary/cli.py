@@ -8,6 +8,7 @@ from pathlib import Path
 from .classification_audit import audit_classification
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
+from .erp_releases import ErpReleaseCatalog, ErpReleaseError
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
 from .portable_export import audit_portable_project, export_portable_project
@@ -95,6 +96,37 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "audit-portable",
         help="Verifica caminhos absolutos e arquivos sensíveis no projeto VR",
+    )
+    erp_import = sub.add_parser(
+        "import-erp-release",
+        help="Inventaria e registra os JARs de uma release do ERP",
+    )
+    erp_import.add_argument("release_id")
+    erp_import.add_argument(
+        "--path",
+        default=None,
+        help="Pasta dos JARs; padrão: ERP/releases/<release>/jars",
+    )
+    erp_import.add_argument("--expected-jars", type=int, default=46)
+    erp_status = sub.add_parser(
+        "status-erp-release",
+        help="Verifica o frescor de uma ou de todas as releases indexadas",
+    )
+    erp_status.add_argument("release_id", nargs="?", default="")
+    erp_status.add_argument(
+        "--full-hash",
+        action="store_true",
+        help="Recalcula SHA-256 de todos os JARs em vez da verificação rápida",
+    )
+    erp_remove = sub.add_parser(
+        "remove-erp-release-index",
+        help="Remove apenas o índice gerado de uma release",
+    )
+    erp_remove.add_argument("release_id")
+    erp_remove.add_argument(
+        "--approve",
+        action="store_true",
+        help="Confirma explicitamente a remoção do índice regenerável",
     )
     return parser
 
@@ -191,7 +223,11 @@ def main(argv: list[str] | None = None) -> int:
             ).fetchone()[0]
         print(
             json.dumps(
-                {"root": str(settings.root), "documents": [dict(row) for row in counts], "reviews": reviews},
+                {
+                    "root": str(settings.root),
+                    "documents": [dict(row) for row in counts],
+                    "reviews": reviews,
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -222,6 +258,44 @@ def main(argv: list[str] | None = None) -> int:
         result = audit_portable_project(settings.root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready"] else 2
+    elif args.command == "import-erp-release":
+        catalog = ErpReleaseCatalog(settings.root, args.expected_jars)
+        try:
+            result = catalog.import_release(args.release_id, args.path)
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["state"] == "ready" else 2
+    elif args.command == "status-erp-release":
+        catalog = ErpReleaseCatalog(settings.root)
+        try:
+            result = (
+                catalog.status(args.release_id, full_hash=args.full_hash)
+                if args.release_id
+                else catalog.list_statuses(full_hash=args.full_hash)
+            )
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if isinstance(result, dict):
+            return 0 if (
+                result.get("state") == "ready"
+                and result.get("freshness") == "fresh"
+            ) else 2
+        return 0 if all(
+            item.get("state") == "ready" and item.get("freshness") == "fresh"
+            for item in result
+        ) else 2
+    elif args.command == "remove-erp-release-index":
+        catalog = ErpReleaseCatalog(settings.root)
+        try:
+            result = catalog.remove_index(args.release_id, approved=args.approve)
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

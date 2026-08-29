@@ -142,6 +142,34 @@ Abra `Start-VRStudio.bat` ou execute:
 
 A interface Qt Quick/QML é o único frontend desktop.
 
+### Releases do ERP para análise de código
+
+Cada versão do ERP deve ficar isolada em `VRProject/ERP/releases/<release>/jars`.
+O inventário registra os 46 JARs, hashes SHA-256, tamanho, classes, informações
+do `MANIFEST.MF`, duplicidades de classe e sinais heurísticos de ofuscação. Os
+JARs fornecidos manualmente nunca são removidos pelo Studio.
+
+```powershell
+# Importar e validar uma release completa
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject import-erp-release 2026.08.28
+
+# Verificação rápida por tamanho e data, ou verificação integral por hash
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject status-erp-release 2026.08.28 --full-hash
+
+# Remover somente o índice regenerável, com aprovação explícita
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject remove-erp-release-index 2026.08.28 --approve
+```
+
+Para importar temporariamente uma pasta fora do layout padrão, use `--path`.
+Uma release com quantidade diferente de 46 JARs ou algum arquivo inválido é
+registrada como `incomplete` e não deve ser selecionada pelo Agente de Código.
+O catálogo mantém no máximo três releases e usa como orçamento inicial do
+índice dez vezes o tamanho da primeira release importada; ele nunca remove uma
+versão automaticamente para abrir espaço.
+
 CLI da base:
 
 ```powershell

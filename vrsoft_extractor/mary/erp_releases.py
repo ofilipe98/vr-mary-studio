@@ -1,0 +1,530 @@
+"""Versioned ERP JAR inventory used by VR code analysis.
+
+This module deliberately stops before decompilation.  It establishes the
+release identity, provenance and freshness guarantees that every later code
+index and worker query must inherit.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import zipfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+from uuid import uuid4
+
+
+MANIFEST_SCHEMA_VERSION = 1
+DEFAULT_EXPECTED_JAR_COUNT = 46
+DEFAULT_MAX_RELEASES = 3
+DEFAULT_STORAGE_BUDGET_MULTIPLIER = 10
+_RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class ErpReleaseError(RuntimeError):
+    """Controlled failure while importing or managing an ERP release."""
+
+
+@dataclass(frozen=True)
+class ErpReleasePaths:
+    root: Path
+
+    @property
+    def source_releases(self) -> Path:
+        return self.root / "ERP" / "releases"
+
+    @property
+    def code_index(self) -> Path:
+        return self.root / "indice" / "codigo"
+
+    @property
+    def indexed_releases(self) -> Path:
+        return self.code_index / "releases"
+
+    @property
+    def artifacts(self) -> Path:
+        return self.code_index / "artifacts"
+
+    def source_for(self, release_id: str) -> Path:
+        return self.source_releases / release_id / "jars"
+
+    def index_for(self, release_id: str) -> Path:
+        return self.indexed_releases / release_id
+
+    def manifest_for(self, release_id: str) -> Path:
+        return self.index_for(release_id) / "manifest.json"
+
+
+class ErpReleaseCatalog:
+    """Import, validate and safely remove versioned ERP JAR inventories."""
+
+    def __init__(
+        self,
+        root: str | Path,
+        expected_jar_count: int = DEFAULT_EXPECTED_JAR_COUNT,
+        max_releases: int = DEFAULT_MAX_RELEASES,
+        storage_budget_multiplier: int = DEFAULT_STORAGE_BUDGET_MULTIPLIER,
+    ) -> None:
+        self.paths = ErpReleasePaths(Path(root).resolve())
+        self.expected_jar_count = max(1, int(expected_jar_count))
+        self.max_releases = max(1, int(max_releases))
+        self.storage_budget_multiplier = max(1, int(storage_budget_multiplier))
+
+    def ensure_dirs(self) -> None:
+        for path in (
+            self.paths.source_releases,
+            self.paths.indexed_releases,
+            self.paths.artifacts,
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+
+    def import_release(
+        self,
+        release_id: str,
+        source_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
+        release_id = validate_release_id(release_id)
+        source = Path(source_dir or self.paths.source_for(release_id)).resolve()
+        if not source.is_dir():
+            raise ErpReleaseError(f"Pasta da release não encontrada: {source}")
+
+        self.ensure_dirs()
+        indexed = {
+            path.name
+            for path in self.paths.indexed_releases.iterdir()
+            if path.is_dir() and (path / "manifest.json").is_file()
+        }
+        if release_id not in indexed and len(indexed) >= self.max_releases:
+            raise ErpReleaseError(
+                f"O limite de {self.max_releases} releases indexadas foi atingido; "
+                "remova uma delas com aprovação antes de importar outra."
+            )
+        jar_paths = sorted(
+            (
+                path
+                for path in source.rglob("*")
+                if path.is_file() and path.suffix.casefold() == ".jar"
+            ),
+            key=lambda path: path.relative_to(source).as_posix().casefold(),
+        )
+        if not jar_paths:
+            raise ErpReleaseError(f"Nenhum JAR encontrado em: {source}")
+
+        artifacts: list[dict[str, Any]] = []
+        class_owners: dict[str, str] = {}
+        duplicate_classes: set[str] = set()
+        class_names: list[str] = []
+        warnings: list[str] = []
+
+        for jar_path in jar_paths:
+            relative_path = jar_path.relative_to(source).as_posix()
+            artifact, names = self._inventory_jar(jar_path, relative_path)
+            artifacts.append(artifact)
+            class_names.extend(names)
+            for class_name in names:
+                previous = class_owners.setdefault(class_name, relative_path)
+                if previous != relative_path:
+                    duplicate_classes.add(class_name)
+            self._write_artifact_metadata(artifact)
+
+        invalid_count = sum(1 for item in artifacts if item.get("error"))
+        if len(artifacts) != self.expected_jar_count:
+            warnings.append(
+                f"Esperados {self.expected_jar_count} JARs, encontrados {len(artifacts)}."
+            )
+        if invalid_count:
+            warnings.append(f"{invalid_count} JAR(s) não puderam ser inspecionados.")
+        if duplicate_classes:
+            warnings.append(
+                f"{len(duplicate_classes)} classe(s) aparecem em mais de um JAR; "
+                "a ordem do classpath precisa ser confirmada."
+            )
+
+        classpath_declarations = [
+            {
+                "jar": item["relative_path"],
+                "entries": item["manifest_class_path"],
+            }
+            for item in artifacts
+            if item.get("manifest_class_path")
+        ]
+        release_hash = aggregate_release_hash(artifacts)
+        ready = len(artifacts) == self.expected_jar_count and invalid_count == 0
+        manifest = {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "release_id": release_id,
+            "release_manifest_sha256": release_hash,
+            "indexed_at": _utc_now(),
+            "source_dir": self._portable_path(source),
+            "expected_jar_count": self.expected_jar_count,
+            "jar_count": len(artifacts),
+            "source_size_bytes": sum(int(item["size_bytes"]) for item in artifacts),
+            "state": "ready" if ready else "incomplete",
+            "freshness": "fresh",
+            "invalid_jar_count": invalid_count,
+            "classpath_status": "partial" if classpath_declarations else "unknown",
+            "classpath_order_known": False,
+            "classpath_declarations": classpath_declarations,
+            "duplicate_class_count": len(duplicate_classes),
+            "duplicate_class_samples": sorted(duplicate_classes)[:200],
+            "obfuscation": estimate_obfuscation(class_names),
+            "warnings": warnings,
+            "artifacts": artifacts,
+        }
+        _atomic_write_json(self.paths.manifest_for(release_id), manifest)
+        self._write_catalog_metadata(manifest["source_size_bytes"])
+        return manifest
+
+    def status(self, release_id: str, *, full_hash: bool = False) -> dict[str, Any]:
+        manifest = self.load_manifest(release_id)
+        source = self._resolve_source(str(manifest.get("source_dir") or ""))
+        result = {
+            "release_id": manifest["release_id"],
+            "state": manifest.get("state", "incomplete"),
+            "freshness": "fresh",
+            "release_manifest_sha256": manifest.get("release_manifest_sha256", ""),
+            "indexed_at": manifest.get("indexed_at", ""),
+            "source_dir": str(manifest.get("source_dir") or ""),
+            "jar_count": manifest.get("jar_count", 0),
+            "expected_jar_count": manifest.get("expected_jar_count", 0),
+            "warnings": list(manifest.get("warnings") or []),
+        }
+        if not source.is_dir():
+            result["freshness"] = "missing"
+            result["warnings"].append("A pasta de origem da release não existe mais.")
+            return result
+
+        expected = {
+            str(item["relative_path"]): item
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict) and item.get("relative_path")
+        }
+        current = {
+            path.relative_to(source).as_posix(): path
+            for path in source.rglob("*")
+            if path.is_file() and path.suffix.casefold() == ".jar"
+        }
+        if set(expected) != set(current):
+            result["freshness"] = "stale"
+            result["warnings"].append("A lista de JARs mudou depois da indexação.")
+            return result
+
+        changed: list[str] = []
+        for relative_path, jar_path in current.items():
+            previous = expected[relative_path]
+            stat = jar_path.stat()
+            metadata_changed = (
+                int(previous.get("size_bytes", -1)) != stat.st_size
+                or int(previous.get("modified_ns", -1)) != stat.st_mtime_ns
+            )
+            if full_hash:
+                metadata_changed = sha256_file(jar_path) != previous.get("sha256")
+            if metadata_changed:
+                changed.append(relative_path)
+        if changed:
+            result["freshness"] = "stale"
+            result["changed_jars"] = changed
+            result["warnings"].append(
+                f"{len(changed)} JAR(s) mudaram depois da indexação."
+            )
+        return result
+
+    def list_statuses(self, *, full_hash: bool = False) -> list[dict[str, Any]]:
+        if not self.paths.indexed_releases.is_dir():
+            return []
+        statuses: list[dict[str, Any]] = []
+        paths = sorted(
+            self.paths.indexed_releases.iterdir(),
+            key=lambda item: item.name.casefold(),
+        )
+        for path in paths:
+            if path.is_dir() and (path / "manifest.json").is_file():
+                try:
+                    statuses.append(self.status(path.name, full_hash=full_hash))
+                except (ErpReleaseError, OSError, ValueError) as exc:
+                    statuses.append(
+                        {
+                            "release_id": path.name,
+                            "state": "failed",
+                            "freshness": "unknown",
+                            "warnings": [str(exc)],
+                        }
+                    )
+        return statuses
+
+    def storage_status(self) -> dict[str, Any]:
+        """Report the generated-index quota without counting source JAR folders."""
+
+        catalog_path = self.paths.code_index / "catalog.json"
+        payload: dict[str, Any] = {}
+        if catalog_path.is_file():
+            try:
+                payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                payload = {}
+        used = _directory_size(self.paths.code_index) if self.paths.code_index.is_dir() else 0
+        budget = int(payload.get("storage_budget_bytes") or 0)
+        return {
+            "used_bytes": used,
+            "budget_bytes": budget,
+            "remaining_bytes": max(0, budget - used) if budget else 0,
+            "usage_ratio": round(used / budget, 6) if budget else 0.0,
+            "max_releases": int(payload.get("max_releases") or self.max_releases),
+            "indexed_releases": len(self.list_statuses()),
+        }
+
+    def load_manifest(self, release_id: str) -> dict[str, Any]:
+        release_id = validate_release_id(release_id)
+        path = self.paths.manifest_for(release_id)
+        if not path.is_file():
+            raise ErpReleaseError(f"Release ainda não indexada: {release_id}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ErpReleaseError(f"Manifesto inválido da release {release_id}.") from exc
+        if payload.get("release_id") != release_id:
+            raise ErpReleaseError("O manifesto não corresponde à pasta da release.")
+        return payload
+
+    def remove_index(self, release_id: str, *, approved: bool = False) -> dict[str, Any]:
+        """Remove only generated index data, never the manually supplied JARs."""
+
+        release_id = validate_release_id(release_id)
+        if not approved:
+            raise ErpReleaseError("A remoção do índice exige aprovação explícita.")
+        release_dir = self.paths.index_for(release_id).resolve()
+        _require_child(release_dir, self.paths.indexed_releases.resolve())
+        if not release_dir.is_dir():
+            raise ErpReleaseError(f"Índice da release não encontrado: {release_id}")
+
+        manifest = self.load_manifest(release_id)
+        candidate_hashes = {
+            str(item.get("sha256") or "")
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict) and _HASH_RE.fullmatch(str(item.get("sha256") or ""))
+        }
+        reclaimed = _directory_size(release_dir)
+        shutil.rmtree(release_dir)
+
+        referenced = self._referenced_artifact_hashes()
+        removed_artifacts = 0
+        for artifact_hash in sorted(candidate_hashes - referenced):
+            artifact_dir = (self.paths.artifacts / artifact_hash).resolve()
+            _require_child(artifact_dir, self.paths.artifacts.resolve())
+            if artifact_dir.is_dir():
+                reclaimed += _directory_size(artifact_dir)
+                shutil.rmtree(artifact_dir)
+                removed_artifacts += 1
+        return {
+            "release_id": release_id,
+            "removed": True,
+            "removed_artifacts": removed_artifacts,
+            "reclaimed_bytes": reclaimed,
+            "source_jars_removed": False,
+        }
+
+    def _inventory_jar(
+        self, jar_path: Path, relative_path: str
+    ) -> tuple[dict[str, Any], list[str]]:
+        before = jar_path.stat()
+        digest = sha256_file(jar_path)
+        after = jar_path.stat()
+        error = ""
+        class_names: list[str] = []
+        manifest: dict[str, str] = {}
+        if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+            error = "O arquivo mudou durante a importação."
+        else:
+            try:
+                with zipfile.ZipFile(jar_path) as archive:
+                    members = archive.namelist()
+                    class_names = sorted(
+                        name[:-6].replace("/", ".")
+                        for name in members
+                        if name.endswith(".class") and not name.endswith("/")
+                    )
+                    manifest_name = next(
+                        (name for name in members if name.casefold() == "meta-inf/manifest.mf"),
+                        "",
+                    )
+                    if manifest_name:
+                        manifest = parse_manifest_bytes(archive.read(manifest_name))
+            except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
+                error = f"{type(exc).__name__}: {exc}"
+
+        artifact = {
+            "relative_path": relative_path,
+            "sha256": digest,
+            "size_bytes": after.st_size,
+            "modified_ns": after.st_mtime_ns,
+            "class_count": len(class_names),
+            "manifest_main_class": manifest.get("Main-Class", ""),
+            "manifest_implementation_version": manifest.get(
+                "Implementation-Version", ""
+            ),
+            "manifest_class_path": manifest.get("Class-Path", "").split(),
+            "error": error,
+        }
+        return artifact, class_names
+
+    def _write_artifact_metadata(self, artifact: dict[str, Any]) -> None:
+        artifact_hash = str(artifact["sha256"])
+        destination = self.paths.artifacts / artifact_hash / "artifact.json"
+        if destination.is_file():
+            return
+        portable = {
+            key: value
+            for key, value in artifact.items()
+            if key not in {"relative_path", "modified_ns"}
+        }
+        portable["schema_version"] = MANIFEST_SCHEMA_VERSION
+        portable["created_at"] = _utc_now()
+        _atomic_write_json(destination, portable)
+
+    def _write_catalog_metadata(self, source_size_bytes: int) -> None:
+        path = self.paths.code_index / "catalog.json"
+        baseline = int(source_size_bytes)
+        if path.is_file():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                baseline = int(existing.get("baseline_source_size_bytes") or baseline)
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                pass
+        _atomic_write_json(
+            path,
+            {
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "max_releases": self.max_releases,
+                "storage_budget_multiplier": self.storage_budget_multiplier,
+                "baseline_source_size_bytes": baseline,
+                "storage_budget_bytes": baseline * self.storage_budget_multiplier,
+                "updated_at": _utc_now(),
+            },
+        )
+
+    def _referenced_artifact_hashes(self) -> set[str]:
+        referenced: set[str] = set()
+        if not self.paths.indexed_releases.is_dir():
+            return referenced
+        for path in self.paths.indexed_releases.glob("*/manifest.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            for item in payload.get("artifacts", []):
+                value = str(item.get("sha256") or "") if isinstance(item, dict) else ""
+                if _HASH_RE.fullmatch(value):
+                    referenced.add(value)
+        return referenced
+
+    def _portable_path(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(self.paths.root).as_posix()
+        except ValueError:
+            return str(path.resolve())
+
+    def _resolve_source(self, value: str) -> Path:
+        path = Path(value)
+        return (path if path.is_absolute() else self.paths.root / path).resolve()
+
+
+def validate_release_id(value: str) -> str:
+    release_id = str(value or "").strip()
+    if not _RELEASE_ID_RE.fullmatch(release_id):
+        raise ErpReleaseError(
+            "Identificador de release inválido; use letras, números, ponto, "
+            "hífen ou underscore."
+        )
+    return release_id
+
+
+def sha256_file(path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def aggregate_release_hash(artifacts: Iterable[dict[str, Any]]) -> str:
+    identity = [
+        {
+            "relative_path": str(item["relative_path"]),
+            "sha256": str(item["sha256"]),
+            "size_bytes": int(item["size_bytes"]),
+        }
+        for item in artifacts
+    ]
+    encoded = json.dumps(
+        identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def parse_manifest_bytes(value: bytes) -> dict[str, str]:
+    text = value.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    unfolded: list[str] = []
+    for line in text.split("\n"):
+        if line.startswith(" ") and unfolded:
+            unfolded[-1] += line[1:]
+        else:
+            unfolded.append(line)
+    parsed: dict[str, str] = {}
+    for line in unfolded:
+        key, separator, raw = line.partition(":")
+        if separator and key.strip():
+            parsed[key.strip()] = raw.lstrip()
+    return parsed
+
+
+def estimate_obfuscation(class_names: Iterable[str]) -> dict[str, Any]:
+    names = []
+    for qualified in class_names:
+        simple = qualified.rsplit(".", 1)[-1].split("$", 1)[0]
+        if simple not in {"module-info", "package-info"}:
+            names.append(simple)
+    if not names:
+        return {"status": "inconclusive", "class_count": 0, "short_name_ratio": 0.0}
+    short = sum(1 for name in names if len(name) <= 2)
+    ratio = short / len(names)
+    status = "probable" if ratio >= 0.40 else "possible" if ratio >= 0.15 else "not_detected"
+    return {
+        "status": status,
+        "class_count": len(names),
+        "short_name_ratio": round(ratio, 4),
+        "method": "heuristic_class_name_length",
+    }
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _require_child(path: Path, parent: Path) -> None:
+    try:
+        path.relative_to(parent)
+    except ValueError as exc:
+        raise ErpReleaseError("Destino calculado fora do índice de código.") from exc
+
+
+def _directory_size(path: Path) -> int:
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")

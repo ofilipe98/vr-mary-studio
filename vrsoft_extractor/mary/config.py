@@ -71,6 +71,14 @@ class MarySettings:
         return self.index_dir / "conhecimento.sqlite"
 
     @property
+    def erp_releases_dir(self) -> Path:
+        return self.root / "ERP" / "releases"
+
+    @property
+    def code_index_dir(self) -> Path:
+        return self.index_dir / "codigo"
+
+    @property
     def work_dir(self) -> Path:
         return self.root / "TrabalhoVR"
 
@@ -113,6 +121,9 @@ class MarySettings:
             self.assets_dir / "wiki" / "endoo",
             self.assets_dir / "kb",
             self.index_dir,
+            self.erp_releases_dir,
+            self.code_index_dir / "releases",
+            self.code_index_dir / "artifacts",
             self.work_dir,
             self.videos_dir,
             self.logs_dir,
