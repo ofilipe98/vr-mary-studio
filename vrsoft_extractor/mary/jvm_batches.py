@@ -22,7 +22,7 @@ from .erp_releases import (
 from .jvm_toolchain import DecompileRequest, DecompileResult, JvmToolchain
 
 
-PROCESSING_SCHEMA_VERSION = 1
+PROCESSING_SCHEMA_VERSION = 2
 DEFAULT_MAX_CLASSES = 500
 DEFAULT_MAX_BYTES = 32 * 1024 * 1024
 
@@ -75,6 +75,7 @@ class DecompilationBatchStore:
                 byte_size INTEGER NOT NULL,
                 state TEXT NOT NULL DEFAULT 'pending',
                 output_reference TEXT NOT NULL DEFAULT '',
+                processing_schema_version INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS class_occurrences (
@@ -101,6 +102,7 @@ class DecompilationBatchStore:
                 ordinal INTEGER NOT NULL,
                 jar_relative_path TEXT NOT NULL,
                 artifact_sha256 TEXT NOT NULL,
+                class_version INTEGER NOT NULL DEFAULT 0,
                 state TEXT NOT NULL,
                 class_count INTEGER NOT NULL,
                 bytecode_bytes INTEGER NOT NULL,
@@ -126,19 +128,33 @@ class DecompilationBatchStore:
             );
             """
         )
-        columns = {
+        batch_columns = {
             row[1]
             for row in connection.execute("PRAGMA table_info(decompilation_batches)")
         }
-        if "expected_source_files" not in columns:
+        if "expected_source_files" not in batch_columns:
             connection.execute(
                 """ALTER TABLE decompilation_batches
                    ADD COLUMN expected_source_files INTEGER NOT NULL DEFAULT 0"""
             )
-        if "actual_source_files" not in columns:
+        if "actual_source_files" not in batch_columns:
             connection.execute(
                 """ALTER TABLE decompilation_batches
                    ADD COLUMN actual_source_files INTEGER NOT NULL DEFAULT 0"""
+            )
+        if "class_version" not in batch_columns:
+            connection.execute(
+                """ALTER TABLE decompilation_batches
+                   ADD COLUMN class_version INTEGER NOT NULL DEFAULT 0"""
+            )
+        content_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(class_contents)")
+        }
+        if "processing_schema_version" not in content_columns:
+            connection.execute(
+                """ALTER TABLE class_contents
+                   ADD COLUMN processing_schema_version INTEGER NOT NULL DEFAULT 0"""
             )
         connection.commit()
 
@@ -185,8 +201,27 @@ class DecompilationBatchStore:
                FROM decompilation_batches WHERE plan_id = ?""",
             (row["plan_id"],),
         ).fetchone()
+        attention_batches = [
+            {
+                "batch_id": item["batch_id"],
+                "ordinal": int(item["ordinal"]),
+                "state": item["state"],
+                "class_version": int(item["class_version"]),
+                "attempt_count": int(item["attempt_count"]),
+                "expected_source_files": int(item["expected_source_files"]),
+                "actual_source_files": int(item["actual_source_files"]),
+                "error": item["last_error"],
+            }
+            for item in connection.execute(
+                """SELECT * FROM decompilation_batches
+                   WHERE plan_id = ? AND state IN ('failed', 'partial')
+                   ORDER BY ordinal""",
+                (row["plan_id"],),
+            )
+        ]
         return {
             "plan_id": row["plan_id"],
+            "schema_version": int(row["schema_version"]),
             "release_id": row["release_id"],
             "release_manifest_sha256": row["release_hash"],
             "state": row["state"],
@@ -199,6 +234,7 @@ class DecompilationBatchStore:
             "expected_source_files": int(totals["expected_sources"]),
             "actual_source_files": int(totals["actual_sources"]),
             "batches_by_state": counts,
+            "attention_batches": attention_batches,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -405,10 +441,12 @@ class DecompilationBatchPlanner:
                     AND a.artifact_sha256 = o.artifact_sha256
                    LEFT JOIN class_contents c
                      ON c.content_sha256 = o.content_sha256
-                   WHERE o.release_hash = ? AND c.state != 'completed'
-                   ORDER BY a.ordinal, lower(o.logical_name), o.class_version,
+                   WHERE o.release_hash = ?
+                     AND (c.state != 'completed'
+                          OR c.processing_schema_version != ?)
+                   ORDER BY a.ordinal, o.class_version, lower(o.logical_name),
                             o.entry_name, o.entry_index""",
-                (plan_id, release_hash),
+                (plan_id, release_hash, PROCESSING_SCHEMA_VERSION),
             ).fetchall()
 
             representatives: list[sqlite3.Row] = []
@@ -424,7 +462,7 @@ class DecompilationBatchPlanner:
             for row in representatives:
                 by_artifact[row["jar_relative_path"]].append(row)
 
-            batches: list[tuple[str, str, list[sqlite3.Row]]] = []
+            batches: list[tuple[str, str, int, list[sqlite3.Row]]] = []
             for relative_path, artifact in selected:
                 known_names = {
                     str(row["logical_name"])
@@ -444,45 +482,71 @@ class DecompilationBatchPlanner:
 
                 current: list[sqlite3.Row] = []
                 current_bytes = 0
+                current_version: int | None = None
                 for family in families:
+                    family_version = int(family[0]["class_version"])
                     family_bytes = sum(int(row["byte_size"]) for row in family)
                     exceeds = current and (
-                        len(current) + len(family) > max_classes
+                        family_version != current_version
+                        or len(current) + len(family) > max_classes
                         or current_bytes + family_bytes > max_bytes
                     )
                     if exceeds:
-                        batches.append((relative_path, str(artifact["sha256"]), current))
+                        batches.append(
+                            (
+                                relative_path,
+                                str(artifact["sha256"]),
+                                int(current_version or 0),
+                                current,
+                            )
+                        )
                         current = []
                         current_bytes = 0
+                    current_version = family_version
                     current.extend(family)
                     current_bytes += family_bytes
                 if current:
-                    batches.append((relative_path, str(artifact["sha256"]), current))
+                    batches.append(
+                        (
+                            relative_path,
+                            str(artifact["sha256"]),
+                            int(current_version or 0),
+                            current,
+                        )
+                    )
 
             now = _utc_now()
             connection.execute("BEGIN IMMEDIATE")
-            for ordinal, (relative_path, artifact_hash, members) in enumerate(batches):
+            for ordinal, (
+                relative_path,
+                artifact_hash,
+                class_version,
+                members,
+            ) in enumerate(batches):
                 batch_id = _stable_id(
                     "batch",
                     {
                         "plan_id": plan_id,
                         "ordinal": ordinal,
                         "artifact": artifact_hash,
+                        "class_version": class_version,
                         "contents": [row["content_sha256"] for row in members],
                     },
                 )
                 connection.execute(
                     """INSERT INTO decompilation_batches
                        (batch_id, plan_id, ordinal, jar_relative_path,
-                        artifact_sha256, state, class_count, bytecode_bytes,
+                        artifact_sha256, class_version, state, class_count,
+                        bytecode_bytes,
                         created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
                     (
                         batch_id,
                         plan_id,
                         ordinal,
                         relative_path,
                         artifact_hash,
+                        class_version,
                         len(members),
                         sum(int(row["byte_size"]) for row in members),
                         now,
@@ -557,11 +621,18 @@ class DecompilationBatchExecutor:
     def retry(self, batch_id: str) -> dict[str, Any]:
         with self.store.connect() as connection:
             row = connection.execute(
-                "SELECT state, plan_id FROM decompilation_batches WHERE batch_id = ?",
+                """SELECT b.state, b.plan_id, p.schema_version
+                   FROM decompilation_batches b
+                   JOIN decompilation_plans p ON p.plan_id = b.plan_id
+                   WHERE b.batch_id = ?""",
                 (batch_id,),
             ).fetchone()
             if row is None:
                 raise DecompilationBatchError(f"Lote não encontrado: {batch_id}")
+            if int(row["schema_version"]) != PROCESSING_SCHEMA_VERSION:
+                raise DecompilationBatchError(
+                    "O plano usa um schema de processamento antigo; gere um novo plano."
+                )
             if row["state"] not in {"failed", "partial"}:
                 raise DecompilationBatchError(
                     "Somente lotes com falha ou saída parcial podem ser reenfileirados."
@@ -588,6 +659,10 @@ class DecompilationBatchExecutor:
             ).fetchone()
         if row is None:
             raise DecompilationBatchError(f"Plano não encontrado: {plan_id}")
+        if int(row["schema_version"]) != PROCESSING_SCHEMA_VERSION:
+            raise DecompilationBatchError(
+                "O plano usa um schema de processamento antigo; gere um novo plano."
+            )
         return row
 
     def _verify_release(self, plan: sqlite3.Row) -> None:
@@ -663,14 +738,20 @@ class DecompilationBatchExecutor:
 
         with self.store.connect() as connection:
             members = connection.execute(
-                """SELECT o.*, c.state AS content_state
+                """SELECT o.*, c.state AS content_state,
+                          c.processing_schema_version
                    FROM batch_members m
                    JOIN class_occurrences o ON o.occurrence_id = m.occurrence_id
                    JOIN class_contents c ON c.content_sha256 = m.content_sha256
                    WHERE m.batch_id = ? ORDER BY m.ordinal""",
                 (batch["batch_id"],),
             ).fetchall()
-        pending = [row for row in members if row["content_state"] != "completed"]
+        pending = [
+            row
+            for row in members
+            if row["content_state"] != "completed"
+            or int(row["processing_schema_version"]) != PROCESSING_SCHEMA_VERSION
+        ]
         if not pending:
             return self._finish_completed(batch, "reused", "", [], expected=0, actual=0)
 
@@ -681,7 +762,7 @@ class DecompilationBatchExecutor:
         expected_paths = {
             _class_family(str(row["logical_name"]), known_names).replace(".", "/")
             + ".java"
-            for row in pending
+            for row in members
         }
         expected_sources = len(expected_paths)
 
@@ -692,7 +773,7 @@ class DecompilationBatchExecutor:
             / f"attempt-{int(batch['attempt_count']):04d}"
         )
         input_path = attempt_dir / "input.jar"
-        self._build_input(jar_path, input_path, pending)
+        self._build_input(jar_path, input_path, members)
         attempts: list[DecompileResult] = []
         for adapter in self.adapters:
             output_dir = attempt_dir / str(adapter.name)
@@ -799,13 +880,22 @@ class DecompilationBatchExecutor:
             ) as target:
                 target.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
                 infos = source.infolist()
+                written_entries: set[str] = set()
                 for member in members:
                     info = infos[int(member["entry_index"])]
                     if info.filename != member["entry_name"]:
                         raise DecompilationBatchError(
                             "A ordem interna do JAR mudou depois do planejamento."
                         )
-                    target.writestr(info.filename, source.read(info))
+                    logical_entry = (
+                        str(member["logical_name"]).replace(".", "/") + ".class"
+                    )
+                    if logical_entry in written_entries:
+                        raise DecompilationBatchError(
+                            "O lote contém variantes conflitantes da mesma classe lógica."
+                        )
+                    written_entries.add(logical_entry)
+                    target.writestr(logical_entry, source.read(info))
             temporary.replace(input_path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -827,9 +917,15 @@ class DecompilationBatchExecutor:
             for member in members:
                 connection.execute(
                     """UPDATE class_contents
-                       SET state = 'completed', output_reference = ?, updated_at = ?
+                       SET state = 'completed', output_reference = ?,
+                           processing_schema_version = ?, updated_at = ?
                        WHERE content_sha256 = ?""",
-                    (reference, now, member["content_sha256"]),
+                    (
+                        reference,
+                        PROCESSING_SCHEMA_VERSION,
+                        now,
+                        member["content_sha256"],
+                    ),
                 )
             connection.execute(
                 """UPDATE decompilation_batches
@@ -934,7 +1030,10 @@ def _class_family(
             simple,
         )
     else:
-        outer = simple.split("$", 1)[0]
+        candidate = simple.split("$", 1)[0]
+        qualified_candidate = f"{package}.{candidate}" if separator else candidate
+        known = {str(item) for item in known_names}
+        outer = candidate if qualified_candidate in known else simple
     return f"{package}.{outer}" if separator else outer
 
 

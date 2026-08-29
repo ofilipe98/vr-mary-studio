@@ -46,6 +46,22 @@ def _catalog(tmp_path: Path) -> ErpReleaseCatalog:
     return catalog
 
 
+def _multi_release_catalog(tmp_path: Path) -> ErpReleaseCatalog:
+    source = tmp_path / "ERP" / "releases" / "r1" / "jars"
+    _jar(
+        source / "MR.jar",
+        {
+            "br/vr/Versioned.class": b"base-outer",
+            "br/vr/Versioned$Inner.class": b"base-inner",
+            "META-INF/versions/9/br/vr/Versioned.class": b"java9-outer",
+            "META-INF/versions/9/br/vr/Versioned$Inner.class": b"java9-inner",
+        },
+    )
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    catalog.import_release("r1")
+    return catalog
+
+
 class _FakeAdapter:
     def __init__(self, name: str, status: str = "completed") -> None:
         self.name = name
@@ -118,7 +134,53 @@ def test_class_family_preserves_legal_leading_dollar_names() -> None:
     assert _class_family(
         "com.google.gson.internal.$Gson$Types$GenericArrayTypeImpl", known
     ) == "com.google.gson.internal.$Gson$Types"
-    assert _class_family("br.vr.Outer$Inner", known) == "br.vr.Outer"
+    assert _class_family("br.vr.Outer$Inner", {*known, "br.vr.Outer"}) == "br.vr.Outer"
+    assert _class_family("br.vr.Outer$Inner", known) == "br.vr.Outer$Inner"
+
+
+def test_multi_release_variants_use_isolated_batches_and_normalized_inputs(
+    tmp_path: Path,
+) -> None:
+    catalog = _multi_release_catalog(tmp_path)
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", ("MR.jar",), max_classes=100
+    )
+
+    assert plan["schema_version"] == 2
+    assert plan["batch_count"] == 2
+    with DecompilationBatchStore(tmp_path).connect() as connection:
+        batches = connection.execute(
+            """SELECT class_version, class_count
+               FROM decompilation_batches
+               WHERE plan_id = ? ORDER BY ordinal""",
+            (plan["plan_id"],),
+        ).fetchall()
+    assert [(row["class_version"], row["class_count"]) for row in batches] == [
+        (0, 2),
+        (9, 2),
+    ]
+
+    adapter = _FakeAdapter("vineflower")
+    result = DecompilationBatchExecutor(
+        tmp_path, catalog=catalog, adapters=(adapter,)
+    ).run(plan["plan_id"], limit=2)
+
+    assert result["plan"]["batches_by_state"] == {"completed": 2}
+    assert len(adapter.requests) == 2
+    for request in adapter.requests:
+        with zipfile.ZipFile(request.input_path) as archive:
+            names = set(archive.namelist())
+        assert "br/vr/Versioned.class" in names
+        assert "br/vr/Versioned$Inner.class" in names
+        assert not any(name.startswith("META-INF/versions/") for name in names)
+    with DecompilationBatchStore(tmp_path).connect() as connection:
+        versions = {
+            row[0]
+            for row in connection.execute(
+                "SELECT processing_schema_version FROM class_contents"
+            )
+        }
+    assert versions == {2}
 
 
 def test_executor_marks_success_and_reuses_completed_content(tmp_path: Path) -> None:
@@ -208,3 +270,21 @@ def test_retry_requires_failed_or_partial_batch(tmp_path: Path) -> None:
         connection.commit()
     retried = executor.retry(batch_id)
     assert retried["batches_by_state"] == {"pending": 1}
+
+
+def test_executor_rejects_plan_from_old_processing_schema(tmp_path: Path) -> None:
+    catalog = _catalog(tmp_path)
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", ("A.jar",), max_classes=20
+    )
+    with DecompilationBatchStore(tmp_path).connect() as connection:
+        connection.execute(
+            "UPDATE decompilation_plans SET schema_version = 1 WHERE plan_id = ?",
+            (plan["plan_id"],),
+        )
+        connection.commit()
+
+    with pytest.raises(DecompilationBatchError, match="schema de processamento antigo"):
+        DecompilationBatchExecutor(
+            tmp_path, catalog=catalog, adapters=(_FakeAdapter("vineflower"),)
+        ).run(plan["plan_id"])

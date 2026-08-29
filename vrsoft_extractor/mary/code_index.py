@@ -13,10 +13,15 @@ from typing import Any, Iterable, Sequence
 
 from .erp_releases import ErpReleaseCatalog
 from .java_ast import JavaAstUnavailable, parse_java_ast, tree_sitter_available
-from .jvm_batches import DecompilationBatchError, DecompilationBatchStore
+from .jvm_batches import (
+    PROCESSING_SCHEMA_VERSION,
+    DecompilationBatchError,
+    DecompilationBatchStore,
+    _class_family,
+)
 
 
-CODE_INDEX_SCHEMA_VERSION = 4
+CODE_INDEX_SCHEMA_VERSION = 5
 _PACKAGE_RE = re.compile(r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;")
 _IMPORT_RE = re.compile(
     r"(?m)^\s*import\s+(static\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$*][\w$*]*)+)\s*;"
@@ -83,6 +88,7 @@ class JavaCodeIndex:
                     jar_relative_path TEXT NOT NULL,
                     artifact_sha256 TEXT NOT NULL,
                     batch_id TEXT NOT NULL,
+                    class_version INTEGER NOT NULL DEFAULT 0,
                     tool TEXT NOT NULL,
                     output_reference TEXT NOT NULL,
                     source_relative_path TEXT NOT NULL,
@@ -155,6 +161,12 @@ class JavaCodeIndex:
             _ensure_column(
                 connection,
                 "code_sources",
+                "class_version",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                connection,
+                "code_sources",
                 "parser_kind",
                 "TEXT NOT NULL DEFAULT 'structural_fallback'",
             )
@@ -186,6 +198,10 @@ class JavaCodeIndex:
             ).fetchone()
             if plan is None:
                 raise DecompilationBatchError(f"Plano não encontrado: {plan_id}")
+            if int(plan["schema_version"]) != PROCESSING_SCHEMA_VERSION:
+                raise DecompilationBatchError(
+                    "O plano usa um schema de processamento antigo e não pode ser indexado."
+                )
             batches = connection.execute(
                 """SELECT * FROM decompilation_batches
                    WHERE plan_id = ? AND state = 'completed'
@@ -202,6 +218,14 @@ class JavaCodeIndex:
             raise DecompilationBatchError(
                 "A release mudou depois da decompilação; o código não será indexado."
             )
+
+        with self.store.connect() as connection:
+            connection.execute(
+                """DELETE FROM code_sources
+                   WHERE release_hash = ? AND schema_version != ?""",
+                (plan["release_hash"], CODE_INDEX_SCHEMA_VERSION),
+            )
+            connection.commit()
 
         indexed = 0
         unchanged = 0
@@ -252,8 +276,9 @@ class JavaCodeIndex:
                 (batch_id,),
             ).fetchall()
         result: dict[str, list[sqlite3.Row]] = {}
+        known_names = {str(row["logical_name"]) for row in rows}
         for row in rows:
-            family = str(row["logical_name"]).split("$", 1)[0]
+            family = _class_family(str(row["logical_name"]), known_names)
             result.setdefault(family, []).append(row)
         return result
 
@@ -278,6 +303,7 @@ class JavaCodeIndex:
                 {
                     "release_hash": plan["release_hash"],
                     "artifact": batch["artifact_sha256"],
+                    "class_version": int(batch["class_version"]),
                     "qualified_name": parsed.qualified_name,
                     "content_hashes": content_hashes,
                 },
@@ -314,6 +340,7 @@ class JavaCodeIndex:
                 batch["jar_relative_path"],
                 batch["artifact_sha256"],
                 batch["batch_id"],
+                int(batch["class_version"]),
                 batch["tool"],
                 batch["output_reference"],
                 relative_path,
@@ -334,12 +361,13 @@ class JavaCodeIndex:
                 cursor = connection.execute(
                     """INSERT INTO code_sources
                        (source_key, schema_version, release_id, release_hash,
-                        jar_relative_path, artifact_sha256, batch_id, tool,
+                        jar_relative_path, artifact_sha256, batch_id,
+                        class_version, tool,
                         output_reference, source_relative_path, source_sha256,
                         package_name, primary_type, qualified_name,
                         logical_names_json, content_hashes_json, occurrence_count,
                         parser_kind, syntax_error_count, symbols_text, body, indexed_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (source_key, *values),
                 )
                 source_id = int(cursor.lastrowid)
@@ -348,7 +376,8 @@ class JavaCodeIndex:
                 connection.execute(
                     """UPDATE code_sources SET
                        schema_version=?, release_id=?, release_hash=?,
-                       jar_relative_path=?, artifact_sha256=?, batch_id=?, tool=?,
+                       jar_relative_path=?, artifact_sha256=?, batch_id=?,
+                       class_version=?, tool=?,
                        output_reference=?, source_relative_path=?, source_sha256=?,
                        package_name=?, primary_type=?, qualified_name=?,
                        logical_names_json=?, content_hashes_json=?, occurrence_count=?,
@@ -471,7 +500,9 @@ class JavaCodeIndex:
             item["excerpt"] = excerpt
             item["citation"] = (
                 f"Código ERP release {item['release_id']}, JAR {item['jar_relative_path']}, "
-                f"classe {item['qualified_name']}, linhas {item['line_start']}-{line_end}, "
+                f"classe {item['qualified_name']}, bytecode "
+                f"{_class_version_label(item['class_version'])}, "
+                f"linhas {item['line_start']}-{line_end}, "
                 f"SHA-256 {item['source_sha256']}"
             )
             item.pop("body", None)
@@ -519,6 +550,12 @@ class JavaCodeIndex:
                      GROUP BY parser_kind ORDER BY parser_kind""",
                 params,
             ).fetchall()
+            class_versions = connection.execute(
+                f"""SELECT class_version, count(*) AS total
+                     FROM code_sources{filter_sql}
+                     GROUP BY class_version ORDER BY class_version""",
+                params,
+            ).fetchall()
         return {
             "schema_version": CODE_INDEX_SCHEMA_VERSION,
             "release_id": release_id,
@@ -533,6 +570,10 @@ class JavaCodeIndex:
                     "syntax_errors": int(item["syntax_errors"] or 0),
                 }
                 for item in parser_kinds
+            },
+            "class_versions": {
+                _class_version_label(item["class_version"]): int(item["total"])
+                for item in class_versions
             },
             "tree_sitter_available": tree_sitter_available(),
             "batches": int(row["batches"]),
@@ -562,7 +603,8 @@ class JavaCodeIndex:
             rows = connection.execute(
                 f"""SELECT r.kind, r.target, r.source_symbol, r.confidence,
                             r.line_start, s.release_id, s.release_hash,
-                            s.jar_relative_path, s.qualified_name, s.source_sha256,
+                            s.jar_relative_path, s.qualified_name, s.class_version,
+                            s.source_sha256,
                             s.parser_kind, s.syntax_error_count, s.body
                      FROM code_relations r
                      JOIN code_sources s ON s.id = r.source_id
@@ -600,11 +642,18 @@ class JavaCodeIndex:
             item["resolution"] = "syntactic"
             item["citation"] = (
                 f"Código ERP release {item['release_id']}, JAR {item['jar_relative_path']}, "
-                f"classe {item['qualified_name']}, linhas {line_start}-{line_end}, "
+                f"classe {item['qualified_name']}, bytecode "
+                f"{_class_version_label(item['class_version'])}, "
+                f"linhas {line_start}-{line_end}, "
                 f"SHA-256 {item['source_sha256']}"
             )
             results.append(item)
         return results
+
+
+def _class_version_label(value: object) -> str:
+    version = int(value or 0)
+    return "base" if version == 0 else f"Java {version}"
 
 
 def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaSource:

@@ -78,8 +78,8 @@ auditoria em vez de ser descartada ou apresentada como parse perfeito.
 
 ## Próximos passos
 
-- concluir os 79 lotes restantes do plano real de `VRPdv.jar` de forma
-  retomável;
+- o plano v1 desta página foi substituído pelo plano multi-release v2; a
+  cobertura completa de `VRPdv.jar` está documentada no Gate 8;
 - selecionar explicitamente e planejar os demais JARs da release quando a
   cobertura dos 46 artefatos for autorizada para a rodada;
 - validar chamados reais com o Agente de Código ligado e desligado;

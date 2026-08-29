@@ -139,12 +139,15 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert index.status("r1")["parser_kinds"]["tree_sitter"]["sources"] == 2
     assert index.status("r1")["relation_kinds"]["calls"] >= 2
     assert index.status("r1")["relation_kinds"]["constructs"] == 1
+    assert index.status("r1")["class_versions"] == {"base": 2}
     assert results[0]["qualified_name"] == "br.vr.Outer"
     assert results[0]["matched_kind"] == "method"
     assert type_results[0]["matched_kind"] == "class"
     assert results[0]["jar_relative_path"] == "ERP.jar"
     assert results[0]["freshness"] == "fresh"
     assert "calcularTotal" in results[0]["excerpt"]
+    assert results[0]["class_version"] == 0
+    assert "bytecode base" in results[0]["citation"]
     assert results[0]["line_start"] <= results[0]["matched_line"] <= results[0]["line_end"]
     assert "Código ERP release r1" in results[0]["citation"]
     assert len(results[0]["source_sha256"]) == 64
