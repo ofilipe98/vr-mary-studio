@@ -3,6 +3,9 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+import pytest
+
+import vrsoft_extractor.mary.code_index as code_index_module
 from vrsoft_extractor.mary.code_index import JavaCodeIndex, parse_java_source
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import (
@@ -38,7 +41,8 @@ public class Outer extends Base implements Runnable {
     private int total;
 
     public int calcularTotal(int value) {
-        return total + value;
+        auditoria.registrar(value);
+        return new Calculadora().somar(total, value);
     }
 
     public void run() {}
@@ -103,6 +107,19 @@ public class Venda extends Base implements Runnable {
     }
 
 
+def test_parser_falls_back_when_native_ast_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> object:
+        raise code_index_module.JavaAstUnavailable("not installed")
+
+    monkeypatch.setattr(code_index_module, "parse_java_ast", unavailable)
+    parsed = code_index_module.parse_java_source(
+        "package br.vr;\npublic class Venda { public void salvar() {} }"
+    )
+
+    assert parsed.qualified_name == "br.vr.Venda"
+    assert parsed.parser_kind == "structural_fallback"
+
+
 def test_index_is_idempotent_and_search_returns_grounded_citation(
     tmp_path: Path,
 ) -> None:
@@ -119,6 +136,9 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert second["unchanged_sources"] == 2
     assert index.status("r1")["sources"] == 2
     assert index.status("r1")["symbols"] >= 5
+    assert index.status("r1")["parser_kinds"]["tree_sitter"]["sources"] == 2
+    assert index.status("r1")["relation_kinds"]["calls"] >= 2
+    assert index.status("r1")["relation_kinds"]["constructs"] == 1
     assert results[0]["qualified_name"] == "br.vr.Outer"
     assert results[0]["matched_kind"] == "method"
     assert type_results[0]["matched_kind"] == "class"
@@ -128,6 +148,15 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert results[0]["line_start"] <= results[0]["matched_line"] <= results[0]["line_end"]
     assert "Código ERP release r1" in results[0]["citation"]
     assert len(results[0]["source_sha256"]) == 64
+
+    callers = index.callers("registrar", release_id="r1")
+    constructors = index.callers("Calculadora", release_id="r1")
+    assert callers[0]["source_symbol"] == "br.vr.Outer.calcularTotal"
+    assert callers[0]["resolution"] == "syntactic"
+    assert callers[0]["confidence"] == 0.65
+    assert "auditoria.registrar" in callers[0]["excerpt"]
+    assert constructors[0]["kind"] == "constructs"
+    assert constructors[0]["confidence"] == 0.8
 
 
 def test_search_warns_when_jar_is_newer_than_index(tmp_path: Path) -> None:

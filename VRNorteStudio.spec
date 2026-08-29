@@ -3,12 +3,15 @@ from PyInstaller.utils.hooks import collect_all
 
 playwright_datas, playwright_binaries, playwright_hidden = collect_all("playwright")
 spellchecker_datas, spellchecker_binaries, spellchecker_hidden = collect_all("spellchecker")
+tree_sitter_datas, tree_sitter_binaries, tree_sitter_hidden = collect_all("tree_sitter")
+tree_sitter_java_datas, tree_sitter_java_binaries, tree_sitter_java_hidden = collect_all("tree_sitter_java")
 
 a = Analysis(
     ["VRNorteStudio.pyw"],
     pathex=[],
-    binaries=playwright_binaries + spellchecker_binaries,
-    datas=playwright_datas + spellchecker_datas + [
+    binaries=(playwright_binaries + spellchecker_binaries + tree_sitter_binaries
+              + tree_sitter_java_binaries),
+    datas=playwright_datas + spellchecker_datas + tree_sitter_datas + tree_sitter_java_datas + [
         (".env.example", "."),
         ("README.md", "."),
         ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
@@ -17,12 +20,13 @@ a = Analysis(
         ("vrsoft_extractor/mary/assets", "vrsoft_extractor/mary/assets"),
         ("vrsoft_extractor/mary/frontend/qml", "vrsoft_extractor/mary/frontend/qml"),
     ],
-    hiddenimports=playwright_hidden + spellchecker_hidden + [
+    hiddenimports=(playwright_hidden + spellchecker_hidden + tree_sitter_hidden
+                   + tree_sitter_java_hidden + [
         "pytesseract",
         "PIL.Image",
         "bs4",
         "markdownify",
-    ],
+    ]),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

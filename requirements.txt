@@ -6,4 +6,6 @@ PySide6>=6.8.0
 pytesseract>=0.3.13
 python-dotenv>=1.0.1
 pyspellchecker>=0.9.0,<1
+tree-sitter==0.25.2
+tree-sitter-java==0.23.5
 yt-dlp>=2024.07.01

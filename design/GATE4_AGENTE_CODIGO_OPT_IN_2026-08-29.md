@@ -50,7 +50,7 @@ Implantação e Treinamento.
 
 - validar chamados reais cuja causa conhecida estava no código, ligado versus
   desligado;
-- substituir a extração estrutural por AST tolerante e adicionar embeddings;
+- adicionar embeddings ao AST tolerante e ao grafo sintático entregues no Gate 5;
 - criar seletor de releases inventariadas em vez de entrada textual;
 - medir tokens e latência do quarto agente por perfil de usuário;
 - formalizar o perfil sênior com permissões de Treinamento, Implantação e

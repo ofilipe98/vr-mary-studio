@@ -201,6 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mostra cobertura do índice pesquisável de código",
     )
     code_status.add_argument("release_id", nargs="?", default="")
+    code_callers = sub.add_parser(
+        "callers-erp-code",
+        help="Lista chamadas sintáticas a um método ou construtor indexado",
+    )
+    code_callers.add_argument("target")
+    code_callers.add_argument("--release", default="")
+    code_callers.add_argument("--limit", type=int, default=50)
     return parser
 
 
@@ -444,6 +451,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "status-erp-code":
         result = JavaCodeIndex(settings.root).status(args.release_id)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "callers-erp-code":
+        try:
+            result = JavaCodeIndex(settings.root).callers(
+                args.target,
+                release_id=args.release,
+                limit=args.limit,
+            )
+        except (DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

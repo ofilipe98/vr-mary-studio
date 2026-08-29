@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .erp_releases import ErpReleaseCatalog
+from .java_ast import JavaAstUnavailable, parse_java_ast, tree_sitter_available
 from .jvm_batches import DecompilationBatchError, DecompilationBatchStore
 
 
-CODE_INDEX_SCHEMA_VERSION = 3
+CODE_INDEX_SCHEMA_VERSION = 4
 _PACKAGE_RE = re.compile(r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;")
 _IMPORT_RE = re.compile(
     r"(?m)^\s*import\s+(static\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$*][\w$*]*)+)\s*;"
@@ -53,6 +54,8 @@ class ParsedJavaSource:
     qualified_name: str
     symbols: tuple[dict[str, Any], ...]
     relations: tuple[dict[str, Any], ...]
+    parser_kind: str = "structural_fallback"
+    syntax_error_count: int = 0
 
 
 class JavaCodeIndex:
@@ -90,6 +93,8 @@ class JavaCodeIndex:
                     logical_names_json TEXT NOT NULL,
                     content_hashes_json TEXT NOT NULL,
                     occurrence_count INTEGER NOT NULL,
+                    parser_kind TEXT NOT NULL DEFAULT 'structural_fallback',
+                    syntax_error_count INTEGER NOT NULL DEFAULT 0,
                     symbols_text TEXT NOT NULL,
                     body TEXT NOT NULL,
                     indexed_at TEXT NOT NULL
@@ -115,10 +120,14 @@ class JavaCodeIndex:
                     source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,
                     kind TEXT NOT NULL,
                     target TEXT NOT NULL,
+                    source_symbol TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL DEFAULT 0.0,
                     line_start INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_code_relations_target
                     ON code_relations(target COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_relations_kind_target
+                    ON code_relations(kind, target COLLATE NOCASE);
                 CREATE VIRTUAL TABLE IF NOT EXISTS code_sources_fts USING fts5(
                     qualified_name,
                     symbols_text,
@@ -142,6 +151,30 @@ class JavaCodeIndex:
                   VALUES(new.id,new.qualified_name,new.symbols_text,new.body);
                 END;
                 """
+            )
+            _ensure_column(
+                connection,
+                "code_sources",
+                "parser_kind",
+                "TEXT NOT NULL DEFAULT 'structural_fallback'",
+            )
+            _ensure_column(
+                connection,
+                "code_sources",
+                "syntax_error_count",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(
+                connection,
+                "code_relations",
+                "source_symbol",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            _ensure_column(
+                connection,
+                "code_relations",
+                "confidence",
+                "REAL NOT NULL DEFAULT 0.0",
             )
             connection.commit()
 
@@ -291,6 +324,8 @@ class JavaCodeIndex:
                 json.dumps(logical_names, ensure_ascii=False),
                 json.dumps(content_hashes),
                 len(rows),
+                parsed.parser_kind,
+                parsed.syntax_error_count,
                 symbols_text,
                 body,
                 now,
@@ -303,8 +338,8 @@ class JavaCodeIndex:
                         output_reference, source_relative_path, source_sha256,
                         package_name, primary_type, qualified_name,
                         logical_names_json, content_hashes_json, occurrence_count,
-                        symbols_text, body, indexed_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        parser_kind, syntax_error_count, symbols_text, body, indexed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (source_key, *values),
                 )
                 source_id = int(cursor.lastrowid)
@@ -317,7 +352,8 @@ class JavaCodeIndex:
                        output_reference=?, source_relative_path=?, source_sha256=?,
                        package_name=?, primary_type=?, qualified_name=?,
                        logical_names_json=?, content_hashes_json=?, occurrence_count=?,
-                       symbols_text=?, body=?, indexed_at=? WHERE id=?""",
+                       parser_kind=?, syntax_error_count=?, symbols_text=?, body=?,
+                       indexed_at=? WHERE id=?""",
                     (*values, source_id),
                 )
                 connection.execute("DELETE FROM code_symbols WHERE source_id = ?", (source_id,))
@@ -341,9 +377,17 @@ class JavaCodeIndex:
             )
             connection.executemany(
                 """INSERT INTO code_relations
-                   (source_id, kind, target, line_start) VALUES (?, ?, ?, ?)""",
+                   (source_id, kind, target, source_symbol, confidence, line_start)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 [
-                    (source_id, item["kind"], item["target"], item["line_start"])
+                    (
+                        source_id,
+                        item["kind"],
+                        item["target"],
+                        item.get("source_symbol", ""),
+                        float(item.get("confidence", 0.0)),
+                        item["line_start"],
+                    )
                     for item in parsed.relations
                 ],
             )
@@ -459,19 +503,131 @@ class JavaCodeIndex:
                      {('WHERE s.release_id = ?' if release_id else '')}""",
                 params,
             ).fetchone()[0]
+            relation_kinds = connection.execute(
+                f"""SELECT r.kind, count(*) AS total FROM code_relations r
+                     JOIN code_sources s ON s.id = r.source_id
+                     {('WHERE s.release_id = ?' if release_id else '')}
+                     GROUP BY r.kind ORDER BY r.kind""",
+                params,
+            ).fetchall()
+            parser_kinds = connection.execute(
+                f"""SELECT parser_kind, count(*) AS total,
+                            sum(CASE WHEN syntax_error_count > 0 THEN 1 ELSE 0 END)
+                                AS sources_with_syntax_errors,
+                            sum(syntax_error_count) AS syntax_errors
+                     FROM code_sources{filter_sql}
+                     GROUP BY parser_kind ORDER BY parser_kind""",
+                params,
+            ).fetchall()
         return {
             "schema_version": CODE_INDEX_SCHEMA_VERSION,
             "release_id": release_id,
             "sources": int(row["sources"]),
             "symbols": int(symbols),
             "relations": int(relations),
+            "relation_kinds": {str(item["kind"]): int(item["total"]) for item in relation_kinds},
+            "parser_kinds": {
+                str(item["parser_kind"]): {
+                    "sources": int(item["total"]),
+                    "sources_with_syntax_errors": int(item["sources_with_syntax_errors"] or 0),
+                    "syntax_errors": int(item["syntax_errors"] or 0),
+                }
+                for item in parser_kinds
+            },
+            "tree_sitter_available": tree_sitter_available(),
             "batches": int(row["batches"]),
             "releases": int(row["releases"]),
             "indexed_at": row["indexed_at"] or "",
         }
 
+    def callers(
+        self,
+        target: str,
+        *,
+        release_id: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return grounded syntactic callers without claiming classpath resolution."""
+
+        self.initialize()
+        normalized = str(target or "").strip()
+        if not normalized:
+            return []
+        release_filter = " AND s.release_id = ?" if release_id else ""
+        params: list[Any] = [normalized, f"%.{normalized}"]
+        if release_id:
+            params.append(release_id)
+        params.append(max(1, int(limit)))
+        with self.store.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT r.kind, r.target, r.source_symbol, r.confidence,
+                            r.line_start, s.release_id, s.release_hash,
+                            s.jar_relative_path, s.qualified_name, s.source_sha256,
+                            s.parser_kind, s.syntax_error_count, s.body
+                     FROM code_relations r
+                     JOIN code_sources s ON s.id = r.source_id
+                     WHERE r.kind IN ('calls', 'constructs')
+                       AND (r.target = ? COLLATE NOCASE
+                            OR r.target LIKE ? COLLATE NOCASE)
+                       {release_filter}
+                     ORDER BY r.confidence DESC, s.qualified_name COLLATE NOCASE,
+                              r.line_start
+                     LIMIT ?""",
+                params,
+            ).fetchall()
+        freshness_cache: dict[str, dict[str, Any]] = {}
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            current_release = str(item["release_id"])
+            if current_release not in freshness_cache:
+                freshness_cache[current_release] = self.catalog.status(current_release)
+            item["freshness"] = freshness_cache[current_release].get("freshness", "unknown")
+            item["freshness_warning"] = (
+                "O índice pode estar desatualizado porque os JARs mudaram."
+                if item["freshness"] != "fresh"
+                else ""
+            )
+            line_start, line_end, excerpt = _source_excerpt(
+                str(item.pop("body")),
+                _search_tokens(normalized),
+                radius=2,
+                preferred_line=int(item["line_start"]),
+            )
+            item["line_start"] = line_start
+            item["line_end"] = line_end
+            item["excerpt"] = excerpt
+            item["resolution"] = "syntactic"
+            item["citation"] = (
+                f"Código ERP release {item['release_id']}, JAR {item['jar_relative_path']}, "
+                f"classe {item['qualified_name']}, linhas {line_start}-{line_end}, "
+                f"SHA-256 {item['source_sha256']}"
+            )
+            results.append(item)
+        return results
+
 
 def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaSource:
+    try:
+        ast = parse_java_ast(body, fallback_qualified=fallback_qualified)
+    except (JavaAstUnavailable, RuntimeError, ValueError):
+        return _parse_java_source_structural(body, fallback_qualified=fallback_qualified)
+    if ast.symbols or ast.qualified_name:
+        return ParsedJavaSource(
+            package_name=ast.package_name,
+            primary_type=ast.primary_type,
+            qualified_name=ast.qualified_name,
+            symbols=ast.symbols,
+            relations=ast.relations,
+            parser_kind="tree_sitter",
+            syntax_error_count=ast.syntax_error_count,
+        )
+    return _parse_java_source_structural(body, fallback_qualified=fallback_qualified)
+
+
+def _parse_java_source_structural(
+    body: str, *, fallback_qualified: str = ""
+) -> ParsedJavaSource:
     package_match = _PACKAGE_RE.search(body)
     package_name = package_match.group(1) if package_match else ""
     type_matches = list(_TYPE_RE.finditer(body))
@@ -505,6 +661,8 @@ def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaS
                         {
                             "kind": relation_kind,
                             "target": target,
+                            "source_symbol": qualified,
+                            "confidence": 0.55,
                             "line_start": _line_number(body, match.start()),
                         }
                     )
@@ -550,6 +708,8 @@ def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaS
             {
                 "kind": "static_import" if match.group(1) else "import",
                 "target": match.group(2),
+                "source_symbol": qualified_name,
+                "confidence": 0.55,
                 "line_start": _line_number(body, match.start()),
             }
         )
@@ -559,6 +719,8 @@ def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaS
         qualified_name=qualified_name,
         symbols=tuple(symbols),
         relations=tuple(relations),
+        parser_kind="structural_fallback",
+        syntax_error_count=0,
     )
 
 
@@ -630,6 +792,20 @@ def _resolve_output(root: Path, value: str) -> Path:
     except ValueError as exc:
         raise DecompilationBatchError("Saída de código fora do índice permitido.") from exc
     return resolved
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    existing = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def _utc_now() -> str:
