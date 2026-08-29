@@ -287,6 +287,8 @@ class ChatBridge(QObject):
         self._vr_mode = "vr"
         self._research_model_keys: list[str] = []
         self._research_max_parallel = 3
+        self._code_analysis_enabled = False
+        self._code_analysis_release = "current"
         self._load_research_config()
         self._apply_research_config()
         self._attachments: list[dict[str, str]] = []
@@ -457,6 +459,14 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def researchMaxParallel(self) -> int:  # noqa: N802
         return self._research_max_parallel
+
+    @Property(bool, notify=stateChanged)
+    def codeAnalysisEnabled(self) -> bool:  # noqa: N802
+        return self._code_analysis_enabled
+
+    @Property(str, notify=stateChanged)
+    def codeAnalysisRelease(self) -> str:  # noqa: N802
+        return self._code_analysis_release
 
     @Property("QVariantList", notify=stateChanged)
     def modelItems(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1471,6 +1481,8 @@ class ChatBridge(QObject):
         )
         self._research_model_keys: list[str] = []
         self._research_max_parallel = 3
+        self._code_analysis_enabled = False
+        self._code_analysis_release = "current"
         self._load_research_config()
         self._apply_research_config()
         self._attachments = []
@@ -1655,6 +1667,14 @@ class ChatBridge(QObject):
         except (TypeError, ValueError):
             parallel = 3
         self._research_max_parallel = max(1, min(3, parallel))
+        self._code_analysis_enabled = self._stored_bool(
+            self._preferences.value("research/code_analysis_enabled", False),
+            False,
+        )
+        self._code_analysis_release = str(
+            self._preferences.value("research/code_analysis_release", "current")
+            or "current"
+        ).strip() or "current"
 
     def _apply_research_config(self) -> None:
         wanted = set(self._research_model_keys)
@@ -1703,6 +1723,25 @@ class ChatBridge(QObject):
         self._preferences.setValue("research/max_parallel", self._research_max_parallel)
         self._preferences.sync()
         self._apply_research_config()
+        self.stateChanged.emit()
+
+    @Slot(bool)
+    def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
+        self._code_analysis_enabled = bool(enabled)
+        self._preferences.setValue(
+            "research/code_analysis_enabled", self._code_analysis_enabled
+        )
+        self._preferences.sync()
+        self.stateChanged.emit()
+
+    @Slot(str)
+    def setCodeAnalysisRelease(self, release_id: str) -> None:  # noqa: N802
+        selected = str(release_id or "").strip()
+        if not selected or selected == self._code_analysis_release:
+            return
+        self._code_analysis_release = selected
+        self._preferences.setValue("research/code_analysis_release", selected)
+        self._preferences.sync()
         self.stateChanged.emit()
 
     @Slot(result=str)
@@ -1964,6 +2003,8 @@ class ChatBridge(QObject):
                 image_paths=image_paths,
                 vr_mode=self._vr_mode,
                 force_research=force_research,
+                code_analysis_enabled=self._code_analysis_enabled,
+                code_analysis_release=self._code_analysis_release,
             )
             self._attachments = []
             self._selected_extension_keys = set()

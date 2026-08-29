@@ -197,6 +197,9 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     kinds = [e.kind for e in events]
     assert "research_started" in kinds
     assert "research_completed" in kinds
+    assert not any(
+        event.payload.get("worker_id") == "fanout_codigo" for event in events
+    )
     row = [r for r in database.messages(cid) if r["role"] == "assistant"]
     assert row and "Resposta Ultra" in row[-1]["content"]
 
@@ -212,8 +215,98 @@ def test_vr_mode_never_triggers_fanout(tmp_path: Path) -> None:
 
 def test_force_research_on_plain_vr(tmp_path: Path) -> None:
     settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "vr")
-    _run_send(orchestrator, cid, events, force_research=True)
+    _run_send(
+        orchestrator,
+        cid,
+        events,
+        force_research=True,
+        code_analysis_enabled=True,
+    )
     assert any(e.kind == "research_started" for e in events)
+    assert not any(
+        event.payload.get("worker_id") == "fanout_codigo" for event in events
+    )
+
+
+def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_search(self, query, *, release_id="", limit=10):
+        calls.append((query, release_id))
+        return [
+            {
+                "source_key": "a" * 64,
+                "release_id": release_id,
+                "jar_relative_path": "VRPdv.jar",
+                "qualified_name": "br.vr.CaixaService",
+                "line_start": 10,
+                "line_end": 18,
+                "excerpt": "public void fecharCaixa() {}",
+                "output_reference": "indice/codigo/decompilation/x",
+                "source_relative_path": "br/vr/CaixaService.java",
+                "indexed_at": "2026-08-29T00:00:00+00:00",
+                "score": 100.0,
+                "freshness": "fresh",
+                "freshness_warning": "",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.JavaCodeIndex.search", fake_search
+    )
+    _run_send(
+        orchestrator,
+        cid,
+        events,
+        code_analysis_enabled=True,
+        code_analysis_release="2026.08.29",
+    )
+
+    assert calls and all(release == "2026.08.29" for _query, release in calls)
+    code_started = [
+        event for event in events
+        if event.kind == "agent_started"
+        and event.payload.get("worker_id") == "fanout_codigo"
+    ]
+    assert code_started
+    completed = [event for event in events if event.kind == "research_completed"][-1]
+    assert completed.payload["code_agent"] == "found"
+    code_completed = [
+        event for event in events
+        if event.kind == "agent_completed"
+        and event.payload.get("worker_id") == "fanout_codigo"
+    ][-1]
+    assert "VRPdv.jar" in code_completed.payload["citations"][0]
+
+
+def test_code_agent_failure_degrades_without_stopping_synthesis(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+
+    def fail_search(*_args, **_kwargs):
+        raise RuntimeError("índice indisponível")
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.JavaCodeIndex.search", fail_search
+    )
+    _run_send(orchestrator, cid, events, code_analysis_enabled=True)
+
+    assert any(
+        event.kind == "agent_failed"
+        and event.payload.get("worker_id") == "fanout_codigo"
+        for event in events
+    )
+    assert any(event.kind == "turn_completed" for event in events)
+    completed = [event for event in events if event.kind == "research_completed"][-1]
+    assert completed.payload["code_agent"] == "failed"
 
 
 # ------------------------------------------------------- pool próprio e limite

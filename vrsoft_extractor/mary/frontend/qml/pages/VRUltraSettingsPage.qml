@@ -34,7 +34,7 @@ Item {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Escolha um modelo para os três agentes de pesquisa. O provedor e o modelo selecionados no Chat VR continuam sendo o orquestrador."
+                text: "Escolha um modelo para os três agentes base e, quando habilitado, para o Agente de Código. O Chat VR continua sendo o orquestrador."
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize
@@ -99,14 +99,14 @@ Item {
                         Layout.fillWidth: true
                         spacing: 1
                         Text {
-                            text: "Modelo dos três agentes"
+                            text: "Modelo dos agentes de pesquisa"
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.bodySize
                             font.weight: Font.DemiBold
                         }
                         Text {
-                            text: "A mesma escolha será usada simultaneamente pelos três pesquisadores."
+                            text: "A mesma escolha é usada pelos três pesquisadores base e pelo worker opcional de código."
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.captionSize
@@ -119,7 +119,7 @@ Item {
                         color: Qt.rgba(1.0, 0.45, 0.0, 0.12)
                         Text {
                             anchors.centerIn: parent
-                            text: "3 agentes"
+                            text: chat.codeAnalysisEnabled ? "4 agentes" : "3 agentes"
                             color: frontend.palette.brandOrange
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.captionSize
@@ -145,13 +145,74 @@ Item {
         Text {
             Layout.fillWidth: true
             text: chat.researchModelKeys.length
-                ? "Os três agentes usarão " + (agentModelPicker.currentItem.displayName
+                ? "Os agentes usarão " + (agentModelPicker.currentItem.displayName
                     || agentModelPicker.currentItem.label || "o modelo selecionado") + "."
-                : "Selecione o modelo que será repetido nos três agentes do VR Ultra."
+                : "Selecione o modelo dos agentes do VR Ultra."
             color: frontend.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.captionSize
             wrapMode: Text.WordWrap
+        }
+
+        Rectangle {
+            objectName: "vrUltraCodeAnalysisCard"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 126
+            radius: Theme.radiusCard
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.border
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceSm
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Agente de Código / JAR"
+                            color: frontend.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.bodySize
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: "Opt-in: consulta somente o índice da release após os outros agentes delimitarem o escopo."
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    VrCheckBox {
+                        objectName: "vrUltraCodeAnalysisToggle"
+                        text: "Ativo"
+                        checked: chat.codeAnalysisEnabled
+                        onToggled: chat.setCodeAnalysisEnabled(checked)
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "Release"
+                        color: frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                    }
+                    VrTextField {
+                        objectName: "vrUltraCodeAnalysisRelease"
+                        Layout.fillWidth: true
+                        text: chat.codeAnalysisRelease
+                        placeholderText: "current"
+                        onEditingFinished: chat.setCodeAnalysisRelease(text)
+                    }
+                }
+            }
         }
 
         Item { Layout.fillHeight: true }

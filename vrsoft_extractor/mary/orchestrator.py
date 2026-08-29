@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import MarySettings
+from .code_index import JavaCodeIndex
 from .db import MaryDatabase
 from .chat_tools import (
     ToolExecutionError,
@@ -24,6 +25,7 @@ from .chat_tools import (
 )
 from .models import (
     ConversationOptions,
+    EvidenceCandidate,
     EvidenceBundle,
     ModelRef,
     RuntimeEvent,
@@ -64,11 +66,13 @@ from .search import (
 )
 from .supervision import (
     FinalResponseValidation,
+    EvidenceClaim,
     MergedEvidence,
     RefinementReason,
     ResponseContract,
     ResponseIntent,
     ResponseViolation,
+    WorkerReport,
     analyze_response_intent,
     build_controlled_failure,
     build_response_contract,
@@ -112,6 +116,31 @@ def vr_sessions_note(native_id: Any, native_id_vr: Any) -> str:
     if has_native:
         return "Somente o thread nativo foi criado nesta conversa."
     return ""
+
+
+def _code_scope_queries(value: str, limit: int = 8) -> tuple[str, ...]:
+    """Prefer code-shaped terms after documentation workers narrowed the scope."""
+
+    ignored = {
+        "ainda", "apenas", "como", "com", "das", "depois", "dos", "essa",
+        "este", "esta", "isso", "para", "pela", "pelo", "porque", "qual",
+        "quando", "sobre", "uma", "usar", "user", "request", "passo",
+        "confirmado", "fato", "inferência", "hipótese",
+    }
+    raw = re.findall(r"[A-Za-zÀ-ÿ_$][A-Za-zÀ-ÿ0-9_$]{2,}", str(value or ""))
+    unique = list(dict.fromkeys(raw))
+    preferred = [
+        item
+        for item in unique
+        if item.casefold() not in ignored
+        and (re.search(r"[a-z][A-Z]", item) or item.isupper() or len(item) >= 6)
+    ]
+    fallback = [
+        item
+        for item in unique
+        if item.casefold() not in ignored and item not in preferred
+    ]
+    return tuple((preferred + fallback)[: max(1, int(limit))])
 
 
 class ChatOrchestrator:
@@ -256,6 +285,8 @@ class ChatOrchestrator:
         image_paths: list[str] | None = None,
         vr_mode: str = "",
         force_research: bool = False,
+        code_analysis_enabled: bool = False,
+        code_analysis_release: str = "current",
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
@@ -532,6 +563,11 @@ class ChatOrchestrator:
                             response_intent,
                             response_contract,
                             fanout_modules,
+                            code_analysis_enabled=(
+                                code_analysis_enabled
+                                and resolved_vr_mode == "ultra"
+                            ),
+                            code_analysis_release=code_analysis_release,
                         )
                     else:
                         provider.send_message(
@@ -721,6 +757,9 @@ class ChatOrchestrator:
         intent: ResponseIntent,
         contract: ResponseContract,
         modules: tuple[str, ...],
+        *,
+        code_analysis_enabled: bool = False,
+        code_analysis_release: str = "current",
     ) -> None:
         """Parallel per-module researchers feeding one buffered synthesis."""
         run_id = uuid.uuid4().hex
@@ -791,6 +830,32 @@ class ChatOrchestrator:
             }
             for index, module in enumerate(modules)
         ]
+        if code_analysis_enabled:
+            runtime_stages.append(
+                {
+                    "id": "fanout_codigo",
+                    "agent_id": "fanout_codigo",
+                    "agent": "vr_fanout_codigo",
+                    "label": "Agente de Código",
+                    "role": "code_research",
+                    "module": "Código",
+                    "source": "code",
+                    "task": (
+                        "Consultar o índice da release selecionada somente depois "
+                        "que os pesquisadores delimitarem o escopo."
+                    ),
+                    "reason": "Análise de JAR habilitada explicitamente.",
+                    "model": model_for_researcher(len(modules)).to_dict(),
+                    "effort": RESEARCH_EFFORT,
+                    "final": False,
+                    "required": False,
+                    "priority": 95,
+                    "parent_id": "vr_fanout",
+                    "worker_id": "fanout_codigo",
+                    "worker_name": "Agente de Código",
+                    "release_id": code_analysis_release,
+                }
+            )
         runtime_stages.append(
             {
                 "id": "fanout_synthesis",
@@ -953,6 +1018,206 @@ class ChatOrchestrator:
                         f"{item.module}: {item.raw_error[:120]}" for item in ordered
                     )
                 )
+            synthesis_bundle = bundle
+            code_status = "disabled"
+            if code_analysis_enabled:
+                code_stage = next(
+                    item for item in runtime_stages if item["id"] == "fanout_codigo"
+                )
+                self._emit_orchestration_event(
+                    conversation_id,
+                    "agent_started",
+                    "Agente de Código iniciado após delimitação do escopo.",
+                    dict(code_stage),
+                )
+                scoped_text = "\n".join(
+                    [request]
+                    + [
+                        claim.text
+                        for item in ordered
+                        if item.report is not None
+                        for claim in item.report.findings[:4]
+                    ]
+                )
+                try:
+                    code_results: list[dict[str, Any]] = []
+                    seen_code: set[str] = set()
+                    for code_query in _code_scope_queries(scoped_text):
+                        for result in JavaCodeIndex(self.settings.root).search(
+                            code_query,
+                            release_id=code_analysis_release,
+                            limit=3,
+                        ):
+                            key = str(result.get("source_key") or "")
+                            if key and key not in seen_code:
+                                seen_code.add(key)
+                                code_results.append(result)
+                            if len(code_results) >= 8:
+                                break
+                        if len(code_results) >= 8:
+                            break
+                    code_candidates: list[EvidenceCandidate] = []
+                    code_claims: list[EvidenceClaim] = []
+                    for result in code_results:
+                        evidence_id = f"code:{str(result['source_key'])[:20]}"
+                        title = (
+                            f"Código {result['release_id']} · {result['jar_relative_path']} · "
+                            f"{result['qualified_name']} · linhas "
+                            f"{result['line_start']}-{result['line_end']}"
+                        )
+                        code_candidates.append(
+                            EvidenceCandidate(
+                                evidence_id=evidence_id,
+                                source="code",
+                                source_id=str(result["source_key"]),
+                                document_id=0,
+                                chunk_id=0,
+                                title=title,
+                                heading=str(result["qualified_name"]),
+                                content_type="java_decompiled",
+                                module=bundle.profile.module,
+                                product=bundle.profile.product,
+                                excerpt=str(result["excerpt"]),
+                                local_path=(
+                                    f"{result['output_reference']}/"
+                                    f"{result['source_relative_path']}"
+                                ),
+                                updated_at=str(result["indexed_at"]),
+                                score=float(result["score"]),
+                                confidence=(
+                                    0.85 if result["freshness"] == "fresh" else 0.45
+                                ),
+                            )
+                        )
+                        code_claims.append(
+                            EvidenceClaim(
+                                text=(
+                                    f"{result['qualified_name']}: "
+                                    f"{result['excerpt']}"
+                                ),
+                                evidence_ids=(evidence_id,),
+                                kind="fact",
+                                confidence=(
+                                    0.85 if result["freshness"] == "fresh" else 0.45
+                                ),
+                                worker_id="fanout_codigo",
+                            )
+                        )
+                    fallback_report = WorkerReport(
+                        worker_id="fanout_codigo",
+                        worker_name="Agente de Código",
+                        module="Código",
+                        parent_id="vr_fanout",
+                        findings=tuple(code_claims),
+                        missing_information=(
+                            ()
+                            if code_claims
+                            else (
+                                "Nenhum fonte indexado correspondeu ao escopo na release selecionada.",
+                            )
+                        ),
+                        warnings=tuple(
+                            dict.fromkeys(
+                                str(item.get("freshness_warning") or "")
+                                for item in code_results
+                                if item.get("freshness_warning")
+                            )
+                        ),
+                        sources=tuple(item.evidence_id for item in code_candidates),
+                    )
+                    code_report = fallback_report
+                    if code_candidates:
+                        code_prompt = f"""Você é o Agente de Código do VR Ultra.
+
+Objetivo: analisar somente os trechos Java já selecionados pelos agentes de
+Schema/KB/Wiki e apontar comportamento relevante à solicitação.
+Fonte permitida: apenas as evidências de código abaixo, da release
+{code_analysis_release}. Não pesquise arquivos nem amplie o escopo.
+Limites: não presuma ordem de classpath; diferencie fato, inferência e hipótese;
+sinalize lacunas ou contradições. Cite somente evidence_ids fornecidos.
+
+Solicitação:
+{request}
+
+Evidências de código:
+{json.dumps([item.to_dict() for item in code_candidates], ensure_ascii=False)}
+
+Retorne somente JSON:
+{{"source_status":"found|exhausted|unavailable","findings":[{{"claim":"achado","evidence_ids":["id fornecido"],"kind":"fact|inference|hypothesis","confidence":0.0}}],"steps":[],"conflicts":[],"missing_information":[],"warnings":[],"sources":["id fornecido"]}}"""
+                        try:
+                            raw_code = self._run_ephemeral_turn(
+                                conversation_id,
+                                run_id,
+                                "vr_fanout_codigo",
+                                ModelRef.from_mapping(code_stage["model"]),
+                                code_prompt,
+                                workspace,
+                                RESEARCH_EFFORT,
+                                timeout_seconds=150,
+                            )
+                            parsed_code = parse_researcher_output(
+                                raw_code,
+                                worker_id="fanout_codigo",
+                                worker_name="Agente de Código",
+                                module="Código",
+                                allowed_evidence_ids=tuple(
+                                    item.evidence_id for item in code_candidates
+                                ),
+                            )
+                            if parsed_code.succeeded and parsed_code.report is not None:
+                                code_report = parsed_code.report
+                            else:
+                                code_report = replace(
+                                    fallback_report,
+                                    warnings=tuple(fallback_report.warnings)
+                                    + ("Análise do modelo falhou; usando trechos recuperados.",),
+                                )
+                        except OrchestrationCancelled:
+                            raise
+                        except Exception as model_exc:
+                            LOGGER.warning(
+                                "Agente de Código caiu para recuperação determinística: %s",
+                                model_exc,
+                            )
+                            code_report = replace(
+                                fallback_report,
+                                warnings=tuple(fallback_report.warnings)
+                                + ("Análise do modelo indisponível; usando trechos recuperados.",),
+                            )
+                    ordered.append(ModuleResearch(module="Código", report=code_report))
+                    synthesis_bundle = replace(
+                        bundle,
+                        candidates=tuple(bundle.candidates) + tuple(code_candidates),
+                    )
+                    allowed_ids = tuple(
+                        item.evidence_id for item in synthesis_bundle.candidates
+                    )
+                    self._pending_evidence_bundles[conversation_id] = synthesis_bundle
+                    code_status = "found" if code_claims else "exhausted"
+                    self._emit_orchestration_event(
+                        conversation_id,
+                        "agent_completed",
+                        (
+                            f"Agente de Código concluiu com {len(code_claims)} achados."
+                        ),
+                        {
+                            **code_stage,
+                            "status": code_status,
+                            "findings": len(code_claims),
+                            "citations": [item.title for item in code_candidates],
+                        },
+                    )
+                except OrchestrationCancelled:
+                    raise
+                except Exception as code_exc:
+                    code_status = "failed"
+                    LOGGER.exception("Agente de Código falhou; síntese seguirá sem JAR.")
+                    self._emit_orchestration_event(
+                        conversation_id,
+                        "agent_failed",
+                        "Agente de Código indisponível; seguindo com as outras fontes.",
+                        {**code_stage, "error": str(code_exc)[:400]},
+                    )
             merged = merge_module_research(ordered)
             self._emit_orchestration_event(
                 conversation_id,
@@ -969,6 +1234,7 @@ class ChatOrchestrator:
                     "claims": len(merged.claims),
                     "conflicts": len(merged.conflicts),
                     "gaps": len(merged.gaps),
+                    "code_agent": code_status,
                 },
             )
             self._emit_orchestration_event(
@@ -994,7 +1260,7 @@ class ChatOrchestrator:
             draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
             envelope_like = self._looks_like_final_envelope(draft.answer_markdown)
             violations = validate_normal_response(
-                draft.answer_markdown, contract, bundle
+                draft.answer_markdown, contract, synthesis_bundle
             )
             if envelope_like and not any(
                 item.code == "internal_leak" for item in violations
@@ -1043,7 +1309,7 @@ class ChatOrchestrator:
                 )
                 draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
                 remaining = validate_normal_response(
-                    draft.answer_markdown, contract, bundle
+                    draft.answer_markdown, contract, synthesis_bundle
                 )
                 if self._looks_like_final_envelope(draft.answer_markdown):
                     remaining = remaining + (
@@ -1076,7 +1342,7 @@ class ChatOrchestrator:
                 final_text = render_sources(
                     draft.answer_markdown,
                     draft.used_evidence_ids,
-                    bundle,
+                    synthesis_bundle,
                 )
             self._publish_final_response(
                 conversation_id,

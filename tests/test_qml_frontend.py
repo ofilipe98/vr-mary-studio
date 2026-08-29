@@ -972,6 +972,35 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
 
+    def test_code_analysis_config_is_opt_in_and_persisted(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertFalse(bridge.codeAnalysisEnabled)
+            self.assertEqual(bridge.codeAnalysisRelease, "current")
+            bridge.setCodeAnalysisEnabled(True)
+            bridge.setCodeAnalysisRelease("2026.08.29")
+
+            self.assertTrue(bridge.codeAnalysisEnabled)
+            self.assertEqual(bridge.codeAnalysisRelease, "2026.08.29")
+            self.assertEqual(
+                str(preferences.value("research/code_analysis_enabled")).casefold(),
+                "true",
+            )
+            reopened = ChatBridge(settings, database, preferences)
+            self.assertTrue(reopened.codeAnalysisEnabled)
+            self.assertEqual(reopened.codeAnalysisRelease, "2026.08.29")
+
     def test_project_folder_browser_lists_directories_and_adds_current_path(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

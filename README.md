@@ -243,6 +243,13 @@ corpo e relações estruturais (`import`, `extends`, `implements`). A evolução
 para AST completo e embeddings deve complementar essa base sem retirar sua
 proveniência determinística.
 
+Na aba `Configurações > VR Ultra`, o toggle **Agente de Código / JAR** permanece
+desligado por padrão e permite escolher a release. Quando ligado, os agentes
+base delimitam primeiro o assunto; só então o worker de código consulta até
+oito fontes candidatas do índice, analisa os trechos em contexto isolado e os
+entrega à síntese. Se o índice ou o worker falhar, o VR Ultra continua com
+Schema/Wiki/KB e registra a degradação na trilha da execução.
+
 CLI da base:
 
 ```powershell
