@@ -140,6 +140,8 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert index.status("r1")["relation_kinds"]["calls"] >= 2
     assert index.status("r1")["relation_kinds"]["constructs"] == 1
     assert index.status("r1")["class_versions"] == {"base": 2}
+    assert index.status("r1")["jar_count"] == 1
+    assert index.status("r1")["jars"] == ["ERP.jar"]
     assert results[0]["qualified_name"] == "br.vr.Outer"
     assert results[0]["matched_kind"] == "method"
     assert type_results[0]["matched_kind"] == "class"

@@ -2267,6 +2267,7 @@ class MaryDatabase:
             "agent_started",
             "agent_completed",
             "agent_failed",
+            "agent_usage",
             "parallel_group_started",
             "parallel_group_completed",
             "evidence_merge_completed",

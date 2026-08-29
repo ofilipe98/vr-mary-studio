@@ -922,7 +922,6 @@ class ChatOrchestrator:
                 "agent_started",
                 f"Pesquisador {module} iniciado.",
                 dict(stage),
-                persist=False,
             )
             sources = ("schema",) if module == SCHEMA_MODULE_LABEL else ("wiki", "kb")
             evidence_context = self.knowledge_router.prompt_for_role(
@@ -980,7 +979,6 @@ class ChatOrchestrator:
                             "agent_completed",
                             f"Pesquisador {module} concluído.",
                             {**stage, "output": output_preview},
-                            persist=False,
                         )
                         return result
                     outcome = result
@@ -1005,7 +1003,6 @@ class ChatOrchestrator:
                 "agent_failed",
                 f"Pesquisador {module} falhou após {RESEARCH_ATTEMPTS} tentativas.",
                 {**stage, "error": outcome.raw_error[:300]},
-                persist=False,
             )
             return outcome
 
@@ -1513,6 +1510,7 @@ Retorne somente JSON:
         done = threading.Event()
         chunks: list[str] = []
         errors: list[str] = []
+        latest_token_usage: dict[str, Any] = {}
         stream_chunks: list[str] = []
         last_stream_emit = time.monotonic()
 
@@ -1535,12 +1533,19 @@ Retorne somente JSON:
             )
 
         def callback(event: RuntimeEvent) -> None:
+            nonlocal latest_token_usage
             if event.kind == "assistant_delta":
                 chunks.append(event.text)
                 stream_chunks.append(event.text)
                 flush_stream()
             elif event.kind == "error":
                 errors.append(event.text)
+            elif event.kind == "token_usage":
+                payload = event.payload.get("tokenUsage") or event.payload.get(
+                    "token_usage"
+                )
+                if isinstance(payload, dict):
+                    latest_token_usage = dict(payload)
             elif event.kind == "turn_completed":
                 flush_stream(force=True)
                 done.set()
@@ -1571,6 +1576,18 @@ Retorne somente JSON:
                         f"Tempo limite do agente {agent_id} após {int(timeout_seconds)}s."
                     )
             self._raise_if_cancelled(conversation_id)
+            if latest_token_usage:
+                self._emit_orchestration_event(
+                    conversation_id,
+                    "agent_usage",
+                    f"Uso do agente {agent_id} registrado.",
+                    {
+                        "run_id": run_id,
+                        "agent_id": agent_id,
+                        "model": model.to_dict(),
+                        "tokenUsage": latest_token_usage,
+                    },
+                )
             if errors:
                 raise ProviderError(errors[-1])
             output = "".join(chunks).strip()

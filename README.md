@@ -250,6 +250,34 @@ oito fontes candidatas do índice, analisa os trechos em contexto isolado e os
 entrega à síntese. Se o índice ou o worker falhar, o VR Ultra continua com
 Schema/Wiki/KB e registra a degradação na trilha da execução.
 
+### Benchmark pareado do Agente de Código
+
+O ganho do toggle deve ser medido com chamados já resolvidos cuja causa em
+código seja conhecida. O benchmark aceita somente casos classificados como
+`anonymized` ou `synthetic`, executa cada pergunta duas vezes no VR Ultra
+(Agente de Código desligado e ligado) e alterna a ordem entre casos para reduzir
+viés de aquecimento. Cada relatório preserva respostas, citações, workers,
+tokens, latência e a cobertura real do índice utilizado; a preferência final
+continua sendo uma revisão humana.
+
+```powershell
+# Gerar o modelo, anonimizar e preencher os casos antes da execução
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject benchmark-code-analysis-template `
+  --output casos-codigo.json
+
+# Duas execuções VR Ultra por caso: exige confirmação explícita de custo/dados
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject benchmark-code-analysis casos-codigo.json `
+  --provider codex --model gpt-5.4 --approve-model-usage
+```
+
+O comando recusa releases ausentes/desatualizadas e índices sem fontes. O
+relatório completo é gravado em
+`VRProject/indice/evaluations/code-analysis/`. Revise e anonimize o arquivo de
+casos antes de usar `--approve-model-usage`: a flag confirma tanto as duas
+chamadas por caso quanto o envio do conteúdo ao provedor configurado.
+
 CLI da base:
 
 ```powershell

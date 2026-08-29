@@ -114,6 +114,13 @@ class _UltraFakeProvider:
             threading.Event().wait(0.05)
         callback(RuntimeEvent(conversation_id, "turn_started", payload={"turn": {"id": "t"}}))
         callback(RuntimeEvent(conversation_id, "assistant_delta", output))
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "token_usage",
+                payload={"tokenUsage": {"last": {"totalTokens": 25}}},
+            )
+        )
         callback(RuntimeEvent(conversation_id, "turn_completed"))
 
 
@@ -202,6 +209,11 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     )
     row = [r for r in database.messages(cid) if r["role"] == "assistant"]
     assert row and "Resposta Ultra" in row[-1]["content"]
+    persisted = database.orchestration_events_after(cid, 0)
+    persisted_kinds = [str(item["kind"]) for item in persisted]
+    assert "agent_started" in persisted_kinds
+    assert "agent_completed" in persisted_kinds
+    assert "agent_usage" in persisted_kinds
 
 
 def test_explicit_response_mode_is_applied_before_contract_and_fanout(tmp_path: Path) -> None:

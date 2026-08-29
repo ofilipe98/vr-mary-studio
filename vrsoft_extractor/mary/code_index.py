@@ -556,6 +556,15 @@ class JavaCodeIndex:
                      GROUP BY class_version ORDER BY class_version""",
                 params,
             ).fetchall()
+            jars = [
+                str(item["jar_relative_path"])
+                for item in connection.execute(
+                    f"""SELECT DISTINCT jar_relative_path
+                         FROM code_sources{filter_sql}
+                         ORDER BY jar_relative_path COLLATE NOCASE""",
+                    params,
+                )
+            ]
         return {
             "schema_version": CODE_INDEX_SCHEMA_VERSION,
             "release_id": release_id,
@@ -575,6 +584,8 @@ class JavaCodeIndex:
                 _class_version_label(item["class_version"]): int(item["total"])
                 for item in class_versions
             },
+            "jar_count": len(jars),
+            "jars": jars,
             "tree_sitter_available": tree_sitter_available(),
             "batches": int(row["batches"]),
             "releases": int(row["releases"]),

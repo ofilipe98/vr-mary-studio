@@ -6,6 +6,11 @@ import sys
 from pathlib import Path
 
 from .classification_audit import audit_classification
+from .code_analysis_benchmark import (
+    CodeAnalysisBenchmarkError,
+    benchmark_template,
+    execute_benchmark_suite,
+)
 from .code_index import JavaCodeIndex
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
@@ -208,11 +213,72 @@ def build_parser() -> argparse.ArgumentParser:
     code_callers.add_argument("target")
     code_callers.add_argument("--release", default="")
     code_callers.add_argument("--limit", type=int, default=50)
+    benchmark_template_parser = sub.add_parser(
+        "benchmark-code-analysis-template",
+        help="Mostra o modelo JSON para casos anonimizados de análise de código",
+    )
+    benchmark_template_parser.add_argument(
+        "--output",
+        default="",
+        help="Grava o modelo em UTF-8 sem sobrescrever um arquivo existente",
+    )
+    benchmark = sub.add_parser(
+        "benchmark-code-analysis",
+        help="Executa casos VR Ultra pareados com o Agente de Código off/on",
+    )
+    benchmark.add_argument("cases", help="Arquivo JSON com chamados anonimizados")
+    benchmark.add_argument("--provider", default="codex")
+    benchmark.add_argument("--model", default="")
+    benchmark.add_argument("--effort", default="medium")
+    benchmark.add_argument("--timeout", type=int, default=600)
+    benchmark.add_argument("--max-cases", type=int, default=0)
+    benchmark.add_argument(
+        "--approve-model-usage",
+        action="store_true",
+        help="Confirma o custo de duas execuções VR Ultra por caso",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "benchmark-code-analysis-template":
+        rendered = json.dumps(benchmark_template(), ensure_ascii=False, indent=2)
+        if args.output:
+            output = Path(args.output).resolve()
+            if output.exists():
+                print(
+                    json.dumps(
+                        {"error": f"O arquivo já existe: {output}"},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 2
+            try:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(rendered + "\n", encoding="utf-8")
+            except OSError as exc:
+                print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+                return 2
+            print(json.dumps({"output": str(output)}, ensure_ascii=False, indent=2))
+        else:
+            print(rendered)
+        return 0
+    if args.command == "benchmark-code-analysis" and not args.approve_model_usage:
+        print(
+            json.dumps(
+                {
+                    "error": (
+                        "O benchmark faz duas execuções VR Ultra por caso. "
+                        "Repita com --approve-model-usage após revisar custo e dados."
+                    )
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
     settings = load_vr_settings(args.app_dir, args.root)
     database = initialize_workspace(settings)
     if args.command == "init":
@@ -463,6 +529,35 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "benchmark-code-analysis":
+        try:
+            result = execute_benchmark_suite(
+                settings,
+                database,
+                args.cases,
+                provider=args.provider,
+                model=args.model,
+                effort=args.effort,
+                timeout_seconds=args.timeout,
+                max_cases=args.max_cases,
+            )
+        except (CodeAnalysisBenchmarkError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "benchmark_id": result["benchmark_id"],
+                    "suite_id": result["suite_id"],
+                    "release_id": result["release_id"],
+                    "case_count": result["case_count"],
+                    "summary": result["summary"],
+                    "report_path": result["report_path"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     return 0
 
 
