@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .classification_audit import audit_classification
+from .code_index import JavaCodeIndex
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
 from .erp_releases import ErpReleaseCatalog, ErpReleaseError
@@ -183,6 +184,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reenfileira explicitamente um lote com falha ou saída parcial",
     )
     batch_retry.add_argument("batch_id")
+    code_index = sub.add_parser(
+        "index-erp-code",
+        help="Indexa fontes Java aprovados de um plano de decompilação",
+    )
+    code_index.add_argument("plan_id")
+    code_search = sub.add_parser(
+        "search-erp-code",
+        help="Pesquisa classes, símbolos, relações e conteúdo Java indexado",
+    )
+    code_search.add_argument("query")
+    code_search.add_argument("--release", default="")
+    code_search.add_argument("--limit", type=int, default=10)
+    code_status = sub.add_parser(
+        "status-erp-code",
+        help="Mostra cobertura do índice pesquisável de código",
+    )
+    code_status.add_argument("release_id", nargs="?", default="")
     return parser
 
 
@@ -404,6 +422,28 @@ def main(argv: list[str] | None = None) -> int:
         except DecompilationBatchError as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "index-erp-code":
+        try:
+            result = JavaCodeIndex(settings.root).index_plan(args.plan_id)
+        except (DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result["errors"] else 2
+    elif args.command == "search-erp-code":
+        try:
+            result = JavaCodeIndex(settings.root).search(
+                args.query,
+                release_id=args.release,
+                limit=args.limit,
+            )
+        except (DecompilationBatchError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "status-erp-code":
+        result = JavaCodeIndex(settings.root).status(args.release_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

@@ -221,6 +221,28 @@ Se o Studio for interrompido, o lock exclusivo garante que um lote deixado em
 `running` só volte a `pending` quando não houver outro executor ativo. Saídas
 parciais ficam preservadas e não entram como conteúdo pronto.
 
+Os fontes aprovados podem ser promovidos para o índice pesquisável. Esta etapa
+é incremental: mudanças na versão do extrator reprocessam os símbolos, enquanto
+fontes e versão de parser inalterados são ignorados. Toda resposta inclui
+release, JAR, classe, linhas, hashes e o frescor atual da release.
+
+```powershell
+# Indexar somente lotes já concluídos e com cobertura aprovada
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject index-erp-code plan-<id>
+
+# Conferir cobertura e pesquisar por classe, pacote, método, campo ou conteúdo
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject status-erp-code current
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject search-erp-code VendaVO --release current --limit 5
+```
+
+O índice atual combina correspondência exata de símbolos, FTS5 sobre nomes e
+corpo e relações estruturais (`import`, `extends`, `implements`). A evolução
+para AST completo e embeddings deve complementar essa base sem retirar sua
+proveniência determinística.
+
 CLI da base:
 
 ```powershell
