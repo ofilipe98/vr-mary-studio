@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shutil
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -279,6 +280,134 @@ class ErpReleaseCatalog:
             "indexed_releases": len(self.list_statuses()),
         }
 
+    def inspect_class_metrics(
+        self,
+        release_id: str,
+        relative_jars: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Measure class-level deduplication before committing to decompilation."""
+
+        manifest = self.load_manifest(release_id)
+        source = self._resolve_source(str(manifest.get("source_dir") or ""))
+        if not source.is_dir():
+            raise ErpReleaseError("A pasta de origem da release não está disponível.")
+        artifacts = {
+            str(item.get("relative_path") or ""): item
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict) and item.get("relative_path")
+        }
+        requested = tuple(dict.fromkeys(str(item).replace("\\", "/") for item in relative_jars))
+        selected = requested or tuple(sorted(artifacts, key=str.casefold))
+        missing = [item for item in selected if item not in artifacts]
+        if missing:
+            raise ErpReleaseError(
+                "JARs não encontrados no manifesto: " + ", ".join(missing)
+            )
+
+        started = time.monotonic()
+        content_hashes: set[str] = set()
+        logical_classes: dict[str, list[Any]] = {}
+        conflict_samples: list[dict[str, str]] = []
+        total_entries = 0
+        total_bytecode_bytes = 0
+        multi_release_entries = 0
+        errors: list[dict[str, str]] = []
+        per_jar: list[dict[str, Any]] = []
+
+        for relative_path in selected:
+            jar_path = (source / relative_path).resolve()
+            _require_child(jar_path, source.resolve())
+            jar_entries = 0
+            jar_bytes = 0
+            jar_hashes: set[str] = set()
+            try:
+                with zipfile.ZipFile(jar_path) as archive:
+                    for info in archive.infolist():
+                        normalized = normalize_class_entry(info.filename)
+                        if normalized is None:
+                            continue
+                        logical_name, class_version = normalized
+                        digest = hashlib.sha256()
+                        with archive.open(info) as handle:
+                            while chunk := handle.read(1024 * 1024):
+                                digest.update(chunk)
+                        class_hash = digest.hexdigest()
+                        total_entries += 1
+                        jar_entries += 1
+                        total_bytecode_bytes += info.file_size
+                        jar_bytes += info.file_size
+                        if class_version:
+                            multi_release_entries += 1
+                        content_hashes.add(class_hash)
+                        jar_hashes.add(class_hash)
+
+                        current = logical_classes.get(logical_name)
+                        if current is None:
+                            logical_classes[logical_name] = [
+                                class_hash,
+                                relative_path,
+                                1,
+                                False,
+                            ]
+                        else:
+                            current[2] += 1
+                            if class_hash != current[0]:
+                                if not current[3] and len(conflict_samples) < 200:
+                                    conflict_samples.append(
+                                        {
+                                            "class": logical_name,
+                                            "first_jar": str(current[1]),
+                                            "first_sha256": str(current[0]),
+                                            "conflicting_jar": relative_path,
+                                            "conflicting_sha256": class_hash,
+                                        }
+                                    )
+                                current[3] = True
+            except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                errors.append(
+                    {"jar": relative_path, "error": f"{type(exc).__name__}: {exc}"}
+                )
+            per_jar.append(
+                {
+                    "jar": relative_path,
+                    "class_entries": jar_entries,
+                    "unique_content_hashes": len(jar_hashes),
+                    "class_bytecode_bytes": jar_bytes,
+                }
+            )
+
+        duplicate_logical_names = sum(
+            1 for value in logical_classes.values() if int(value[2]) > 1
+        )
+        conflicting_logical_names = sum(
+            1 for value in logical_classes.values() if bool(value[3])
+        )
+        report = {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "release_id": release_id,
+            "release_manifest_sha256": manifest.get("release_manifest_sha256", ""),
+            "inspected_at": _utc_now(),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "selected_jars": list(selected),
+            "selected_jar_count": len(selected),
+            "total_class_entries": total_entries,
+            "unique_logical_class_count": len(logical_classes),
+            "duplicate_logical_class_count": duplicate_logical_names,
+            "conflicting_logical_class_count": conflicting_logical_names,
+            "unique_class_content_count": len(content_hashes),
+            "duplicate_content_entries": max(0, total_entries - len(content_hashes)),
+            "multi_release_entries": multi_release_entries,
+            "class_bytecode_bytes": total_bytecode_bytes,
+            "conflict_samples": conflict_samples,
+            "errors": errors,
+            "per_jar": per_jar,
+        }
+        _atomic_write_json(
+            self.paths.index_for(release_id) / "class-metrics.json",
+            report,
+        )
+        return report
+
     def load_manifest(self, release_id: str) -> dict[str, Any]:
         release_id = validate_release_id(release_id)
         path = self.paths.manifest_for(release_id)
@@ -500,6 +629,23 @@ def estimate_obfuscation(class_names: Iterable[str]) -> dict[str, Any]:
         "short_name_ratio": round(ratio, 4),
         "method": "heuristic_class_name_length",
     }
+
+
+def normalize_class_entry(value: str) -> tuple[str, int] | None:
+    normalized = str(value or "").replace("\\", "/")
+    if not normalized.casefold().endswith(".class"):
+        return None
+    class_version = 0
+    match = re.match(
+        r"^META-INF/versions/(\d+)/(.*\.class)$",
+        normalized,
+        re.IGNORECASE,
+    )
+    if match:
+        class_version = int(match.group(1))
+        normalized = match.group(2)
+    logical_name = normalized[:-6].replace("/", ".")
+    return logical_name, class_version
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

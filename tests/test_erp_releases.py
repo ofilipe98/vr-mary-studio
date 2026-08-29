@@ -9,6 +9,7 @@ import pytest
 from vrsoft_extractor.mary.erp_releases import (
     ErpReleaseCatalog,
     ErpReleaseError,
+    normalize_class_entry,
     parse_manifest_bytes,
 )
 
@@ -169,6 +170,52 @@ def test_manifest_parser_unfolds_continuation_lines() -> None:
         b"Manifest-Version: 1.0\r\nClass-Path: lib/A.jar lib/\r\n B.jar\r\n"
     )
     assert parsed["Class-Path"] == "lib/A.jar lib/B.jar"
+
+
+def test_normalize_class_entry_understands_multi_release_jars() -> None:
+    assert normalize_class_entry("br/com/vr/App.class") == ("br.com.vr.App", 0)
+    assert normalize_class_entry("META-INF/versions/17/br/com/vr/App.class") == (
+        "br.com.vr.App",
+        17,
+    )
+    assert normalize_class_entry("META-INF/MANIFEST.MF") is None
+
+
+def test_deep_class_metrics_detect_content_dedup_and_conflicts(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "ERP" / "releases" / "r1" / "jars"
+    source.mkdir(parents=True)
+    with zipfile.ZipFile(source / "A.jar", "w") as archive:
+        archive.writestr("br/com/vr/App.class", b"version-a")
+        archive.writestr(
+            "META-INF/versions/17/br/com/vr/App.class",
+            b"version-a-17",
+        )
+    with zipfile.ZipFile(source / "B.jar", "w") as archive:
+        archive.writestr("br/com/vr/App.class", b"version-b")
+        archive.writestr("br/com/vr/Copy.class", b"version-b")
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=2)
+    catalog.import_release("r1")
+
+    report = catalog.inspect_class_metrics("r1", ("A.jar", "B.jar"))
+
+    assert report["total_class_entries"] == 4
+    assert report["unique_logical_class_count"] == 2
+    assert report["duplicate_logical_class_count"] == 1
+    assert report["conflicting_logical_class_count"] == 1
+    assert report["unique_class_content_count"] == 3
+    assert report["duplicate_content_entries"] == 1
+    assert report["multi_release_entries"] == 1
+    assert report["conflict_samples"][0]["class"] == "br.com.vr.App"
+    assert (
+        tmp_path
+        / "indice"
+        / "codigo"
+        / "releases"
+        / "r1"
+        / "class-metrics.json"
+    ).is_file()
 
 
 def test_manifest_written_with_portable_source_path(tmp_path: Path) -> None:

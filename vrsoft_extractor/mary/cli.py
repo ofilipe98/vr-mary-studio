@@ -14,6 +14,7 @@ from .movidesk import MovideskSync
 from .portable_export import audit_portable_project, export_portable_project
 from .portable_project import ensure_portable_project
 from .indexer import export_catalog
+from .jvm_toolchain import JvmToolchain
 from .wiki import WikiSync
 from .schema_sync import SchemaSync
 from .workspace import initialize_workspace
@@ -118,6 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Recalcula SHA-256 de todos os JARs em vez da verificação rápida",
     )
+    erp_classes = sub.add_parser(
+        "inspect-erp-classes",
+        help="Mede bytecode e duplicidades antes da decompilação",
+    )
+    erp_classes.add_argument("release_id")
+    erp_classes.add_argument(
+        "--jar",
+        action="append",
+        default=[],
+        help="Caminho relativo de um JAR; pode ser repetido. Sem opção, usa todos.",
+    )
     erp_remove = sub.add_parser(
         "remove-erp-release-index",
         help="Remove apenas o índice gerado de uma release",
@@ -127,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--approve",
         action="store_true",
         help="Confirma explicitamente a remoção do índice regenerável",
+    )
+    sub.add_parser(
+        "doctor-code-analysis",
+        help="Verifica Java 17 isolado, Vineflower e CFR sem alterar o sistema",
     )
     return parser
 
@@ -288,6 +304,15 @@ def main(argv: list[str] | None = None) -> int:
             item.get("state") == "ready" and item.get("freshness") == "fresh"
             for item in result
         ) else 2
+    elif args.command == "inspect-erp-classes":
+        catalog = ErpReleaseCatalog(settings.root)
+        try:
+            result = catalog.inspect_class_metrics(args.release_id, args.jar)
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result["errors"] else 2
     elif args.command == "remove-erp-release-index":
         catalog = ErpReleaseCatalog(settings.root)
         try:
@@ -296,6 +321,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "doctor-code-analysis":
+        result = JvmToolchain(settings.root).doctor()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     return 0
 
 

@@ -170,6 +170,30 @@ O catálogo mantém no máximo três releases e usa como orçamento inicial do
 índice dez vezes o tamanho da primeira release importada; ele nunca remove uma
 versão automaticamente para abrir espaço.
 
+O diagnóstico da toolchain de código procura primeiro um Java 17 isolado em
+`VRProject/tools/code-analysis/java17`, sem alterar o Java global do ERP. As
+versões iniciais aprovadas são Vineflower 1.12.0 e CFR 0.152, com checksum
+validado antes do uso:
+
+```powershell
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject doctor-code-analysis
+```
+
+Antes de decompilar uma release, o Gate 1 mede conteúdos únicos e conflitos de
+bytecode em um conjunto representativo de JARs:
+
+```powershell
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject inspect-erp-classes current `
+  --jar VRMaster.jar --jar VRAtacarejo.jar --jar VRPdv.jar `
+  --jar lib/VRLib.jar --jar lib/VRCore.jar
+```
+
+O processamento definitivo deve ser feito em lotes resumíveis de classes. Um
+JAR completo não pode monopolizar memória nem ser considerado concluído quando
+o decompilador expira ou deixa somente uma saída parcial.
+
 CLI da base:
 
 ```powershell

@@ -79,6 +79,10 @@ class MarySettings:
         return self.index_dir / "codigo"
 
     @property
+    def code_tools_dir(self) -> Path:
+        return self.root / "tools" / "code-analysis"
+
+    @property
     def work_dir(self) -> Path:
         return self.root / "TrabalhoVR"
 
@@ -124,6 +128,7 @@ class MarySettings:
             self.erp_releases_dir,
             self.code_index_dir / "releases",
             self.code_index_dir / "artifacts",
+            self.code_tools_dir / "decompilers",
             self.work_dir,
             self.videos_dir,
             self.logs_dir,
