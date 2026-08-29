@@ -14,7 +14,7 @@ from ..brand import (
     SETTINGS_APP_NAME,
     brand_palette,
 )
-from ..chat_widgets import CodeSyntaxHighlighter, apply_message_document_style
+from .text_rendering import CodeSyntaxHighlighter, apply_message_document_style
 from ..config import MarySettings
 
 

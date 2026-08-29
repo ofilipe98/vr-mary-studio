@@ -5,6 +5,6 @@ if len(sys.argv) > 1 and sys.argv[1] == "--video-cli":
 
     raise SystemExit(video_main(sys.argv[2:]))
 
-from vrsoft_extractor.mary.ui import main
+from vrsoft_extractor.mary.frontend.app import main
 
 main()

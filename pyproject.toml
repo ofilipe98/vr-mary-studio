@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.4-1"
+version = "0.4-2"
 description = "VR Norte Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,12 +28,12 @@ dev = [
 
 [project.scripts]
 vrsoft-extractor = "vrsoft_extractor.cli:main"
-vrsoft-extractor-gui = "vrsoft_extractor.mary.ui:main"
+vrsoft-extractor-gui = "vrsoft_extractor.mary.frontend.app:main"
 vr-norte = "vrsoft_extractor.mary.cli:main"
-vr-norte-studio = "vrsoft_extractor.mary.ui:main"
+vr-norte-studio = "vrsoft_extractor.mary.frontend.app:main"
 # Compatibility aliases for existing development environments.
 vr-mary = "vrsoft_extractor.mary.cli:main"
-vr-mary-studio = "vrsoft_extractor.mary.ui:main"
+vr-mary-studio = "vrsoft_extractor.mary.frontend.app:main"
 
 [tool.setuptools.packages.find]
 include = ["vrsoft_extractor*"]

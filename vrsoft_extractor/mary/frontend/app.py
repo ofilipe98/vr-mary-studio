@@ -27,7 +27,7 @@ MAIN_QML = QML_DIR / "Main.qml"
 
 
 def apply_ui_scale_environment(preferences: QSettings) -> None:
-    """Keep legacy startup calls while QML applies text scale live.
+    """Keep startup scale handling centralized while QML applies it live.
 
     QT_SCALE_FACTOR enlarged the complete window geometry and made the Studio
     disproportionate to T3 Code. The saved preference is now consumed by the

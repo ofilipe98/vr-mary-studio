@@ -397,89 +397,6 @@ class ModelRef:
         }
 
 
-ORCHESTRATION_STRATEGIES = {
-    "automatic",
-    "parallel",
-    "specialized",
-    "sequential",
-    "debate",
-    "consensus",
-    "adaptive",
-}
-
-ORCHESTRATION_MODES = {"off", "automatic", "standard", "ultra"}
-
-
-@dataclass(frozen=True)
-class OrchestrationOptions:
-    """Sticky VR routing options, kept separate from provider settings."""
-
-    enabled: bool = False
-    strategy: str = "automatic"
-    model_pool: tuple[ModelRef, ...] = ()
-    ultra: bool = False
-    mode: str = ""
-    show_execution: bool = True
-    explain_routing: bool = False
-    dynamic_model_routing: bool = True
-    dynamic_agent_count: bool = True
-    difficulty_routing: bool = True
-
-    def __post_init__(self) -> None:
-        mode = str(self.mode or "").strip().casefold()
-        if mode not in ORCHESTRATION_MODES:
-            mode = "ultra" if self.ultra else "automatic" if self.enabled else "off"
-        object.__setattr__(self, "mode", mode)
-        # Keep the legacy booleans coherent for providers and older callers.
-        object.__setattr__(self, "enabled", mode != "off")
-        object.__setattr__(self, "ultra", mode == "ultra")
-
-    @classmethod
-    def from_mapping(
-        cls,
-        value: Any,
-        model_pool: tuple[ModelRef, ...] | list[ModelRef] = (),
-    ) -> "OrchestrationOptions":
-        keys = value.keys() if hasattr(value, "keys") else ()
-        get = value.__getitem__ if hasattr(value, "__getitem__") else lambda _key: ""
-
-        def boolean(name: str, default: bool) -> bool:
-            if name not in keys:
-                return default
-            raw = get(name)
-            if isinstance(raw, bool):
-                return raw
-            if isinstance(raw, (int, float)):
-                return bool(raw)
-            return str(raw).strip().casefold() not in {"", "0", "false", "no", "off"}
-
-        strategy = (
-            str(get("orchestration_strategy") or "automatic")
-            if "orchestration_strategy" in keys
-            else "automatic"
-        ).strip().casefold()
-        if strategy not in ORCHESTRATION_STRATEGIES:
-            strategy = "automatic"
-        enabled = boolean("orchestration_enabled", False)
-        ultra = boolean("ultra_enabled", False)
-        mode = (
-            str(get("orchestration_mode") or "").strip().casefold()
-            if "orchestration_mode" in keys
-            else ""
-        )
-        return cls(
-            enabled=enabled,
-            strategy=strategy,
-            model_pool=tuple(model_pool),
-            ultra=ultra,
-            mode=mode,
-            show_execution=boolean("show_execution", True),
-            explain_routing=boolean("explain_routing", False),
-            dynamic_model_routing=boolean("dynamic_model_routing", True),
-            dynamic_agent_count=boolean("dynamic_agent_count", True),
-            difficulty_routing=boolean("difficulty_routing", True),
-        )
-
 
 @dataclass(frozen=True)
 class ConversationOptions:
@@ -492,7 +409,6 @@ class ConversationOptions:
     collaboration_mode: str = "default"
     dynamic_tools: tuple[dict[str, Any], ...] = ()
     mcp_tools: tuple[dict[str, str], ...] = ()
-    orchestration: OrchestrationOptions = field(default_factory=OrchestrationOptions)
     vr_enabled: bool = False
     vr_mode: str = ""
 
@@ -509,7 +425,6 @@ class ConversationOptions:
     def from_mapping(
         cls,
         value: Any,
-        model_pool: tuple[ModelRef, ...] | list[ModelRef] = (),
     ) -> "ConversationOptions":
         keys = value.keys() if hasattr(value, "keys") else ()
         get = value.__getitem__ if hasattr(value, "__getitem__") else lambda _key: ""
@@ -523,7 +438,6 @@ class ConversationOptions:
             service_tier=field_value("service_tier"),
             approval_profile=field_value("approval_profile", "auto") or "auto",
             collaboration_mode=field_value("collaboration_mode", "default") or "default",
-            orchestration=OrchestrationOptions.from_mapping(value, model_pool),
             vr_mode=field_value("vr_mode"),
             vr_enabled=(
                 str(get("vr_enabled")).strip().casefold()

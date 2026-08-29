@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
 import threading
 import time
@@ -26,7 +27,7 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
-from ..chat_widgets import FENCE_RE, code_language_badge
+from .text_rendering import FENCE_RE, code_language_badge
 from ..config import MarySettings
 from ..db import MaryDatabase
 from ..models import ModelRef, RuntimeEvent
@@ -211,7 +212,6 @@ class ChatBridge(QObject):
     conversationArchived = Signal(str)
     _modelsLoaded = Signal(object)
     _extensionsLoaded = Signal(object)
-    _fileSuggestionsReady = Signal(int, object, object)
 
     def __init__(
         self,
@@ -286,7 +286,6 @@ class ChatBridge(QObject):
         )
         self._vr_mode = "vr"
         self._research_model_keys: list[str] = []
-        self._research_trigger = "auto"
         self._research_max_parallel = 3
         self._load_research_config()
         self._apply_research_config()
@@ -301,14 +300,21 @@ class ChatBridge(QObject):
         self._file_suggestions_built_at = 0.0
         self._file_suggestions_loading = False
         self._file_suggestions_query = ""
+        self._file_suggestions_results: queue.SimpleQueue[
+            tuple[int, Path, list[dict[str, str]]]
+        ] = queue.SimpleQueue()
         self._modelsLoaded.connect(self._apply_model_catalog)
         self._extensionsLoaded.connect(self._apply_extension_catalog)
-        self._fileSuggestionsReady.connect(self._apply_file_suggestions)
         self._runtimeEvent.connect(self._on_runtime_event)
         self._file_suggestions_timer = QTimer(self)
         self._file_suggestions_timer.setSingleShot(True)
         self._file_suggestions_timer.setInterval(500)
         self._file_suggestions_timer.timeout.connect(self._rebuild_file_suggestions)
+        self._file_suggestions_poll_timer = QTimer(self)
+        self._file_suggestions_poll_timer.setInterval(25)
+        self._file_suggestions_poll_timer.timeout.connect(
+            self._poll_file_suggestions
+        )
         self._stream_timer = QTimer(self)
         self._stream_timer.setInterval(28)
         self._stream_timer.timeout.connect(self._flush_stream_step)
@@ -447,10 +453,6 @@ class ChatBridge(QObject):
     @Property("QVariantList", notify=stateChanged)
     def researchModelKeys(self) -> list[str]:  # noqa: N802
         return list(self._research_model_keys)
-
-    @Property(str, notify=stateChanged)
-    def researchTrigger(self) -> str:  # noqa: N802
-        return self._research_trigger
 
     @Property(int, notify=stateChanged)
     def researchMaxParallel(self) -> int:  # noqa: N802
@@ -686,6 +688,7 @@ class ChatBridge(QObject):
         self._closed = True
         for timer in (
             self._file_suggestions_timer,
+            self._file_suggestions_poll_timer,
             self._stream_timer,
             self._activity_clock,
             self._state_update_timer,
@@ -1014,7 +1017,11 @@ class ChatBridge(QObject):
         needle = str(query or "").strip().casefold()
         self._file_suggestions_query = needle
         if self._file_suggestions_stale() and not self._file_suggestions_timer.isActive():
-            self._file_suggestions_timer.start()
+            # The first opening of the Files surface has nothing to debounce.
+            # Start it on the next event-loop tick so the initial listing does
+            # not inherit the refresh delay used after project mutations.
+            initial_load = self._file_suggestions_root is None
+            self._file_suggestions_timer.start(0 if initial_load else 500)
         return [
             {"label": item["relative"], "path": item["path"]}
             for item in self._file_suggestions_cache
@@ -1027,7 +1034,9 @@ class ChatBridge(QObject):
         root = (self._project_scope or self._settings.root).resolve(strict=False)
         if self._file_suggestions_root != root:
             return True
-        if not self._file_suggestions_cache:
+        # A completed scan of an empty project is still a valid cache.  Without
+        # this marker every QML binding read starts another background thread.
+        if self._file_suggestions_built_at <= 0:
             return True
         return time.monotonic() - self._file_suggestions_built_at > 60
 
@@ -1051,6 +1060,7 @@ class ChatBridge(QObject):
             return
         self._file_suggestions_loading = True
         generation = self._file_suggestions_generation
+        results = self._file_suggestions_results
 
         def scan() -> None:
             ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
@@ -1064,16 +1074,35 @@ class ChatBridge(QObject):
                 entries.sort(key=lambda item: item["relative"].casefold())
             except OSError:
                 entries = []
-            self._fileSuggestionsReady.emit(generation, root, entries)
+            # A Python worker must not emit through a QObject that may already
+            # have been destroyed by Qt.  The UI thread drains this queue.
+            results.put((generation, root, entries))
 
+        self._file_suggestions_poll_timer.start()
         threading.Thread(target=scan, daemon=True).start()
 
-    @Slot(int, object, object)
+    @Slot()
+    def _poll_file_suggestions(self) -> None:
+        latest: tuple[int, Path, list[dict[str, str]]] | None = None
+        while True:
+            try:
+                latest = self._file_suggestions_results.get_nowait()
+            except queue.Empty:
+                break
+        if latest is None:
+            if not self._file_suggestions_loading:
+                self._file_suggestions_poll_timer.stop()
+            return
+        self._apply_file_suggestions(*latest)
+        if not self._file_suggestions_loading:
+            self._file_suggestions_poll_timer.stop()
+
     def _apply_file_suggestions(
-        self, generation: int, root: object, entries: object
+        self, generation: int, root: Path, entries: list[dict[str, str]]
     ) -> None:  # noqa: N802
         self._file_suggestions_loading = False
         if generation != self._file_suggestions_generation:
+            self._file_suggestions_timer.start(0)
             return
         self._file_suggestions_cache = [
             {
@@ -1083,7 +1112,7 @@ class ChatBridge(QObject):
             for item in list(entries or [])
             if isinstance(item, dict) and item.get("relative")
         ]
-        self._file_suggestions_root = root if isinstance(root, Path) else None
+        self._file_suggestions_root = root
         self._file_suggestions_built_at = time.monotonic()
         self._apply_pending_file_suggestions()
 
@@ -1441,7 +1470,6 @@ class ChatBridge(QObject):
             else "off"
         )
         self._research_model_keys: list[str] = []
-        self._research_trigger = "auto"
         self._research_max_parallel = 3
         self._load_research_config()
         self._apply_research_config()
@@ -1622,10 +1650,6 @@ class ChatBridge(QObject):
         self._research_model_keys = [
             str(item) for item in values if str(item or "").strip()
         ][:1]
-        trigger = str(self._preferences.value("research/trigger", "auto") or "auto")
-        self._research_trigger = (
-            "manual" if trigger.strip().casefold() == "manual" else "auto"
-        )
         try:
             parallel = int(self._preferences.value("research/max_parallel", 3))
         except (TypeError, ValueError):
@@ -1646,7 +1670,6 @@ class ChatBridge(QObject):
         try:
             self._orchestrator.set_research_config(
                 pool=pool,
-                trigger=self._research_trigger,
                 max_parallel=self._research_max_parallel,
             )
         except Exception:
@@ -1666,16 +1689,6 @@ class ChatBridge(QObject):
             "research/model_pool",
             json.dumps(self._research_model_keys),
         )
-        self._preferences.sync()
-        self._apply_research_config()
-        self.stateChanged.emit()
-
-    @Slot(str)
-    def setResearchTrigger(self, trigger: str) -> None:  # noqa: N802
-        self._research_trigger = (
-            "manual" if str(trigger or "").casefold() == "manual" else "auto"
-        )
-        self._preferences.setValue("research/trigger", self._research_trigger)
         self._preferences.sync()
         self._apply_research_config()
         self.stateChanged.emit()

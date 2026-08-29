@@ -68,11 +68,10 @@ origem; a interface mostra as contagens separadas. A resposta deve citar o URL
 original, e o banco registra apenas as evidências cujo URL ou ID foi realmente
 usado no texto final.
 
-O grafo proprietário de planejador, workers, supervisor e sintetizador continua
-disponível apenas para compatibilidade quando `VR_LEGACY_ORCHESTRATION=true`.
-Ele fica desligado por padrão e não bloqueia o caminho normal. Assim, **VR
-ativado** significa identidade VR + pesquisa local + resposta do provedor
-principal; **VR desativado** envia a solicitação sem consulta à base local.
+Assim, **VR ativado** significa identidade VR + pesquisa local + resposta do
+provedor principal; **VR desativado** envia a solicitação sem consulta à base
+local. O **VR Ultra** acrescenta pesquisadores modulares em paralelo quando a
+pergunta envolve vários módulos ou exige investigação aprofundada.
 
 Documentos recuperados são tratados como dados não confiáveis, nunca como
 instruções. Schema é priorizado para estrutura física, Wiki para funcionamento
@@ -97,7 +96,6 @@ ENDOO_PASSWORD=
 ENDOO_BASE_URL=https://vrsoft.endoo.com.br
 ENDOO_API_URL=https://api.iendo.us/api
 VR_ENDOO_WIKI_ENABLED=true
-VR_LEGACY_ORCHESTRATION=false
 MOVIDESK_EMAIL=
 MOVIDESK_PASSWORD=
 VR_ROOT=VRProject
@@ -139,16 +137,10 @@ modo. A sessão autenticada é salva em
 Abra `Start-VRStudio.bat` ou execute:
 
 ```powershell
-.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --project-dir .
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.frontend.app --project-dir .
 ```
 
-A interface Qt Quick/QML aprovada é aberta por padrão. Durante o ciclo de
-estabilização da versão de desenvolvimento, a interface Qt Widgets anterior
-continua disponível apenas como rollback explícito:
-
-```powershell
-.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --legacy-frontend --project-dir .
-```
+A interface Qt Quick/QML é o único frontend desktop.
 
 CLI da base:
 
@@ -323,5 +315,5 @@ Smoke test visual:
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.ui --smoke-test
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.frontend.app --smoke-test
 ```

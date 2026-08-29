@@ -1,15 +1,16 @@
 """Module fan-out research: parallel per-module readers feeding one synthesis.
 
-A lightweight middle path between the direct answer flow and the legacy
-planner/worker/supervisor graph. The deterministic router decides which
-modules are involved; one researcher per module runs in parallel; a single
-buffered synthesis merges the condensed reports.
+The deterministic router decides which modules are involved; one researcher
+per module runs in parallel; a single buffered synthesis merges the condensed
+reports.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
+
+from .models import ModelRef
 
 from .personality import (
     VRMASTER_EVIDENCE_POLICY,
@@ -43,6 +44,34 @@ ROLE_BY_FANOUT_MODULE = {
     SCHEMA_MODULE_LABEL: "database_specialist",
     GLOBAL_MODULE_LABEL: "evidence_research",
 }
+
+
+def resolve_model_ref(
+    provider: str,
+    model: str,
+    pool: Iterable[ModelRef] = (),
+) -> ModelRef:
+    """Resolve the main model for research and final synthesis."""
+    for candidate in pool:
+        if candidate.provider == provider and candidate.model == model:
+            return candidate
+    return ModelRef(
+        provider=provider,
+        model=model,
+        display_name=model or f"{provider.title()} padrão",
+    )
+
+
+def available_research_pool(
+    pool: Iterable[ModelRef],
+    available_providers: set[str],
+) -> tuple[ModelRef, ...]:
+    """Return unique configured research models backed by live providers."""
+    unique: dict[str, ModelRef] = {}
+    for candidate in pool:
+        if candidate.provider and candidate.provider in available_providers:
+            unique[candidate.key] = candidate
+    return tuple(unique.values())
 
 
 @dataclass(frozen=True)

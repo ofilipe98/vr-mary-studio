@@ -216,13 +216,6 @@ def test_force_research_on_plain_vr(tmp_path: Path) -> None:
     assert any(e.kind == "research_started" for e in events)
 
 
-def test_ultra_button_overrides_legacy_manual_trigger(tmp_path: Path) -> None:
-    settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "ultra")
-    orchestrator.set_research_config(trigger="manual")
-    _run_send(orchestrator, cid, events)
-    assert any(e.kind == "research_started" for e in events)
-
-
 # ------------------------------------------------------- pool próprio e limite
 
 

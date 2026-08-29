@@ -455,19 +455,15 @@ def test_researchers_cycle_through_model_pool(tmp_path: Path, monkeypatch) -> No
     )
     database.update_conversation(conversation_id, native_id="native-x")
 
-    from vrsoft_extractor.mary.models import ModelRef, OrchestrationOptions
+    from vrsoft_extractor.mary.models import ModelRef
 
-    options = ConversationOptions(
-        effort="medium",
-        vr_enabled=True,
-        orchestration=OrchestrationOptions(
-            mode="off",
-            model_pool=(
-                ModelRef("codex", "sol", "Sol"),
-                ModelRef("codex", "opus", "Opus"),
-            ),
+    orchestrator.set_research_config(
+        pool=(
+            ModelRef("codex", "sol", "Sol"),
+            ModelRef("codex", "opus", "Opus"),
         ),
     )
+    options = ConversationOptions(effort="medium", vr_enabled=True)
     events: list[RuntimeEvent] = []
     orchestrator._external_callbacks[conversation_id] = events.append
 

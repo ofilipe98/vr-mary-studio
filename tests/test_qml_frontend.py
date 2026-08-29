@@ -962,17 +962,14 @@ class QmlFrontendTest(unittest.TestCase):
             ]
 
             bridge.setResearchModels(["codex:sol"])
-            bridge.setResearchTrigger("manual")
             bridge.setResearchMaxParallel(1)
 
             self.assertEqual(bridge.researchModelKeys, ["codex:sol"])
-            self.assertEqual(bridge.researchTrigger, "manual")
             self.assertEqual(bridge.researchMaxParallel, 1)
             pool = bridge._orchestrator._research_pool
             self.assertEqual(
                 [(ref.provider, ref.model) for ref in pool], [("codex", "sol")]
             )
-            self.assertEqual(bridge._orchestrator._research_trigger, "manual")
             self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
 
     def test_project_folder_browser_lists_directories_and_adds_current_path(self):
@@ -1961,7 +1958,7 @@ class QmlFrontendTest(unittest.TestCase):
         qml_main.assert_called_once_with(["--project-dir", "demo"])
 
     def test_settings_tabs_use_canonical_tab_bar_with_accent_token(self):
-        from vrsoft_extractor.mary import ui as ui_module
+        from vrsoft_extractor.mary.frontend import app as app_module
 
         components_dir = MAIN_QML.parent / "components"
         tab_bar_qml = (components_dir / "VrTabBar.qml").read_text(encoding="utf-8")
@@ -1969,7 +1966,7 @@ class QmlFrontendTest(unittest.TestCase):
         settings_qml = (
             MAIN_QML.parent / "pages" / "SettingsPage.qml"
         ).read_text(encoding="utf-8")
-        ui_qml_source = Path(ui_module.__file__).read_text(encoding="utf-8")
+        app_source = Path(app_module.__file__).read_text(encoding="utf-8")
 
         self.assertIn("Accessible.role: Accessible.PageTab", tab_bar_qml)
         self.assertIn("Keys.onLeftPressed", tab_bar_qml)
@@ -2010,13 +2007,8 @@ class QmlFrontendTest(unittest.TestCase):
             # Data pages fill the window; only Configurações caps the width.
             self.assertNotIn("VrPageColumn", page_qml, page)
             self.assertIn("anchors.fill: parent", page_qml, page)
-        self.assertIn("apply_ui_scale_environment(_app_preferences())", ui_qml_source)
+        self.assertIn("apply_ui_scale_environment(preferences)", app_source)
         self.assertIn("control.variant === \"danger\"", button_qml)
-        self.assertIn("{ACCENT_SOFT}", ui_qml_source)
-        self.assertIn("{DARK_ACCENT_SOFT}", ui_qml_source)
-        self.assertNotIn("#FFE8D6", ui_qml_source)
-        self.assertNotIn("#EAEAF0", ui_qml_source)
-        self.assertNotIn("#462813", ui_qml_source)
 
     def test_settings_page_loads_with_tab_bar_in_engine(self):
         with TemporaryDirectory() as temporary:
@@ -2142,27 +2134,6 @@ class QmlFrontendTest(unittest.TestCase):
                 [],
             )
 
-    def test_qml_preview_remains_a_compatibility_alias(self):
-        from vrsoft_extractor.mary import ui
-
-        with patch(
-            "vrsoft_extractor.mary.frontend.app.main", return_value=23
-        ) as qml_main:
-            result = ui.main(["--qml-preview", "--project-dir", "demo"])
-
-        self.assertEqual(result, 23)
-        qml_main.assert_called_once_with(["--project-dir", "demo"])
-
-    def test_legacy_frontend_flag_is_explicitly_parsed(self):
-        from vrsoft_extractor.mary import ui
-
-        args, unknown = ui.build_parser().parse_known_args(
-            ["--legacy-frontend", "--project-dir", "demo"]
-        )
-
-        self.assertTrue(args.legacy_frontend)
-        self.assertEqual(args.project_dir, "demo")
-        self.assertEqual(unknown, [])
 
 
 if __name__ == "__main__":

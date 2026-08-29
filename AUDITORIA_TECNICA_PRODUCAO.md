@@ -19,8 +19,8 @@ Não restou nenhum defeito conhecido de severidade `CRITICAL` sem mitigação. A
 | Camada | Responsabilidade | Fonte de verdade |
 |---|---|---|
 | Entradas | `VRNorteStudio.pyw`, CLI VR e CLI de vídeos | argumentos e `.env` |
-| UI principal | `mary/ui.py`, `mary/chat_widgets.py` | estado transitório Qt; nunca deve substituir persistência |
-| Chat/orquestração | `orchestrator.py`, `multiagent.py`, `providers.py`, `chat_tools.py` | SQLite para conversa/mensagem/evento; IDs nativos apenas como vínculo |
+| UI principal | `mary/frontend/app.py`, bridges Python e QML | estado transitório Qt; nunca deve substituir persistência |
+| Chat/orquestração | `orchestrator.py`, `research_fanout.py`, `providers.py`, `chat_tools.py` | SQLite para conversa/mensagem/evento; IDs nativos apenas como vínculo |
 | Conhecimento | Wiki, Movidesk, classificador, revisão, indexador e busca | SQLite para estado lógico; Markdown canônico para conteúdo portátil |
 | Vídeos | auth, cursos, scanner, classificação, downloader e inventário | `metadata/*.json` + arquivos válidos em disco |
 | OCR | `mary/ocr.py` | executável e `por+eng.traineddata` validados por existência/tamanho |
@@ -66,7 +66,7 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 
 #### CHAT-001 — Arquivar só atualizava visualmente apó mudar de aba
 
-- **Arquivos / funções / módulo:** `mary/ui.py`; `Worker`, `_start_worker`, `_run_conversation_operation`; Chat VR.
+- **Arquivos / funções / módulo:** frontend Widgets removido; registro histórico do Chat VR.
 - **Categoria / severidade:** estado assíncrono / `HIGH` / corrigido.
 - **Problema e incoerência:** o banco arquivava, mas o objeto `QRunnable` podia ser coletado antes do callback; a UI ficava stale ou podia encerrar de forma instável.
 - **Reprodução / atual:** arquivar e permanecer na aba; conversa permanecia visível até outra navegação.
@@ -86,7 +86,7 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 
 #### CHAT-003 — Double click/envio concorrente criava turno fantasma ou duplicado
 
-- **Arquivos / funções / módulo:** `mary/db.py`, `mary/orchestrator.py`, `mary/ui.py`; `begin_user_turn`, `abort_user_turn`, `send`; Chat VR.
+- **Arquivos / funções / módulo:** `mary/db.py`, `mary/orchestrator.py`, `mary/frontend/`; `begin_user_turn`, `abort_user_turn`, `send`; Chat VR.
 - **Categoria / severidade:** concorrência e persistência / `HIGH` / corrigido.
 - **Problema e incoerência:** a validação e a inserção da mensagem eram separadas; duas threads podiam aceitar a mesma conversa, e falha ao iniciar provedor deixava mensagem/status.
 - **Reprodução / atual:** dois `send` simultâneos ou falha síncrona em `start_conversation`.
@@ -106,7 +106,7 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 
 #### SYNC-001 — Falha parcial podia inativar documentos e afirmar sucesso
 
-- **Arquivos / funções / módulo:** `mary/wiki.py`, `mary/movidesk.py`, `mary/db.py`, `mary/ui.py`; sincronizações.
+- **Arquivos / funções / módulo:** `mary/wiki.py`, `mary/movidesk.py`, `mary/db.py`, `mary/frontend/`; sincronizações.
 - **Categoria / severidade:** regra de negócio e estado / `HIGH` / corrigido.
 - **Problema e incoerência:** erro em item era confundido com item removido; execução com falhas terminava como `completed`.
 - **Reprodução / atual:** falhar a leitura de uma página durante inventário completo.
@@ -116,7 +116,7 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 
 #### VIDEO-001 — `downloaded=true` não significava arquivo válido
 
-- **Arquivos / funções / módulo:** `downloader.py`, `video_storage.py`, `mary/ui.py`; vídeos/Dashboard.
+- **Arquivos / funções / módulo:** `downloader.py`, `video_storage.py`, `mary/frontend/`; vídeos/Dashboard.
 - **Categoria / severidade:** pós-condição e estado impossível / `HIGH` / corrigido.
 - **Problema e incoerência:** thumbnail/arquivo vazio podia ser aceito; `--redownload` não incluía todos os estados; Dashboard confiava apenas no status.
 - **Reprodução / atual:** inventário marcado como baixado com path ausente, ou `.jpg` com mesmo basename.
@@ -151,20 +151,20 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 | FUNC-001 | Dashboard/Sincronizações/Vídeos | semântica de UI / `FUNCTIONAL INCONSISTENCY` / corrigido | “Sincronizar tudo” não incluía vídeos; “Executar tudo” não inscrevia/organizava | labels agora dizem `Wiki + KB` e `Inventariar e baixar`; handlers compartilhados mantêm a mesma semântica | testes de UI + inspeção visual |
 | LOW-001 | imports/f-strings/timer do model picker | código morto/flake / `LOW` / corrigido | seis imports/expressões mortas e popup dependente de atraso arbitrário | removidos; abertura agendada no próximo ciclo de eventos | Ruff `F/E9` e teste do seletor |
 
-## Problemas de arquitetura e riscos ainda abertos
+## Problemas de arquitetura abertos e resolvidos recentes
 
-### ARCH-001 — `MainWindow` é um god object
+### ARCH-001 — `MainWindow` era um god object
 
-- **Arquivos / funções / módulo:** `mary/ui.py`, classe `MainWindow`; UI inteira.
-- **Categoria / severidade:** `ARCHITECTURE` / risco `MEDIUM` / aberto.
-- **Problema e incoerência:** cerca de 7,4 mil linhas e mais de 200 métodos coordenam chat, sync, vídeos, revisão, settings e logs; consumidores dependem de estado mutável do widget.
-- **Reprodução / atual:** qualquer alteração cross-module exige tocar a mesma classe e amplia combinações de estado.
-- **Esperado / causa raiz / risco:** controllers por domínio e eventos tipados; crescimento incremental concentrou responsabilidades; risco de regressão e testes caros.
-- **Correção proposta / teste:** extrair primeiro `ConversationController` e `SyncController`, mantendo contratos existentes; testes de integração por controller. Não executado para evitar reescrita de alto risco nesta estabilização.
+- **Arquivos / funções / módulo:** frontend Widgets removido; registro histórico.
+- **Categoria / severidade:** `ARCHITECTURE` / risco `MEDIUM` / resolvido pela migração QML.
+- **Problema e incoerência anterior:** cerca de 7,4 mil linhas e mais de 200 métodos coordenavam chat, sync, vídeos, revisão, settings e logs; consumidores dependiam de estado mutável do widget.
+- **Reprodução anterior:** qualquer alteração cross-module exigia tocar a mesma classe e ampliava combinações de estado.
+- **Esperado / causa raiz / risco tratado:** separação por domínio e eventos tipados; o crescimento incremental havia concentrado responsabilidades e ampliado o risco de regressão.
+- **Correção aplicada / teste:** a UI atual foi separada em QML, bridges e serviços Python; o frontend Widgets foi removido após a migração.
 
 ### CONC-001 — lock de sincronização existe apenas por janela/processo
 
-- **Arquivos / funções / módulo:** `mary/ui.py::_run_sync`, `db.start_sync`; sincronização.
+- **Arquivos / funções / módulo:** bridges de sincronização em `mary/frontend/`, `db.start_sync`; sincronização.
 - **Categoria / severidade:** concorrência / `HIGH` potencial / aberto.
 - **Problema e incoerência:** duas instâncias apontadas para a mesma raiz podem executar Wiki/KB simultaneamente.
 - **Reprodução / atual:** abrir dois Studios e sincronizar a mesma fonte; cada processo aceita a operação.
@@ -223,7 +223,7 @@ Entidades principais: documento, versão, revisão, fonte, sincronização, conv
 
 ### TYPE-001 — camada Qt não fecha no mypy atual
 
-- **Arquivos / funções / módulo:** `mary/ui.py`, `mary/chat_widgets.py`; UI.
+- **Arquivos / funções / módulo:** `mary/frontend/` e QML; UI.
 - **Categoria / severidade:** tipos / `LOW` / aberto.
 - **Problema:** stubs do PySide6 reportam enums/kwargs válidos em runtime como erro e o mypy 2.3 chegou a erro interno na análise integral.
 - **Estado:** 28 arquivos de núcleo passam com `--check-untyped-defs`; UI foi validada por testes e smoke gráfico, não por type-check limpo.

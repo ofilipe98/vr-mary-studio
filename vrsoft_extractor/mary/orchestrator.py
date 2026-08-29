@@ -26,30 +26,10 @@ from .models import (
     ConversationOptions,
     EvidenceBundle,
     ModelRef,
-    OrchestrationOptions,
     RuntimeEvent,
     utc_now,
 )
 from .knowledge_router import KnowledgeRouter
-from .multiagent import (
-    AGENT_CATALOG,
-    VrAgentAssignment,
-    VrAgentResult,
-    VrPlan,
-    bind_response_contract,
-    build_agent_prompt,
-    build_planner_prompt,
-    build_synthesis_prompt,
-    choose_model,
-    eligible_model_pool,
-    effective_orchestration_mode,
-    ensure_source_research_plan,
-    execution_batches,
-    orchestrator_model,
-    parse_plan,
-    normalize_agent_effort,
-    routing_reason,
-)
 from .providers import (
     AgentProvider,
     CodexProvider,
@@ -67,11 +47,13 @@ from .research_fanout import (
     ROLE_BY_FANOUT_MODULE,
     SCHEMA_MODULE_LABEL,
     ModuleResearch,
+    available_research_pool,
     build_researcher_prompt,
     build_synthesis_prompt as build_fanout_synthesis_prompt,
     fanout_payload,
     merge_module_research,
     parse_researcher_output,
+    resolve_model_ref,
 )
 from .personality import VRMASTER_DIRECT_RESPONSE_POLICY
 from .search import (
@@ -81,35 +63,20 @@ from .search import (
     strip_optional_vr_prefix,
 )
 from .supervision import (
-    FinalDraft,
     FinalResponseValidation,
     MergedEvidence,
     RefinementReason,
-    RefinementTask,
     ResponseContract,
     ResponseIntent,
     ResponseViolation,
-    SupervisorAssessment,
     analyze_response_intent,
-    build_agent_task,
     build_controlled_failure,
-    build_final_validation_prompt,
     build_response_contract,
     build_rewrite_prompt,
-    build_supervision_prompt,
-    combine_supervision,
     decide_adaptive_effort,
-    deterministic_supervision,
-    effective_refinement_rounds,
-    merge_worker_reports,
     parse_final_draft,
-    parse_final_validation,
-    parse_supervisor_assessment,
-    parse_worker_report,
     render_sources,
-    should_use_semantic_final_validation,
     strip_internal_leaks,
-    validate_final_response,
     validate_normal_response,
 )
 from .workspace import (
@@ -170,7 +137,6 @@ class ChatOrchestrator:
         self._pending_used_evidence_ids: dict[str, tuple[str, ...]] = {}
         self._pending_response_contracts: dict[str, ResponseContract] = {}
         self._research_pool: tuple[ModelRef, ...] = ()
-        self._research_trigger: str = "auto"
         self._research_max_parallel: int = MAX_PARALLEL_RESEARCHERS
         self._pending_dynamic_tools: dict[str, tuple[RuntimeEvent, dict]] = {}
         self._active_agent_runs: dict[
@@ -225,7 +191,6 @@ class ChatOrchestrator:
         dynamic_tool_ids: list[str] | None = None,
         mcp_tools: list[dict[str, str]] | None = None,
         defer_provider_start: bool = False,
-        orchestration: OrchestrationOptions | None = None,
         workspace: Path | None = None,
         vr_enabled: bool = False,
         vr_mode: str = "",
@@ -250,7 +215,6 @@ class ChatOrchestrator:
             service_tier=service_tier,
             approval_profile=approval_profile,
             collaboration_mode=collaboration_mode,
-            orchestration=orchestration,
             vr_enabled=vr_enabled,
             vr_mode=resolved_mode,
         )
@@ -528,10 +492,9 @@ class ChatOrchestrator:
                                 "completed": min(3, len(visible_plan)),
                             },
                         )
-                    # The VR button mounts the local knowledge and identity on
-                    # the provider's main session.  The former proprietary
-                    # planner/worker/supervisor graph is retained only behind a
-                    # compatibility switch; it must not gate normal answers.
+                    # The VR button mounts local knowledge and identity on the
+                    # provider's main session. VR Ultra may add the modular
+                    # research fan-out before the final synthesis.
                     turn_options = self._apply_adaptive_effort(
                         conversation_id,
                         options,
@@ -539,10 +502,8 @@ class ChatOrchestrator:
                         response_intent,
                         evidence_bundle,
                     )
-                    # The composer mode is authoritative: choosing VR Ultra
-                    # always enables the multi-agent fan-out. The legacy
-                    # trigger preference remains readable for compatibility,
-                    # but cannot silently downgrade the Ultra button to VR.
+                    # The composer mode is authoritative: VR Ultra enables the
+                    # modular fan-out, while /pesquisa can request it in VR.
                     fanout_allowed = force_research or resolved_vr_mode == "ultra"
                     fanout_modules = (
                         self._fanout_modules(
@@ -554,9 +515,6 @@ class ChatOrchestrator:
                             use_vr
                             and fanout_allowed
                             and getattr(self.settings, "vr_research_fanout", False)
-                            # Explicit legacy orchestration keeps priority;
-                            # fan-out enhances the direct flow only.
-                            and not options.orchestration.enabled
                         )
                         else None
                     )
@@ -574,25 +532,6 @@ class ChatOrchestrator:
                             response_intent,
                             response_contract,
                             fanout_modules,
-                        )
-                    elif (
-                        use_vr
-                        and not image_paths
-                        and options.orchestration.enabled
-                        and self.settings.legacy_vr_orchestration
-                    ):
-                        self._run_orchestrated_turn(
-                            conversation_id,
-                            dict(conversation),
-                            native_id,
-                            workspace,
-                            orchestration_request,
-                            provider,
-                            turn_options,
-                            skills or [],
-                            evidence_bundle,
-                            response_intent,
-                            response_contract,
                         )
                     else:
                         provider.send_message(
@@ -645,925 +584,6 @@ class ChatOrchestrator:
             self._external_callbacks.pop(conversation_id, None)
             self.database.abort_user_turn(conversation_id, message_id)
             raise
-
-    def _run_orchestrated_turn(
-        self,
-        conversation_id: str,
-        conversation: dict[str, Any],
-        native_id: str,
-        workspace: Path,
-        request: str,
-        provider: AgentProvider,
-        options: ConversationOptions,
-        skills: list[dict[str, Any]],
-        evidence_bundle: EvidenceBundle | None = None,
-        response_intent: ResponseIntent | None = None,
-        response_contract: ResponseContract | None = None,
-    ) -> None:
-        run_id = uuid.uuid4().hex
-        with self._agent_run_lock:
-            self._active_orchestration_runs[conversation_id] = run_id
-        orchestration = options.orchestration
-        main_model = orchestrator_model(
-            str(conversation["provider"]),
-            str(conversation.get("model") or ""),
-            orchestration.model_pool,
-        )
-        available_providers = {
-            name for name, candidate in self.providers.items() if candidate.available()
-        }
-        model_pool = eligible_model_pool(
-            orchestration, main_model, available_providers
-        )
-        if not model_pool:
-            raise ProviderError(
-                "Nenhum modelo selecionado no pool VR está disponível."
-            )
-        self._emit_orchestration_event(
-            conversation_id,
-            "orchestration_started",
-            "Orquestrador classificando a solicitação.",
-            {
-                "run_id": run_id,
-                "orchestrator": main_model.to_dict(),
-                "strategy": orchestration.strategy,
-                "mode": orchestration.mode,
-                "ultra": orchestration.mode == "ultra",
-            },
-        )
-
-        planner_prompt = build_planner_prompt(
-            request,
-            orchestration,
-            main_model,
-            model_pool,
-            (
-                self.knowledge_router.prompt(evidence_bundle)
-                if evidence_bundle is not None
-                else ""
-            ),
-            intent=response_intent,
-            contract=response_contract,
-        )
-        raw_plan = ""
-        try:
-            raw_plan = self._run_ephemeral_turn(
-                conversation_id,
-                run_id,
-                "vr_orchestrator_plan",
-                main_model,
-                planner_prompt,
-                workspace,
-                options.effort,
-                timeout_seconds=(
-                    240
-                    if orchestration.mode in {"automatic", "ultra"}
-                    else 180
-                ),
-            )
-        except OrchestrationCancelled:
-            raise
-        except Exception:
-            # The validated deterministic plan is deliberately the only fallback.
-            raw_plan = ""
-        plan = parse_plan(
-            raw_plan, request, orchestration, main_model, model_pool
-        )
-        if response_intent is None:
-            profile = (
-                evidence_bundle.profile
-                if evidence_bundle is not None
-                else self.knowledge_router.classify(request)
-            )
-            response_intent = analyze_response_intent(request, profile)
-        if response_contract is None:
-            response_contract = build_response_contract(response_intent)
-            if not (evidence_bundle and evidence_bundle.candidates):
-                response_contract = replace(
-                    response_contract,
-                    requires_sources=False,
-                    sources_position="none",
-                )
-        effective_mode = effective_orchestration_mode(
-            orchestration, plan.difficulty_level
-        )
-        effective_ultra = effective_mode == "ultra"
-        if effective_mode == "off":
-            final = next(item for item in plan.agents if item.agent.final)
-            plan = VrPlan(
-                plan.difficulty_level,
-                plan.difficulty_label,
-                plan.difficulty_summary,
-                "automatic",
-                (
-                    VrAgentAssignment(
-                        final.id,
-                        final.agent,
-                        final.model,
-                        final.task,
-                        final.reason,
-                        (),
-                        final.effort,
-                        True,
-                        100,
-                        final.task_spec,
-                    ),
-                ),
-                plan.fallback,
-                plan.warnings,
-            )
-        if effective_mode != "off":
-            routed_sources = (
-                self.knowledge_router.sources_for_profile(evidence_bundle.profile)
-                if evidence_bundle is not None
-                else ("wiki", "kb", "schema")
-            )
-            required_sources = (
-                self.knowledge_router.required_sources_for_bundle(evidence_bundle)
-                if evidence_bundle is not None
-                else routed_sources
-            )
-            plan = ensure_source_research_plan(
-                plan,
-                orchestration,
-                main_model,
-                model_pool,
-                effective_mode=effective_mode,
-                modules=(
-                    evidence_bundle.selected_modules
-                    if evidence_bundle is not None
-                    else ()
-                ),
-                sources=routed_sources,
-                required_sources=required_sources,
-            )
-        plan = bind_response_contract(plan, response_intent, response_contract)
-        final_stage = next(
-            item for item in reversed(plan.agents) if item.agent.final
-        )
-        self._emit_orchestration_event(
-            conversation_id,
-            "plan_created",
-            f"Complexidade {plan.difficulty_label} — nível {plan.difficulty_level}.",
-            {
-                "run_id": run_id,
-                "orchestrator": main_model.to_dict(),
-                "mode": orchestration.mode,
-                "effective_mode": effective_mode,
-                "ultra": effective_ultra,
-                "module_routing": (
-                    [item.to_dict() for item in evidence_bundle.module_routing]
-                    if evidence_bundle is not None
-                    else []
-                ),
-                "routing_scope": (
-                    evidence_bundle.routing_scope
-                    if evidence_bundle is not None
-                    else "unclassified"
-                ),
-                "runtime_stages": [
-                    {
-                        "id": "vr_supervisor_global",
-                        "agent": "vr_supervisor_global",
-                        "label": "Supervisor global",
-                        "role": "global_supervision",
-                        "source": "",
-                        "module": "",
-                        "parent_id": "",
-                        "task": (
-                            "Validar cobertura, procedência, conflitos e falhas "
-                            "antes da síntese final."
-                        ),
-                        "model": main_model.to_dict(),
-                        "effort": normalize_agent_effort(
-                            "", "validation", plan.difficulty_level
-                        ),
-                        "depends_on": list(final_stage.depends_on),
-                        "final": False,
-                        "required": True,
-                        "priority": 100,
-                        "runtime_stage": True,
-                    }
-                ],
-                "plan": plan.to_dict(
-                    include_reasons=orchestration.explain_routing
-                ),
-            },
-        )
-
-        results_by_id: dict[str, VrAgentResult] = {}
-        for batch_index, batch in enumerate(execution_batches(plan), start=1):
-            self._raise_if_cancelled(conversation_id)
-            if len(batch) > 1:
-                self._emit_orchestration_event(
-                    conversation_id,
-                    "parallel_group_started",
-                    f"{len(batch)} agentes executando em paralelo.",
-                    {
-                        "run_id": run_id,
-                        "batch": batch_index,
-                        "agents": [item.id for item in batch],
-                    },
-                )
-            # Every planned non-final agent is independent. The final
-            # synthesizer is the only barrier and starts after this group.
-            with ThreadPoolExecutor(
-                max_workers=max(1, min(6, len(batch)))
-            ) as executor:
-                futures = {
-                    executor.submit(
-                        self._execute_agent_assignment,
-                        conversation_id,
-                        run_id,
-                        assignment,
-                        request,
-                        [
-                            results_by_id[dependency]
-                            for dependency in assignment.depends_on
-                            if dependency in results_by_id
-                        ],
-                        workspace,
-                        orchestration.explain_routing,
-                        evidence_bundle,
-                    ): assignment
-                    for assignment in batch
-                }
-                for future in as_completed(futures):
-                    result = future.result()
-                    results_by_id[result.assignment.id] = result
-            if len(batch) > 1:
-                self._emit_orchestration_event(
-                    conversation_id,
-                    "parallel_group_completed",
-                    "Análises paralelas concluídas.",
-                    {"run_id": run_id, "batch": batch_index},
-                )
-
-        results = list(results_by_id.values())
-        results, merged, supervisor, evidence_bundle = self._supervise_and_refine(
-            conversation_id,
-            run_id,
-            request,
-            results,
-            plan,
-            main_model,
-            model_pool,
-            workspace,
-            orchestration,
-            effective_mode,
-            evidence_bundle,
-            response_intent,
-            response_contract,
-        )
-        if evidence_bundle is not None:
-            self._pending_evidence_bundles[conversation_id] = evidence_bundle
-        if supervisor.verdict == "reject":
-            self._pending_used_evidence_ids[conversation_id] = ()
-            self._publish_final_response(
-                conversation_id,
-                build_controlled_failure(supervisor),
-                run_id=run_id,
-            )
-            return
-
-        self._run_validated_synthesis(
-            conversation_id,
-            run_id,
-            request,
-            dict(conversation),
-            native_id,
-            provider,
-            workspace,
-            options,
-            skills,
-            plan,
-            results,
-            merged,
-            supervisor,
-            main_model,
-            evidence_bundle,
-            response_intent,
-            response_contract,
-        )
-
-    def _supervise_and_refine(
-        self,
-        conversation_id: str,
-        run_id: str,
-        request: str,
-        results: list[VrAgentResult],
-        plan: VrPlan,
-        main_model: ModelRef,
-        model_pool: tuple[ModelRef, ...],
-        workspace: Path,
-        orchestration: OrchestrationOptions,
-        effective_mode: str,
-        evidence_bundle: EvidenceBundle | None,
-        intent: ResponseIntent,
-        contract: ResponseContract,
-    ) -> tuple[
-        list[VrAgentResult],
-        MergedEvidence,
-        SupervisorAssessment,
-        EvidenceBundle | None,
-    ]:
-        if not results:
-            return (
-                results,
-                MergedEvidence(),
-                SupervisorAssessment(
-                    verdict="approve",
-                    summary="Resposta direta sem workers intermediários.",
-                    confidence=1.0,
-                ),
-                evidence_bundle,
-            )
-        maximum_rounds = (
-            effective_refinement_rounds(effective_mode)
-            if orchestration.dynamic_agent_count
-            else 0
-        )
-        available_worker_ids = tuple(
-            item.id for item in plan.agents if not item.agent.final
-        )
-        assessment = SupervisorAssessment()
-        merged = MergedEvidence()
-        for refinement_round in range(maximum_rounds + 1):
-            self._raise_if_cancelled(conversation_id)
-            successful_scopes = {
-                (
-                    item.assignment.agent.id,
-                    item.assignment.module,
-                    item.assignment.agent.source,
-                )
-                for item in results
-                if item.success
-            }
-            failed_required = [
-                item.assignment.id
-                for item in results
-                if item.assignment.required and not item.success
-                and (
-                    item.assignment.agent.id,
-                    item.assignment.module,
-                    item.assignment.agent.source,
-                )
-                not in successful_scopes
-            ]
-            failed_optional = [
-                item.assignment.id
-                for item in results
-                if not item.assignment.required and not item.success
-                and (
-                    item.assignment.agent.id,
-                    item.assignment.module,
-                    item.assignment.agent.source,
-                )
-                not in successful_scopes
-            ]
-            merged = merge_worker_reports(
-                [item.report for item in results if item.report is not None],
-                failed_required_workers=failed_required,
-                failed_optional_workers=failed_optional,
-            )
-            deterministic = deterministic_supervision(
-                merged,
-                contract,
-                has_retrieved_sources=bool(
-                    evidence_bundle is not None and evidence_bundle.candidates
-                ),
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "validation_started",
-                "Supervisor validando fatos, cobertura e apresentação esperada.",
-                {"run_id": run_id, "refinement_round": refinement_round},
-            )
-            try:
-                raw_assessment = self._run_ephemeral_turn(
-                    conversation_id,
-                    run_id,
-                    "vr_orchestrator_validation",
-                    main_model,
-                    build_supervision_prompt(
-                        request,
-                        intent,
-                        contract,
-                        merged,
-                        worker_ids=available_worker_ids,
-                    ),
-                    workspace,
-                    normalize_agent_effort(
-                        "", "validation", plan.difficulty_level
-                    ),
-                    timeout_seconds=180,
-                )
-                semantic = parse_supervisor_assessment(
-                    raw_assessment,
-                    available_worker_ids=available_worker_ids,
-                    fallback=deterministic,
-                )
-            except OrchestrationCancelled:
-                raise
-            except Exception:
-                LOGGER.exception("Falha na avaliação semântica do supervisor VR")
-                semantic = deterministic
-            assessment = combine_supervision(deterministic, semantic)
-            epistemic_failures = {
-                RefinementReason.UNSUPPORTED_CLAIMS,
-                RefinementReason.MISSING_SOURCES,
-                RefinementReason.CONFLICT_UNRESOLVED,
-                RefinementReason.REQUIRED_WORKER_FAILED,
-                RefinementReason.INVALID_OUTPUT,
-            }
-            if (
-                assessment.verdict == "revise"
-                and refinement_round >= maximum_rounds
-                and epistemic_failures.intersection(assessment.reasons)
-            ):
-                assessment = replace(
-                    assessment,
-                    verdict="reject",
-                    summary=(
-                        "O limite de refinamento foi atingido com riscos factuais "
-                        "ainda não resolvidos."
-                    ),
-                )
-            validation_payload = {
-                "run_id": run_id,
-                "refinement_round": refinement_round,
-                **assessment.to_dict(),
-            }
-            self._emit_orchestration_event(
-                conversation_id,
-                "evidence_merge_completed",
-                "Resultados dos workers consolidados com provenance.",
-                {
-                    "run_id": run_id,
-                    "refinement_round": refinement_round,
-                    "claims": len(merged.claims),
-                    "sources": len(merged.sources),
-                    "gaps": len(merged.gaps),
-                    "conflicts": len(merged.conflicts),
-                },
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "evidence_validation_completed",
-                "Validação factual concluída.",
-                validation_payload,
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "critic_completed",
-                "Crítica de cobertura e adequação concluída.",
-                validation_payload,
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "validation_completed",
-                (
-                    "Material aprovado pelo supervisor."
-                    if assessment.verdict == "approve"
-                    else "Supervisor solicitou refinamento."
-                    if assessment.verdict == "revise"
-                    else "Material rejeitado pelo supervisor."
-                ),
-                validation_payload,
-            )
-            if assessment.verdict != "revise" or refinement_round >= maximum_rounds:
-                return results, merged, assessment, evidence_bundle
-
-            tasks = list(assessment.refinement_tasks)
-            if not tasks:
-                missing = assessment.missing_required_topics or merged.gaps
-                detail = "; ".join(missing[:6]) or ", ".join(
-                    item.value for item in assessment.reasons
-                )
-                tasks = [
-                    RefinementTask(
-                        objective=(
-                            "Corrigir as lacunas apontadas pelo supervisor"
-                            + (f": {detail}" if detail else ".")
-                        ),
-                        worker_id="vr_validator",
-                        required=True,
-                    )
-                ]
-            next_round = refinement_round + 1
-            self._emit_orchestration_event(
-                conversation_id,
-                "refinement_requested",
-                "Supervisor solicitou uma nova rodada direcionada.",
-                {
-                    "run_id": run_id,
-                    "refinement_round": next_round,
-                    "reasons": [item.value for item in assessment.reasons],
-                    "tasks": [item.to_dict() for item in tasks],
-                },
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "revision_started",
-                "Nova rodada VR corrigindo lacunas específicas.",
-                {"run_id": run_id, "refinement_round": next_round},
-            )
-            assignments = self._refinement_assignments(
-                tasks,
-                next_round,
-                plan,
-                model_pool,
-                orchestration,
-                intent,
-                contract,
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "refinement_started",
-                "Workers selecionados para refinamento.",
-                {
-                    "run_id": run_id,
-                    "refinement_round": next_round,
-                    "agents": [
-                        {
-                            "id": item.id,
-                            "assignment_id": item.id,
-                            "agent": item.agent.id,
-                            "worker_id": item.agent.id,
-                            "label": item.display_label,
-                            "worker_name": item.display_label,
-                            "role": item.agent.role,
-                            "source": item.agent.source,
-                            "module": item.module,
-                            "parent_id": item.parent_id,
-                            "task": item.task,
-                            "model": item.model.to_dict(),
-                            "effort": item.effort,
-                            "required": item.required,
-                            "priority": item.priority,
-                            "final": False,
-                        }
-                        for item in assignments
-                    ],
-                },
-            )
-            if evidence_bundle is not None:
-                refinement_query = " ".join(
-                    [request, *(task.objective for task in tasks)]
-                )
-                try:
-                    evidence_bundle = self.knowledge_router.refine(
-                        evidence_bundle,
-                        refinement_query,
-                    )
-                    self._emit_orchestration_event(
-                        conversation_id,
-                        "knowledge_refined",
-                        "Nova recuperação direcionada concluída para o refinamento.",
-                        {
-                            "run_id": run_id,
-                            "refinement_round": next_round,
-                            "evidence_count": len(evidence_bundle.candidates),
-                        },
-                    )
-                except Exception:
-                    LOGGER.exception("Falha na recuperação direcionada do refinamento VR")
-            with ThreadPoolExecutor(max_workers=max(1, len(assignments))) as executor:
-                futures = [
-                    executor.submit(
-                        self._execute_agent_assignment,
-                        conversation_id,
-                        run_id,
-                        assignment,
-                        request,
-                        list(results),
-                        workspace,
-                        orchestration.explain_routing,
-                        evidence_bundle,
-                    )
-                    for assignment in assignments
-                ]
-                for future in as_completed(futures):
-                    results.append(future.result())
-            self._emit_orchestration_event(
-                conversation_id,
-                "refinement_completed",
-                "Rodada de refinamento concluída.",
-                {"run_id": run_id, "refinement_round": next_round},
-            )
-        return results, merged, assessment, evidence_bundle
-
-    def _refinement_assignments(
-        self,
-        tasks: list[RefinementTask],
-        refinement_round: int,
-        plan: VrPlan,
-        model_pool: tuple[ModelRef, ...],
-        orchestration: OrchestrationOptions,
-        intent: ResponseIntent,
-        contract: ResponseContract,
-    ) -> list[VrAgentAssignment]:
-        assignments: list[VrAgentAssignment] = []
-        for index, task in enumerate(tasks[:4], start=1):
-            base_assignment = next(
-                (item for item in plan.agents if item.id == task.worker_id),
-                None,
-            )
-            definition = (
-                base_assignment.agent
-                if base_assignment is not None
-                else AGENT_CATALOG.get(task.worker_id)
-                or AGENT_CATALOG["vr_validator"]
-            )
-            module = base_assignment.module if base_assignment is not None else ""
-            parent_id = (
-                base_assignment.parent_id if base_assignment is not None else ""
-            )
-            normalized_objective = task.objective.casefold()
-            source_agents = (
-                (
-                    "vr_wiki_researcher",
-                    ("wiki",),
-                ),
-                (
-                    "vr_kb_researcher",
-                    (" kb ", "base de conhecimento", "knowledge base"),
-                ),
-                (
-                    "vr_schema_researcher",
-                    ("schema", "esquema de dados"),
-                ),
-            )
-            padded_objective = f" {normalized_objective} "
-            if base_assignment is None:
-                for source_agent_id, markers in source_agents:
-                    if any(marker in padded_objective for marker in markers):
-                        definition = AGENT_CATALOG[source_agent_id]
-                        break
-                module_markers = (
-                    ("Fiscal", (" fiscal ", "sped", "tribut")),
-                    (
-                        "ADM_FIN_ESTOQUE",
-                        (" estoque ", "financeiro", "fornecedor", " cadastro "),
-                    ),
-                    ("PDV", (" pdv ", " tef ", " caixa ", " cupom ")),
-                )
-                for candidate_module, markers in module_markers:
-                    if any(marker in padded_objective for marker in markers):
-                        module = candidate_module
-                        break
-            model = (
-                choose_model(definition.role, plan.difficulty_level, model_pool)
-                if orchestration.dynamic_model_routing
-                else model_pool[0]
-            )
-            assignment_id = (
-                f"vr_revision_{refinement_round}_{index}_{definition.id}"
-            )
-            priority = max(80, 100 - index)
-            task_spec = build_agent_task(
-                task.objective,
-                intent,
-                contract,
-                required=task.required,
-                priority=priority,
-            )
-            assignments.append(
-                VrAgentAssignment(
-                    assignment_id,
-                    definition,
-                    model,
-                    task.objective,
-                    routing_reason(
-                        definition.role, model, plan.difficulty_level
-                    ),
-                    (),
-                    normalize_agent_effort(
-                        "", definition.role, plan.difficulty_level
-                    ),
-                    task.required,
-                    priority,
-                    task_spec,
-                    module,
-                    parent_id,
-                )
-            )
-        return assignments
-
-    def _run_validated_synthesis(
-        self,
-        conversation_id: str,
-        run_id: str,
-        request: str,
-        conversation: dict[str, Any],
-        native_id: str,
-        provider: AgentProvider,
-        workspace: Path,
-        options: ConversationOptions,
-        skills: list[dict[str, Any]],
-        plan: VrPlan,
-        results: list[VrAgentResult],
-        merged: MergedEvidence,
-        supervisor: SupervisorAssessment,
-        main_model: ModelRef,
-        evidence_bundle: EvidenceBundle | None,
-        intent: ResponseIntent,
-        contract: ResponseContract,
-    ) -> None:
-        self._raise_if_cancelled(conversation_id)
-        final_assignment = next(
-            item for item in reversed(plan.agents) if item.agent.final
-        )
-        synthesis_options = ConversationOptions(
-            model=options.model,
-            effort=final_assignment.effort,
-            service_tier=options.service_tier,
-            approval_profile=options.approval_profile,
-            collaboration_mode=options.collaboration_mode,
-            dynamic_tools=options.dynamic_tools,
-            mcp_tools=options.mcp_tools,
-            orchestration=options.orchestration,
-            vr_enabled=True,
-        )
-        self._emit_orchestration_event(
-            conversation_id,
-            "synthesis_started",
-            f"{main_model.display_name or main_model.model or main_model.provider.title()} sintetizando uma nova resposta.",
-            {"run_id": run_id, "orchestrator": main_model.to_dict()},
-        )
-        synthesis_prompt = build_synthesis_prompt(
-            request,
-            plan,
-            results,
-            None,
-            (
-                self.knowledge_router.prompt(evidence_bundle)
-                if evidence_bundle is not None
-                else ""
-            ),
-            intent=intent,
-            contract=contract,
-            merged=merged,
-            supervisor=supervisor,
-        )
-        raw_draft, started_payload, completed_payload = self._run_buffered_main_turn(
-            conversation_id,
-            native_id,
-            provider,
-            str(conversation.get("model") or ""),
-            final_assignment.effort,
-            workspace,
-            synthesis_prompt,
-            synthesis_options,
-            skills,
-        )
-        allowed_ids = tuple(
-            item.evidence_id
-            for item in evidence_bundle.candidates
-        ) if evidence_bundle is not None else ()
-        draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
-        validation = self._validate_final_draft(
-            conversation_id,
-            run_id,
-            request,
-            draft,
-            contract,
-            merged,
-            main_model,
-            workspace,
-            plan.difficulty_level,
-        )
-        if validation.verdict == "revise":
-            self._emit_orchestration_event(
-                conversation_id,
-                "response_rewrite_started",
-                "A resposta ainda não atende ao contrato; reescrevendo em privado.",
-                {"run_id": run_id, **validation.to_dict()},
-            )
-            rewrite_prompt = build_rewrite_prompt(
-                request,
-                intent,
-                contract,
-                draft,
-                validation,
-                merged,
-            )
-            raw_draft, started_payload, completed_payload = self._run_buffered_main_turn(
-                conversation_id,
-                native_id,
-                provider,
-                str(conversation.get("model") or ""),
-                final_assignment.effort,
-                workspace,
-                rewrite_prompt,
-                synthesis_options,
-                skills,
-            )
-            draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
-            validation = self._validate_final_draft(
-                conversation_id,
-                run_id,
-                request,
-                draft,
-                contract,
-                merged,
-                main_model,
-                workspace,
-                plan.difficulty_level,
-            )
-            self._emit_orchestration_event(
-                conversation_id,
-                "response_rewrite_completed",
-                "Reescrita concluída e revalidada.",
-                {"run_id": run_id, **validation.to_dict()},
-            )
-
-        if validation.verdict == "approve":
-            self._pending_used_evidence_ids[conversation_id] = tuple(
-                draft.used_evidence_ids
-            )
-            final_text = render_sources(
-                draft.answer_markdown,
-                draft.used_evidence_ids,
-                evidence_bundle,
-            )
-        else:
-            self._pending_used_evidence_ids[conversation_id] = ()
-            final_text = build_controlled_failure(validation)
-        self._emit_orchestration_event(
-            conversation_id,
-            "synthesis_completed",
-            "Resposta final aprovada para exibição."
-            if validation.verdict == "approve"
-            else "Resposta substituída por uma falha controlada.",
-            {"run_id": run_id, "verdict": validation.verdict},
-        )
-        self._publish_final_response(
-            conversation_id,
-            final_text,
-            run_id=run_id,
-            started_payload=started_payload,
-            completed_payload=completed_payload,
-        )
-
-    def _validate_final_draft(
-        self,
-        conversation_id: str,
-        run_id: str,
-        request: str,
-        draft: FinalDraft,
-        contract: ResponseContract,
-        merged: MergedEvidence,
-        main_model: ModelRef,
-        workspace: Path,
-        difficulty_level: int,
-    ) -> FinalResponseValidation:
-        deterministic = validate_final_response(
-            draft,
-            contract,
-            user_message=request,
-        )
-        validation = deterministic
-        if should_use_semantic_final_validation(contract, difficulty_level):
-            self._emit_orchestration_event(
-                conversation_id,
-                "final_validation_started",
-                "Validando aderência e apresentação antes de exibir.",
-                {"run_id": run_id},
-            )
-            try:
-                raw_validation = self._run_ephemeral_turn(
-                    conversation_id,
-                    run_id,
-                    "vr_orchestrator_final_validation",
-                    main_model,
-                    build_final_validation_prompt(
-                        request,
-                        contract,
-                        draft,
-                        merged,
-                    ),
-                    workspace,
-                    normalize_agent_effort("", "validation", difficulty_level),
-                    timeout_seconds=180,
-                )
-                validation = parse_final_validation(
-                    raw_validation,
-                    fallback=deterministic,
-                )
-            except OrchestrationCancelled:
-                raise
-            except Exception:
-                LOGGER.exception("Falha na validação semântica da resposta final")
-        self._emit_orchestration_event(
-            conversation_id,
-            "final_validation_completed",
-            "Resposta aprovada."
-            if validation.verdict == "approve"
-            else "Resposta reprovada antes da exibição.",
-            {"run_id": run_id, **validation.to_dict()},
-        )
-        return validation
 
     def _run_buffered_main_turn(
         self,
@@ -1652,173 +672,6 @@ class ChatOrchestrator:
             RuntimeEvent(conversation_id, "turn_completed", payload=completed)
         )
 
-    def _execute_agent_assignment(
-        self,
-        conversation_id: str,
-        run_id: str,
-        assignment: VrAgentAssignment,
-        request: str,
-        dependencies: list[VrAgentResult],
-        workspace: Path,
-        explain_routing: bool,
-        evidence_bundle: EvidenceBundle | None = None,
-    ) -> VrAgentResult:
-        payload: dict[str, Any] = {
-            "run_id": run_id,
-            "agent_id": assignment.id,
-            "agent": assignment.agent.id,
-            "label": assignment.display_label,
-            "assignment_id": assignment.id,
-            "worker_id": assignment.agent.id,
-            "worker_name": assignment.display_label,
-            "role": assignment.agent.role,
-            "source": assignment.agent.source,
-            "module": assignment.module,
-            "parent_id": assignment.parent_id,
-            "model": assignment.model.to_dict(),
-            "effort": assignment.effort,
-            "required": assignment.required,
-            "priority": assignment.priority,
-        }
-        if explain_routing:
-            payload["reason"] = assignment.reason
-        self._emit_orchestration_event(
-            conversation_id,
-            "agent_started",
-            (
-                f"{assignment.display_label} pesquisando {assignment.agent.source.upper()}."
-                if assignment.agent.source
-                else f"{assignment.display_label} consolidando o módulo {assignment.module}."
-                if assignment.module
-                else f"{assignment.display_label} executando."
-            ),
-            payload,
-        )
-        try:
-            output = self._run_ephemeral_turn(
-                conversation_id,
-                run_id,
-                assignment.id,
-                assignment.model,
-                build_agent_prompt(
-                    assignment,
-                    request,
-                    dependencies,
-                    (
-                        self.knowledge_router.prompt_for_role(
-                            evidence_bundle,
-                            assignment.agent.role,
-                            module=assignment.module,
-                        )
-                        if evidence_bundle is not None
-                        else ""
-                    ),
-                    self._load_agent_instructions(
-                        assignment.agent.instructions_path
-                    ),
-                ),
-                workspace,
-                assignment.effort,
-                timeout_seconds=300,
-                stream_agent=True,
-            )
-        except OrchestrationCancelled:
-            raise
-        except Exception as exc:
-            result = VrAgentResult(assignment, error=str(exc))
-            self._emit_orchestration_event(
-                conversation_id,
-                "agent_failed",
-                (
-                    f"{assignment.display_label} obrigatório não concluiu; o supervisor decidirá se o fluxo pode continuar."
-                    if assignment.required
-                    else f"{assignment.display_label} opcional não concluiu; o fluxo continuará se o material restante for suficiente."
-                ),
-                {**payload, "error": str(exc)[:1200]},
-            )
-            return result
-        source_report = (
-            evidence_bundle.source_report(
-                assignment.agent.source, assignment.module
-            )
-            if evidence_bundle is not None and assignment.agent.source
-            else None
-        )
-
-        def evidence_is_allowed(item: Any) -> bool:
-            if assignment.agent.source and item.source != assignment.agent.source:
-                return False
-            if assignment.agent.role == "domain_dba" and item.source != "schema":
-                return False
-            if assignment.module:
-                if item.module not in {assignment.module, "Multimodulo"}:
-                    return False
-                if assignment.agent.role in {
-                    "domain_fisco",
-                    "domain_atlas",
-                    "domain_caixa",
-                } and item.source not in {"wiki", "kb"}:
-                    return False
-            return True
-
-        report = parse_worker_report(
-            output,
-            worker_id=assignment.id,
-            worker_name=assignment.display_label,
-            module=assignment.module,
-            parent_id=assignment.parent_id,
-            allowed_evidence_ids=(
-                (
-                    item.evidence_id
-                    for item in evidence_bundle.candidates
-                    if evidence_is_allowed(item)
-                )
-                if evidence_bundle is not None
-                else ()
-            ),
-            source_report=source_report,
-        )
-        result = VrAgentResult(assignment, output=output, report=report)
-        source_status_labels = {
-            "found": "fonte consultada com evidências encontradas",
-            "exhausted": "fonte consultada até o esgotamento, sem evidência suficiente",
-            "unavailable": "fonte indisponível para consulta",
-            "not_applicable": "fonte avaliada e marcada como não aplicável",
-        }
-        completion_text = f"{assignment.display_label} concluiu."
-        if report.source_report is not None:
-            status_label = source_status_labels.get(
-                report.source_report.status,
-                "validação da fonte concluída",
-            )
-            completion_text = f"{assignment.display_label}: {status_label}."
-        self._emit_orchestration_event(
-            conversation_id,
-            "agent_completed",
-            completion_text,
-            {
-                **payload,
-                "output_chars": len(output),
-                "output": output.strip(),
-                "report": report.to_dict(),
-            },
-        )
-        return result
-
-    def _load_agent_instructions(self, relative_path: str) -> str:
-        raw_path = str(relative_path or "").strip()
-        if not raw_path:
-            return ""
-        try:
-            root = self.settings.root.resolve()
-            candidate = (root / raw_path).resolve()
-            candidate.relative_to(root)
-            if not candidate.is_file():
-                return ""
-            return candidate.read_text(encoding="utf-8")[:24000]
-        except (OSError, UnicodeError, ValueError):
-            return ""
-
     def _fanout_modules(
         self,
         bundle: EvidenceBundle | None,
@@ -1873,7 +726,7 @@ class ChatOrchestrator:
         run_id = uuid.uuid4().hex
         with self._agent_run_lock:
             self._active_orchestration_runs[conversation_id] = run_id
-        main_model = orchestrator_model(
+        main_model = resolve_model_ref(
             str(conversation["provider"]),
             str(conversation.get("model") or ""),
             (),
@@ -1895,22 +748,18 @@ class ChatOrchestrator:
             intent,
             bundle,
             options.effort,
-            allow_max=str(options.orchestration.mode) == "ultra",
+            allow_max=options.vr_mode == "ultra",
         ).effort
-        # VR Ultra pool: the dedicated research configuration wins; the legacy
-        # orchestration pool remains as fallback for older setups.
+        # VR Ultra uses its dedicated research pool; when it is empty the main
+        # conversation model performs every research stage.
         available_providers = {
             name
             for name, candidate in self.providers.items()
             if candidate.available()
         }
-        model_pool = self._research_pool or eligible_model_pool(
-            options.orchestration, main_model, available_providers
-        )
-        model_pool = tuple(
-            item
-            for item in model_pool
-            if item.provider in available_providers
+        model_pool = available_research_pool(
+            self._research_pool,
+            available_providers,
         ) or (main_model,)
         max_parallel = max(1, min(MAX_PARALLEL_RESEARCHERS, self._research_max_parallel))
 
@@ -2139,7 +988,7 @@ class ChatOrchestrator:
                 synthesis_effort,
                 workspace,
                 synthesis_prompt,
-                replace(options, orchestration=replace(options.orchestration, enabled=False)),
+                options,
                 skills,
             )
             draft = parse_final_draft(raw_draft, allowed_evidence_ids=allowed_ids)
@@ -2188,7 +1037,7 @@ class ChatOrchestrator:
                         synthesis_effort,
                         workspace,
                         rewrite_prompt,
-                        replace(options, orchestration=replace(options.orchestration, enabled=False)),
+                        options,
                         skills,
                     )
                 )
@@ -2299,7 +1148,7 @@ class ChatOrchestrator:
         corrected = ""
         try:
             row = self._conversation(conversation_id)
-            model_ref = orchestrator_model(
+            model_ref = resolve_model_ref(
                 str(row["provider"]),
                 str(row["model"] or ""),
                 (),
@@ -3129,9 +1978,9 @@ class ChatOrchestrator:
     ) -> list[Any]:
         """Persist only evidence the direct answer actually references.
 
-        The legacy supervised flow reports evidence IDs explicitly. The direct
-        flow does not, so a canonical URL (or an evidence ID) must appear in the
-        final answer before it is recorded as a citation.
+        The direct flow does not report evidence IDs separately, so a canonical
+        URL (or an evidence ID) must appear in the final answer before it is
+        recorded as a citation.
         """
 
         normalized_content = str(content or "").replace("\\/", "/")
@@ -3223,38 +2072,6 @@ class ChatOrchestrator:
             service_tier=options.service_tier,
             approval_profile=options.approval_profile,
             collaboration_mode=options.collaboration_mode,
-            orchestration_enabled=int(options.orchestration.enabled),
-            orchestration_mode=options.orchestration.mode,
-            orchestration_strategy=options.orchestration.strategy,
-            ultra_enabled=int(options.orchestration.ultra),
-            show_execution=int(options.orchestration.show_execution),
-            explain_routing=int(options.orchestration.explain_routing),
-            dynamic_model_routing=int(options.orchestration.dynamic_model_routing),
-            dynamic_agent_count=int(options.orchestration.dynamic_agent_count),
-            difficulty_routing=int(options.orchestration.difficulty_routing),
-        )
-        self.database.set_conversation_model_pool(
-            conversation_id, list(options.orchestration.model_pool)
-        )
-
-    def update_orchestration(
-        self, conversation_id: str, orchestration: OrchestrationOptions
-    ) -> None:
-        self._conversation(conversation_id)
-        self.database.update_conversation(
-            conversation_id,
-            orchestration_enabled=int(orchestration.enabled),
-            orchestration_mode=orchestration.mode,
-            orchestration_strategy=orchestration.strategy,
-            ultra_enabled=int(orchestration.ultra),
-            show_execution=int(orchestration.show_execution),
-            explain_routing=int(orchestration.explain_routing),
-            dynamic_model_routing=int(orchestration.dynamic_model_routing),
-            dynamic_agent_count=int(orchestration.dynamic_agent_count),
-            difficulty_routing=int(orchestration.difficulty_routing),
-        )
-        self.database.set_conversation_model_pool(
-            conversation_id, list(orchestration.model_pool)
         )
 
     def switch_provider(
@@ -3344,7 +2161,6 @@ class ChatOrchestrator:
             source_options.collaboration_mode,
             dynamic_tool_ids if dynamic_tool_ids is not None else selected["dynamic"],
             mcp_tools if mcp_tools is not None else selected["mcp"],
-            orchestration=source_options.orchestration,
             workspace=project_workspace,
             vr_enabled=bool(source["vr_enabled"]),
             vr_mode=source_options.vr_mode,
@@ -3391,7 +2207,6 @@ class ChatOrchestrator:
             service_tier=options.service_tier,
             approval_profile=options.approval_profile,
             collaboration_mode=options.collaboration_mode,
-            orchestration=options.orchestration,
             vr_enabled=bool(source["vr_enabled"]),
             vr_mode=options.vr_mode,
         )
@@ -3643,9 +2458,7 @@ class ChatOrchestrator:
             dynamic = (*dynamic, vr_search_tool_spec())
         elif self.native_vr_search_enabled:
             dynamic = (*dynamic, vr_search_tool_spec())
-        base = ConversationOptions.from_mapping(
-            row, tuple(self.database.conversation_model_pool(conversation_id))
-        )
+        base = ConversationOptions.from_mapping(row)
         row_mode = str(row["vr_mode"] or "").strip().casefold()
         if row_mode not in ConversationOptions.VALID_VR_MODES:
             row_mode = "vr" if base.vr_enabled else "off"
@@ -3659,7 +2472,6 @@ class ChatOrchestrator:
             collaboration_mode=base.collaboration_mode,
             dynamic_tools=dynamic,
             mcp_tools=tuple(selected["mcp"]),
-            orchestration=base.orchestration,
             vr_mode=row_mode,
         )
 
@@ -3687,7 +2499,7 @@ class ChatOrchestrator:
                 response_intent,
                 evidence_bundle,
                 options.effort,
-                allow_max=str(options.orchestration.mode) == "ultra",
+                allow_max=options.vr_mode == "ultra",
             )
             if not decision.changed:
                 return options
@@ -3711,7 +2523,7 @@ class ChatOrchestrator:
             response_intent,
             evidence_bundle,
             options.effort,
-            allow_max=str(options.orchestration.mode) == "ultra",
+            allow_max=options.vr_mode == "ultra",
         )
         if decision.changed:
             self._emit_orchestration_event(
@@ -3752,7 +2564,6 @@ class ChatOrchestrator:
     def set_research_config(
         self,
         pool: Iterable[ModelRef] = (),
-        trigger: str = "auto",
         max_parallel: int = MAX_PARALLEL_RESEARCHERS,
     ) -> None:
         """Apply the global VR Ultra research configuration (UI-owned)."""
@@ -3762,9 +2573,6 @@ class ChatOrchestrator:
             if ref.provider:
                 unique[(ref.provider, ref.model)] = ref
         self._research_pool = tuple(unique.values())
-        self._research_trigger = (
-            "manual" if str(trigger or "").casefold() == "manual" else "auto"
-        )
         try:
             parallel = int(max_parallel)
         except (TypeError, ValueError):

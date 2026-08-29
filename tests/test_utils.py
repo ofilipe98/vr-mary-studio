@@ -13,7 +13,7 @@ class UtilsTest(unittest.TestCase):
         launcher = (root / "Start-VRStudio.bat").read_text(encoding="utf-8")
 
         self.assertIn(r".venv\Scripts\python.exe", launcher)
-        self.assertIn("-m vrsoft_extractor.mary.ui", launcher)
+        self.assertIn("-m vrsoft_extractor.mary.frontend.app", launcher)
         self.assertNotIn("vr-norte-studio.exe", launcher)
         self.assertNotIn("vr-mary-studio.exe", launcher)
 

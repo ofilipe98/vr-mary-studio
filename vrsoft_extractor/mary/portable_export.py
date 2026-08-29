@@ -289,7 +289,6 @@ def _sanitize_portable_database(
             "approvals",
             "runtime_events",
             "conversation_tools",
-            "conversation_model_pool",
             "messages",
             "conversations",
             "tool_definitions",

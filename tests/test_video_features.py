@@ -469,32 +469,6 @@ def test_enroll_one_does_not_post_waitlist_course():
     assert request.posts == []
 
 
-def test_video_output_decoder_preserves_split_utf8_character():
-    from vrsoft_extractor.mary.ui import (
-        new_video_output_decoder,
-        video_process_command,
-        video_process_environment,
-    )
-
-    decoder = new_video_output_decoder()
-    encoded = "Treinamento Força de Vendas".encode("utf-8")
-    split = encoded.index("ç".encode("utf-8")) + 1
-    text = decoder.decode(encoded[:split], final=False)
-    text += decoder.decode(encoded[split:], final=True)
-    assert text == "Treinamento Força de Vendas"
-    environment = video_process_environment()
-    assert environment.value("PYTHONUTF8") == "1"
-    assert environment.value("PYTHONIOENCODING") == "utf-8"
-    executable, development = video_process_command(
-        Path("VRProject"), "scan", frozen=False
-    )
-    assert executable
-    assert development[:2] == ["-m", "vrsoft_extractor"]
-    _executable, packaged = video_process_command(
-        Path("VRProject"), "scan", frozen=True
-    )
-    assert packaged[:2] == ["--video-cli", "--project-dir"]
-
 
 def test_studio_main_routes_packaged_video_cli_without_opening_gui():
     from vrsoft_extractor.mary import ui

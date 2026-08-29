@@ -15,8 +15,6 @@ from .content import target_path, write_document
 from .knowledge import split_knowledge_document
 from .models import (
     KnowledgeDocument,
-    ModelRef,
-    OrchestrationOptions,
     ReviewFilters,
     ReviewPage,
     RuntimeEvent,
@@ -218,15 +216,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     service_tier TEXT NOT NULL DEFAULT '',
     approval_profile TEXT NOT NULL DEFAULT 'auto',
     collaboration_mode TEXT NOT NULL DEFAULT 'default',
-    orchestration_enabled INTEGER NOT NULL DEFAULT 0,
-    orchestration_mode TEXT NOT NULL DEFAULT 'off',
-    orchestration_strategy TEXT NOT NULL DEFAULT 'automatic',
-    ultra_enabled INTEGER NOT NULL DEFAULT 0,
-    show_execution INTEGER NOT NULL DEFAULT 1,
-    explain_routing INTEGER NOT NULL DEFAULT 0,
-    dynamic_model_routing INTEGER NOT NULL DEFAULT 1,
-    dynamic_agent_count INTEGER NOT NULL DEFAULT 1,
-    difficulty_routing INTEGER NOT NULL DEFAULT 1,
     vr_enabled INTEGER NOT NULL DEFAULT 0,
     vr_mode TEXT NOT NULL DEFAULT 'off',
     context_used_tokens INTEGER NOT NULL DEFAULT 0,
@@ -237,16 +226,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     cloned_from TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS conversation_model_pool (
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    model_id TEXT NOT NULL DEFAULT '',
-    display_name TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
-    capabilities_json TEXT NOT NULL DEFAULT '[]',
-    PRIMARY KEY(conversation_id,provider,model_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -386,7 +365,6 @@ class MaryDatabase:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             if self.root and backup_portable_migration:
-                self._backup_before_multiagent_migration(connection)
                 self._backup_before_knowledge_router_migration(connection)
                 self._backup_before_endoo_wiki_migration(connection)
             connection.executescript(SCHEMA)
@@ -432,15 +410,6 @@ class MaryDatabase:
                 ("service_tier", "TEXT NOT NULL DEFAULT ''"),
                 ("approval_profile", "TEXT NOT NULL DEFAULT 'auto_edits'"),
                 ("collaboration_mode", "TEXT NOT NULL DEFAULT 'default'"),
-                ("orchestration_enabled", "INTEGER NOT NULL DEFAULT 0"),
-                ("orchestration_mode", "TEXT NOT NULL DEFAULT ''"),
-                ("orchestration_strategy", "TEXT NOT NULL DEFAULT 'automatic'"),
-                ("ultra_enabled", "INTEGER NOT NULL DEFAULT 0"),
-                ("show_execution", "INTEGER NOT NULL DEFAULT 1"),
-                ("explain_routing", "INTEGER NOT NULL DEFAULT 0"),
-                ("dynamic_model_routing", "INTEGER NOT NULL DEFAULT 1"),
-                ("dynamic_agent_count", "INTEGER NOT NULL DEFAULT 1"),
-                ("difficulty_routing", "INTEGER NOT NULL DEFAULT 1"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("vr_mode", "TEXT NOT NULL DEFAULT ''"),
                 ("native_id_vr", "TEXT NOT NULL DEFAULT ''"),
@@ -455,16 +424,6 @@ class MaryDatabase:
                 """UPDATE conversations
                       SET vr_mode=CASE WHEN vr_enabled=1 THEN 'vr' ELSE 'off' END
                     WHERE trim(vr_mode)=''"""
-            )
-            connection.execute(
-                """UPDATE conversations
-                      SET orchestration_mode=CASE
-                            WHEN ultra_enabled=1 THEN 'ultra'
-                            WHEN orchestration_enabled=1 THEN 'automatic'
-                            ELSE 'off'
-                          END
-                    WHERE orchestration_mode NOT IN
-                          ('off','automatic','standard','ultra')"""
             )
             for column, definition in (
                 ("turn_id", "TEXT NOT NULL DEFAULT ''"),
@@ -492,16 +451,6 @@ class MaryDatabase:
                 connection.commit()
                 self._backup_before_portable_migration(connection)
             self._migrate_review_metadata(connection)
-            connection.execute(
-                """INSERT OR IGNORE INTO conversation_model_pool
-                   (conversation_id,provider,model_id,display_name)
-                   SELECT c.id,c.provider,c.model,c.model
-                     FROM conversations c
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM conversation_model_pool p
-                         WHERE p.conversation_id=c.id
-                    )"""
-            )
             if self.root:
                 self._migrate_portable_paths(connection)
             connection.executescript(
@@ -548,48 +497,6 @@ class MaryDatabase:
                     ON artifacts(conversation_id);
                 """
             )
-
-    def _backup_before_multiagent_migration(
-        self, connection: sqlite3.Connection
-    ) -> None:
-        """Create one recoverable SQLite snapshot before changing chat schema."""
-        root = self.root
-        if root is None:
-            raise RuntimeError("A raiz da base é obrigatória para criar o backup.")
-        has_conversations = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversations'"
-        ).fetchone()
-        if not has_conversations:
-            return
-        columns = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
-        }
-        has_pool = connection.execute(
-            "SELECT 1 FROM sqlite_master "
-            "WHERE type='table' AND name='conversation_model_pool'"
-        ).fetchone()
-        required = {
-            "orchestration_enabled",
-            "orchestration_mode",
-            "orchestration_strategy",
-            "ultra_enabled",
-            "show_execution",
-            "explain_routing",
-            "dynamic_model_routing",
-            "dynamic_agent_count",
-            "difficulty_routing",
-        }
-        if required.issubset(columns) and has_pool:
-            return
-        backup_path = (
-            root / ".state" / "backups" / "conhecimento-pre-multiagent.sqlite"
-        )
-        if backup_path.exists():
-            return
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(backup_path) as target:
-            connection.backup(target)
 
     def _backup_before_knowledge_router_migration(
         self, connection: sqlite3.Connection
@@ -1946,13 +1853,11 @@ class MaryDatabase:
         service_tier: str = "",
         approval_profile: str = "auto",
         collaboration_mode: str = "default",
-        orchestration: OrchestrationOptions | None = None,
         vr_enabled: bool = False,
         vr_mode: str = "",
     ) -> str:
         conversation_id = uuid.uuid4().hex
         now = utc_now()
-        orchestration = orchestration or OrchestrationOptions()
         resolved_mode = str(vr_mode or "").strip().casefold()
         if resolved_mode not in {"off", "vr", "ultra"}:
             resolved_mode = "vr" if vr_enabled else "off"
@@ -1960,12 +1865,9 @@ class MaryDatabase:
             connection.execute(
                 """INSERT INTO conversations
                    (id,title,provider,model,effort,service_tier,approval_profile,
-                    collaboration_mode,orchestration_enabled,orchestration_mode,
-                    orchestration_strategy,
-                    ultra_enabled,show_execution,explain_routing,dynamic_model_routing,
-                     dynamic_agent_count,difficulty_routing,vr_enabled,vr_mode,workspace,
-                     cloned_from,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    collaboration_mode,vr_enabled,vr_mode,workspace,
+                    cloned_from,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     title,
@@ -1975,15 +1877,6 @@ class MaryDatabase:
                     service_tier,
                     approval_profile,
                     collaboration_mode,
-                    int(orchestration.enabled),
-                    orchestration.mode,
-                    orchestration.strategy,
-                    int(orchestration.ultra),
-                    int(orchestration.show_execution),
-                    int(orchestration.explain_routing),
-                    int(orchestration.dynamic_model_routing),
-                    int(orchestration.dynamic_agent_count),
-                    int(orchestration.difficulty_routing),
                     int(vr_enabled),
                     resolved_mode,
                     to_portable_path(self.root, workspace) if self.root else str(workspace),
@@ -1992,10 +1885,6 @@ class MaryDatabase:
                     now,
                 ),
             )
-        pool = list(orchestration.model_pool) or [
-            ModelRef(provider=provider, model=model, display_name=model)
-        ]
-        self.set_conversation_model_pool(conversation_id, pool)
         return conversation_id
 
     def list_conversations(
@@ -2033,10 +1922,6 @@ class MaryDatabase:
             "title", "provider", "model", "effort", "native_id", "native_id_vr",
             "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
-            "orchestration_enabled", "orchestration_mode",
-            "orchestration_strategy", "ultra_enabled",
-            "show_execution", "explain_routing",
-            "dynamic_model_routing", "dynamic_agent_count", "difficulty_routing",
             "workspace", "original_workspace", "vr_enabled", "vr_mode",
             "context_used_tokens", "context_window_tokens", "total_processed_tokens",
         }
@@ -2364,82 +2249,6 @@ class MaryDatabase:
             ],
         }
 
-    def set_conversation_model_pool(
-        self, conversation_id: str, models: list[ModelRef] | tuple[ModelRef, ...]
-    ) -> None:
-        unique: dict[tuple[str, str], ModelRef] = {}
-        for raw_model in models:
-            model = raw_model if isinstance(raw_model, ModelRef) else ModelRef.from_mapping(raw_model)
-            if model.provider:
-                unique[(model.provider, model.model)] = model
-        if not unique:
-            row = self.get_conversation(conversation_id)
-            if not row:
-                raise KeyError(conversation_id)
-            fallback = ModelRef(
-                provider=str(row["provider"]),
-                model=str(row["model"] or ""),
-                display_name=str(row["model"] or ""),
-            )
-            unique[(fallback.provider, fallback.model)] = fallback
-        with self.connect() as connection:
-            connection.execute(
-                "DELETE FROM conversation_model_pool WHERE conversation_id=?",
-                (conversation_id,),
-            )
-            connection.executemany(
-                """INSERT INTO conversation_model_pool
-                   (conversation_id,provider,model_id,display_name,description,
-                    capabilities_json) VALUES(?,?,?,?,?,?)""",
-                [
-                    (
-                        conversation_id,
-                        model.provider,
-                        model.model,
-                        model.display_name,
-                        model.description,
-                        json.dumps(list(model.capabilities), ensure_ascii=False),
-                    )
-                    for model in unique.values()
-                ],
-            )
-
-    def conversation_model_pool(self, conversation_id: str) -> list[ModelRef]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """SELECT provider,model_id,display_name,description,capabilities_json
-                   FROM conversation_model_pool WHERE conversation_id=?
-                   ORDER BY provider,model_id""",
-                (conversation_id,),
-            ).fetchall()
-        result: list[ModelRef] = []
-        for row in rows:
-            try:
-                capabilities = json.loads(row["capabilities_json"] or "[]")
-            except (TypeError, ValueError):
-                capabilities = []
-            result.append(
-                ModelRef(
-                    provider=str(row["provider"]),
-                    model=str(row["model_id"] or ""),
-                    display_name=str(row["display_name"] or ""),
-                    description=str(row["description"] or ""),
-                    capabilities=tuple(str(item) for item in capabilities),
-                )
-            )
-        if result:
-            return result
-        row = self.get_conversation(conversation_id)
-        if not row:
-            return []
-        return [
-            ModelRef(
-                provider=str(row["provider"]),
-                model=str(row["model"] or ""),
-                display_name=str(row["model"] or ""),
-            )
-        ]
-
     def latest_event(self, conversation_id: str, kind: str) -> sqlite3.Row | None:
         with self.connect() as connection:
             return connection.execute(
@@ -2524,7 +2333,7 @@ class MaryDatabase:
         with self.connect() as connection:
             for table in (
                 "source_citations", "artifacts", "approvals", "runtime_events",
-                "conversation_tools", "conversation_model_pool", "messages",
+                "conversation_tools", "messages",
             ):
                 connection.execute(f"DELETE FROM {table} WHERE conversation_id=?", (conversation_id,))
             connection.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
