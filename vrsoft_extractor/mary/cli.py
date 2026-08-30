@@ -10,9 +10,12 @@ from .classpath import ClasspathAnalyzer, ClasspathError, ClasspathPolicyStore
 from .code_analysis_benchmark import (
     CodeAnalysisBenchmarkError,
     apply_blind_review,
+    audit_benchmark_intake,
     benchmark_template,
+    build_benchmark_intake_manifest,
     build_blind_review_packet,
     execute_benchmark_suite,
+    load_benchmark_intake_manifest,
     load_benchmark_suite,
     preflight_benchmark_suite,
 )
@@ -297,6 +300,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--timeout", type=int, default=600)
     benchmark.add_argument("--max-cases", type=int, default=0)
     benchmark.add_argument(
+        "--intake-manifest",
+        default="",
+        help="Manifesto congelado da suíte anonimizada",
+    )
+    benchmark.add_argument(
         "--approve-model-usage",
         action="store_true",
         help="Confirma o custo de duas execuções VR Ultra por caso",
@@ -306,6 +314,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Valida casos, cobertura e símbolos sem chamar modelos",
     )
     benchmark_preflight.add_argument("cases")
+    benchmark_preflight.add_argument("--intake-manifest", default="")
+    intake_audit = sub.add_parser(
+        "audit-code-analysis-cases",
+        help="Audita seleção, evidência e dados sensíveis sem chamar modelos",
+    )
+    intake_audit.add_argument("cases")
+    intake_freeze = sub.add_parser(
+        "freeze-code-analysis-cases",
+        help="Congela uma suíte aprovada em manifesto SHA-256",
+    )
+    intake_freeze.add_argument("cases")
+    intake_freeze.add_argument("--output", required=True)
     review_prepare = sub.add_parser(
         "prepare-code-analysis-review",
         help="Cria pacote cego A/B e chave separada a partir de um benchmark",
@@ -378,6 +398,34 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"output": str(output)}, ensure_ascii=False, indent=2))
         else:
             print(rendered)
+        return 0
+    if args.command == "audit-code-analysis-cases":
+        try:
+            suite = load_benchmark_suite(args.cases)
+            audit = audit_benchmark_intake(suite)
+        except CodeAnalysisBenchmarkError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(audit, ensure_ascii=False, indent=2))
+        return 0 if audit["ready"] else 2
+    if args.command == "freeze-code-analysis-cases":
+        try:
+            suite = load_benchmark_suite(args.cases)
+            manifest = build_benchmark_intake_manifest(suite)
+            output = _write_new_json(args.output, manifest)
+        except (CodeAnalysisBenchmarkError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "output": str(output),
+                    "suite_fingerprint": manifest["suite_fingerprint"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.command == "prepare-code-analysis-review":
         try:
@@ -759,7 +807,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "preflight-code-analysis":
         try:
             suite = load_benchmark_suite(args.cases)
-            result = preflight_benchmark_suite(suite, settings.root)
+            intake_manifest = (
+                load_benchmark_intake_manifest(args.intake_manifest)
+                if args.intake_manifest
+                else None
+            )
+            result = preflight_benchmark_suite(
+                suite, settings.root, intake_manifest=intake_manifest
+            )
         except (CodeAnalysisBenchmarkError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
@@ -776,6 +831,7 @@ def main(argv: list[str] | None = None) -> int:
                 effort=args.effort,
                 timeout_seconds=args.timeout,
                 max_cases=args.max_cases,
+                intake_manifest_path=args.intake_manifest or None,
             )
         except (CodeAnalysisBenchmarkError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))

@@ -27,13 +27,51 @@ from .orchestrator import ChatOrchestrator
 BENCHMARK_SCHEMA_VERSION = 1
 SAFE_DATA_CLASSIFICATIONS = {"anonymized", "synthetic"}
 VALID_RESPONSE_MODES = {"auto", "training", "support", "implementation"}
+REAL_CASE_COUNT_RANGE = (5, 10)
 PLACEHOLDER_MARKERS = {
     "substituir",
+    "descrever",
+    "aaaa-mm-dd",
     "classeoumetodoconfirmado",
     "causa conhecida",
     "hipotese ja descartada",
     "hipótese já descartada",
 }
+SENSITIVE_TEXT_PATTERNS = (
+    (
+        "email",
+        re.compile(
+            r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+            r"(?![A-Za-z0-9_-])"
+        ),
+    ),
+    (
+        "telefone",
+        re.compile(
+            r"(?<!\d)(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)"
+            r"(?:9\d{4}|\d{4})[\s.-]?\d{4}(?!\d)"
+        ),
+    ),
+    (
+        "endereco_ip",
+        re.compile(
+            r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+            r"(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)"
+        ),
+    ),
+    ("url", re.compile(r"https?://[^\s<>'\"]+", re.IGNORECASE)),
+    (
+        "caminho_usuario",
+        re.compile(r"(?:[A-Za-z]:\\Users\\[^\\\s]+|/Users/[^/\s]+|/home/[^/\s]+)"),
+    ),
+    (
+        "credencial",
+        re.compile(
+            r"\b(?:password|senha|secret|token|api[_-]?key)\s*[:=]\s*[^\s,;]+",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 
 class CodeAnalysisBenchmarkError(RuntimeError):
@@ -49,6 +87,8 @@ class BenchmarkCase:
     module: str
     target_jars: tuple[str, ...]
     known_root_cause: str
+    root_cause_evidence: str
+    resolved_at: str
     expected_terms: tuple[str, ...]
     expected_code_symbols: tuple[str, ...]
     expected_citation_sources: tuple[str, ...]
@@ -60,6 +100,9 @@ class BenchmarkSuite:
     suite_id: str
     release_id: str
     data_classification: str
+    candidate_pool_size: int
+    selection_method: str
+    anonymization_review_id: str
     cases: tuple[BenchmarkCase, ...]
 
 
@@ -93,6 +136,16 @@ def load_benchmark_suite(path: str | Path) -> BenchmarkSuite:
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
         raise CodeAnalysisBenchmarkError("A suíte precisa conter ao menos um caso.")
+    try:
+        candidate_pool_size = int(payload.get("candidate_pool_size") or 0)
+    except (TypeError, ValueError) as exc:
+        raise CodeAnalysisBenchmarkError(
+            "candidate_pool_size precisa ser um número inteiro."
+        ) from exc
+    selection_method = str(payload.get("selection_method") or "").strip()
+    anonymization_review_id = str(
+        payload.get("anonymization_review_id") or ""
+    ).strip()
     cases: list[BenchmarkCase] = []
     seen: set[str] = set()
     for index, raw in enumerate(raw_cases, start=1):
@@ -119,6 +172,10 @@ def load_benchmark_suite(path: str | Path) -> BenchmarkSuite:
                 module=str(raw.get("module") or "").strip(),
                 target_jars=_string_tuple(raw.get("target_jars")),
                 known_root_cause=str(raw.get("known_root_cause") or "").strip(),
+                root_cause_evidence=str(
+                    raw.get("root_cause_evidence") or ""
+                ).strip(),
+                resolved_at=str(raw.get("resolved_at") or "").strip(),
                 expected_terms=_string_tuple(raw.get("expected_terms")),
                 expected_code_symbols=_string_tuple(
                     raw.get("expected_code_symbols")
@@ -129,13 +186,216 @@ def load_benchmark_suite(path: str | Path) -> BenchmarkSuite:
                 forbidden_terms=_string_tuple(raw.get("forbidden_terms")),
             )
         )
-    return BenchmarkSuite(suite_id, release_id, classification, tuple(cases))
+    return BenchmarkSuite(
+        suite_id,
+        release_id,
+        classification,
+        candidate_pool_size,
+        selection_method,
+        anonymization_review_id,
+        tuple(cases),
+    )
+
+
+def audit_benchmark_intake(suite: BenchmarkSuite) -> dict[str, Any]:
+    """Audit real-case selection and obvious sensitive data without model calls."""
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    case_count = len(suite.cases)
+    findings = _benchmark_sensitive_findings(suite)
+    if findings:
+        errors.append(
+            "Foram encontrados dados potencialmente sensíveis; anonimize os campos "
+            "indicados antes de congelar a suíte."
+        )
+
+    if suite.data_classification == "anonymized":
+        minimum, maximum = REAL_CASE_COUNT_RANGE
+        if not minimum <= case_count <= maximum:
+            errors.append(
+                f"A suíte real precisa conter entre {minimum} e {maximum} casos."
+            )
+        if suite.candidate_pool_size < case_count:
+            errors.append(
+                "candidate_pool_size precisa ser maior ou igual ao total selecionado."
+            )
+        if len(suite.selection_method) < 20 or _contains_placeholder(
+            (suite.selection_method,)
+        ):
+            errors.append(
+                "selection_method precisa explicar como os casos foram escolhidos "
+                "antes da execução."
+            )
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", suite.anonymization_review_id
+        ):
+            errors.append(
+                "anonymization_review_id precisa identificar a revisão manual sem "
+                "incluir nome ou dado pessoal."
+            )
+
+    case_reports: list[dict[str, Any]] = []
+    for case in suite.cases:
+        case_errors: list[str] = []
+        case_findings = [
+            finding for finding in findings if finding["case_id"] == case.case_id
+        ]
+        if suite.data_classification == "anonymized":
+            if not case.module:
+                case_errors.append("module é obrigatório.")
+            if len(case.root_cause_evidence) < 20 or _contains_placeholder(
+                (case.root_cause_evidence,)
+            ):
+                case_errors.append(
+                    "root_cause_evidence precisa registrar como a causa foi confirmada."
+                )
+            if not _valid_past_date(case.resolved_at):
+                case_errors.append(
+                    "resolved_at precisa ser uma data ISO válida e não futura."
+                )
+        case_reports.append(
+            {
+                "case_id": case.case_id,
+                "module": case.module,
+                "ready": not case_errors and not case_findings,
+                "errors": case_errors,
+                "sensitive_finding_count": len(case_findings),
+            }
+        )
+        errors.extend(f"{case.case_id}: {error}" for error in case_errors)
+
+    modules = Counter(case.module or "não informado" for case in suite.cases)
+    response_modes = Counter(case.response_mode for case in suite.cases)
+    if suite.data_classification == "anonymized" and len(modules) < 2:
+        warnings.append(
+            "A amostra cobre apenas um módulo; não generalize o resultado para todo o ERP."
+        )
+    if case_count and max(modules.values()) / case_count > 0.6:
+        warnings.append(
+            "Mais de 60% dos casos pertencem ao mesmo módulo; registre esse viés "
+            "na interpretação."
+        )
+
+    return {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "suite_id": suite.suite_id,
+        "release_id": suite.release_id,
+        "data_classification": suite.data_classification,
+        "checked_at": _utc_now(),
+        "ready": not errors and all(item["ready"] for item in case_reports),
+        "errors": errors,
+        "warnings": warnings,
+        "case_count": case_count,
+        "required_case_count": (
+            {"minimum": REAL_CASE_COUNT_RANGE[0], "maximum": REAL_CASE_COUNT_RANGE[1]}
+            if suite.data_classification == "anonymized"
+            else None
+        ),
+        "candidate_pool_size": suite.candidate_pool_size,
+        "selection_method_present": bool(suite.selection_method),
+        "anonymization_review_id": suite.anonymization_review_id,
+        "module_distribution": dict(sorted(modules.items())),
+        "response_mode_distribution": dict(sorted(response_modes.items())),
+        "sensitive_findings": findings,
+        "cases": case_reports,
+    }
+
+
+def benchmark_suite_fingerprint(suite: BenchmarkSuite) -> str:
+    encoded = json.dumps(
+        asdict(suite),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_benchmark_intake_manifest(suite: BenchmarkSuite) -> dict[str, Any]:
+    audit = audit_benchmark_intake(suite)
+    if not audit["ready"]:
+        raise CodeAnalysisBenchmarkError(
+            "Intake reprovado: " + "; ".join(str(item) for item in audit["errors"])
+        )
+    return {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "suite_id": suite.suite_id,
+        "release_id": suite.release_id,
+        "data_classification": suite.data_classification,
+        "suite_fingerprint": benchmark_suite_fingerprint(suite),
+        "frozen_at": _utc_now(),
+        "audit": {
+            "case_count": audit["case_count"],
+            "candidate_pool_size": audit["candidate_pool_size"],
+            "module_distribution": audit["module_distribution"],
+            "response_mode_distribution": audit["response_mode_distribution"],
+            "sensitive_finding_count": len(audit["sensitive_findings"]),
+            "warnings": audit["warnings"],
+        },
+    }
+
+
+def load_benchmark_intake_manifest(path: str | Path) -> dict[str, Any]:
+    source = Path(path).resolve()
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CodeAnalysisBenchmarkError(
+            f"Não foi possível ler o manifesto de intake: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise CodeAnalysisBenchmarkError(
+            "O manifesto de intake precisa ser um objeto JSON."
+        )
+    return payload
+
+
+def verify_benchmark_intake_manifest(
+    suite: BenchmarkSuite, manifest: dict[str, Any] | None
+) -> dict[str, Any]:
+    if suite.data_classification == "synthetic" and manifest is None:
+        return {
+            "required": False,
+            "ready": True,
+            "status": "not_required",
+            "suite_fingerprint": benchmark_suite_fingerprint(suite),
+            "errors": [],
+        }
+    errors: list[str] = []
+    if not isinstance(manifest, dict):
+        errors.append(
+            "A suíte anonimizada exige manifesto criado por freeze-code-analysis-cases."
+        )
+        manifest = {}
+    expected_fingerprint = benchmark_suite_fingerprint(suite)
+    checks = {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "suite_id": suite.suite_id,
+        "release_id": suite.release_id,
+        "data_classification": suite.data_classification,
+        "suite_fingerprint": expected_fingerprint,
+    }
+    for field, expected in checks.items():
+        if manifest.get(field) != expected:
+            errors.append(f"Manifesto de intake não corresponde ao campo {field}.")
+    if not _valid_past_date(str(manifest.get("frozen_at") or "")):
+        errors.append("Manifesto de intake não possui frozen_at válido.")
+    return {
+        "required": suite.data_classification == "anonymized",
+        "ready": not errors,
+        "status": "verified" if not errors else "invalid",
+        "suite_fingerprint": expected_fingerprint,
+        "frozen_at": str(manifest.get("frozen_at") or ""),
+        "errors": errors,
+    }
 
 
 def preflight_benchmark_suite(
     suite: BenchmarkSuite,
     root: str | Path,
     *,
+    intake_manifest: dict[str, Any] | None = None,
     catalog: ErpReleaseCatalog | None = None,
     code_index: JavaCodeIndex | None = None,
     classpath_policy: ClasspathPolicyStore | None = None,
@@ -153,8 +413,11 @@ def preflight_benchmark_suite(
     )
     classpath = policy.status(suite.release_id)
     covered_jars = set(str(item) for item in coverage.get("covered_jars") or [])
-    errors: list[str] = []
-    warnings: list[str] = []
+    intake = audit_benchmark_intake(suite)
+    manifest = verify_benchmark_intake_manifest(suite, intake_manifest)
+    errors: list[str] = list(intake["errors"])
+    errors.extend(manifest["errors"])
+    warnings: list[str] = list(intake["warnings"])
     if release.get("state") != "ready" or release.get("freshness") != "fresh":
         errors.append("A release selecionada não está pronta e atualizada.")
     if int(index_status.get("sources") or 0) < 1:
@@ -261,6 +524,8 @@ def preflight_benchmark_suite(
         "ready": not errors and all(item["ready"] for item in case_reports),
         "errors": errors,
         "warnings": warnings,
+        "intake": intake,
+        "intake_manifest": manifest,
         "coverage": {
             "covered_jar_count": int(coverage.get("covered_jar_count") or 0),
             "expected_jar_count": int(coverage.get("expected_jar_count") or 0),
@@ -740,9 +1005,28 @@ def execute_benchmark_suite(
     effort: str = "medium",
     timeout_seconds: int = 600,
     max_cases: int = 0,
+    intake_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     suite = load_benchmark_suite(suite_path)
-    preflight = preflight_benchmark_suite(suite, settings.root)
+    if int(max_cases) < 0:
+        raise CodeAnalysisBenchmarkError("--max-cases não pode ser negativo.")
+    if (
+        suite.data_classification == "anonymized"
+        and max_cases
+        and int(max_cases) != len(suite.cases)
+    ):
+        raise CodeAnalysisBenchmarkError(
+            "--max-cases não pode reduzir uma suíte real congelada; execute todos "
+            "os casos ou use uma suíte synthetic para ensaios."
+        )
+    intake_manifest = (
+        load_benchmark_intake_manifest(intake_manifest_path)
+        if intake_manifest_path
+        else None
+    )
+    preflight = preflight_benchmark_suite(
+        suite, settings.root, intake_manifest=intake_manifest
+    )
     if not preflight["ready"]:
         problems = list(preflight["errors"])
         problems.extend(
@@ -785,6 +1069,11 @@ def benchmark_template() -> dict[str, Any]:
         "suite_id": "chamados-causa-codigo-v1",
         "release_id": "current",
         "data_classification": "anonymized",
+        "candidate_pool_size": 0,
+        "selection_method": (
+            "Descrever a regra aplicada ao conjunto de candidatos antes da execução."
+        ),
+        "anonymization_review_id": "anon-review-001",
         "cases": [
             {
                 "case_id": "chamado-001",
@@ -796,6 +1085,10 @@ def benchmark_template() -> dict[str, Any]:
                 "known_root_cause": (
                     "Substituir pela causa-raiz confirmada após a resolução."
                 ),
+                "root_cause_evidence": (
+                    "Descrever a evidência local que confirmou a causa-raiz."
+                ),
+                "resolved_at": "AAAA-MM-DD",
                 "expected_terms": ["causa conhecida"],
                 "expected_code_symbols": ["ClasseOuMetodoConfirmado"],
                 "expected_citation_sources": ["VRPdv.jar"],
@@ -853,6 +1146,93 @@ def _normalize(value: object) -> str:
 def _contains_placeholder(values: tuple[str, ...]) -> bool:
     searchable = _normalize(" ".join(values))
     return any(_normalize(marker) in searchable for marker in PLACEHOLDER_MARKERS)
+
+
+def _benchmark_sensitive_findings(suite: BenchmarkSuite) -> list[dict[str, str]]:
+    fields: list[tuple[str, str, str]] = [
+        ("", "selection_method", suite.selection_method),
+    ]
+    for case in suite.cases:
+        fields.extend(
+            [
+                (case.case_id, "title", case.title),
+                (case.case_id, "question", case.question),
+                (case.case_id, "known_root_cause", case.known_root_cause),
+                (case.case_id, "root_cause_evidence", case.root_cause_evidence),
+                *(
+                    (case.case_id, f"expected_terms[{index}]", value)
+                    for index, value in enumerate(case.expected_terms)
+                ),
+                *(
+                    (case.case_id, f"forbidden_terms[{index}]", value)
+                    for index, value in enumerate(case.forbidden_terms)
+                ),
+            ]
+        )
+    findings: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for case_id, field, value in fields:
+        matches: list[tuple[str, str]] = []
+        for kind, pattern in SENSITIVE_TEXT_PATTERNS:
+            matches.extend((kind, item.group(0)) for item in pattern.finditer(value))
+        for candidate in re.findall(r"(?<!\d)[\d./-]{11,18}(?!\d)", value):
+            digits = re.sub(r"\D", "", candidate)
+            if _valid_cpf(digits):
+                matches.append(("cpf", candidate))
+            elif _valid_cnpj(digits):
+                matches.append(("cnpj", candidate))
+        for kind, matched in matches:
+            fingerprint = hashlib.sha256(
+                f"{kind}:{matched.casefold()}".encode("utf-8")
+            ).hexdigest()[:12]
+            key = (case_id, field, kind, fingerprint)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(
+                {
+                    "case_id": case_id,
+                    "field": field,
+                    "kind": kind,
+                    "fingerprint": fingerprint,
+                }
+            )
+    return findings
+
+
+def _valid_cpf(digits: str) -> bool:
+    if len(digits) != 11 or len(set(digits)) == 1:
+        return False
+    numbers = [int(item) for item in digits]
+    first = (sum(numbers[index] * (10 - index) for index in range(9)) * 10) % 11
+    first = 0 if first == 10 else first
+    second = (sum(numbers[index] * (11 - index) for index in range(10)) * 10) % 11
+    second = 0 if second == 10 else second
+    return numbers[9:] == [first, second]
+
+
+def _valid_cnpj(digits: str) -> bool:
+    if len(digits) != 14 or len(set(digits)) == 1:
+        return False
+    numbers = [int(item) for item in digits]
+
+    def check(values: list[int], weights: list[int]) -> int:
+        remainder = sum(value * weight for value, weight in zip(values, weights)) % 11
+        return 0 if remainder < 2 else 11 - remainder
+
+    first = check(numbers[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    second = check(numbers[:12] + [first], [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return numbers[12:] == [first, second]
+
+
+def _valid_past_date(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc)
 
 
 def _blind_packet_fingerprint(packet: dict[str, Any]) -> str:
@@ -913,13 +1293,18 @@ __all__ = [
     "CodeAnalysisBenchmarkError",
     "OrchestratorBenchmarkExecutor",
     "apply_blind_review",
+    "audit_benchmark_intake",
     "benchmark_template",
+    "benchmark_suite_fingerprint",
     "build_blind_review_packet",
+    "build_benchmark_intake_manifest",
     "compare_variants",
     "execute_benchmark_suite",
     "load_benchmark_suite",
+    "load_benchmark_intake_manifest",
     "preflight_benchmark_suite",
     "run_paired_benchmark",
     "score_variant",
     "summarize_results",
+    "verify_benchmark_intake_manifest",
 ]

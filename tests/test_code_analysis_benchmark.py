@@ -8,22 +8,29 @@ import pytest
 from vrsoft_extractor.mary.code_analysis_benchmark import (
     CodeAnalysisBenchmarkError,
     apply_blind_review,
+    audit_benchmark_intake,
     benchmark_template,
+    build_benchmark_intake_manifest,
     build_blind_review_packet,
+    execute_benchmark_suite,
     load_benchmark_suite,
     preflight_benchmark_suite,
     run_paired_benchmark,
+    verify_benchmark_intake_manifest,
 )
 from vrsoft_extractor.mary.cli import build_parser
 from vrsoft_extractor.mary.cli import main as cli_main
 
 
-def _write_suite(path: Path, *, classification: str = "anonymized") -> Path:
+def _write_suite(path: Path, *, classification: str = "synthetic") -> Path:
     payload = {
         "schema_version": 1,
         "suite_id": "resolved-code-cases",
         "release_id": "r1",
         "data_classification": classification,
+        "candidate_pool_size": 2,
+        "selection_method": "Seleção sintética determinada antes da execução.",
+        "anonymization_review_id": "anon-review-test",
         "cases": [
             {
                 "case_id": "case-1",
@@ -33,6 +40,8 @@ def _write_suite(path: Path, *, classification: str = "anonymized") -> Path:
                 "module": "VRPdv",
                 "target_jars": ["VRPdv.jar"],
                 "known_root_cause": "A validação final rejeita o estado aberto.",
+                "root_cause_evidence": "Correção reproduzida e confirmada em teste.",
+                "resolved_at": "2026-01-10",
                 "expected_terms": ["validação final"],
                 "expected_code_symbols": ["CaixaService.fechar"],
                 "expected_citation_sources": ["VRPdv.jar"],
@@ -46,6 +55,8 @@ def _write_suite(path: Path, *, classification: str = "anonymized") -> Path:
                 "module": "VRPdv",
                 "target_jars": ["VRPdv.jar"],
                 "known_root_cause": "O retorno fiscal rejeitado interrompe o envio.",
+                "root_cause_evidence": "Stack trace e correção confirmaram o fluxo.",
+                "resolved_at": "2026-01-11",
                 "expected_terms": ["retorno rejeitado"],
                 "expected_code_symbols": ["NfeService.enviar"],
                 "expected_citation_sources": ["VRPdv.jar"],
@@ -57,11 +68,130 @@ def _write_suite(path: Path, *, classification: str = "anonymized") -> Path:
     return path
 
 
+def _write_real_suite(path: Path, *, sensitive: bool = False) -> Path:
+    payload = json.loads(_write_suite(path).read_text(encoding="utf-8"))
+    payload["data_classification"] = "anonymized"
+    payload["candidate_pool_size"] = 12
+    payload["selection_method"] = (
+        "Amostragem dos chamados encerrados com causa confirmada em código."
+    )
+    base_cases = payload["cases"]
+    payload["cases"] = []
+    modules = ["VRPdv", "VRMaster", "VRAutorizador", "VRPdv", "VRMaster"]
+    jars = [
+        "VRPdv.jar",
+        "VRMaster.jar",
+        "VRAutorizador.jar",
+        "VRPdv.jar",
+        "VRMaster.jar",
+    ]
+    for index in range(5):
+        case = dict(base_cases[index % len(base_cases)])
+        case["case_id"] = f"case-{index + 1}"
+        case["title"] = f"Falha resolvida {index + 1}"
+        case["question"] = f"Qual componente explica a falha {index + 1}?"
+        case["module"] = modules[index]
+        case["target_jars"] = [jars[index]]
+        case["expected_citation_sources"] = [jars[index]]
+        payload["cases"].append(case)
+    if sensitive:
+        payload["cases"][0]["question"] = (
+            "Cliente 529.982.247-25 informou contato pessoa@cliente.com."
+        )
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def test_suite_requires_anonymized_or_synthetic_cases(tmp_path: Path) -> None:
     source = _write_suite(tmp_path / "cases.json", classification="customer_raw")
 
     with pytest.raises(CodeAnalysisBenchmarkError, match="anonymized ou synthetic"):
         load_benchmark_suite(source)
+
+
+def test_real_intake_blocks_sensitive_data_without_echoing_values(tmp_path: Path) -> None:
+    suite = load_benchmark_suite(_write_real_suite(tmp_path / "real.json", sensitive=True))
+
+    audit = audit_benchmark_intake(suite)
+    rendered = json.dumps(audit, ensure_ascii=False)
+
+    assert audit["ready"] is False
+    assert {item["kind"] for item in audit["sensitive_findings"]} >= {"cpf", "email"}
+    assert "529.982.247-25" not in rendered
+    assert "pessoa@cliente.com" not in rendered
+    with pytest.raises(CodeAnalysisBenchmarkError, match="Intake reprovado"):
+        build_benchmark_intake_manifest(suite)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_kind"),
+    [
+        ("pessoa@cliente.com", "email"),
+        ("(11) 98765-4321", "telefone"),
+        ("529.982.247-25", "cpf"),
+        ("04.252.011/0001-10", "cnpj"),
+        ("10.0.0.12", "endereco_ip"),
+        ("https://cliente.local/erro", "url"),
+        (r"C:\Users\cliente\erro.log", "caminho_usuario"),
+        ("token=abc123", "credencial"),
+    ],
+)
+def test_intake_sensitive_detectors(
+    tmp_path: Path, value: str, expected_kind: str
+) -> None:
+    source = _write_suite(tmp_path / f"{expected_kind}.json")
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["cases"][0]["question"] = f"Falha observada em {value}."
+    source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    audit = audit_benchmark_intake(load_benchmark_suite(source))
+
+    assert expected_kind in {
+        finding["kind"] for finding in audit["sensitive_findings"]
+    }
+    assert value not in json.dumps(audit, ensure_ascii=False)
+
+
+def test_frozen_intake_manifest_detects_any_suite_change(tmp_path: Path) -> None:
+    source = _write_real_suite(tmp_path / "real.json")
+    suite = load_benchmark_suite(source)
+    audit = audit_benchmark_intake(suite)
+    manifest = build_benchmark_intake_manifest(suite)
+
+    assert audit["ready"] is True
+    assert verify_benchmark_intake_manifest(suite, manifest)["ready"] is True
+
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["cases"][0]["question"] = "Pergunta modificada após o congelamento."
+    source.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    changed = load_benchmark_suite(source)
+    verification = verify_benchmark_intake_manifest(changed, manifest)
+
+    assert verification["ready"] is False
+    assert any("suite_fingerprint" in item for item in verification["errors"])
+
+
+def test_real_execution_cannot_reduce_the_frozen_sample(tmp_path: Path) -> None:
+    source = _write_real_suite(tmp_path / "real.json")
+
+    with pytest.raises(CodeAnalysisBenchmarkError, match="não pode reduzir"):
+        execute_benchmark_suite(
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            source,
+            provider="codex",
+            model="test",
+            max_cases=1,
+        )
+    with pytest.raises(CodeAnalysisBenchmarkError, match="não pode ser negativo"):
+        execute_benchmark_suite(
+            None,  # type: ignore[arg-type]
+            None,  # type: ignore[arg-type]
+            _write_suite(tmp_path / "synthetic.json"),
+            provider="codex",
+            model="test",
+            max_cases=-1,
+        )
 
 
 def test_paired_benchmark_alternates_order_and_measures_gain(tmp_path: Path) -> None:
@@ -168,9 +298,12 @@ def test_preflight_checks_coverage_symbols_and_template_placeholders(
     )
 
     assert result["ready"] is True
+    assert result["intake_manifest"]["status"] == "not_required"
     assert result["cases"][0]["symbol_checks"][0]["found"] is True
     assert result["coverage"]["classpath_status"] == "partial"
     assert template_result["ready"] is False
+    assert template_result["intake_manifest"]["status"] == "invalid"
+    assert "manifesto" in template_result["intake_manifest"]["errors"][0].casefold()
     assert "marcadores do template" in template_result["cases"][0]["errors"][-1]
 
 
@@ -222,6 +355,26 @@ def test_cli_writes_utf8_template_without_overwriting(tmp_path: Path) -> None:
     assert cli_main(["benchmark-code-analysis-template", "--output", str(output)]) == 0
     assert "título anonimizado" in output.read_text(encoding="utf-8")
     assert cli_main(["benchmark-code-analysis-template", "--output", str(output)]) == 2
+
+
+def test_cli_audits_and_freezes_real_cases_without_workspace_startup(
+    tmp_path: Path,
+) -> None:
+    source = _write_real_suite(tmp_path / "real.json")
+    manifest = tmp_path / "real.intake.json"
+
+    assert cli_main(["audit-code-analysis-cases", str(source)]) == 0
+    assert cli_main(
+        ["freeze-code-analysis-cases", str(source), "--output", str(manifest)]
+    ) == 0
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert payload["suite_id"] == "resolved-code-cases"
+    assert len(payload["suite_fingerprint"]) == 64
+    assert payload["audit"]["sensitive_finding_count"] == 0
+    assert cli_main(
+        ["freeze-code-analysis-cases", str(source), "--output", str(manifest)]
+    ) == 2
 
 
 def test_cli_prepares_and_finalizes_separate_blind_review(tmp_path: Path) -> None:

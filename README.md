@@ -366,6 +366,33 @@ custo; ele bloqueia placeholders, cobertura insuficiente e símbolos ausentes:
 O desenho, a validação contra o índice real e as regras de integridade estão em
 `design/GATE14_PREFLIGHT_REVISAO_CEGA_2026-08-30.md`.
 
+O Gate 15 acrescenta uma barreira de entrada para chamados reais. Suítes
+`anonymized` precisam conter 5–10 casos resolvidos, método de seleção, tamanho
+do conjunto candidato, revisão humana de anonimização e evidência da causa. Um
+scanner local bloqueia padrões sensíveis óbvios sem reproduzir o valor no
+relatório; ele complementa, mas não substitui, a revisão humana.
+
+```powershell
+# Auditar e congelar a seleção antes de olhar qualquer resposta
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  audit-code-analysis-cases casos-codigo.json
+
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  freeze-code-analysis-cases casos-codigo.json `
+  --output casos-codigo.intake.json
+
+# O SHA-256 do manifesto precisa continuar correspondendo à suíte
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject preflight-code-analysis casos-codigo.json `
+  --intake-manifest casos-codigo.intake.json
+```
+
+O benchmark de uma suíte real também exige
+`--intake-manifest casos-codigo.intake.json`. Qualquer alteração posterior nos
+casos ou critérios invalida o manifesto e bloqueia o envio. Contrato, limites do
+scanner e critérios estão em
+`design/GATE15_INTAKE_CASOS_REAIS_2026-08-30.md`.
+
 CLI da base:
 
 ```powershell
