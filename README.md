@@ -343,6 +343,29 @@ relatório completo é gravado em
 casos antes de usar `--approve-model-usage`: a flag confirma tanto as duas
 chamadas por caso quanto o envio do conteúdo ao provedor configurado.
 
+O Gate 14 acrescenta preflight obrigatório e revisão humana realmente cega.
+Cada caso declara módulo, JARs-alvo, causa-raiz conhecida, termos, símbolos,
+fontes esperadas e hipóteses proibidas. Execute o preflight antes de aprovar
+custo; ele bloqueia placeholders, cobertura insuficiente e símbolos ausentes:
+
+```powershell
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject preflight-code-analysis casos-codigo.json
+
+# Depois do benchmark, separar respostas A/B da chave off/on
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject prepare-code-analysis-review relatorio.json `
+  --output review.json --key-output review-key.json
+
+# Preencher review.json sem consultar a chave e então consolidar
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject finalize-code-analysis-review `
+  relatorio.json review.json review-key.json --output reviewed.json
+```
+
+O desenho, a validação contra o índice real e as regras de integridade estão em
+`design/GATE14_PREFLIGHT_REVISAO_CEGA_2026-08-30.md`.
+
 CLI da base:
 
 ```powershell

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import re
 import threading
 import time
@@ -13,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
 from .config import MarySettings
 from .db import MaryDatabase
@@ -24,6 +27,13 @@ from .orchestrator import ChatOrchestrator
 BENCHMARK_SCHEMA_VERSION = 1
 SAFE_DATA_CLASSIFICATIONS = {"anonymized", "synthetic"}
 VALID_RESPONSE_MODES = {"auto", "training", "support", "implementation"}
+PLACEHOLDER_MARKERS = {
+    "substituir",
+    "classeoumetodoconfirmado",
+    "causa conhecida",
+    "hipotese ja descartada",
+    "hipótese já descartada",
+}
 
 
 class CodeAnalysisBenchmarkError(RuntimeError):
@@ -36,8 +46,12 @@ class BenchmarkCase:
     title: str
     question: str
     response_mode: str
+    module: str
+    target_jars: tuple[str, ...]
+    known_root_cause: str
     expected_terms: tuple[str, ...]
     expected_code_symbols: tuple[str, ...]
+    expected_citation_sources: tuple[str, ...]
     forbidden_terms: tuple[str, ...]
 
 
@@ -102,14 +116,164 @@ def load_benchmark_suite(path: str | Path) -> BenchmarkSuite:
                 title=str(raw.get("title") or case_id).strip(),
                 question=question,
                 response_mode=response_mode,
+                module=str(raw.get("module") or "").strip(),
+                target_jars=_string_tuple(raw.get("target_jars")),
+                known_root_cause=str(raw.get("known_root_cause") or "").strip(),
                 expected_terms=_string_tuple(raw.get("expected_terms")),
                 expected_code_symbols=_string_tuple(
                     raw.get("expected_code_symbols")
+                ),
+                expected_citation_sources=_string_tuple(
+                    raw.get("expected_citation_sources")
                 ),
                 forbidden_terms=_string_tuple(raw.get("forbidden_terms")),
             )
         )
     return BenchmarkSuite(suite_id, release_id, classification, tuple(cases))
+
+
+def preflight_benchmark_suite(
+    suite: BenchmarkSuite,
+    root: str | Path,
+    *,
+    catalog: ErpReleaseCatalog | None = None,
+    code_index: JavaCodeIndex | None = None,
+    classpath_policy: ClasspathPolicyStore | None = None,
+) -> dict[str, Any]:
+    """Validate that cases are measurable against the selected local index."""
+
+    project_root = Path(root).resolve()
+    release_catalog = catalog or ErpReleaseCatalog(project_root)
+    index = code_index or JavaCodeIndex(project_root)
+    release = release_catalog.status(suite.release_id)
+    coverage = index.coverage(suite.release_id)
+    index_status = index.status(suite.release_id)
+    policy = classpath_policy or ClasspathPolicyStore(
+        project_root, catalog=release_catalog
+    )
+    classpath = policy.status(suite.release_id)
+    covered_jars = set(str(item) for item in coverage.get("covered_jars") or [])
+    errors: list[str] = []
+    warnings: list[str] = []
+    if release.get("state") != "ready" or release.get("freshness") != "fresh":
+        errors.append("A release selecionada não está pronta e atualizada.")
+    if int(index_status.get("sources") or 0) < 1:
+        errors.append("A release selecionada não possui fontes no índice de código.")
+    if str(classpath.get("classpath_status") or "unknown") != "resolved":
+        warnings.append(
+            "A ordem completa do classpath não foi confirmada; ambiguidades devem "
+            "permanecer explícitas nas respostas."
+        )
+
+    case_reports: list[dict[str, Any]] = []
+    for case in suite.cases:
+        case_errors: list[str] = []
+        case_warnings: list[str] = []
+        if not case.known_root_cause:
+            case_errors.append("known_root_cause é obrigatório para aferir correção.")
+        if not case.target_jars:
+            case_errors.append("target_jars precisa declarar ao menos um JAR esperado.")
+        uncovered = [item for item in case.target_jars if item not in covered_jars]
+        if uncovered:
+            case_errors.append(
+                "JARs esperados fora da cobertura integral: " + ", ".join(uncovered)
+            )
+        if not (
+            case.expected_terms
+            or case.expected_code_symbols
+            or case.expected_citation_sources
+        ):
+            case_errors.append("O caso não possui critérios objetivos esperados.")
+        placeholder_values = (
+            case.title,
+            case.question,
+            case.known_root_cause,
+            *case.expected_terms,
+            *case.expected_code_symbols,
+            *case.expected_citation_sources,
+            *case.forbidden_terms,
+        )
+        if _contains_placeholder(placeholder_values):
+            case_errors.append("O caso ainda contém marcadores do template.")
+
+        symbol_checks: list[dict[str, Any]] = []
+        for symbol in case.expected_code_symbols:
+            matches = index.search(symbol, release_id=suite.release_id, limit=10)
+            selected = next(
+                (
+                    item
+                    for item in matches
+                    if not case.target_jars
+                    or str(item.get("jar_relative_path") or "") in case.target_jars
+                ),
+                None,
+            )
+            symbol_checks.append(
+                {
+                    "symbol": symbol,
+                    "found": selected is not None,
+                    "jar_relative_path": (
+                        str(selected.get("jar_relative_path") or "")
+                        if selected
+                        else ""
+                    ),
+                    "qualified_name": (
+                        str(selected.get("qualified_name") or "") if selected else ""
+                    ),
+                    "citation": str(selected.get("citation") or "") if selected else "",
+                    "freshness": str(selected.get("freshness") or "") if selected else "",
+                    "classpath_resolution": (
+                        str(selected.get("classpath_resolution") or "")
+                        if selected
+                        else ""
+                    ),
+                }
+            )
+            if selected is None:
+                case_errors.append(
+                    f"Símbolo esperado não localizado nos JARs-alvo: {symbol}"
+                )
+            elif str(selected.get("classpath_resolution") or "") in {
+                "ambiguous",
+                "shadowed",
+                "unknown",
+            }:
+                case_warnings.append(
+                    f"{symbol}: classpath {selected.get('classpath_resolution')}."
+                )
+        case_reports.append(
+            {
+                "case_id": case.case_id,
+                "module": case.module,
+                "target_jars": list(case.target_jars),
+                "ready": not case_errors,
+                "errors": case_errors,
+                "warnings": case_warnings,
+                "symbol_checks": symbol_checks,
+            }
+        )
+
+    return {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "suite_id": suite.suite_id,
+        "release_id": suite.release_id,
+        "checked_at": _utc_now(),
+        "ready": not errors and all(item["ready"] for item in case_reports),
+        "errors": errors,
+        "warnings": warnings,
+        "coverage": {
+            "covered_jar_count": int(coverage.get("covered_jar_count") or 0),
+            "expected_jar_count": int(coverage.get("expected_jar_count") or 0),
+            "covered_jars": sorted(covered_jars, key=str.casefold),
+            "classpath_status": str(classpath.get("classpath_status") or "unknown"),
+        },
+        "index": {
+            "sources": int(index_status.get("sources") or 0),
+            "symbols": int(index_status.get("symbols") or 0),
+            "jar_count": int(index_status.get("jar_count") or 0),
+        },
+        "cases": case_reports,
+    }
 
 
 def run_paired_benchmark(
@@ -159,15 +323,20 @@ def score_variant(case: BenchmarkCase, result: dict[str, Any]) -> dict[str, Any]
     answer = str(result.get("answer") or "")
     citations = " ".join(str(item) for item in result.get("code_citations") or [])
     searchable = _normalize(f"{answer} {citations}")
+    citation_searchable = _normalize(citations)
     expected_terms = [item for item in case.expected_terms if item]
     expected_symbols = [item for item in case.expected_code_symbols if item]
+    expected_sources = [item for item in case.expected_citation_sources if item]
     matched_terms = [item for item in expected_terms if _normalize(item) in searchable]
     matched_symbols = [item for item in expected_symbols if _normalize(item) in searchable]
+    matched_sources = [
+        item for item in expected_sources if _normalize(item) in citation_searchable
+    ]
     forbidden_hits = [
         item for item in case.forbidden_terms if _normalize(item) in searchable
     ]
-    expected_total = len(expected_terms) + len(expected_symbols)
-    matched_total = len(matched_terms) + len(matched_symbols)
+    expected_total = len(expected_terms) + len(expected_symbols) + len(expected_sources)
+    matched_total = len(matched_terms) + len(matched_symbols) + len(matched_sources)
     recall = matched_total / expected_total if expected_total else None
     objective = None
     if recall is not None:
@@ -177,6 +346,7 @@ def score_variant(case: BenchmarkCase, result: dict[str, Any]) -> dict[str, Any]
         "expected_recall": round(recall, 4) if recall is not None else None,
         "matched_terms": matched_terms,
         "matched_code_symbols": matched_symbols,
+        "matched_citation_sources": matched_sources,
         "forbidden_hits": forbidden_hits,
         "grounded_code": bool(result.get("code_citations")),
         "completed": str(result.get("status") or "") == "completed",
@@ -234,6 +404,199 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "human_review_pending": len(results),
     }
+
+
+def build_blind_review_packet(
+    report: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    benchmark_id = str(report.get("benchmark_id") or "").strip()
+    results = report.get("results")
+    if not benchmark_id or not isinstance(results, list) or not results:
+        raise CodeAnalysisBenchmarkError(
+            "Relatório inválido para preparar a revisão cega."
+        )
+    review_id = f"review-{uuid.uuid4().hex[:16]}"
+    cases: list[dict[str, Any]] = []
+    mappings: dict[str, dict[str, str]] = {}
+    for item in results:
+        case = item.get("case") or {}
+        case_id = str(case.get("case_id") or "").strip()
+        if not case_id or not isinstance(item.get("off"), dict) or not isinstance(
+            item.get("on"), dict
+        ):
+            raise CodeAnalysisBenchmarkError(
+                "Relatório contém caso sem variantes off/on válidas."
+            )
+        on_first = int(
+            hashlib.sha256(f"{benchmark_id}:{case_id}".encode("utf-8")).hexdigest(),
+            16,
+        ) % 2 == 0
+        mapping = {"A": "on", "B": "off"} if on_first else {"A": "off", "B": "on"}
+        mappings[case_id] = mapping
+        responses = {
+            label: {
+                "answer": str(item[variant].get("answer") or ""),
+                "citations": [
+                    str(value) for value in item[variant].get("code_citations") or []
+                ],
+            }
+            for label, variant in mapping.items()
+        }
+        cases.append(
+            {
+                "case_id": case_id,
+                "title": str(case.get("title") or case_id),
+                "question": str(case.get("question") or ""),
+                "module": str(case.get("module") or ""),
+                "responses": responses,
+                "review": {
+                    "A": {"correctness": None, "grounding": None},
+                    "B": {"correctness": None, "grounding": None},
+                    "preferred": "",
+                    "notes": "",
+                },
+            }
+        )
+    packet = {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "review_id": review_id,
+        "benchmark_id": benchmark_id,
+        "suite_id": str(report.get("suite_id") or ""),
+        "created_at": _utc_now(),
+        "instructions": (
+            "Avalie A e B sem consultar a chave. Use notas de 0 a 4 para "
+            "correctness e grounding; preferred deve ser A, B ou tie."
+        ),
+        "cases": cases,
+    }
+    fingerprint = _blind_packet_fingerprint(packet)
+    packet["content_fingerprint"] = fingerprint
+    key = {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "review_id": review_id,
+        "benchmark_id": benchmark_id,
+        "content_fingerprint": fingerprint,
+        "created_at": _utc_now(),
+        "mappings": mappings,
+    }
+    return packet, key
+
+
+def apply_blind_review(
+    report: dict[str, Any],
+    packet: dict[str, Any],
+    key: dict[str, Any],
+) -> dict[str, Any]:
+    benchmark_id = str(report.get("benchmark_id") or "")
+    if not benchmark_id or benchmark_id != str(packet.get("benchmark_id") or ""):
+        raise CodeAnalysisBenchmarkError("Pacote de revisão não pertence ao relatório.")
+    if benchmark_id != str(key.get("benchmark_id") or ""):
+        raise CodeAnalysisBenchmarkError("Chave de revisão não pertence ao relatório.")
+    if str(packet.get("review_id") or "") != str(key.get("review_id") or ""):
+        raise CodeAnalysisBenchmarkError("Pacote e chave possuem review_id diferentes.")
+    fingerprint = _blind_packet_fingerprint(packet)
+    if fingerprint != str(packet.get("content_fingerprint") or "") or fingerprint != str(
+        key.get("content_fingerprint") or ""
+    ):
+        raise CodeAnalysisBenchmarkError(
+            "As respostas do pacote foram alteradas depois do cegamento."
+        )
+    mappings = key.get("mappings")
+    if not isinstance(mappings, dict):
+        raise CodeAnalysisBenchmarkError("Chave de revisão não possui mappings válidos.")
+    raw_packet_cases = packet.get("cases") or []
+    if not isinstance(raw_packet_cases, list):
+        raise CodeAnalysisBenchmarkError("Pacote de revisão não possui casos válidos.")
+    packet_cases = {
+        str(item.get("case_id") or ""): item
+        for item in raw_packet_cases
+        if isinstance(item, dict)
+    }
+    report_case_ids = {
+        str((item.get("case") or {}).get("case_id") or "")
+        for item in report.get("results") or []
+        if isinstance(item, dict)
+    }
+    if (
+        len(packet_cases) != len(raw_packet_cases)
+        or set(packet_cases) != report_case_ids
+        or set(mappings) != report_case_ids
+    ):
+        raise CodeAnalysisBenchmarkError(
+            "Casos do relatório, pacote e chave não correspondem exatamente."
+        )
+    if any(
+        not isinstance(mapping, dict)
+        or set(mapping) != {"A", "B"}
+        or set(str(value) for value in mapping.values()) != {"off", "on"}
+        for mapping in mappings.values()
+    ):
+        raise CodeAnalysisBenchmarkError("A chave possui mapeamento A/B inválido.")
+    reviewed = json.loads(json.dumps(report, ensure_ascii=False))
+    correctness_deltas: list[float] = []
+    grounding_deltas: list[float] = []
+    preferences: Counter[str] = Counter()
+    for item in reviewed.get("results") or []:
+        case_id = str((item.get("case") or {}).get("case_id") or "")
+        review_case = packet_cases.get(case_id)
+        mapping = mappings.get(case_id)
+        if review_case is None or not isinstance(mapping, dict):
+            raise CodeAnalysisBenchmarkError(f"Revisão ausente para o caso {case_id}.")
+        review = review_case.get("review") or {}
+        label_scores: dict[str, dict[str, float]] = {}
+        for label in ("A", "B"):
+            raw_scores = review.get(label) or {}
+            label_scores[label] = {
+                "correctness": _review_score(
+                    raw_scores.get("correctness"), case_id, label, "correctness"
+                ),
+                "grounding": _review_score(
+                    raw_scores.get("grounding"), case_id, label, "grounding"
+                ),
+            }
+        preferred_label = str(review.get("preferred") or "").strip().upper()
+        if preferred_label not in {"A", "B", "TIE"}:
+            raise CodeAnalysisBenchmarkError(
+                f"Caso {case_id}: preferred precisa ser A, B ou tie."
+            )
+        variant_scores = {
+            str(mapping[label]): label_scores[label] for label in ("A", "B")
+        }
+        preferred_variant = (
+            "tie" if preferred_label == "TIE" else str(mapping[preferred_label])
+        )
+        preferences[preferred_variant] += 1
+        correctness_deltas.append(
+            variant_scores["on"]["correctness"]
+            - variant_scores["off"]["correctness"]
+        )
+        grounding_deltas.append(
+            variant_scores["on"]["grounding"]
+            - variant_scores["off"]["grounding"]
+        )
+        item["human_review"] = {
+            "off_correctness": variant_scores["off"]["correctness"],
+            "on_correctness": variant_scores["on"]["correctness"],
+            "off_grounding": variant_scores["off"]["grounding"],
+            "on_grounding": variant_scores["on"]["grounding"],
+            "preferred": preferred_variant,
+            "notes": str(review.get("notes") or ""),
+            "review_id": str(packet.get("review_id") or ""),
+        }
+    human_summary = {
+        "reviewed_cases": len(correctness_deltas),
+        "preferences": dict(sorted(preferences.items())),
+        "mean_correctness_delta": _mean(correctness_deltas),
+        "mean_grounding_delta": _mean(grounding_deltas),
+    }
+    reviewed.setdefault("summary", {})["human_review"] = human_summary
+    reviewed["summary"]["human_review_pending"] = 0
+    reviewed["blind_review"] = {
+        "review_id": str(packet.get("review_id") or ""),
+        "content_fingerprint": fingerprint,
+        "finalized_at": _utc_now(),
+    }
+    return reviewed
 
 
 class OrchestratorBenchmarkExecutor:
@@ -379,6 +742,17 @@ def execute_benchmark_suite(
     max_cases: int = 0,
 ) -> dict[str, Any]:
     suite = load_benchmark_suite(suite_path)
+    preflight = preflight_benchmark_suite(suite, settings.root)
+    if not preflight["ready"]:
+        problems = list(preflight["errors"])
+        problems.extend(
+            f"{item['case_id']}: {error}"
+            for item in preflight["cases"]
+            for error in item["errors"]
+        )
+        raise CodeAnalysisBenchmarkError(
+            "Preflight do benchmark reprovado: " + "; ".join(problems)
+        )
     executor = OrchestratorBenchmarkExecutor(
         settings,
         database,
@@ -392,6 +766,7 @@ def execute_benchmark_suite(
     report["provider"] = provider
     report["model"] = model
     report["effort"] = effort
+    report["preflight"] = preflight
     report["code_index"] = executor.code_index_status
     output_dir = settings.index_dir / "evaluations" / "code-analysis"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -416,8 +791,14 @@ def benchmark_template() -> dict[str, Any]:
                 "title": "Substituir por título anonimizado",
                 "question": "Substituir pela pergunta anonimizada do chamado.",
                 "response_mode": "support",
+                "module": "VRPdv",
+                "target_jars": ["VRPdv.jar"],
+                "known_root_cause": (
+                    "Substituir pela causa-raiz confirmada após a resolução."
+                ),
                 "expected_terms": ["causa conhecida"],
                 "expected_code_symbols": ["ClasseOuMetodoConfirmado"],
+                "expected_citation_sources": ["VRPdv.jar"],
                 "forbidden_terms": ["hipótese já descartada"],
             }
         ],
@@ -469,6 +850,54 @@ def _normalize(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").casefold()).strip()
 
 
+def _contains_placeholder(values: tuple[str, ...]) -> bool:
+    searchable = _normalize(" ".join(values))
+    return any(_normalize(marker) in searchable for marker in PLACEHOLDER_MARKERS)
+
+
+def _blind_packet_fingerprint(packet: dict[str, Any]) -> str:
+    immutable = {
+        "review_id": str(packet.get("review_id") or ""),
+        "benchmark_id": str(packet.get("benchmark_id") or ""),
+        "cases": [
+            {
+                "case_id": str(item.get("case_id") or ""),
+                "title": str(item.get("title") or ""),
+                "question": str(item.get("question") or ""),
+                "module": str(item.get("module") or ""),
+                "responses": item.get("responses") or {},
+            }
+            for item in packet.get("cases") or []
+            if isinstance(item, dict)
+        ],
+    }
+    encoded = json.dumps(
+        immutable,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _review_score(value: object, case_id: str, label: str, field: str) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise CodeAnalysisBenchmarkError(
+            f"Caso {case_id}, resposta {label}: {field} precisa ser uma nota de 0 a 4."
+        ) from exc
+    if not math.isfinite(score) or score < 0 or score > 4:
+        raise CodeAnalysisBenchmarkError(
+            f"Caso {case_id}, resposta {label}: {field} precisa ficar entre 0 e 4."
+        )
+    return score
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
 def _ratio(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 4) if denominator else None
 
@@ -483,10 +912,13 @@ __all__ = [
     "BenchmarkSuite",
     "CodeAnalysisBenchmarkError",
     "OrchestratorBenchmarkExecutor",
+    "apply_blind_review",
     "benchmark_template",
+    "build_blind_review_packet",
     "compare_variants",
     "execute_benchmark_suite",
     "load_benchmark_suite",
+    "preflight_benchmark_suite",
     "run_paired_benchmark",
     "score_variant",
     "summarize_results",

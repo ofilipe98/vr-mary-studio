@@ -9,8 +9,12 @@ from .classification_audit import audit_classification
 from .classpath import ClasspathAnalyzer, ClasspathError, ClasspathPolicyStore
 from .code_analysis_benchmark import (
     CodeAnalysisBenchmarkError,
+    apply_blind_review,
     benchmark_template,
+    build_blind_review_packet,
     execute_benchmark_suite,
+    load_benchmark_suite,
+    preflight_benchmark_suite,
 )
 from .code_coverage import CodeCoverageError, ErpCodeCoverage
 from .code_index import JavaCodeIndex
@@ -297,7 +301,57 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirma o custo de duas execuções VR Ultra por caso",
     )
+    benchmark_preflight = sub.add_parser(
+        "preflight-code-analysis",
+        help="Valida casos, cobertura e símbolos sem chamar modelos",
+    )
+    benchmark_preflight.add_argument("cases")
+    review_prepare = sub.add_parser(
+        "prepare-code-analysis-review",
+        help="Cria pacote cego A/B e chave separada a partir de um benchmark",
+    )
+    review_prepare.add_argument("report")
+    review_prepare.add_argument("--output", required=True)
+    review_prepare.add_argument("--key-output", required=True)
+    review_finalize = sub.add_parser(
+        "finalize-code-analysis-review",
+        help="Aplica notas A/B usando a chave e consolida a revisão humana",
+    )
+    review_finalize.add_argument("report")
+    review_finalize.add_argument("review")
+    review_finalize.add_argument("key")
+    review_finalize.add_argument("--output", required=True)
     return parser
+
+
+def _read_json_object(path: str | Path, label: str) -> dict[str, object]:
+    source = Path(path).resolve()
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CodeAnalysisBenchmarkError(
+            f"Não foi possível ler {label}: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise CodeAnalysisBenchmarkError(f"{label} precisa ser um objeto JSON.")
+    return payload
+
+
+def _write_new_json(path: str | Path, payload: dict[str, object]) -> Path:
+    output = Path(path).resolve()
+    if output.exists():
+        raise CodeAnalysisBenchmarkError(f"O arquivo já existe: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return output
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -324,6 +378,44 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"output": str(output)}, ensure_ascii=False, indent=2))
         else:
             print(rendered)
+        return 0
+    if args.command == "prepare-code-analysis-review":
+        try:
+            report = _read_json_object(args.report, "o relatório")
+            packet, key = build_blind_review_packet(report)
+            output = Path(args.output).resolve()
+            key_output = Path(args.key_output).resolve()
+            if output == key_output:
+                raise CodeAnalysisBenchmarkError(
+                    "Pacote e chave precisam ser gravados em arquivos diferentes."
+                )
+            if output.exists() or key_output.exists():
+                existing = output if output.exists() else key_output
+                raise CodeAnalysisBenchmarkError(f"O arquivo já existe: {existing}")
+            written_packet = _write_new_json(output, packet)
+            written_key = _write_new_json(key_output, key)
+        except (CodeAnalysisBenchmarkError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {"review": str(written_packet), "key": str(written_key)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "finalize-code-analysis-review":
+        try:
+            report = _read_json_object(args.report, "o relatório")
+            packet = _read_json_object(args.review, "o pacote de revisão")
+            key = _read_json_object(args.key, "a chave de revisão")
+            reviewed = apply_blind_review(report, packet, key)
+            output = _write_new_json(args.output, reviewed)
+        except (CodeAnalysisBenchmarkError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps({"output": str(output)}, ensure_ascii=False, indent=2))
         return 0
     if args.command == "benchmark-code-analysis" and not args.approve_model_usage:
         print(
@@ -664,6 +756,15 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "preflight-code-analysis":
+        try:
+            suite = load_benchmark_suite(args.cases)
+            result = preflight_benchmark_suite(suite, settings.root)
+        except (CodeAnalysisBenchmarkError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     elif args.command == "benchmark-code-analysis":
         try:
             result = execute_benchmark_suite(
