@@ -153,7 +153,12 @@ try {
         if (Test-Path -LiteralPath $PortableArchive) {
             Remove-Item -LiteralPath $PortableArchive -Force
         }
-        Compress-Archive -LiteralPath $PortableRoot -DestinationPath $PortableArchive
+        # Compress-Archive usa uma implementação .NET que falha perto de 4 GB.
+        # zipfile habilita ZIP64 por padrão e preserva a pasta VRNortePortable.
+        & $Python -m zipfile -c $PortableArchive $PortableRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "Compactacao ZIP64 falhou com codigo $LASTEXITCODE"
+        }
         $ArchiveHash = (Get-FileHash -LiteralPath $PortableArchive -Algorithm SHA256).Hash
         $ChecksumPath = Join-Path $ReleaseRoot "SHA256SUMS.txt"
         $ChecksumLine = "$ArchiveHash  $([IO.Path]::GetFileName($PortableArchive))"

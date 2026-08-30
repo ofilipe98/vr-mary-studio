@@ -61,6 +61,19 @@ class UtilsTest(unittest.TestCase):
             tuple(int(value) for value in fixed_match.groups()), expected_fixed
         )
 
+    def test_portable_build_uses_zip64_capable_archiver(self):
+        root = Path(__file__).parents[1]
+        build_script = (root / "build_portable.ps1").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "& $Python -m zipfile -c $PortableArchive $PortableRoot", build_script
+        )
+        self.assertNotRegex(build_script, r"(?m)^\s*Compress-Archive\b")
+        self.assertLess(
+            build_script.index("-m zipfile -c"),
+            build_script.index("Get-FileHash -LiteralPath $PortableArchive"),
+        )
+
     def test_sanitize_filename_removes_windows_invalid_chars(self):
         self.assertEqual(sanitize_filename(' Aula: "PDV" / Frente? '), "Aula_ _PDV_ _ Frente_")
 

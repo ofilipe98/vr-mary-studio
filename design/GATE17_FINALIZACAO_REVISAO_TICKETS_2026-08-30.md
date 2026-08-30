@@ -76,3 +76,11 @@ benchmark: nenhum pode ser promovido automaticamente. A próxima ação humana �
 revisar primeiro os candidatos N2 priorizados e aprovar de 5 a 10 casos com
 causa em código comprovada. Se menos de 5 atenderem ao contrato, será necessário
 fornecer mais tickets já resolvidos com evidência técnica de desenvolvimento.
+
+## Empacotamento da versão
+
+A exportação real desta etapa ultrapassou 4 GB e expôs o limite do
+`Compress-Archive` do PowerShell. A build portátil passou a usar o módulo
+`zipfile` do Python, com ZIP64 habilitado por padrão, mantendo a pasta-raiz do
+produto dentro do arquivo. O checksum SHA-256 continua sendo calculado somente
+depois do fechamento bem-sucedido do ZIP.

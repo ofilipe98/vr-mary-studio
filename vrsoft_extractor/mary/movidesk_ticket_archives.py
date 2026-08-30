@@ -284,6 +284,8 @@ def finalize_movidesk_ticket_review(
     cases = tuple(_benchmark_case(candidate) for candidate in selected)
     packet_id = str(packet["packet_id"])
     fingerprint = str(packet["content_fingerprint"])
+    safe_packet_id = _audit_token(packet_id, group_size=4)
+    safe_fingerprint = _audit_token(fingerprint, group_size=8)
     suite = BenchmarkSuite(
         suite_id=f"movidesk-{packet_id.removeprefix('ticket-review-')}",
         release_id=normalized_release,
@@ -291,7 +293,8 @@ def finalize_movidesk_ticket_review(
         candidate_pool_size=len(candidates),
         selection_method=(
             "Seleção manual concluída antes da execução, a partir do pacote "
-            f"{packet_id} com fingerprint {fingerprint}; somente chamados com "
+            f"{safe_packet_id} com fingerprint {safe_fingerprint}; somente "
+            "chamados com "
             "causa em código e evidência de resolução confirmadas foram incluídos."
         ),
         anonymization_review_id=review_id,
@@ -492,6 +495,13 @@ def _review_string_list(
         )
     return tuple(
         dict.fromkeys(str(item).strip() for item in value if str(item).strip())
+    )
+
+
+def _audit_token(value: str, *, group_size: int) -> str:
+    return ":".join(
+        value[index : index + group_size]
+        for index in range(0, len(value), group_size)
     )
 
 
