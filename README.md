@@ -279,6 +279,15 @@ Schema/Wiki/KB e registra a degradação na trilha da execução.
 O seletor mostra cobertura efetiva, por exemplo `3/46 JARs indexados`, separada
 do inventário completo da release.
 
+O checkpoint controlado do Gate 11 chegou a 10/46 JARs, incluindo `VRPdv`,
+`VRGerenciadorNFCe`, `VRConcentrador`, `VRAutorizador` e `VRAtacado`. A medição,
+os critérios de parada e a divergência de entradas duplicadas encontrada no
+`VRAtacado.jar` estão documentados em
+`design/GATE11_EXPANSAO_CONTROLADA_PRIORITARIOS_2026-08-30.md`. `VRAtacarejo` e
+`VRMaster` permanecem pendentes até a política de classpath/duplicatas ser
+formalizada; consultas não devem escolher silenciosamente uma variante
+conflitante.
+
 ### Benchmark pareado do Agente de Código
 
 O ganho do toggle deve ser medido com chamados já resolvidos cuja causa em

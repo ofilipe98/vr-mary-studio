@@ -12,6 +12,8 @@ from vrsoft_extractor.mary.jvm_batches import (
     DecompilationBatchPlanner,
     DecompilationBatchStore,
     _class_family,
+    _java_source_candidates,
+    _missing_java_sources,
 )
 from vrsoft_extractor.mary.jvm_toolchain import DecompileRequest, DecompileResult
 
@@ -136,6 +138,30 @@ def test_class_family_preserves_legal_leading_dollar_names() -> None:
     ) == "com.google.gson.internal.$Gson$Types"
     assert _class_family("br.vr.Outer$Inner", {*known, "br.vr.Outer"}) == "br.vr.Outer"
     assert _class_family("br.vr.Outer$Inner", known) == "br.vr.Outer$Inner"
+    assert _class_family(
+        "br.vr.Outer$Inner$1", {*known, "br.vr.Outer$Inner"}
+    ) == "br.vr.Outer$Inner"
+    assert _class_family(
+        "br.vr.Outer$Inner$1", {*known, "br.vr.Outer", "br.vr.Outer$Inner"}
+    ) == "br.vr.Outer"
+
+
+def test_nested_class_accepts_any_decompiler_source_boundary() -> None:
+    known = {
+        "br.vr.Outer",
+        "br.vr.Outer$Inner",
+        "br.vr.Outer$Inner$1",
+    }
+    logical = "br.vr.Outer$Inner$1"
+
+    assert _java_source_candidates(logical, known) == {
+        "br/vr/Outer.java",
+        "br/vr/Outer$Inner.java",
+        "br/vr/Outer$Inner$1.java",
+    }
+    assert not _missing_java_sources({logical}, known, {"br/vr/Outer.java"})
+    assert not _missing_java_sources({logical}, known, {"br/vr/Outer$Inner.java"})
+    assert _missing_java_sources({logical}, known, set()) == {"br/vr/Outer.java"}
 
 
 def test_multi_release_variants_use_isolated_batches_and_normalized_inputs(

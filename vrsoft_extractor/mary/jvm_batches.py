@@ -753,6 +753,20 @@ class DecompilationBatchExecutor:
                    WHERE m.batch_id = ? ORDER BY m.ordinal""",
                 (batch["batch_id"],),
             ).fetchall()
+            namespace_names = {
+                str(row["logical_name"])
+                for row in connection.execute(
+                    """SELECT DISTINCT logical_name
+                       FROM class_occurrences
+                       WHERE release_hash = ? AND jar_relative_path = ?
+                         AND class_version = ?""",
+                    (
+                        plan["release_hash"],
+                        batch["jar_relative_path"],
+                        batch["class_version"],
+                    ),
+                ).fetchall()
+            }
         pending = [
             row
             for row in members
@@ -762,14 +776,17 @@ class DecompilationBatchExecutor:
         if not pending:
             return self._finish_completed(batch, "reused", "", [], expected=0, actual=0)
 
-        # Preserve the full batch namespace when resuming partially reused work:
-        # the outer class may already be completed while one of its nested
-        # classes is still pending.
-        known_names = {str(row["logical_name"]) for row in members}
+        # Resolve nested-class families against the whole artifact namespace.
+        # A deduplicated outer class may already be completed and therefore not
+        # be a member of this plan even though the decompiler folds a pending
+        # nested class into that outer source file.
+        known_names = namespace_names | {
+            str(row["logical_name"]) for row in members
+        }
+        logical_names = {str(row["logical_name"]) for row in members}
         expected_paths = {
-            _class_family(str(row["logical_name"]), known_names).replace(".", "/")
-            + ".java"
-            for row in members
+            _class_family(logical_name, known_names).replace(".", "/") + ".java"
+            for logical_name in logical_names
         }
         expected_sources = len(expected_paths)
 
@@ -795,7 +812,12 @@ class DecompilationBatchExecutor:
             attempts.append(result)
             actual_paths = _java_source_paths(output_dir)
             java_files = len(actual_paths)
-            if result.status == "completed" and expected_paths <= actual_paths:
+            missing = _missing_java_sources(
+                logical_names,
+                known_names,
+                actual_paths,
+            )
+            if result.status == "completed" and not missing:
                 reference = _portable_path(self.root, output_dir)
                 self._write_attempt_report(
                     attempt_dir,
@@ -818,7 +840,9 @@ class DecompilationBatchExecutor:
         errors = []
         for result in attempts:
             actual_paths = _java_source_paths(Path(result.output_dir))
-            missing = sorted(expected_paths - actual_paths)
+            missing = sorted(
+                _missing_java_sources(logical_names, known_names, actual_paths)
+            )
             errors.append(
                 {
                     "tool": result.tool,
@@ -1037,11 +1061,53 @@ def _class_family(
             simple,
         )
     else:
-        candidate = simple.split("$", 1)[0]
-        qualified_candidate = f"{package}.{candidate}" if separator else candidate
         known = {str(item) for item in known_names}
-        outer = candidate if qualified_candidate in known else simple
+        candidates = [
+            simple[:index]
+            for index, character in enumerate(simple)
+            if character == "$" and index > 0
+        ]
+        outer = next(
+            (
+                candidate
+                for candidate in candidates
+                if (f"{package}.{candidate}" if separator else candidate) in known
+            ),
+            simple,
+        )
     return f"{package}.{outer}" if separator else outer
+
+
+def _java_source_candidates(
+    logical_name: str,
+    known_names: Iterable[str] = (),
+) -> set[str]:
+    package, separator, simple = str(logical_name).rpartition(".")
+    known = {str(item) for item in known_names}
+    candidates: list[str] = []
+    for index, character in enumerate(simple):
+        if character != "$" or index <= 0:
+            continue
+        candidate = simple[:index]
+        qualified = f"{package}.{candidate}" if separator else candidate
+        if qualified in known:
+            candidates.append(qualified)
+    candidates.append(str(logical_name))
+    return {candidate.replace(".", "/") + ".java" for candidate in candidates}
+
+
+def _missing_java_sources(
+    logical_names: Iterable[str],
+    known_names: Iterable[str],
+    actual_paths: set[str],
+) -> set[str]:
+    known = {str(item) for item in known_names}
+    missing: set[str] = set()
+    for logical_name in {str(item) for item in logical_names}:
+        if _java_source_candidates(logical_name, known) & actual_paths:
+            continue
+        missing.add(_class_family(logical_name, known).replace(".", "/") + ".java")
+    return missing
 
 
 def _stable_id(prefix: str, payload: dict[str, Any]) -> str:
