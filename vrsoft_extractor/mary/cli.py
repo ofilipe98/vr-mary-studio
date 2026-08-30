@@ -26,6 +26,11 @@ from .endoo_wiki import EndooWikiSync
 from .erp_releases import ErpReleaseCatalog, ErpReleaseError
 from .migration import build_manifest, migrate
 from .movidesk import MovideskSync
+from .movidesk_ticket_archives import (
+    MovideskTicketArchiveError,
+    audit_movidesk_ticket_archives,
+    build_movidesk_ticket_review_packet,
+)
 from .portable_export import audit_portable_project, export_portable_project
 from .portable_project import ensure_portable_project
 from .indexer import export_catalog
@@ -326,6 +331,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     intake_freeze.add_argument("cases")
     intake_freeze.add_argument("--output", required=True)
+    ticket_archive_audit = sub.add_parser(
+        "audit-movidesk-ticket-archives",
+        help="Inventaria ZIPs de tickets sem expor assunto ou mensagens",
+    )
+    ticket_archive_audit.add_argument("source")
+    ticket_review_prepare = sub.add_parser(
+        "prepare-movidesk-ticket-review",
+        help="Cria pacote pseudonimizado e chave de origem separada",
+    )
+    ticket_review_prepare.add_argument("source")
+    ticket_review_prepare.add_argument("--output", required=True)
+    ticket_review_prepare.add_argument("--key-output", required=True)
     review_prepare = sub.add_parser(
         "prepare-code-analysis-review",
         help="Cria pacote cego A/B e chave separada a partir de um benchmark",
@@ -421,6 +438,44 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "output": str(output),
                     "suite_fingerprint": manifest["suite_fingerprint"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "audit-movidesk-ticket-archives":
+        try:
+            audit = audit_movidesk_ticket_archives(args.source)
+        except MovideskTicketArchiveError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(audit, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "prepare-movidesk-ticket-review":
+        try:
+            packet, key = build_movidesk_ticket_review_packet(args.source)
+            output = Path(args.output).resolve()
+            key_output = Path(args.key_output).resolve()
+            if output == key_output:
+                raise MovideskTicketArchiveError(
+                    "Pacote e chave precisam ser gravados em arquivos diferentes."
+                )
+            if output.exists() or key_output.exists():
+                existing = output if output.exists() else key_output
+                raise MovideskTicketArchiveError(f"O arquivo já existe: {existing}")
+            written_packet = _write_new_json(output, packet)
+            written_key = _write_new_json(key_output, key)
+        except (CodeAnalysisBenchmarkError, MovideskTicketArchiveError, OSError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "review": str(written_packet),
+                    "key": str(written_key),
+                    "candidate_count": len(packet["candidates"]),
+                    "safe_for_model": packet["safe_for_model"],
                 },
                 ensure_ascii=False,
                 indent=2,

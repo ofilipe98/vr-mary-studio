@@ -393,6 +393,26 @@ casos ou critérios invalida o manifesto e bloqueia o envio. Contrato, limites d
 scanner e critérios estão em
 `design/GATE15_INTAKE_CASOS_REAIS_2026-08-30.md`.
 
+O Gate 16 aceita páginas de tickets Movidesk salvas como ZIP. O inventário não
+expõe assunto nem mensagens; a preparação gera um pacote pseudonimizado e uma
+chave sensível de origem em arquivos separados. Nenhum candidato é marcado como
+elegível apenas porque o ticket está resolvido ou contém termos de código.
+
+```powershell
+# Inventário local e seguro
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  audit-movidesk-ticket-archives "C:\Caminho\Auditoria"
+
+# Revisar somente o pacote; não compartilhar a chave de origem
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  prepare-movidesk-ticket-review "C:\Caminho\Auditoria" `
+  --output tickets-review.json --key-output tickets-source-key.json
+```
+
+O pacote continua com `safe_for_model: false` até revisão humana, mesmo quando
+todos os detectores automáticos ficam zerados. Resultados e limites estão em
+`design/GATE16_INTAKE_ARQUIVOS_MOVIDESK_2026-08-30.md`.
+
 CLI da base:
 
 ```powershell

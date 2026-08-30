@@ -1172,32 +1172,71 @@ def _benchmark_sensitive_findings(suite: BenchmarkSuite) -> list[dict[str, str]]
     findings: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for case_id, field, value in fields:
-        matches: list[tuple[str, str]] = []
-        for kind, pattern in SENSITIVE_TEXT_PATTERNS:
-            matches.extend((kind, item.group(0)) for item in pattern.finditer(value))
-        for candidate in re.findall(r"(?<!\d)[\d./-]{11,18}(?!\d)", value):
-            digits = re.sub(r"\D", "", candidate)
-            if _valid_cpf(digits):
-                matches.append(("cpf", candidate))
-            elif _valid_cnpj(digits):
-                matches.append(("cnpj", candidate))
-        for kind, matched in matches:
-            fingerprint = hashlib.sha256(
-                f"{kind}:{matched.casefold()}".encode("utf-8")
-            ).hexdigest()[:12]
-            key = (case_id, field, kind, fingerprint)
+        for finding in sensitive_text_findings(value, case_id=case_id, field=field):
+            key = (
+                finding["case_id"],
+                finding["field"],
+                finding["kind"],
+                finding["fingerprint"],
+            )
             if key in seen:
                 continue
             seen.add(key)
-            findings.append(
-                {
-                    "case_id": case_id,
-                    "field": field,
-                    "kind": kind,
-                    "fingerprint": fingerprint,
-                }
-            )
+            findings.append(finding)
     return findings
+
+
+def sensitive_text_findings(
+    value: str, *, case_id: str = "", field: str = "text"
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for kind, matched in _sensitive_text_matches(value):
+        fingerprint = hashlib.sha256(
+            f"{kind}:{matched.casefold()}".encode("utf-8")
+        ).hexdigest()[:12]
+        key = (kind, fingerprint)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(
+            {
+                "case_id": case_id,
+                "field": field,
+                "kind": kind,
+                "fingerprint": fingerprint,
+            }
+        )
+    return findings
+
+
+def redact_benchmark_sensitive_text(value: str) -> str:
+    redacted = str(value or "")
+    for kind, pattern in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(f"[{kind.upper()}]", redacted)
+
+    def redact_document(match: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if _valid_cpf(digits):
+            return "[CPF]"
+        if _valid_cnpj(digits):
+            return "[CNPJ]"
+        return match.group(0)
+
+    return re.sub(r"(?<!\d)[\d./-]{11,18}(?!\d)", redact_document, redacted)
+
+
+def _sensitive_text_matches(value: str) -> list[tuple[str, str]]:
+    matches: list[tuple[str, str]] = []
+    for kind, pattern in SENSITIVE_TEXT_PATTERNS:
+        matches.extend((kind, item.group(0)) for item in pattern.finditer(value))
+    for candidate in re.findall(r"(?<!\d)[\d./-]{11,18}(?!\d)", value):
+        digits = re.sub(r"\D", "", candidate)
+        if _valid_cpf(digits):
+            matches.append(("cpf", candidate))
+        elif _valid_cnpj(digits):
+            matches.append(("cnpj", candidate))
+    return matches
 
 
 def _valid_cpf(digits: str) -> bool:
@@ -1303,8 +1342,10 @@ __all__ = [
     "load_benchmark_suite",
     "load_benchmark_intake_manifest",
     "preflight_benchmark_suite",
+    "redact_benchmark_sensitive_text",
     "run_paired_benchmark",
     "score_variant",
+    "sensitive_text_findings",
     "summarize_results",
     "verify_benchmark_intake_manifest",
 ]
