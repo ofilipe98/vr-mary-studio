@@ -1,4 +1,4 @@
-"""Searchable Java source index with release and bytecode provenance."""
+"""Searchable Java/Kotlin source index with release and bytecode provenance."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from .classpath import ClasspathResolver
 from .erp_releases import ErpReleaseCatalog
 from .java_ast import JavaAstUnavailable, parse_java_ast, tree_sitter_available
 from .jvm_batches import (
+    DECOMPILED_SOURCE_SUFFIXES,
     PROCESSING_SCHEMA_VERSION,
     DecompilationBatchError,
     DecompilationBatchStore,
@@ -23,7 +24,9 @@ from .jvm_batches import (
 
 
 CODE_INDEX_SCHEMA_VERSION = 5
-_PACKAGE_RE = re.compile(r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;")
+_PACKAGE_RE = re.compile(
+    r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;?\s*$"
+)
 _IMPORT_RE = re.compile(
     r"(?m)^\s*import\s+(static\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$*][\w$*]*)+)\s*;"
 )
@@ -242,7 +245,13 @@ class JavaCodeIndex:
                 )
                 continue
             provenance = self._batch_provenance(batch["batch_id"])
-            for source_path in sorted(output_dir.rglob("*.java")):
+            source_paths = sorted(
+                item
+                for item in output_dir.rglob("*")
+                if item.is_file()
+                and item.suffix.casefold() in DECOMPILED_SOURCE_SUFFIXES
+            )
+            for source_path in source_paths:
                 try:
                     changed = self._index_source(plan, batch, output_dir, source_path, provenance)
                 except (OSError, UnicodeError, sqlite3.Error, ValueError) as exc:
@@ -293,8 +302,11 @@ class JavaCodeIndex:
     ) -> bool:
         body = source_path.read_text(encoding="utf-8", errors="replace")
         relative_path = source_path.relative_to(output_dir).as_posix()
-        fallback_qualified = relative_path.removesuffix(".java").replace("/", ".")
-        parsed = parse_java_source(body, fallback_qualified=fallback_qualified)
+        fallback_qualified = relative_path.rsplit(".", 1)[0].replace("/", ".")
+        if source_path.suffix.casefold() == ".kt":
+            parsed = parse_kotlin_source(body, fallback_qualified=fallback_qualified)
+        else:
+            parsed = parse_java_source(body, fallback_qualified=fallback_qualified)
         rows = provenance.get(parsed.qualified_name) or provenance.get(fallback_qualified) or []
         logical_names = sorted({str(row["logical_name"]) for row in rows})
         content_hashes = sorted({str(row["content_sha256"]) for row in rows})
@@ -768,6 +780,26 @@ def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaS
             syntax_error_count=ast.syntax_error_count,
         )
     return _parse_java_source_structural(body, fallback_qualified=fallback_qualified)
+
+
+def parse_kotlin_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaSource:
+    package_match = _PACKAGE_RE.search(body)
+    package_name = package_match.group(1) if package_match else ""
+    primary_type = fallback_qualified.rsplit(".", 1)[-1] if fallback_qualified else ""
+    qualified_name = (
+        f"{package_name}.{primary_type}"
+        if package_name and primary_type
+        else fallback_qualified
+    )
+    return ParsedJavaSource(
+        package_name=package_name,
+        primary_type=primary_type,
+        qualified_name=qualified_name,
+        symbols=(),
+        relations=(),
+        parser_kind="kotlin_structural",
+        syntax_error_count=0,
+    )
 
 
 def _parse_java_source_structural(

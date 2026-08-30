@@ -25,6 +25,7 @@ from .jvm_toolchain import DecompileRequest, DecompileResult, JvmToolchain
 PROCESSING_SCHEMA_VERSION = 2
 DEFAULT_MAX_CLASSES = 500
 DEFAULT_MAX_BYTES = 32 * 1024 * 1024
+DECOMPILED_SOURCE_SUFFIXES = frozenset({".java", ".kt"})
 
 
 class DecompilationBatchError(RuntimeError):
@@ -1093,7 +1094,11 @@ def _java_source_candidates(
         if qualified in known:
             candidates.append(qualified)
     candidates.append(str(logical_name))
-    return {candidate.replace(".", "/") + ".java" for candidate in candidates}
+    return {
+        candidate.replace(".", "/") + suffix
+        for candidate in candidates
+        for suffix in DECOMPILED_SOURCE_SUFFIXES
+    }
 
 
 def _missing_java_sources(
@@ -1102,12 +1107,27 @@ def _missing_java_sources(
     actual_paths: set[str],
 ) -> set[str]:
     known = {str(item) for item in known_names}
+    actual_keys = {_java_source_path_key(item) for item in actual_paths}
     missing: set[str] = set()
     for logical_name in {str(item) for item in logical_names}:
-        if _java_source_candidates(logical_name, known) & actual_paths:
+        candidate_paths = _java_source_candidates(logical_name, known)
+        if any(_java_source_path_key(item) in actual_keys for item in candidate_paths):
             continue
         missing.add(_class_family(logical_name, known).replace(".", "/") + ".java")
     return missing
+
+
+def _java_source_path_key(
+    value: str,
+    *,
+    case_sensitive: bool | None = None,
+) -> str:
+    """Match paths using the semantics of the filesystem that stores outputs."""
+
+    normalized = str(value).replace("\\", "/")
+    if case_sensitive is None:
+        case_sensitive = os.name != "nt"
+    return normalized if case_sensitive else normalized.casefold()
 
 
 def _stable_id(prefix: str, payload: dict[str, Any]) -> str:
@@ -1147,8 +1167,8 @@ def _java_source_paths(path: Path) -> set[str]:
         return set()
     return {
         item.relative_to(path).as_posix()
-        for item in path.rglob("*.java")
-        if item.is_file()
+        for item in path.rglob("*")
+        if item.is_file() and item.suffix.casefold() in DECOMPILED_SOURCE_SUFFIXES
     }
 
 

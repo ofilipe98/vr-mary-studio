@@ -308,6 +308,13 @@ Use `set-erp-classpath ... --complete --approve` apenas quando a ordem tiver
 sido confirmada no launcher ou trace real. Declarações `Class-Path` do manifesto
 são sugestões parciais e não são promovidas automaticamente.
 
+O Gate 13 concluiu `VRAtacarejo.jar` e `VRMaster.jar`, elevando a cobertura para
+12/46 e completando os sete módulos principais. A execução real também levou o
+pipeline a aceitar fontes Java e Kotlin do Vineflower e a respeitar a semântica
+de capitalização do filesystem ao validar caminhos. Métricas, retries e
+critérios estão em
+`design/GATE13_COBERTURA_ATACAREJO_MASTER_2026-08-30.md`.
+
 ### Benchmark pareado do Agente de Código
 
 O ganho do toggle deve ser medido com chamados já resolvidos cuja causa em

@@ -7,7 +7,11 @@ import pytest
 
 import vrsoft_extractor.mary.code_index as code_index_module
 from vrsoft_extractor.mary.classpath import ClasspathAnalyzer
-from vrsoft_extractor.mary.code_index import JavaCodeIndex, parse_java_source
+from vrsoft_extractor.mary.code_index import (
+    JavaCodeIndex,
+    parse_java_source,
+    parse_kotlin_source,
+)
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import (
     DecompilationBatchExecutor,
@@ -49,6 +53,31 @@ public class Outer extends Base implements Runnable {
     public void run() {}
 }
 """,
+            encoding="utf-8",
+        )
+        shared.write_text(
+            "package br.vr;\npublic record Shared(String value) {}\n",
+            encoding="utf-8",
+        )
+        return DecompileResult(
+            tool=self.name,
+            status="completed",
+            duration_ms=4,
+            exit_code=0,
+            output_dir=str(request.output_dir),
+        )
+
+
+class _KotlinSourceAdapter:
+    name = "vineflower"
+
+    def decompile(self, request: DecompileRequest) -> DecompileResult:
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        outer = request.output_dir / "br" / "vr" / "Outer.kt"
+        shared = request.output_dir / "br" / "vr" / "Shared.java"
+        outer.parent.mkdir(parents=True, exist_ok=True)
+        outer.write_text(
+            "package br.vr\n\nfun kotlinTotal(): Int = 1\n",
             encoding="utf-8",
         )
         shared.write_text(
@@ -119,6 +148,45 @@ def test_parser_falls_back_when_native_ast_is_unavailable(monkeypatch: pytest.Mo
 
     assert parsed.qualified_name == "br.vr.Venda"
     assert parsed.parser_kind == "structural_fallback"
+
+
+def test_kotlin_parser_preserves_path_identity_and_package() -> None:
+    parsed = parse_kotlin_source(
+        "package org.springframework.beans.factory\n",
+        fallback_qualified=(
+            "org.springframework.beans.factory.BeanFactoryExtensionsKt"
+        ),
+    )
+
+    assert parsed.package_name == "org.springframework.beans.factory"
+    assert parsed.primary_type == "BeanFactoryExtensionsKt"
+    assert parsed.qualified_name.endswith(".BeanFactoryExtensionsKt")
+    assert parsed.parser_kind == "kotlin_structural"
+
+
+def test_index_accepts_kotlin_output_with_bytecode_provenance(tmp_path: Path) -> None:
+    jar = tmp_path / "ERP" / "releases" / "r1" / "jars" / "ERP.jar"
+    _jar(jar)
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    catalog.import_release("r1")
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", max_classes=20
+    )
+    execution = DecompilationBatchExecutor(
+        tmp_path, catalog=catalog, adapters=(_KotlinSourceAdapter(),)
+    ).run(plan["plan_id"])
+    index = JavaCodeIndex(tmp_path, catalog=catalog)
+
+    result = index.index_plan(plan["plan_id"])
+    matches = index.search("kotlinTotal", release_id="r1")
+
+    assert execution["executed"][0]["state"] == "completed"
+    assert result["indexed_sources"] == 2
+    assert result["errors"] == []
+    assert index.status("r1")["parser_kinds"]["kotlin_structural"]["sources"] == 1
+    assert matches[0]["qualified_name"] == "br.vr.Outer"
+    assert matches[0]["source_relative_path"] == "br/vr/Outer.kt"
+    assert matches[0]["logical_names_json"] == '["br.vr.Outer", "br.vr.Outer$Inner"]'
 
 
 def test_index_is_idempotent_and_search_returns_grounded_citation(

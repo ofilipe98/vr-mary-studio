@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from vrsoft_extractor.mary.jvm_batches import (
     DecompilationBatchStore,
     _class_family,
     _java_source_candidates,
+    _java_source_path_key,
     _missing_java_sources,
 )
 from vrsoft_extractor.mary.jvm_toolchain import DecompileRequest, DecompileResult
@@ -156,12 +158,39 @@ def test_nested_class_accepts_any_decompiler_source_boundary() -> None:
 
     assert _java_source_candidates(logical, known) == {
         "br/vr/Outer.java",
+        "br/vr/Outer.kt",
         "br/vr/Outer$Inner.java",
+        "br/vr/Outer$Inner.kt",
         "br/vr/Outer$Inner$1.java",
+        "br/vr/Outer$Inner$1.kt",
     }
     assert not _missing_java_sources({logical}, known, {"br/vr/Outer.java"})
     assert not _missing_java_sources({logical}, known, {"br/vr/Outer$Inner.java"})
+    assert not _missing_java_sources({logical}, known, {"br/vr/Outer.kt"})
     assert _missing_java_sources({logical}, known, set()) == {"br/vr/Outer.java"}
+
+
+def test_java_source_path_key_respects_output_filesystem_case_semantics() -> None:
+    upper = "COM/ibm/db2/app/Blob.java"
+    lower = "com/ibm/db2/app/Blob.java"
+
+    assert _java_source_path_key(upper, case_sensitive=False) == _java_source_path_key(
+        lower, case_sensitive=False
+    )
+    assert _java_source_path_key(upper, case_sensitive=True) != _java_source_path_key(
+        lower, case_sensitive=True
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS output is case-insensitive")
+def test_missing_sources_accepts_decompiler_directory_case_on_windows() -> None:
+    logical = "COM.ibm.db2.app.Blob"
+
+    assert not _missing_java_sources(
+        {logical},
+        {logical},
+        {"com/ibm/db2/app/Blob.java"},
+    )
 
 
 def test_multi_release_variants_use_isolated_batches_and_normalized_inputs(
