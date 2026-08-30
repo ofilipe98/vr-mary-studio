@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from .classpath import ClasspathResolver
 from .erp_releases import ErpReleaseCatalog
 from .java_ast import JavaAstUnavailable, parse_java_ast, tree_sitter_available
 from .jvm_batches import (
@@ -428,6 +429,7 @@ class JavaCodeIndex:
         query: str,
         *,
         release_id: str = "",
+        classpath_profile: str = "",
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         self.initialize()
@@ -478,8 +480,9 @@ class JavaCodeIndex:
         results = sorted(
             selected.values(),
             key=lambda item: (-float(item["score"]), str(item["qualified_name"]).casefold()),
-        )[: max(1, int(limit))]
+        )
         freshness_cache: dict[str, dict[str, Any]] = {}
+        resolver = ClasspathResolver(self.root, catalog=self.catalog)
         for item in results:
             current_release = str(item["release_id"])
             if current_release not in freshness_cache:
@@ -491,6 +494,7 @@ class JavaCodeIndex:
                 if item["freshness"] != "fresh"
                 else ""
             )
+            resolver.annotate(item, classpath_profile)
             matched_line = int(item.get("matched_line") or 0)
             line_start, line_end, excerpt = _source_excerpt(
                 item["body"], tokens, preferred_line=matched_line
@@ -502,12 +506,21 @@ class JavaCodeIndex:
                 f"Código ERP release {item['release_id']}, JAR {item['jar_relative_path']}, "
                 f"classe {item['qualified_name']}, bytecode "
                 f"{_class_version_label(item['class_version'])}, "
+                f"classpath {item['classpath_resolution']}, "
                 f"linhas {item['line_start']}-{line_end}, "
                 f"SHA-256 {item['source_sha256']}"
             )
             item.pop("body", None)
             item.pop("symbols_text", None)
-        return results
+        if classpath_profile:
+            results.sort(
+                key=lambda item: (
+                    _classpath_rank(str(item.get("classpath_resolution") or "")),
+                    -float(item["score"]),
+                    str(item["qualified_name"]).casefold(),
+                )
+            )
+        return results[: max(1, int(limit))]
 
     def status(self, release_id: str = "") -> dict[str, Any]:
         self.initialize()
@@ -646,6 +659,7 @@ class JavaCodeIndex:
         target: str,
         *,
         release_id: str = "",
+        classpath_profile: str = "",
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Return grounded syntactic callers without claiming classpath resolution."""
@@ -664,8 +678,9 @@ class JavaCodeIndex:
                 f"""SELECT r.kind, r.target, r.source_symbol, r.confidence,
                             r.line_start, s.release_id, s.release_hash,
                             s.jar_relative_path, s.qualified_name, s.class_version,
-                            s.source_sha256,
-                            s.parser_kind, s.syntax_error_count, s.body
+                            s.source_sha256, s.logical_names_json,
+                            s.content_hashes_json, s.parser_kind,
+                            s.syntax_error_count, s.body
                      FROM code_relations r
                      JOIN code_sources s ON s.id = r.source_id
                      WHERE r.kind IN ('calls', 'constructs')
@@ -678,6 +693,7 @@ class JavaCodeIndex:
                 params,
             ).fetchall()
         freshness_cache: dict[str, dict[str, Any]] = {}
+        resolver = ClasspathResolver(self.root, catalog=self.catalog)
         results: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
@@ -690,6 +706,7 @@ class JavaCodeIndex:
                 if item["freshness"] != "fresh"
                 else ""
             )
+            resolver.annotate(item, classpath_profile)
             line_start, line_end, excerpt = _source_excerpt(
                 str(item.pop("body")),
                 _search_tokens(normalized),
@@ -704,16 +721,35 @@ class JavaCodeIndex:
                 f"Código ERP release {item['release_id']}, JAR {item['jar_relative_path']}, "
                 f"classe {item['qualified_name']}, bytecode "
                 f"{_class_version_label(item['class_version'])}, "
+                f"classpath {item['classpath_resolution']}, "
                 f"linhas {line_start}-{line_end}, "
                 f"SHA-256 {item['source_sha256']}"
             )
             results.append(item)
-        return results
+        if classpath_profile:
+            results.sort(
+                key=lambda item: (
+                    _classpath_rank(str(item.get("classpath_resolution") or "")),
+                    -float(item.get("confidence") or 0.0),
+                    str(item.get("qualified_name") or "").casefold(),
+                )
+            )
+        return results[: max(1, int(limit))]
 
 
 def _class_version_label(value: object) -> str:
     version = int(value or 0)
     return "base" if version == 0 else f"Java {version}"
+
+
+def _classpath_rank(value: str) -> int:
+    return {
+        "resolved": 0,
+        "unique": 1,
+        "ambiguous": 2,
+        "unknown": 3,
+        "shadowed": 4,
+    }.get(value, 5)
 
 
 def parse_java_source(body: str, *, fallback_qualified: str = "") -> ParsedJavaSource:

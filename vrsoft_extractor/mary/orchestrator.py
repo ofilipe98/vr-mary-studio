@@ -1067,6 +1067,13 @@ class ChatOrchestrator:
                     code_candidates: list[EvidenceCandidate] = []
                     code_claims: list[EvidenceClaim] = []
                     for result in code_results:
+                        code_confidence = (
+                            0.85
+                            if result["freshness"] == "fresh"
+                            and result.get("classpath_resolution")
+                            in {"unique", "resolved"}
+                            else 0.45
+                        )
                         evidence_id = f"code:{str(result['source_key'])[:20]}"
                         title = (
                             f"Código {result['release_id']} · {result['jar_relative_path']} · "
@@ -1092,9 +1099,7 @@ class ChatOrchestrator:
                                 ),
                                 updated_at=str(result["indexed_at"]),
                                 score=float(result["score"]),
-                                confidence=(
-                                    0.85 if result["freshness"] == "fresh" else 0.45
-                                ),
+                                confidence=code_confidence,
                             )
                         )
                         code_claims.append(
@@ -1105,9 +1110,7 @@ class ChatOrchestrator:
                                 ),
                                 evidence_ids=(evidence_id,),
                                 kind="fact",
-                                confidence=(
-                                    0.85 if result["freshness"] == "fresh" else 0.45
-                                ),
+                                confidence=code_confidence,
                                 worker_id="fanout_codigo",
                             )
                         )
@@ -1126,9 +1129,13 @@ class ChatOrchestrator:
                         ),
                         warnings=tuple(
                             dict.fromkeys(
-                                str(item.get("freshness_warning") or "")
+                                str(warning)
                                 for item in code_results
-                                if item.get("freshness_warning")
+                                for warning in (
+                                    item.get("freshness_warning"),
+                                    item.get("classpath_warning"),
+                                )
+                                if warning
                             )
                         ),
                         sources=tuple(item.evidence_id for item in code_candidates),

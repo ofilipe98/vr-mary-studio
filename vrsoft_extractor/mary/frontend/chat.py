@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
 from .text_rendering import FENCE_RE, code_language_badge
+from ..classpath import ClasspathError, ClasspathPolicyStore
 from ..code_index import JavaCodeIndex
 from ..config import MarySettings
 from ..db import MaryDatabase
@@ -1869,7 +1870,17 @@ class ChatBridge(QObject):
                 sqlite3.Error,
             ):
                 coverage = {}
+            try:
+                classpath = ClasspathPolicyStore(self._settings.root).status(release_id)
+            except (ClasspathError, ErpReleaseError, OSError, ValueError, sqlite3.Error):
+                classpath = {}
             covered_jar_count = int(coverage.get("covered_jar_count") or 0)
+            classpath_status = str(classpath.get("classpath_status") or "unknown")
+            classpath_label = {
+                "resolved": "classpath resolvido",
+                "partial": "classpath parcial",
+                "unknown": "classpath desconhecido",
+            }.get(classpath_status, f"classpath {classpath_status}")
             freshness_label = {
                 "fresh": "atualizado",
                 "stale": "desatualizado",
@@ -1880,13 +1891,26 @@ class ChatBridge(QObject):
                     "releaseId": release_id,
                     "label": (
                         f"{release_id} · {covered_jar_count}/{jar_count} JARs "
-                        f"indexados · {freshness_label}"
+                        f"indexados · {freshness_label} · {classpath_label}"
                     ),
                     "freshness": freshness,
                     "state": str(status.get("state") or "incomplete"),
                     "coveredJarCount": covered_jar_count,
                     "jarCount": jar_count,
-                    "warning": " ".join(str(item) for item in status.get("warnings") or []),
+                    "classpathStatus": classpath_status,
+                    "warning": " ".join(
+                        [
+                            *(str(item) for item in status.get("warnings") or []),
+                            *(
+                                [
+                                    "A ordem efetiva do classpath ainda não foi confirmada; "
+                                    "resultados conflitantes serão sinalizados."
+                                ]
+                                if classpath_status != "resolved"
+                                else []
+                            ),
+                        ]
+                    ),
                 }
             )
         self._code_analysis_release_items = items

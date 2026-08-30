@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import vrsoft_extractor.mary.code_index as code_index_module
+from vrsoft_extractor.mary.classpath import ClasspathAnalyzer
 from vrsoft_extractor.mary.code_index import JavaCodeIndex, parse_java_source
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import (
@@ -149,12 +150,19 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert type_results[0]["matched_kind"] == "class"
     assert results[0]["jar_relative_path"] == "ERP.jar"
     assert results[0]["freshness"] == "fresh"
+    assert results[0]["classpath_resolution"] == "unknown"
+    assert "ainda não cobre" in results[0]["classpath_warning"]
     assert "calcularTotal" in results[0]["excerpt"]
     assert results[0]["class_version"] == 0
     assert "bytecode base" in results[0]["citation"]
     assert results[0]["line_start"] <= results[0]["matched_line"] <= results[0]["line_end"]
     assert "Código ERP release r1" in results[0]["citation"]
     assert len(results[0]["source_sha256"]) == 64
+
+    ClasspathAnalyzer(index.root, catalog=index.catalog).analyze("r1")
+    resolved = index.search("Outer", release_id="r1")[0]
+    assert resolved["classpath_resolution"] == "unique"
+    assert "classpath unique" in resolved["citation"]
 
     callers = index.callers("registrar", release_id="r1")
     constructors = index.callers("Calculadora", release_id="r1")

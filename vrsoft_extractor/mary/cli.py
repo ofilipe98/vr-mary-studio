@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .classification_audit import audit_classification
+from .classpath import ClasspathAnalyzer, ClasspathError, ClasspathPolicyStore
 from .code_analysis_benchmark import (
     CodeAnalysisBenchmarkError,
     benchmark_template,
@@ -145,6 +146,40 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Caminho relativo de um JAR; pode ser repetido. Sem opção, usa todos.",
     )
+    classpath_inspect = sub.add_parser(
+        "inspect-erp-classpath",
+        help="Indexa duplicatas e a variante efetiva selecionada pelo runtime Java",
+    )
+    classpath_inspect.add_argument("release_id")
+    classpath_inspect.add_argument("--jar", action="append", default=[])
+    classpath_status = sub.add_parser(
+        "status-erp-classpath",
+        help="Mostra análise, perfis e estado de resolução do classpath",
+    )
+    classpath_status.add_argument("release_id")
+    classpath_status.add_argument("--profile", default="")
+    classpath_set = sub.add_parser(
+        "set-erp-classpath",
+        help="Grava uma ordem de JARs explícita para um perfil da release",
+    )
+    classpath_set.add_argument("release_id")
+    classpath_set.add_argument("profile_id")
+    classpath_set.add_argument(
+        "--jar",
+        action="append",
+        default=[],
+        help="JAR na ordem do classpath; repita na ordem efetiva",
+    )
+    classpath_set.add_argument(
+        "--complete",
+        action="store_true",
+        help="Declara que a ordem informada representa o classpath completo do perfil",
+    )
+    classpath_set.add_argument(
+        "--approve",
+        action="store_true",
+        help="Confirma explicitamente a gravação da política",
+    )
     erp_remove = sub.add_parser(
         "remove-erp-release-index",
         help="Remove apenas o índice gerado de uma release",
@@ -201,6 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     code_search.add_argument("query")
     code_search.add_argument("--release", default="")
+    code_search.add_argument("--profile", default="")
     code_search.add_argument("--limit", type=int, default=10)
     code_status = sub.add_parser(
         "status-erp-code",
@@ -235,6 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     code_callers.add_argument("target")
     code_callers.add_argument("--release", default="")
+    code_callers.add_argument("--profile", default="")
     code_callers.add_argument("--limit", type=int, default=50)
     benchmark_template_parser = sub.add_parser(
         "benchmark-code-analysis-template",
@@ -480,6 +517,38 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if not result["errors"] else 2
+    elif args.command == "inspect-erp-classpath":
+        try:
+            result = ClasspathAnalyzer(settings.root).analyze(
+                args.release_id, args.jar
+            )
+        except (ClasspathError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result["errors"] else 2
+    elif args.command == "status-erp-classpath":
+        try:
+            result = ClasspathPolicyStore(settings.root).status(
+                args.release_id, args.profile
+            )
+        except (ClasspathError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "set-erp-classpath":
+        try:
+            result = ClasspathPolicyStore(settings.root).set_profile(
+                args.release_id,
+                args.profile_id,
+                args.jar,
+                complete=args.complete,
+                approved=args.approve,
+            )
+        except (ClasspathError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "remove-erp-release-index":
         catalog = ErpReleaseCatalog(settings.root)
         try:
@@ -546,9 +615,10 @@ def main(argv: list[str] | None = None) -> int:
             result = JavaCodeIndex(settings.root).search(
                 args.query,
                 release_id=args.release,
+                classpath_profile=args.profile,
                 limit=args.limit,
             )
-        except (DecompilationBatchError, ErpReleaseError) as exc:
+        except (ClasspathError, DecompilationBatchError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -587,9 +657,10 @@ def main(argv: list[str] | None = None) -> int:
             result = JavaCodeIndex(settings.root).callers(
                 args.target,
                 release_id=args.release,
+                classpath_profile=args.profile,
                 limit=args.limit,
             )
-        except (DecompilationBatchError, ErpReleaseError) as exc:
+        except (ClasspathError, DecompilationBatchError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))

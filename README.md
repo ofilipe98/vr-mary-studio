@@ -288,6 +288,26 @@ os critérios de parada e a divergência de entradas duplicadas encontrada no
 formalizada; consultas não devem escolher silenciosamente uma variante
 conflitante.
 
+O Gate 12 formaliza essa política em
+`design/GATE12_CLASSPATH_DUPLICATAS_2026-08-30.md`. A análise incremental grava
+a variante que `java.util.jar.JarFile` realmente seleciona dentro de cada JAR e
+cruza conflitos entre artefatos. Sem um perfil completo, a busca devolve
+`classpath_resolution: ambiguous` e o Agente de Código reduz a confiança.
+
+```powershell
+# Analisar os 46 JARs; artefatos já conhecidos são reutilizados por SHA-256
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject inspect-erp-classpath current
+
+# Conferir perfis candidatos e política efetiva
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject status-erp-classpath current
+```
+
+Use `set-erp-classpath ... --complete --approve` apenas quando a ordem tiver
+sido confirmada no launcher ou trace real. Declarações `Class-Path` do manifesto
+são sugestões parciais e não são promovidas automaticamente.
+
 ### Benchmark pareado do Agente de Código
 
 O ganho do toggle deve ser medido com chamados já resolvidos cuja causa em

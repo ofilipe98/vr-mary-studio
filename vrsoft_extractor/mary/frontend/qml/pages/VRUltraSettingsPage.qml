@@ -292,6 +292,21 @@ Item {
                         }
                     }
                 }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: {
+                        var index = codeReleasePicker.currentIndex
+                        if (index < 0 || index >= chat.codeAnalysisReleaseItems.length)
+                            return ""
+                        return chat.codeAnalysisReleaseItems[index].warning || ""
+                    }
+                    color: frontend.palette.warning
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
             }
         }
 

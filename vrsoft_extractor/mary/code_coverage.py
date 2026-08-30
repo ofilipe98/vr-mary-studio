@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
+from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
 from .erp_releases import ErpReleaseCatalog
 from .jvm_batches import (
@@ -110,6 +111,9 @@ class ErpCodeCoverage:
         else:
             capacity_state = "ready"
         total = len(all_jars)
+        classpath = ClasspathPolicyStore(
+            self.root, catalog=self.catalog
+        ).status(release_id)
         return {
             "release": release,
             "release_manifest_sha256": release_hash,
@@ -133,8 +137,9 @@ class ErpCodeCoverage:
                 "conservative_forecast_bytes": forecast_bytes,
                 "state": capacity_state,
             },
-            "classpath_order_known": bool(manifest.get("classpath_order_known")),
-            "classpath_status": str(manifest.get("classpath_status") or "unknown"),
+            "classpath_order_known": bool(classpath.get("classpath_order_known")),
+            "classpath_status": str(classpath.get("classpath_status") or "unknown"),
+            "classpath": classpath,
         }
 
     def advance(

@@ -1006,6 +1006,13 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertFalse(bridge.codeAnalysisEnabled)
             self.assertEqual(bridge.codeAnalysisRelease, "current")
             self.assertIn("0/1 JARs indexados", bridge.codeAnalysisReleaseItems[0]["label"])
+            self.assertIn(
+                "classpath desconhecido", bridge.codeAnalysisReleaseItems[0]["label"]
+            )
+            self.assertIn(
+                "resultados conflitantes",
+                bridge.codeAnalysisReleaseItems[0]["warning"],
+            )
             bridge.setCodeAnalysisEnabled(True)
             bridge.setCodeAnalysisRelease("2026.08.29")
 
