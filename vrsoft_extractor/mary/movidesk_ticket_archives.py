@@ -8,6 +8,7 @@ import re
 import uuid
 import zipfile
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -15,6 +16,12 @@ from bs4 import BeautifulSoup
 
 from .classifier import classify
 from .code_analysis_benchmark import (
+    BENCHMARK_SCHEMA_VERSION,
+    BenchmarkCase,
+    BenchmarkSuite,
+    CodeAnalysisBenchmarkError,
+    audit_benchmark_intake,
+    build_benchmark_intake_manifest,
     redact_benchmark_sensitive_text,
     sensitive_text_findings,
 )
@@ -191,6 +198,9 @@ def build_movidesk_ticket_review_packet(
                     "anonymization_approved": False,
                     "eligible_for_code_benchmark": False,
                     "paired_candidate_id": "",
+                    "benchmark_title": "",
+                    "benchmark_question": "",
+                    "resolved_at": "",
                     "module": "",
                     "target_jars": [],
                     "known_root_cause": "",
@@ -233,6 +243,256 @@ def build_movidesk_ticket_review_packet(
         "mappings": mappings,
     }
     return packet, key
+
+
+def finalize_movidesk_ticket_review(
+    packet: dict[str, Any],
+    key: dict[str, Any],
+    *,
+    release_id: str,
+    anonymization_review_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Turn an approved local ticket review into a frozen benchmark suite."""
+
+    candidates = _validate_review_integrity(packet, key)
+    selected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        review = candidate.get("review")
+        if not isinstance(review, dict):
+            raise MovideskTicketArchiveError(
+                f"Candidato {candidate['candidate_id']} não possui bloco review válido."
+            )
+        _review_boolean(review, "anonymization_approved", candidate["candidate_id"])
+        eligible = _review_boolean(
+            review, "eligible_for_code_benchmark", candidate["candidate_id"]
+        )
+        if eligible:
+            selected.append(candidate)
+
+    if not 5 <= len(selected) <= 10:
+        raise MovideskTicketArchiveError(
+            "Selecione entre 5 e 10 candidatos elegíveis para o benchmark; "
+            f"foram selecionados {len(selected)}."
+        )
+
+    normalized_release = str(release_id or "").strip()
+    if not normalized_release:
+        raise MovideskTicketArchiveError(
+            "release_id é obrigatório e precisa ser escolhido explicitamente."
+        )
+    review_id = str(anonymization_review_id or "").strip()
+    cases = tuple(_benchmark_case(candidate) for candidate in selected)
+    packet_id = str(packet["packet_id"])
+    fingerprint = str(packet["content_fingerprint"])
+    suite = BenchmarkSuite(
+        suite_id=f"movidesk-{packet_id.removeprefix('ticket-review-')}",
+        release_id=normalized_release,
+        data_classification="anonymized",
+        candidate_pool_size=len(candidates),
+        selection_method=(
+            "Seleção manual concluída antes da execução, a partir do pacote "
+            f"{packet_id} com fingerprint {fingerprint}; somente chamados com "
+            "causa em código e evidência de resolução confirmadas foram incluídos."
+        ),
+        anonymization_review_id=review_id,
+        cases=cases,
+    )
+    audit = audit_benchmark_intake(suite)
+    if not audit["ready"]:
+        raise MovideskTicketArchiveError(
+            "Revisão não pode ser finalizada: "
+            + "; ".join(str(item) for item in audit["errors"])
+        )
+    try:
+        manifest = build_benchmark_intake_manifest(suite)
+    except CodeAnalysisBenchmarkError as exc:
+        raise MovideskTicketArchiveError(str(exc)) from exc
+    manifest["source_review"] = {
+        "packet_id": packet_id,
+        "content_fingerprint": fingerprint,
+        "source_set_fingerprint": str(packet["source_set_fingerprint"]),
+        "source_key_verified": True,
+        "selected_candidate_ids": [case.case_id for case in cases],
+    }
+    suite_payload = {"schema_version": BENCHMARK_SCHEMA_VERSION, **asdict(suite)}
+    return suite_payload, manifest
+
+
+def _validate_review_integrity(
+    packet: dict[str, Any], key: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if not isinstance(packet, dict) or not isinstance(key, dict):
+        raise MovideskTicketArchiveError("Pacote e chave precisam ser objetos JSON.")
+    if int(packet.get("schema_version") or 0) != ARCHIVE_SCHEMA_VERSION:
+        raise MovideskTicketArchiveError("schema_version inválido no pacote.")
+    if int(key.get("schema_version") or 0) != ARCHIVE_SCHEMA_VERSION:
+        raise MovideskTicketArchiveError("schema_version inválido na chave.")
+    packet_id = str(packet.get("packet_id") or "")
+    if not packet_id or packet_id != str(key.get("packet_id") or ""):
+        raise MovideskTicketArchiveError("Pacote e chave não possuem o mesmo packet_id.")
+    source_fingerprint = str(packet.get("source_set_fingerprint") or "")
+    if not source_fingerprint or source_fingerprint != str(
+        key.get("source_set_fingerprint") or ""
+    ):
+        raise MovideskTicketArchiveError(
+            "Pacote e chave não possuem o mesmo source_set_fingerprint."
+        )
+    expected = str(packet.get("content_fingerprint") or "")
+    if not expected or expected != str(key.get("content_fingerprint") or ""):
+        raise MovideskTicketArchiveError(
+            "Pacote e chave não possuem o mesmo content_fingerprint."
+        )
+    try:
+        actual = _packet_fingerprint(packet)
+    except (KeyError, TypeError) as exc:
+        raise MovideskTicketArchiveError(
+            "Estrutura imutável do pacote de revisão é inválida."
+        ) from exc
+    if actual != expected:
+        raise MovideskTicketArchiveError(
+            "O conteúdo imutável do pacote foi alterado depois da preparação."
+        )
+    candidates = packet.get("candidates")
+    mappings = key.get("mappings")
+    if not isinstance(candidates, list) or not candidates:
+        raise MovideskTicketArchiveError("O pacote não possui candidatos.")
+    if not isinstance(mappings, dict):
+        raise MovideskTicketArchiveError("A chave não possui mappings válidos.")
+    candidate_ids: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise MovideskTicketArchiveError("Candidato do pacote não é um objeto.")
+        candidate_id = str(candidate.get("candidate_id") or "")
+        if not candidate_id or candidate_id in candidate_ids:
+            raise MovideskTicketArchiveError(
+                "O pacote possui candidate_id ausente ou duplicado."
+            )
+        candidate_ids.append(candidate_id)
+        mapping = mappings.get(candidate_id)
+        mapped_sha256 = (
+            str(mapping.get("archive_sha256") or "")
+            if isinstance(mapping, dict)
+            else ""
+        )
+        if mapped_sha256 != str(candidate.get("archive_sha256") or ""):
+            raise MovideskTicketArchiveError(
+                f"Mapeamento de origem inválido para {candidate_id}."
+            )
+    if set(candidate_ids) != set(str(item) for item in mappings):
+        raise MovideskTicketArchiveError(
+            "A chave não corresponde exatamente aos candidatos do pacote."
+        )
+    return candidates
+
+
+def _review_boolean(review: dict[str, Any], field: str, candidate_id: str) -> bool:
+    value = review.get(field)
+    if not isinstance(value, bool):
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: {field} precisa ser true ou false."
+        )
+    return value
+
+
+def _benchmark_case(candidate: dict[str, Any]) -> BenchmarkCase:
+    candidate_id = str(candidate["candidate_id"])
+    review = candidate["review"]
+    if review["anonymization_approved"] is not True:
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: candidato elegível sem aprovação de anonimização."
+        )
+    redaction = candidate.get("automated_redaction")
+    if not isinstance(redaction, dict) or int(
+        redaction.get("remaining_sensitive_pattern_count") or 0
+    ):
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: a redação automática ainda possui alerta sensível."
+        )
+
+    required_text = {
+        "benchmark_title": 5,
+        "benchmark_question": 20,
+        "module": 1,
+        "known_root_cause": 20,
+        "root_cause_evidence": 20,
+        "resolved_at": 1,
+    }
+    text: dict[str, str] = {}
+    for field, minimum in required_text.items():
+        value = str(review.get(field) or "").strip()
+        if len(value) < minimum:
+            raise MovideskTicketArchiveError(
+                f"{candidate_id}: {field} precisa ter ao menos {minimum} caracteres."
+            )
+        text[field] = value
+
+    lists = {
+        field: _review_string_list(review, field, candidate_id)
+        for field in (
+            "target_jars",
+            "expected_terms",
+            "expected_code_symbols",
+            "expected_citation_sources",
+            "forbidden_terms",
+        )
+    }
+    for field in (
+        "target_jars",
+        "expected_terms",
+        "expected_code_symbols",
+        "expected_citation_sources",
+    ):
+        if not lists[field]:
+            raise MovideskTicketArchiveError(
+                f"{candidate_id}: {field} precisa conter ao menos um item."
+            )
+    if any(not item.casefold().endswith(".jar") for item in lists["target_jars"]):
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: cada target_jars precisa terminar em .jar."
+        )
+
+    manual_fields = [
+        *text.values(),
+        *(item for values in lists.values() for item in values),
+    ]
+    findings = [
+        finding
+        for value in manual_fields
+        for finding in sensitive_text_findings(value, case_id=candidate_id)
+    ]
+    if findings:
+        kinds = ", ".join(sorted({str(item["kind"]) for item in findings}))
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: campos manuais contêm padrões sensíveis ({kinds})."
+        )
+    return BenchmarkCase(
+        case_id=candidate_id,
+        title=text["benchmark_title"],
+        question=text["benchmark_question"],
+        response_mode="support",
+        module=text["module"],
+        target_jars=lists["target_jars"],
+        known_root_cause=text["known_root_cause"],
+        root_cause_evidence=text["root_cause_evidence"],
+        resolved_at=text["resolved_at"],
+        expected_terms=lists["expected_terms"],
+        expected_code_symbols=lists["expected_code_symbols"],
+        expected_citation_sources=lists["expected_citation_sources"],
+        forbidden_terms=lists["forbidden_terms"],
+    )
+
+
+def _review_string_list(
+    review: dict[str, Any], field: str, candidate_id: str
+) -> tuple[str, ...]:
+    value = review.get(field)
+    if not isinstance(value, list):
+        raise MovideskTicketArchiveError(
+            f"{candidate_id}: {field} precisa ser uma lista."
+        )
+    return tuple(
+        dict.fromkeys(str(item).strip() for item in value if str(item).strip())
+    )
 
 
 def _source_root(root: str | Path) -> Path:
@@ -518,4 +778,5 @@ __all__ = [
     "MovideskTicketArchiveError",
     "audit_movidesk_ticket_archives",
     "build_movidesk_ticket_review_packet",
+    "finalize_movidesk_ticket_review",
 ]

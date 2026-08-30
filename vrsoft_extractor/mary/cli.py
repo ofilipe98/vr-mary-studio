@@ -30,6 +30,7 @@ from .movidesk_ticket_archives import (
     MovideskTicketArchiveError,
     audit_movidesk_ticket_archives,
     build_movidesk_ticket_review_packet,
+    finalize_movidesk_ticket_review,
 )
 from .portable_export import audit_portable_project, export_portable_project
 from .portable_project import ensure_portable_project
@@ -343,6 +344,16 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_review_prepare.add_argument("source")
     ticket_review_prepare.add_argument("--output", required=True)
     ticket_review_prepare.add_argument("--key-output", required=True)
+    ticket_review_finalize = sub.add_parser(
+        "finalize-movidesk-ticket-review",
+        help="Valida a revisão humana e congela suíte e manifesto do benchmark",
+    )
+    ticket_review_finalize.add_argument("review")
+    ticket_review_finalize.add_argument("key")
+    ticket_review_finalize.add_argument("--release", required=True)
+    ticket_review_finalize.add_argument("--anonymization-review-id", required=True)
+    ticket_review_finalize.add_argument("--output", required=True)
+    ticket_review_finalize.add_argument("--manifest-output", required=True)
     review_prepare = sub.add_parser(
         "prepare-code-analysis-review",
         help="Cria pacote cego A/B e chave separada a partir de um benchmark",
@@ -389,6 +400,48 @@ def _write_new_json(path: str | Path, payload: dict[str, object]) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return output
+
+
+def _write_new_json_pair(
+    first_path: str | Path,
+    first_payload: dict[str, object],
+    second_path: str | Path,
+    second_payload: dict[str, object],
+) -> tuple[Path, Path]:
+    first = Path(first_path).resolve()
+    second = Path(second_path).resolve()
+    if first == second:
+        raise CodeAnalysisBenchmarkError(
+            "Os dois documentos precisam ser gravados em arquivos diferentes."
+        )
+    if first.exists() or second.exists():
+        existing = first if first.exists() else second
+        raise CodeAnalysisBenchmarkError(f"O arquivo já existe: {existing}")
+    first.parent.mkdir(parents=True, exist_ok=True)
+    second.parent.mkdir(parents=True, exist_ok=True)
+    first_temporary = first.with_name(f".{first.name}.tmp")
+    second_temporary = second.with_name(f".{second.name}.tmp")
+    written_first = False
+    try:
+        first_temporary.write_text(
+            json.dumps(first_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        second_temporary.write_text(
+            json.dumps(second_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        first_temporary.replace(first)
+        written_first = True
+        second_temporary.replace(second)
+    except Exception:
+        if written_first:
+            first.unlink(missing_ok=True)
+        raise
+    finally:
+        first_temporary.unlink(missing_ok=True)
+        second_temporary.unlink(missing_ok=True)
+    return first, second
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -476,6 +529,43 @@ def main(argv: list[str] | None = None) -> int:
                     "key": str(written_key),
                     "candidate_count": len(packet["candidates"]),
                     "safe_for_model": packet["safe_for_model"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "finalize-movidesk-ticket-review":
+        try:
+            packet = _read_json_object(args.review, "o pacote de tickets")
+            key = _read_json_object(args.key, "a chave de origem")
+            suite, manifest = finalize_movidesk_ticket_review(
+                packet,
+                key,
+                release_id=args.release,
+                anonymization_review_id=args.anonymization_review_id,
+            )
+            written_suite, written_manifest = _write_new_json_pair(
+                args.output,
+                suite,
+                args.manifest_output,
+                manifest,
+            )
+        except (
+            CodeAnalysisBenchmarkError,
+            MovideskTicketArchiveError,
+            OSError,
+        ) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "suite": str(written_suite),
+                    "manifest": str(written_manifest),
+                    "suite_fingerprint": manifest["suite_fingerprint"],
+                    "case_count": len(suite["cases"]),
+                    "release_id": suite["release_id"],
                 },
                 ensure_ascii=False,
                 indent=2,

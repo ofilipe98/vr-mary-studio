@@ -413,6 +413,28 @@ O pacote continua com `safe_for_model: false` até revisão humana, mesmo quando
 todos os detectores automáticos ficam zerados. Resultados e limites estão em
 `design/GATE16_INTAKE_ARQUIVOS_MOVIDESK_2026-08-30.md`.
 
+O Gate 17 fecha essa revisão sem enviar o histórico bruto ao modelo. No bloco
+`review` de cada candidato, o revisor preenche título e pergunta anonimizados,
+data da resolução, módulo, JARs, causa-raiz, evidência e critérios esperados.
+Somente 5–10 casos com `anonymization_approved: true` e
+`eligible_for_code_benchmark: true` podem virar suíte. A release é sempre
+informada explicitamente; ela nunca é inferida da pasta ou dos tickets.
+
+```powershell
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  finalize-movidesk-ticket-review tickets-review.json tickets-source-key.json `
+  --release RELEASE_ESCOLHIDA `
+  --anonymization-review-id anon-review-local-001 `
+  --output casos-codigo.json `
+  --manifest-output casos-codigo.intake.json
+```
+
+A operação comprova que pacote e chave pertencem ao mesmo conjunto, detecta
+alterações no conteúdo pseudonimizado, reexecuta a auditoria de dados sensíveis
+nos campos manuais e produz o manifesto SHA-256 junto com a suíte. O pacote de
+revisão e a chave continuam locais e não devem ser compartilhados. Detalhes em
+`design/GATE17_FINALIZACAO_REVISAO_TICKETS_2026-08-30.md`.
+
 CLI da base:
 
 ```powershell
