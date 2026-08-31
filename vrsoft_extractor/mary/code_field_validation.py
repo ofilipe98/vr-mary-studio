@@ -35,7 +35,7 @@ class CodeFieldValidator:
             raise CodeFieldValidationError("Informe ao menos uma release.")
         if len(releases) > 3:
             raise CodeFieldValidationError(
-                "A validaÃ§Ã£o local aceita no mÃ¡ximo trÃªs releases simultÃ¢neas."
+                "A validação local aceita no máximo três releases simultâneas."
             )
         probe = str(probe_symbol or "").strip()
         blockers: list[str] = []
@@ -49,9 +49,9 @@ class CodeFieldValidator:
             release_hash = str(manifest.get("release_manifest_sha256") or "")
             hashes.append(release_hash)
             if release.get("state") != "ready":
-                blockers.append(f"{release_id}: inventÃ¡rio nÃ£o estÃ¡ pronto.")
+                blockers.append(f"{release_id}: inventário não está pronto.")
             if release.get("freshness") != "fresh":
-                blockers.append(f"{release_id}: origem nÃ£o estÃ¡ fresca.")
+                blockers.append(f"{release_id}: origem não está fresca.")
             if int(coverage.get("covered_jar_count") or 0) != int(
                 coverage.get("expected_jar_count") or 0
             ):
@@ -63,7 +63,7 @@ class CodeFieldValidator:
             )
             if probe and not matches:
                 blockers.append(
-                    f"{release_id}: sÃ­mbolo de prova nÃ£o encontrado: {probe}."
+                    f"{release_id}: símbolo de prova não encontrado: {probe}."
                 )
             if any(str(item.get("release_id") or "") != release_id for item in matches):
                 blockers.append(f"{release_id}: resultado contaminado por outra release.")
@@ -74,7 +74,7 @@ class CodeFieldValidator:
                 else {}
             )
             if not telemetry:
-                warnings.append(f"{release_id}: ainda nÃ£o hÃ¡ telemetria de campo.")
+                warnings.append(f"{release_id}: ainda não há telemetria de campo.")
             reports.append(
                 {
                     "release_id": release_id,

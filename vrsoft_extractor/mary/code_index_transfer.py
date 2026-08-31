@@ -56,13 +56,13 @@ class CodeIndexTransfer:
         status = self.catalog.status(release_id, full_hash=True)
         if status.get("freshness") != "fresh" or manifest.get("state") != "ready":
             raise CodeIndexTransferError(
-                "A release precisa estar pronta e fresca para exportar o Ã­ndice."
+                "A release precisa estar pronta e fresca para exportar o índice."
             )
         self.code_index.initialize()
         coverage = self.code_index.coverage(release_id)
         covered_jars = [str(item) for item in coverage.get("covered_jars") or []]
         if not covered_jars:
-            raise CodeIndexTransferError("A release ainda nÃ£o possui JAR indexado.")
+            raise CodeIndexTransferError("A release ainda não possui JAR indexado.")
         artifacts = {
             str(item.get("relative_path") or ""): str(item.get("sha256") or "")
             for item in manifest.get("artifacts") or []
@@ -75,7 +75,7 @@ class CodeIndexTransfer:
         target = Path(destination).expanduser().resolve()
         if target.exists():
             raise CodeIndexTransferError(
-                "O pacote de destino jÃ¡ existe; nenhum arquivo foi sobrescrito."
+                "O pacote de destino já existe; nenhum arquivo foi sobrescrito."
             )
         target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -146,20 +146,20 @@ class CodeIndexTransfer:
     ) -> dict[str, Any]:
         package = Path(package_path).expanduser().resolve()
         if not package.is_file():
-            raise CodeIndexTransferError(f"Pacote nÃ£o encontrado: {package}")
+            raise CodeIndexTransferError(f"Pacote não encontrado: {package}")
         try:
             with zipfile.ZipFile(package) as archive:
                 names = set(archive.namelist())
                 if names != {PACKAGE_MANIFEST, PACKAGE_PAYLOAD}:
                     raise CodeIndexTransferError(
-                        "O pacote deve conter somente manifesto e payload do Ã­ndice."
+                        "O pacote deve conter somente manifesto e payload do índice."
                     )
                 manifest_info = archive.getinfo(PACKAGE_MANIFEST)
                 if manifest_info.file_size > 1024 * 1024:
                     raise CodeIndexTransferError("Manifesto do pacote excede 1 MB.")
                 package_manifest = json.loads(archive.read(PACKAGE_MANIFEST).decode("utf-8"))
                 if not isinstance(package_manifest, dict):
-                    raise CodeIndexTransferError("Manifesto do pacote invÃ¡lido.")
+                    raise CodeIndexTransferError("Manifesto do pacote inválido.")
                 self._validate_package_manifest(package_manifest)
                 selected_release = str(
                     release_id or package_manifest.get("release_id") or ""
@@ -172,14 +172,14 @@ class CodeIndexTransfer:
                 local_status = self.catalog.status(selected_release, full_hash=True)
                 if local_status.get("freshness") != "fresh":
                     raise CodeIndexTransferError(
-                        "A release local mudou; o pacote nÃ£o serÃ¡ importado."
+                        "A release local mudou; o pacote não será importado."
                     )
                 if (
                     local_manifest.get("release_manifest_sha256")
                     != package_manifest.get("release_manifest_sha256")
                 ):
                     raise CodeIndexTransferError(
-                        "O hash da release local nÃ£o corresponde ao pacote."
+                        "O hash da release local não corresponde ao pacote."
                     )
                 self._validate_artifacts(local_manifest, package_manifest)
                 payload_info = archive.getinfo(PACKAGE_PAYLOAD)
@@ -188,12 +188,12 @@ class CodeIndexTransfer:
                 )
                 if payload_info.file_size != declared_size:
                     raise CodeIndexTransferError(
-                        "O tamanho do payload nÃ£o corresponde ao manifesto do pacote."
+                        "O tamanho do payload não corresponde ao manifesto do pacote."
                     )
                 self.catalog.paths.code_index.mkdir(parents=True, exist_ok=True)
                 if declared_size > shutil.disk_usage(self.root).free:
                     raise CodeIndexTransferError(
-                        "EspaÃ§o em disco insuficiente para verificar o pacote."
+                        "Espaço em disco insuficiente para verificar o pacote."
                     )
                 with tempfile.TemporaryDirectory(
                     prefix="vr-index-import-",
@@ -211,11 +211,11 @@ class CodeIndexTransfer:
                             target.write(chunk)
                     if actual_size != declared_size:
                         raise CodeIndexTransferError(
-                            "O tamanho extraÃ­do nÃ£o corresponde ao manifesto do pacote."
+                            "O tamanho extraído não corresponde ao manifesto do pacote."
                         )
                     if digest.hexdigest() != package_manifest.get("payload_sha256"):
                         raise CodeIndexTransferError(
-                            "O SHA-256 do payload nÃ£o corresponde ao manifesto do pacote."
+                            "O SHA-256 do payload não corresponde ao manifesto do pacote."
                         )
                     self.code_index.initialize()
                     imported, unchanged = self._import_payload(
@@ -235,7 +235,7 @@ class CodeIndexTransfer:
             raise
         except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as exc:
             raise CodeIndexTransferError(
-                f"Pacote de Ã­ndice invÃ¡lido: {type(exc).__name__}: {exc}"
+                f"Pacote de índice inválido: {type(exc).__name__}: {exc}"
             ) from exc
 
         self._record_imported_coverage(selected_release, package_manifest)
@@ -313,11 +313,11 @@ class CodeIndexTransfer:
     @staticmethod
     def _validate_package_manifest(package_manifest: dict[str, Any]) -> None:
         if int(package_manifest.get("schema_version") or 0) != TRANSFER_SCHEMA_VERSION:
-            raise CodeIndexTransferError("VersÃ£o do pacote de Ã­ndice incompatÃ­vel.")
+            raise CodeIndexTransferError("Versão do pacote de índice incompatível.")
         if int(package_manifest.get("code_index_schema_version") or 0) != CODE_INDEX_SCHEMA_VERSION:
-            raise CodeIndexTransferError("Schema do Ã­ndice de cÃ³digo incompatÃ­vel.")
+            raise CodeIndexTransferError("Schema do índice de código incompatível.")
         if int(package_manifest.get("processing_schema_version") or 0) != PROCESSING_SCHEMA_VERSION:
-            raise CodeIndexTransferError("Schema de processamento incompatÃ­vel.")
+            raise CodeIndexTransferError("Schema de processamento incompatível.")
         if not package_manifest.get("package_id") or not package_manifest.get(
             "payload_sha256"
         ):
@@ -345,7 +345,7 @@ class CodeIndexTransfer:
             ).encode("utf-8")
         ).hexdigest()
         if expected_package_id != package_manifest.get("package_id"):
-            raise CodeIndexTransferError("A assinatura hash do pacote Ã© invÃ¡lida.")
+            raise CodeIndexTransferError("A assinatura hash do pacote é inválida.")
 
     @staticmethod
     def _validate_artifacts(
@@ -359,15 +359,15 @@ class CodeIndexTransfer:
         }
         covered = package_manifest.get("covered_artifacts")
         if not isinstance(covered, list) or not covered:
-            raise CodeIndexTransferError("O pacote nÃ£o declara JARs cobertos.")
+            raise CodeIndexTransferError("O pacote não declara JARs cobertos.")
         for item in covered:
             if not isinstance(item, dict):
-                raise CodeIndexTransferError("Artefato invÃ¡lido no pacote.")
+                raise CodeIndexTransferError("Artefato inválido no pacote.")
             relative_path = str(item.get("relative_path") or "")
             digest = str(item.get("sha256") or "")
             if local.get(relative_path) != digest:
                 raise CodeIndexTransferError(
-                    f"O artefato local nÃ£o corresponde ao pacote: {relative_path}"
+                    f"O artefato local não corresponde ao pacote: {relative_path}"
                 )
 
     def _import_payload(
@@ -399,7 +399,7 @@ class CodeIndexTransfer:
                     )
             if imported + unchanged != max(0, int(expected_source_count)):
                 raise CodeIndexTransferError(
-                    "A quantidade de fontes nÃ£o corresponde ao manifesto do pacote."
+                    "A quantidade de fontes não corresponde ao manifesto do pacote."
                 )
             connection.commit()
         return imported, unchanged
@@ -421,11 +421,11 @@ class CodeIndexTransfer:
                     record = json.loads(line)
                 except (TypeError, ValueError, json.JSONDecodeError) as exc:
                     raise CodeIndexTransferError(
-                        f"Registro invÃ¡lido no payload, linha {line_number}."
+                        f"Registro inválido no payload, linha {line_number}."
                     ) from exc
                 if not isinstance(record, dict):
                     raise CodeIndexTransferError(
-                        f"Registro invÃ¡lido no payload, linha {line_number}."
+                        f"Registro inválido no payload, linha {line_number}."
                     )
                 jar_relative_path = str(record.get("jar_relative_path") or "")
                 artifact_sha256 = str(record.get("artifact_sha256") or "")
@@ -438,7 +438,7 @@ class CodeIndexTransfer:
                     record.get("source_sha256") or ""
                 ):
                     raise CodeIndexTransferError(
-                        f"Fonte com SHA-256 invÃ¡lido, linha {line_number}."
+                        f"Fonte com SHA-256 inválido, linha {line_number}."
                     )
                 content_hashes = json.loads(
                     str(record.get("content_hashes_json") or "[]")
@@ -495,7 +495,7 @@ class CodeIndexTransfer:
                 relations = record.get("relations") or []
                 if not isinstance(symbols, list) or not isinstance(relations, list):
                     raise CodeIndexTransferError(
-                        f"SÃ­mbolos/relaÃ§Ãµes invÃ¡lidos, linha {line_number}."
+                        f"Símbolos/relações inválidos, linha {line_number}."
                     )
                 connection.executemany(
                     """INSERT INTO code_symbols

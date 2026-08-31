@@ -26,7 +26,7 @@ def processing_window_status(
         return {
             "policy": selected,
             "allowed": True,
-            "label": "qualquer horÃ¡rio",
+            "label": "qualquer horário",
             "start_minute": 0,
             "end_minute": 0,
         }

@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     storage_budget = sub.add_parser(
         "set-erp-code-storage-budget",
-        help="Define o limite local do Ã­ndice entre 1x e 10x o tamanho da release",
+        help="Define o limite local do índice entre 1x e 10x o tamanho da release",
     )
     storage_budget.add_argument("--multiplier", type=int, required=True)
     sub.add_parser(
@@ -292,19 +292,19 @@ def build_parser() -> argparse.ArgumentParser:
     code_status.add_argument("release_id", nargs="?", default="")
     code_export = sub.add_parser(
         "export-erp-code-index",
-        help="Exporta um Ã­ndice offline verificado por hash, sem incluir os JARs",
+        help="Exporta um índice offline verificado por hash, sem incluir os JARs",
     )
     code_export.add_argument("release_id")
     code_export.add_argument("destination")
     code_import = sub.add_parser(
         "import-erp-code-index",
-        help="Importa um Ã­ndice somente se release e hashes locais coincidirem",
+        help="Importa um índice somente se release e hashes locais coincidirem",
     )
     code_import.add_argument("package")
     code_import.add_argument("--release", default="")
     field_validation = sub.add_parser(
         "validate-erp-code-field",
-        help="Valida offline cobertura, isolamento, hashes, citaÃ§Ãµes e telemetria",
+        help="Valida offline cobertura, isolamento, hashes, citações e telemetria",
     )
     field_validation.add_argument("--release", action="append", required=True)
     field_validation.add_argument("--probe-symbol", default="")
