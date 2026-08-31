@@ -23,7 +23,7 @@ from .jvm_batches import (
 )
 
 
-CODE_INDEX_SCHEMA_VERSION = 5
+CODE_INDEX_SCHEMA_VERSION = 6
 _PACKAGE_RE = re.compile(
     r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;?\s*$"
 )
@@ -192,7 +192,46 @@ class JavaCodeIndex:
                 "confidence",
                 "REAL NOT NULL DEFAULT 0.0",
             )
+            self._migrate_source_identity(connection)
             connection.commit()
+
+    @staticmethod
+    def _migrate_source_identity(connection: sqlite3.Connection) -> None:
+        """Add release_id to legacy source identities without re-decompiling."""
+
+        rows = connection.execute(
+            """SELECT id, release_id, release_hash, artifact_sha256,
+                      class_version, qualified_name, content_hashes_json
+               FROM code_sources WHERE schema_version != ? ORDER BY id""",
+            (CODE_INDEX_SCHEMA_VERSION,),
+        ).fetchall()
+        for row in rows:
+            try:
+                content_hashes = json.loads(row["content_hashes_json"] or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                content_hashes = []
+            if not isinstance(content_hashes, list):
+                content_hashes = []
+            source_key = _code_source_key(
+                release_id=str(row["release_id"]),
+                release_hash=str(row["release_hash"]),
+                artifact_sha256=str(row["artifact_sha256"]),
+                class_version=int(row["class_version"]),
+                qualified_name=str(row["qualified_name"]),
+                content_hashes=[str(item) for item in content_hashes],
+            )
+            duplicate = connection.execute(
+                "SELECT id FROM code_sources WHERE source_key = ? AND id != ?",
+                (source_key, row["id"]),
+            ).fetchone()
+            if duplicate is not None:
+                connection.execute("DELETE FROM code_sources WHERE id = ?", (row["id"],))
+            else:
+                connection.execute(
+                    """UPDATE code_sources SET source_key = ?, schema_version = ?
+                       WHERE id = ?""",
+                    (source_key, CODE_INDEX_SCHEMA_VERSION, row["id"]),
+                )
 
     def index_plan(self, plan_id: str) -> dict[str, Any]:
         self.initialize()
@@ -211,6 +250,11 @@ class JavaCodeIndex:
                    WHERE plan_id = ? AND state = 'completed'
                      AND output_reference != '' AND tool != 'reused'
                    ORDER BY ordinal""",
+                (plan_id,),
+            ).fetchall()
+            plan_artifacts = connection.execute(
+                """SELECT relative_path, artifact_sha256 FROM plan_artifacts
+                   WHERE plan_id = ? ORDER BY ordinal""",
                 (plan_id,),
             ).fetchall()
         manifest = self.catalog.load_manifest(plan["release_id"])
@@ -233,7 +277,23 @@ class JavaCodeIndex:
 
         indexed = 0
         unchanged = 0
+        reused = 0
         errors: list[dict[str, str]] = []
+        locally_decompiled_artifacts = {
+            str(batch["artifact_sha256"]) for batch in batches
+        }
+        for artifact in plan_artifacts:
+            if str(artifact["artifact_sha256"]) in locally_decompiled_artifacts:
+                continue
+            try:
+                reused += self._reuse_artifact_sources(plan, artifact)
+            except (sqlite3.Error, ValueError) as exc:
+                errors.append(
+                    {
+                        "artifact": str(artifact["relative_path"]),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
         for batch in batches:
             output_dir = _resolve_output(self.root, batch["output_reference"])
             if not output_dir.is_dir():
@@ -273,9 +333,129 @@ class JavaCodeIndex:
             "completed_batches": len(batches),
             "indexed_sources": indexed,
             "unchanged_sources": unchanged,
+            "reused_sources": reused,
             "errors": errors,
             "indexed_at": _utc_now(),
         }
+
+    def _reuse_artifact_sources(
+        self,
+        plan: sqlite3.Row,
+        artifact: sqlite3.Row,
+    ) -> int:
+        """Clone searchable rows for an identical JAR into another release.
+
+        Decompiled source and AST rows are immutable with respect to the JAR
+        SHA-256.  Release-scoped rows are still created so queries and citations
+        cannot leak the source release identity.
+        """
+
+        artifact_hash = str(artifact["artifact_sha256"])
+        with self.store.connect() as connection:
+            origin = connection.execute(
+                """SELECT release_id, release_hash, count(*) AS total,
+                          max(indexed_at) AS latest
+                   FROM code_sources
+                   WHERE artifact_sha256 = ? AND schema_version = ?
+                     AND release_id != ?
+                   GROUP BY release_id, release_hash
+                   ORDER BY total DESC, latest DESC, release_id, release_hash
+                   LIMIT 1""",
+                (
+                    artifact_hash,
+                    CODE_INDEX_SCHEMA_VERSION,
+                    plan["release_id"],
+                ),
+            ).fetchone()
+            if origin is None:
+                return 0
+            sources = connection.execute(
+                """SELECT * FROM code_sources
+                   WHERE artifact_sha256 = ? AND schema_version = ?
+                     AND release_id = ? AND release_hash = ?
+                   ORDER BY id""",
+                (
+                    artifact_hash,
+                    CODE_INDEX_SCHEMA_VERSION,
+                    origin["release_id"],
+                    origin["release_hash"],
+                ),
+            ).fetchall()
+            inserted = 0
+            now = _utc_now()
+            connection.execute("BEGIN IMMEDIATE")
+            for source in sources:
+                content_hashes = json.loads(source["content_hashes_json"] or "[]")
+                source_key = _code_source_key(
+                    release_id=str(plan["release_id"]),
+                    release_hash=str(plan["release_hash"]),
+                    artifact_sha256=artifact_hash,
+                    class_version=int(source["class_version"]),
+                    qualified_name=str(source["qualified_name"]),
+                    content_hashes=content_hashes,
+                )
+                existing = connection.execute(
+                    "SELECT id FROM code_sources WHERE source_key = ?",
+                    (source_key,),
+                ).fetchone()
+                if existing is not None:
+                    continue
+                cursor = connection.execute(
+                    """INSERT INTO code_sources
+                       (source_key, schema_version, release_id, release_hash,
+                        jar_relative_path, artifact_sha256, batch_id,
+                        class_version, tool, output_reference,
+                        source_relative_path, source_sha256, package_name,
+                        primary_type, qualified_name, logical_names_json,
+                        content_hashes_json, occurrence_count, parser_kind,
+                        syntax_error_count, symbols_text, body, indexed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        source_key,
+                        CODE_INDEX_SCHEMA_VERSION,
+                        plan["release_id"],
+                        plan["release_hash"],
+                        artifact["relative_path"],
+                        artifact_hash,
+                        plan["plan_id"],
+                        int(source["class_version"]),
+                        "reused",
+                        source["output_reference"],
+                        source["source_relative_path"],
+                        source["source_sha256"],
+                        source["package_name"],
+                        source["primary_type"],
+                        source["qualified_name"],
+                        source["logical_names_json"],
+                        source["content_hashes_json"],
+                        int(source["occurrence_count"]),
+                        source["parser_kind"],
+                        int(source["syntax_error_count"]),
+                        source["symbols_text"],
+                        source["body"],
+                        now,
+                    ),
+                )
+                target_id = int(cursor.lastrowid)
+                connection.execute(
+                    """INSERT INTO code_symbols
+                       (source_id, kind, simple_name, qualified_name, signature,
+                        visibility, line_start)
+                       SELECT ?, kind, simple_name, qualified_name, signature,
+                              visibility, line_start
+                       FROM code_symbols WHERE source_id = ?""",
+                    (target_id, int(source["id"])),
+                )
+                connection.execute(
+                    """INSERT INTO code_relations
+                       (source_id, kind, target, source_symbol, confidence, line_start)
+                       SELECT ?, kind, target, source_symbol, confidence, line_start
+                       FROM code_relations WHERE source_id = ?""",
+                    (target_id, int(source["id"])),
+                )
+                inserted += 1
+            connection.commit()
+        return inserted
 
     def _batch_provenance(self, batch_id: str) -> dict[str, list[sqlite3.Row]]:
         with self.store.connect() as connection:
@@ -311,19 +491,14 @@ class JavaCodeIndex:
         logical_names = sorted({str(row["logical_name"]) for row in rows})
         content_hashes = sorted({str(row["content_sha256"]) for row in rows})
         source_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        source_key = hashlib.sha256(
-            json.dumps(
-                {
-                    "release_hash": plan["release_hash"],
-                    "artifact": batch["artifact_sha256"],
-                    "class_version": int(batch["class_version"]),
-                    "qualified_name": parsed.qualified_name,
-                    "content_hashes": content_hashes,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        source_key = _code_source_key(
+            release_id=str(plan["release_id"]),
+            release_hash=str(plan["release_hash"]),
+            artifact_sha256=str(batch["artifact_sha256"]),
+            class_version=int(batch["class_version"]),
+            qualified_name=parsed.qualified_name,
+            content_hashes=content_hashes,
+        )
         symbols_text = " ".join(
             dict.fromkeys(
                 [parsed.qualified_name]
@@ -922,6 +1097,31 @@ def _compact(value: str) -> str:
 
 def _line_number(body: str, offset: int) -> int:
     return body.count("\n", 0, offset) + 1
+
+
+def _code_source_key(
+    *,
+    release_id: str,
+    release_hash: str,
+    artifact_sha256: str,
+    class_version: int,
+    qualified_name: str,
+    content_hashes: Sequence[str],
+) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "release_id": release_id,
+                "release_hash": release_hash,
+                "artifact": artifact_sha256,
+                "class_version": int(class_version),
+                "qualified_name": qualified_name,
+                "content_hashes": list(content_hashes),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _search_tokens(query: str) -> list[str]:

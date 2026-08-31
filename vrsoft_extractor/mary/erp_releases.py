@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shutil
+import sqlite3
 import time
 import zipfile
 from dataclasses import dataclass
@@ -89,6 +90,9 @@ class ErpReleaseCatalog:
         self,
         release_id: str,
         source_dir: str | Path | None = None,
+        *,
+        source_origin_dir: str | Path | None = None,
+        analysis_scope: str | None = None,
     ) -> dict[str, Any]:
         release_id = validate_release_id(release_id)
         source = Path(source_dir or self.paths.source_for(release_id)).resolve()
@@ -163,6 +167,20 @@ class ErpReleaseCatalog:
             "release_manifest_sha256": release_hash,
             "indexed_at": _utc_now(),
             "source_dir": self._portable_path(source),
+            "source_origin_dir": self._portable_path(
+                Path(source_origin_dir).resolve()
+                if source_origin_dir is not None
+                else source
+            ),
+            "snapshot_managed": source_origin_dir is not None,
+            "analysis_scope": str(
+                analysis_scope
+                or (
+                    "full_release"
+                    if self.expected_jar_count == DEFAULT_EXPECTED_JAR_COUNT
+                    else "custom"
+                )
+            ),
             "expected_jar_count": self.expected_jar_count,
             "jar_count": len(artifacts),
             "source_size_bytes": sum(int(item["size_bytes"]) for item in artifacts),
@@ -182,6 +200,149 @@ class ErpReleaseCatalog:
         self._write_catalog_metadata(manifest["source_size_bytes"])
         return manifest
 
+    def snapshot_release(
+        self,
+        release_id: str,
+        source_dir: str | Path,
+        *,
+        analysis_scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Copy a complete release or one explicitly selected JAR before indexing."""
+
+        release_id = validate_release_id(release_id)
+        source = Path(source_dir).resolve()
+        destination = self.paths.source_for(release_id).resolve()
+        if self.paths.manifest_for(release_id).is_file():
+            raise ErpReleaseError(
+                "A release já está inventariada; use outro release_id para não "
+                "substituir o manifesto e o índice existentes."
+            )
+        if source == destination:
+            return self.import_release(release_id, destination)
+        selected_single_jar = source.is_file()
+        if selected_single_jar:
+            if source.suffix.casefold() != ".jar":
+                raise ErpReleaseError(f"O arquivo selecionado não é um JAR: {source}")
+            if self.expected_jar_count != 1:
+                raise ErpReleaseError(
+                    "A análise de um arquivo exige o escopo de JAR único."
+                )
+            source_root = source.parent
+            jar_paths = [source]
+            analysis_scope = "single_jar"
+        else:
+            if not source.is_dir():
+                raise ErpReleaseError(f"Pasta da release não encontrada: {source}")
+            source_root = source
+            jar_paths = sorted(
+                (
+                    path
+                    for path in source.rglob("*")
+                    if path.is_file() and path.suffix.casefold() == ".jar"
+                ),
+                key=lambda path: path.relative_to(source).as_posix().casefold(),
+            )
+        if destination.exists():
+            raise ErpReleaseError(
+                "O snapshot da release já existe; use outro release_id ou remova "
+                "a release existente com aprovação."
+            )
+
+        self.ensure_dirs()
+        indexed = {
+            path.name
+            for path in self.paths.indexed_releases.iterdir()
+            if path.is_dir() and (path / "manifest.json").is_file()
+        }
+        if release_id not in indexed and len(indexed) >= self.max_releases:
+            raise ErpReleaseError(
+                f"O limite de {self.max_releases} releases indexadas foi atingido; "
+                "remova uma delas com aprovação antes de importar outra."
+            )
+
+        if len(jar_paths) != self.expected_jar_count:
+            raise ErpReleaseError(
+                f"O snapshot exige exatamente {self.expected_jar_count} JARs; "
+                    f"foram encontrados {len(jar_paths)} em {source}."
+            )
+
+        source_artifacts: list[dict[str, Any]] = []
+        for jar_path in jar_paths:
+            resolved = jar_path.resolve()
+            _require_child(resolved, source_root)
+            try:
+                with zipfile.ZipFile(resolved) as archive:
+                    archive.infolist()
+            except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                raise ErpReleaseError(
+                    f"JAR ilegível na origem: {jar_path.relative_to(source_root).as_posix()} "
+                    f"({type(exc).__name__}: {exc})"
+                ) from exc
+            before = resolved.stat()
+            digest = sha256_file(resolved)
+            after = resolved.stat()
+            if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+                raise ErpReleaseError(
+                    "Um JAR mudou durante o preflight; tente novamente quando a "
+                    "atualização do ERP terminar."
+                )
+            source_artifacts.append(
+                {
+                    "path": resolved,
+                    "relative_path": jar_path.relative_to(source_root),
+                    "sha256": digest,
+                    "size_bytes": after.st_size,
+                }
+            )
+
+        release_root = destination.parent
+        staging_root = self.paths.source_releases / (
+            f".{release_id}.snapshot-{uuid4().hex}"
+        )
+        staging_jars = staging_root / "jars"
+        try:
+            for artifact in source_artifacts:
+                target = staging_jars / artifact["relative_path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(artifact["path"], target)
+                if target.stat().st_size != int(artifact["size_bytes"]):
+                    raise ErpReleaseError(
+                        f"Tamanho divergente no snapshot: {artifact['relative_path']}"
+                    )
+                if sha256_file(target) != artifact["sha256"]:
+                    raise ErpReleaseError(
+                        f"SHA-256 divergente no snapshot: {artifact['relative_path']}"
+                    )
+            if release_root.exists():
+                raise ErpReleaseError(
+                    "A pasta gerenciada da release surgiu durante o snapshot; "
+                    "nenhum arquivo existente foi sobrescrito."
+                )
+            staging_root.replace(release_root)
+        except Exception:
+            if staging_root.is_dir():
+                shutil.rmtree(staging_root)
+            raise
+
+        manifest = self.import_release(
+            release_id,
+            destination,
+            source_origin_dir=source,
+            analysis_scope=analysis_scope,
+        )
+        manifest["snapshot"] = {
+            "created_at": manifest["indexed_at"],
+            "source_dir": self._portable_path(source),
+            "destination_dir": self._portable_path(destination),
+            "jar_count": len(source_artifacts),
+            "source_size_bytes": sum(
+                int(item["size_bytes"]) for item in source_artifacts
+            ),
+            "verified": True,
+        }
+        _atomic_write_json(self.paths.manifest_for(release_id), manifest)
+        return manifest
+
     def status(self, release_id: str, *, full_hash: bool = False) -> dict[str, Any]:
         manifest = self.load_manifest(release_id)
         source = self._resolve_source(str(manifest.get("source_dir") or ""))
@@ -194,6 +355,7 @@ class ErpReleaseCatalog:
             "source_dir": str(manifest.get("source_dir") or ""),
             "jar_count": manifest.get("jar_count", 0),
             "expected_jar_count": manifest.get("expected_jar_count", 0),
+            "analysis_scope": manifest.get("analysis_scope", "full_release"),
             "warnings": list(manifest.get("warnings") or []),
         }
         if not source.is_dir():
@@ -279,6 +441,48 @@ class ErpReleaseCatalog:
             "max_releases": int(payload.get("max_releases") or self.max_releases),
             "indexed_releases": len(self.list_statuses()),
         }
+
+    def set_storage_budget_multiplier(self, multiplier: int) -> dict[str, Any]:
+        """Update the generated-index budget without touching source JARs."""
+
+        selected = int(multiplier)
+        if selected < 1 or selected > DEFAULT_STORAGE_BUDGET_MULTIPLIER:
+            raise ErpReleaseError(
+                "O limite de disco deve ficar entre 1x e "
+                f"{DEFAULT_STORAGE_BUDGET_MULTIPLIER}x o tamanho da release."
+            )
+        self.storage_budget_multiplier = selected
+        baseline = 0
+        catalog_path = self.paths.code_index / "catalog.json"
+        if catalog_path.is_file():
+            try:
+                payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+                baseline = int(payload.get("baseline_source_size_bytes") or 0)
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                baseline = 0
+        if baseline <= 0:
+            manifests = [
+                self.load_manifest(str(item.get("release_id") or ""))
+                for item in self.list_statuses()
+                if item.get("release_id")
+            ]
+            baseline = max(
+                (int(item.get("source_size_bytes") or 0) for item in manifests),
+                default=0,
+            )
+        self.ensure_dirs()
+        _atomic_write_json(
+            catalog_path,
+            {
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "max_releases": self.max_releases,
+                "storage_budget_multiplier": selected,
+                "baseline_source_size_bytes": baseline,
+                "storage_budget_bytes": baseline * selected,
+                "updated_at": _utc_now(),
+            },
+        )
+        return self.storage_status()
 
     def inspect_class_metrics(
         self,
@@ -439,6 +643,17 @@ class ErpReleaseCatalog:
             if isinstance(item, dict) and _HASH_RE.fullmatch(str(item.get("sha256") or ""))
         }
         reclaimed = _directory_size(release_dir)
+        shared_release_hash = any(
+            str(item.get("release_id") or "") != release_id
+            and str(item.get("release_manifest_sha256") or "")
+            == str(manifest.get("release_manifest_sha256") or "")
+            for item in self.list_statuses()
+        )
+        processing = self._purge_release_processing_data(
+            release_id,
+            preserve_occurrences=shared_release_hash,
+        )
+        reclaimed += int(processing["reclaimed_bytes"])
         shutil.rmtree(release_dir)
 
         referenced = self._referenced_artifact_hashes()
@@ -454,8 +669,134 @@ class ErpReleaseCatalog:
             "release_id": release_id,
             "removed": True,
             "removed_artifacts": removed_artifacts,
+            "removed_search_sources": processing["removed_search_sources"],
+            "removed_processing_plans": processing["removed_processing_plans"],
+            "preserved_shared_decompilation_dirs": processing[
+                "preserved_shared_decompilation_dirs"
+            ],
             "reclaimed_bytes": reclaimed,
             "source_jars_removed": False,
+        }
+
+    def _purge_release_processing_data(
+        self,
+        release_id: str,
+        *,
+        preserve_occurrences: bool,
+    ) -> dict[str, int]:
+        database_path = self.paths.code_index / "processing.sqlite"
+        if not database_path.is_file():
+            return {
+                "removed_search_sources": 0,
+                "removed_processing_plans": 0,
+                "preserved_shared_decompilation_dirs": 0,
+                "reclaimed_bytes": 0,
+            }
+        plan_ids: list[str] = []
+        removed_sources = 0
+        remaining_references: list[str] = []
+        connection = sqlite3.connect(database_path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            tables = {
+                str(row["name"])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "decompilation_plans" not in tables:
+                return {
+                    "removed_search_sources": 0,
+                    "removed_processing_plans": 0,
+                    "preserved_shared_decompilation_dirs": 0,
+                    "reclaimed_bytes": 0,
+                }
+            plan_ids = [
+                str(row["plan_id"])
+                for row in connection.execute(
+                    "SELECT plan_id FROM decompilation_plans WHERE release_id = ?",
+                    (release_id,),
+                )
+            ]
+            connection.execute("BEGIN IMMEDIATE")
+            if "code_sources" in tables:
+                removed_sources = int(
+                    connection.execute(
+                        "SELECT count(*) FROM code_sources WHERE release_id = ?",
+                        (release_id,),
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    "DELETE FROM code_sources WHERE release_id = ?", (release_id,)
+                )
+            if plan_ids:
+                placeholders = ",".join("?" for _ in plan_ids)
+                connection.execute(
+                    f"""DELETE FROM batch_members WHERE batch_id IN
+                         (SELECT batch_id FROM decompilation_batches
+                          WHERE plan_id IN ({placeholders}))""",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM decompilation_batches WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM plan_artifacts WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM decompilation_plans WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+            if "class_occurrences" in tables and not preserve_occurrences:
+                connection.execute(
+                    "DELETE FROM class_occurrences WHERE release_id = ?", (release_id,)
+                )
+            if "class_contents" in tables and "class_occurrences" in tables:
+                connection.execute(
+                    """DELETE FROM class_contents
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM class_occurrences o
+                         WHERE o.content_sha256 = class_contents.content_sha256
+                       )"""
+                )
+                remaining_references = [
+                    str(row["output_reference"])
+                    for row in connection.execute(
+                        """SELECT DISTINCT output_reference FROM class_contents
+                           WHERE output_reference != ''"""
+                    )
+                ]
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        reclaimed = 0
+        preserved = 0
+        decompilation_root = (self.paths.code_index / "decompilation").resolve()
+        for plan_id in plan_ids:
+            plan_dir = (decompilation_root / plan_id).resolve()
+            _require_child(plan_dir, decompilation_root)
+            relative = self._portable_path(plan_dir).replace("\\", "/").rstrip("/")
+            shared = any(
+                reference.replace("\\", "/").startswith(relative + "/")
+                for reference in remaining_references
+            )
+            if shared:
+                preserved += 1
+            elif plan_dir.is_dir():
+                reclaimed += _directory_size(plan_dir)
+                shutil.rmtree(plan_dir)
+        return {
+            "removed_search_sources": removed_sources,
+            "removed_processing_plans": len(plan_ids),
+            "preserved_shared_decompilation_dirs": preserved,
+            "reclaimed_bytes": reclaimed,
         }
 
     def _inventory_jar(
@@ -522,7 +863,10 @@ class ErpReleaseCatalog:
         if path.is_file():
             try:
                 existing = json.loads(path.read_text(encoding="utf-8"))
-                baseline = int(existing.get("baseline_source_size_bytes") or baseline)
+                baseline = max(
+                    baseline,
+                    int(existing.get("baseline_source_size_bytes") or 0),
+                )
             except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
                 pass
         _atomic_write_json(

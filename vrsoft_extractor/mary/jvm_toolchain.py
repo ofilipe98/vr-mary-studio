@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -41,6 +42,8 @@ class DecompileRequest:
     output_dir: Path
     timeout_seconds: int = 900
     max_heap_mb: int = 4096
+    max_cpu_cores: int = 1
+    process_priority: str = "low"
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,14 @@ class DecompileResult:
     stdout: str = ""
     stderr: str = ""
     error: str = ""
+    peak_rss_bytes: int = 0
+    cpu_user_ms: int = 0
+    cpu_kernel_ms: int = 0
+    input_bytes: int = 0
+    output_bytes: int = 0
+    timed_out: bool = False
+    metrics_available: bool = False
+    cpu_limit_applied: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -171,17 +182,57 @@ class DecompilerAdapter:
             )
         request.output_dir.mkdir(parents=True, exist_ok=True)
         started = time.monotonic()
+        sampler: _ProcessSampler | None = None
+        monitor_stop = threading.Event()
+        monitor_thread: threading.Thread | None = None
+        peak_rss_bytes = 0
+        cpu_user_ms = 0
+        cpu_kernel_ms = 0
+        metrics_available = False
+        timed_out = False
+        cpu_limit_applied = False
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 self.command(request),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=max(1, request.timeout_seconds),
-                check=False,
-                creationflags=_no_window_flag(),
+                creationflags=_process_creation_flags(request.process_priority),
             )
+            cpu_limit_applied = _limit_process_cpu(
+                process.pid, request.max_cpu_cores
+            )
+            sampler = _ProcessSampler(process.pid)
+
+            def monitor() -> None:
+                nonlocal peak_rss_bytes, cpu_user_ms, cpu_kernel_ms, metrics_available
+                while not monitor_stop.wait(0.05):
+                    sample = sampler.sample()
+                    if sample is None:
+                        continue
+                    metrics_available = True
+                    peak_rss_bytes = max(peak_rss_bytes, sample[0])
+                    cpu_user_ms = max(cpu_user_ms, sample[1])
+                    cpu_kernel_ms = max(cpu_kernel_ms, sample[2])
+                sample = sampler.sample()
+                if sample is not None:
+                    metrics_available = True
+                    peak_rss_bytes = max(peak_rss_bytes, sample[0])
+                    cpu_user_ms = max(cpu_user_ms, sample[1])
+                    cpu_kernel_ms = max(cpu_kernel_ms, sample[2])
+
+            monitor_thread = threading.Thread(target=monitor, daemon=True)
+            monitor_thread.start()
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=max(1, request.timeout_seconds)
+                )
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                stdout, stderr = process.communicate()
         except (OSError, subprocess.SubprocessError) as exc:
             return DecompileResult(
                 tool=self.name,
@@ -190,15 +241,40 @@ class DecompilerAdapter:
                 exit_code=None,
                 output_dir=str(request.output_dir),
                 error=f"{type(exc).__name__}: {exc}",
+                input_bytes=_file_size(request.input_path),
+                output_bytes=_directory_size(request.output_dir),
             )
+        finally:
+            monitor_stop.set()
+            if monitor_thread is not None:
+                monitor_thread.join(timeout=1)
+            if sampler is not None:
+                sampler.close()
         return DecompileResult(
             tool=self.name,
-            status="completed" if completed.returncode == 0 else "failed",
+            status=(
+                "completed"
+                if process.returncode == 0 and not timed_out
+                else "failed"
+            ),
             duration_ms=int((time.monotonic() - started) * 1000),
-            exit_code=completed.returncode,
+            exit_code=process.returncode,
             output_dir=str(request.output_dir),
-            stdout=completed.stdout[-4000:],
-            stderr=completed.stderr[-4000:],
+            stdout=str(stdout or "")[-4000:],
+            stderr=str(stderr or "")[-4000:],
+            error=(
+                f"Timeout após {max(1, request.timeout_seconds)} segundo(s)."
+                if timed_out
+                else ""
+            ),
+            peak_rss_bytes=peak_rss_bytes,
+            cpu_user_ms=cpu_user_ms,
+            cpu_kernel_ms=cpu_kernel_ms,
+            input_bytes=_file_size(request.input_path),
+            output_bytes=_directory_size(request.output_dir),
+            timed_out=timed_out,
+            metrics_available=metrics_available,
+            cpu_limit_applied=cpu_limit_applied,
         )
 
 
@@ -340,6 +416,193 @@ def _java_executable() -> str:
 
 def _no_window_flag() -> int:
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if os.name == "nt" else 0
+
+
+def _process_creation_flags(priority: str) -> int:
+    flags = _no_window_flag()
+    if os.name == "nt" and str(priority or "").casefold() == "low":
+        flags |= int(getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x00004000))
+    return flags
+
+
+def _limit_process_cpu(pid: int, max_cpu_cores: int) -> bool:
+    requested = max(1, int(max_cpu_cores))
+    available = max(1, int(os.cpu_count() or 1))
+    selected = min(requested, available)
+    if selected >= available:
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            process_set_information = 0x0200
+            process_query_limited_information = 0x1000
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [
+                ctypes.c_uint32,
+                ctypes.c_int,
+                ctypes.c_uint32,
+            ]
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            handle = kernel32.OpenProcess(
+                process_set_information | process_query_limited_information,
+                False,
+                int(pid),
+            )
+            if not handle:
+                return False
+            try:
+                kernel32.SetProcessAffinityMask.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_size_t,
+                ]
+                kernel32.SetProcessAffinityMask.restype = ctypes.c_int
+                mask = (1 << selected) - 1
+                return bool(kernel32.SetProcessAffinityMask(handle, mask))
+            finally:
+                kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+                kernel32.CloseHandle.restype = ctypes.c_int
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError, ValueError):
+            return False
+    try:
+        if hasattr(os, "sched_setaffinity"):
+            os.sched_setaffinity(pid, set(range(selected)))
+            return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+class _ProcessSampler:
+    """Best-effort per-process telemetry without an external dependency."""
+
+    def __init__(self, pid: int) -> None:
+        self._handle = None
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+
+            query_limited_information = 0x1000
+            process_vm_read = 0x0010
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [
+                ctypes.c_uint32,
+                ctypes.c_int,
+                ctypes.c_uint32,
+            ]
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            self._handle = kernel32.OpenProcess(
+                query_limited_information | process_vm_read,
+                False,
+                int(pid),
+            )
+        except (AttributeError, OSError, ValueError):
+            self._handle = None
+
+    def sample(self) -> tuple[int, int, int] | None:
+        if not self._handle or os.name != "nt":
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class ProcessMemoryCounters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            memory = ProcessMemoryCounters()
+            memory.cb = ctypes.sizeof(memory)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            psapi.GetProcessMemoryInfo.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            if not psapi.GetProcessMemoryInfo(
+                self._handle, ctypes.byref(memory), memory.cb
+            ):
+                return None
+            creation = wintypes.FILETIME()
+            exit_time = wintypes.FILETIME()
+            kernel = wintypes.FILETIME()
+            user = wintypes.FILETIME()
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetProcessTimes.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+            ]
+            kernel32.GetProcessTimes.restype = wintypes.BOOL
+            if not kernel32.GetProcessTimes(
+                self._handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            ):
+                return None
+            return (
+                int(memory.PeakWorkingSetSize),
+                _filetime_milliseconds(user),
+                _filetime_milliseconds(kernel),
+            )
+        except (AttributeError, OSError, ValueError):
+            return None
+
+    def close(self) -> None:
+        if not self._handle or os.name != "nt":
+            return
+        try:
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle.restype = ctypes.c_int
+            kernel32.CloseHandle(self._handle)
+        except (AttributeError, OSError, ValueError):
+            pass
+        self._handle = None
+
+
+def _filetime_milliseconds(value: object) -> int:
+    high = int(getattr(value, "dwHighDateTime", 0))
+    low = int(getattr(value, "dwLowDateTime", 0))
+    return int(((high << 32) | low) / 10_000)
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return int(path.stat().st_size)
+    except OSError:
+        return 0
+
+
+def _directory_size(path: Path) -> int:
+    if not path.is_dir():
+        return 0
+    total = 0
+    try:
+        for item in path.rglob("*"):
+            if item.is_file():
+                total += int(item.stat().st_size)
+    except OSError:
+        return total
+    return total
 
 
 def _sha256_file(path: Path) -> str:

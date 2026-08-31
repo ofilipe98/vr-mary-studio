@@ -248,7 +248,15 @@ def ensure_portable_project(root: Path, *, replace_legacy_agents: bool = True) -
 def write_portable_manifest(root: Path, destination: Path | None = None) -> Path:
     root = root.resolve()
     destination = destination or (root / "portable-manifest.json")
-    excluded = {".state", "logs", ".trash", "downloads"}
+    excluded = {
+        ".state",
+        "logs",
+        ".trash",
+        "downloads",
+        "ERP local",
+        "indice/codigo local",
+        "releases geradas",
+    }
     files = 0
     bytes_total = 0
     sections: dict[str, dict[str, int]] = {}

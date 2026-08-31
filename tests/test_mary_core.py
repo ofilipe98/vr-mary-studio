@@ -2,6 +2,7 @@ import json
 import io
 import os
 import queue
+import shutil
 import sqlite3
 import sys
 import threading
@@ -69,6 +70,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 class MaryCoreTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(".test-tmp") / f"{self._testMethodName}-{uuid.uuid4().hex}"
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
         self.app = self.root / "app"
         self.old = self.root / "old"
         self.app.mkdir(parents=True, exist_ok=True)

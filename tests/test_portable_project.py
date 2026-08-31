@@ -185,6 +185,18 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
         "Conversa privada", "codex", "gpt-test", private_workspace
     )
     database.add_message(conversation_id, "user", "conteúdo privado")
+    local_jar = source / "ERP" / "releases" / "4.4.101" / "jars" / "VRPdv.jar"
+    local_jar.parent.mkdir(parents=True)
+    local_jar.write_bytes(b"analyst-local-bytecode")
+    code_index = source / "indice" / "codigo" / "processing.sqlite"
+    code_index.parent.mkdir(parents=True)
+    code_index.write_bytes(b"analyst-local-index")
+    evaluation = source / "indice" / "evaluations" / "review.json"
+    evaluation.parent.mkdir(parents=True)
+    evaluation.write_text("{}", encoding="utf-8")
+    generated_release = source / "releases" / "old-build.zip"
+    generated_release.parent.mkdir(parents=True)
+    generated_release.write_bytes(b"generated-build")
     inactive = source / "conhecimento" / "PDV" / "KB" / "obsoleto.md"
     inactive.write_text("conteúdo removido", encoding="utf-8")
     with database.connect() as connection:
@@ -206,6 +218,13 @@ def test_export_portable_excludes_secrets_and_full_videos(tmp_path: Path) -> Non
     assert (destination / "videos" / "inventory.json").is_file()
     assert (destination / "TrabalhoVR").is_dir()
     assert not (destination / "TrabalhoVR" / "private-chat").exists()
+    assert not (destination / "ERP").exists()
+    assert not (destination / "indice" / "codigo").exists()
+    assert not (destination / "indice" / "evaluations").exists()
+    assert not (destination / "releases").exists()
+    assert local_jar.is_file()
+    assert code_index.is_file()
+    assert generated_release.is_file()
     assert not (destination / "conhecimento" / "PDV" / "KB" / "obsoleto.md").exists()
     assert "assets/kb/pinpad.png" in (
         destination / "conhecimento" / "PDV" / "KB" / "pinpad.md"

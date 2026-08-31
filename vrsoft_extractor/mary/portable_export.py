@@ -19,9 +19,19 @@ EXCLUDED_TOP_LEVEL = {
     ".trash",
     "downloads",
     "logs",
+    # ERP bytecode and generated code indexes are analyst-local. Shipping them
+    # duplicates multiple gigabytes, can mix client releases and defeats the
+    # explicit per-workspace release contract.
+    "erp",
+    "releases",
     "trabalhovr",
     # Compatibility with private workspaces created before the rename.
     "trabalhomary",
+}
+PORTABLE_INDEX_FILES = {
+    "indice/catalogo.jsonl",
+    "indice/conhecimento.sqlite",
+    "indice/index.md",
 }
 EXCLUDED_NAMES = {".env", "thumbs.db", "desktop.ini"}
 EXCLUDED_SUFFIXES = {".sqlite-shm", ".sqlite-wal", ".tmp", ".log"}
@@ -304,6 +314,8 @@ def _excluded(relative: Path) -> bool:
     if not parts:
         return False
     if parts[0] in EXCLUDED_TOP_LEVEL or "__pycache__" in parts:
+        return True
+    if parts[0] == "indice" and relative.as_posix().casefold() not in PORTABLE_INDEX_FILES:
         return True
     name = relative.name.casefold()
     if name in EXCLUDED_NAMES:

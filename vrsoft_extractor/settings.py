@@ -286,6 +286,12 @@ def _read_protected_credentials(directory: Path) -> dict[str, str]:
     return result
 
 
+def read_protected_credentials(directory: Path) -> dict[str, str]:
+    """Read credentials scoped to one project without mutating process state."""
+
+    return dict(_read_protected_credentials(Path(directory)))
+
+
 def _load_protected_credentials(directory: Path) -> None:
     for key, value in _read_protected_credentials(directory).items():
         if not os.environ.get(key):

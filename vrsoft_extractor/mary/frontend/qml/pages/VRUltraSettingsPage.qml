@@ -17,10 +17,17 @@ Item {
         return -1
     }
 
-    ColumnLayout {
+    ScrollView {
+        id: settingsScroll
+        objectName: "vrUltraSettingsScroll"
         anchors.fill: parent
-        anchors.margins: Theme.spaceXs
-        spacing: Theme.spaceLg
+        clip: true
+        contentWidth: availableWidth
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+        ColumnLayout {
+            width: settingsScroll.availableWidth
+            spacing: Theme.spaceLg
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -222,13 +229,14 @@ Item {
         Rectangle {
             objectName: "vrUltraCodeAnalysisCard"
             Layout.fillWidth: true
-            Layout.preferredHeight: 126
+            Layout.preferredHeight: codeAnalysisContent.implicitHeight + Theme.spaceMd * 2
             radius: Theme.radiusCard
             color: frontend.palette.surface
             border.width: 1
             border.color: frontend.palette.border
 
             ColumnLayout {
+                id: codeAnalysisContent
                 anchors.fill: parent
                 anchors.margins: Theme.spaceMd
                 spacing: Theme.spaceSm
@@ -258,6 +266,7 @@ Item {
                         text: "Ativo"
                         checked: chat.codeAnalysisEnabled
                         enabled: chat.codeAnalysisReleaseItems.length > 0
+                            && chat.codeAnalysisReleaseFresh
                         onToggled: chat.setCodeAnalysisEnabled(checked)
                     }
                 }
@@ -275,6 +284,7 @@ Item {
                         objectName: "vrUltraCodeAnalysisRelease"
                         Layout.fillWidth: true
                         enabled: chat.codeAnalysisReleaseItems.length > 0
+                            && !chat.codeProcessingRunning
                         model: chat.codeAnalysisReleaseItems.length
                             ? chat.codeAnalysisReleaseItems
                             : [{"label": "Nenhuma release inventariada", "releaseId": ""}]
@@ -310,11 +320,519 @@ Item {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Rectangle {
+            objectName: "vrUltraJarDirectoryCard"
+            Layout.fillWidth: true
+            Layout.preferredHeight: jarDirectoryContent.implicitHeight + Theme.spaceMd * 2
+            radius: Theme.radiusCard
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.border
+
+            ColumnLayout {
+                id: jarDirectoryContent
+                anchors.fill: parent
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceSm
+
+                Text {
+                    text: "Diretório padrão dos JARs"
+                    color: frontend.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Font.DemiBold
+                }
+
+                VrComboBox {
+                    id: jarSourcePicker
+                    objectName: "vrUltraJarDirectoryPicker"
+                    Layout.fillWidth: true
+                    enabled: !chat.releaseSnapshotRunning
+                        && !chat.codeProcessingRunning
+                    model: chat.codeAnalysisJarSourceItems
+                    textRole: "label"
+                    currentIndex: {
+                        for (var index = 0; index < chat.codeAnalysisJarSourceItems.length; ++index) {
+                            if (chat.codeAnalysisJarSourceItems[index].value === chat.codeAnalysisJarSource)
+                                return index
+                        }
+                        return 0
+                    }
+                    onActivated: index => {
+                        if (index < chat.codeAnalysisJarSourceItems.length)
+                            chat.setCodeAnalysisJarSource(chat.codeAnalysisJarSourceItems[index].value)
+                    }
+                }
+
+                Text {
+                    text: "Escopo da análise"
+                    color: frontend.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    font.weight: Font.DemiBold
+                }
+
+                VrComboBox {
+                    id: jarScopePicker
+                    objectName: "vrUltraJarScopePicker"
+                    Layout.fillWidth: true
+                    enabled: !chat.releaseSnapshotRunning
+                        && !chat.codeProcessingRunning
+                    model: [
+                        { "label": "Release completa · 46 JARs", "value": "full_release" },
+                        { "label": "Somente um JAR", "value": "single_jar" }
+                    ]
+                    textRole: "label"
+                    currentIndex: chat.codeAnalysisSnapshotScope === "single_jar" ? 1 : 0
+                    onActivated: index => chat.setCodeAnalysisSnapshotScope(
+                        index === 1 ? "single_jar" : "full_release"
+                    )
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: {
+                        var index = jarSourcePicker.currentIndex
+                        if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
+                            return ""
+                        var item = chat.codeAnalysisJarSourceItems[index]
+                        if (chat.codeAnalysisSnapshotScope === "single_jar")
+                            return item.path + " · " + item.status
+                                + " · escolha um JAR abaixo"
+                        var expected = item.jarCount === chat.codeAnalysisExpectedJarCount
+                            ? ""
+                            : " · esperado: " + chat.codeAnalysisExpectedJarCount
+                        return item.path + " · " + item.status + expected
+                    }
+                    color: {
+                        var index = jarSourcePicker.currentIndex
+                        if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
+                            return frontend.palette.mutedText
+                        var item = chat.codeAnalysisJarSourceItems[index]
+                        return item.exists
+                            && (chat.codeAnalysisSnapshotScope === "single_jar"
+                                || item.jarCount === chat.codeAnalysisExpectedJarCount)
+                            ? frontend.palette.mutedText
+                            : frontend.palette.warning
+                    }
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    objectName: "vrUltraSingleJarRow"
+                    Layout.fillWidth: true
+                    visible: chat.codeAnalysisSnapshotScope === "single_jar"
+                    spacing: Theme.spaceSm
+
+                    VrTextField {
+                        objectName: "vrUltraSingleJarPath"
+                        Layout.fillWidth: true
+                        readOnly: true
+                        text: chat.codeAnalysisSingleJarPath
+                        placeholderText: "Nenhum JAR selecionado"
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraSelectSingleJarButton"
+                        text: "Escolher JAR…"
+                        enabled: !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingRunning
+                        onClicked: chat.selectCodeAnalysisSingleJar()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    VrTextField {
+                        id: releaseIdField
+                        objectName: "vrUltraReleaseIdField"
+                        Layout.fillWidth: true
+                        placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
+                            ? "Identificador próprio (ex.: 4.4.101-VRPdv)"
+                            : "Identificador da release (ex.: 2026.08.30)"
+                        enabled: !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingRunning
+                        onAccepted: {
+                            if (text.trim().length)
+                                chat.snapshotCodeAnalysisRelease(text.trim())
+                        }
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraAddReleaseButton"
+                        text: chat.releaseSnapshotRunning ? "Adicionando…" : "Adicionar release"
+                        variant: "primary"
+                        enabled: !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingRunning
+                            && releaseIdField.text.trim().length > 0
+                            && (chat.codeAnalysisSnapshotScope !== "single_jar"
+                                || chat.codeAnalysisSingleJarPath.length > 0)
+                        onClicked: chat.snapshotCodeAnalysisRelease(releaseIdField.text.trim())
+                    }
+                }
+
+                Text {
+                    objectName: "vrUltraReleaseSnapshotStatus"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: chat.releaseSnapshotStatus
+                    color: text.indexOf("Não foi possível") === 0
+                        ? frontend.palette.warning
+                        : frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Rectangle {
+            objectName: "vrUltraCodeProcessingCard"
+            Layout.fillWidth: true
+            Layout.preferredHeight: codeProcessingContent.implicitHeight + Theme.spaceMd * 2
+            radius: Theme.radiusCard
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.border
+
+            ColumnLayout {
+                id: codeProcessingContent
+                anchors.fill: parent
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceSm
+
+                Text {
+                    text: "Processamento local do índice"
+                    color: frontend.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.bodySize
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Decompilação, AST/grafo e FTS rodam na máquina do analista. A pausa ocorre com segurança entre lotes."
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Heap máximo por lote"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                        }
+                        VrComboBox {
+                            id: codeProcessingHeapPicker
+                            objectName: "vrUltraCodeProcessingHeapPicker"
+                            Layout.fillWidth: true
+                            enabled: !chat.codeProcessingRunning
+                            model: chat.codeProcessingHeapOptions
+                            textRole: "label"
+                            currentIndex: {
+                                for (var index = 0; index < chat.codeProcessingHeapOptions.length; ++index) {
+                                    if (chat.codeProcessingHeapOptions[index].value === chat.codeProcessingMaxHeapMb)
+                                        return index
+                                }
+                                return 0
+                            }
+                            onActivated: index => chat.setCodeProcessingMaxHeapMb(
+                                chat.codeProcessingHeapOptions[index].value
+                            )
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Timeout por lote"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                        }
+                        VrComboBox {
+                            id: codeProcessingTimeoutPicker
+                            objectName: "vrUltraCodeProcessingTimeoutPicker"
+                            Layout.fillWidth: true
+                            enabled: !chat.codeProcessingRunning
+                            model: chat.codeProcessingTimeoutOptions
+                            textRole: "label"
+                            currentIndex: {
+                                for (var index = 0; index < chat.codeProcessingTimeoutOptions.length; ++index) {
+                                    if (chat.codeProcessingTimeoutOptions[index].value === chat.codeProcessingTimeoutSeconds)
+                                        return index
+                                }
+                                return 0
+                            }
+                            onActivated: index => chat.setCodeProcessingTimeoutSeconds(
+                                chat.codeProcessingTimeoutOptions[index].value
+                            )
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "CPU máxima"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                        }
+                        VrComboBox {
+                            objectName: "vrUltraCodeProcessingCpuPicker"
+                            Layout.fillWidth: true
+                            enabled: !chat.codeProcessingRunning
+                            model: chat.codeProcessingCpuCoreOptions
+                            textRole: "label"
+                            currentIndex: {
+                                for (var index = 0; index < chat.codeProcessingCpuCoreOptions.length; ++index) {
+                                    if (chat.codeProcessingCpuCoreOptions[index].value === chat.codeProcessingMaxCpuCores)
+                                        return index
+                                }
+                                return 0
+                            }
+                            onActivated: index => chat.setCodeProcessingMaxCpuCores(
+                                chat.codeProcessingCpuCoreOptions[index].value
+                            )
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Limite do índice"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                        }
+                        VrComboBox {
+                            objectName: "vrUltraCodeProcessingDiskPicker"
+                            Layout.fillWidth: true
+                            enabled: !chat.codeProcessingRunning
+                            model: chat.codeProcessingDiskMultiplierOptions
+                            textRole: "label"
+                            currentIndex: {
+                                for (var index = 0; index < chat.codeProcessingDiskMultiplierOptions.length; ++index) {
+                                    if (chat.codeProcessingDiskMultiplierOptions[index].value === chat.codeProcessingDiskMultiplier)
+                                        return index
+                                }
+                                return 0
+                            }
+                            onActivated: index => chat.setCodeProcessingDiskMultiplier(
+                                chat.codeProcessingDiskMultiplierOptions[index].value
+                            )
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: "Janela de execução"
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                        }
+                        VrComboBox {
+                            objectName: "vrUltraCodeProcessingWindowPicker"
+                            Layout.fillWidth: true
+                            enabled: !chat.codeProcessingRunning
+                            model: chat.codeProcessingWindowOptions
+                            textRole: "label"
+                            currentIndex: {
+                                for (var index = 0; index < chat.codeProcessingWindowOptions.length; ++index) {
+                                    if (chat.codeProcessingWindowOptions[index].value === chat.codeProcessingWindow)
+                                        return index
+                                }
+                                return 0
+                            }
+                            onActivated: index => chat.setCodeProcessingWindow(
+                                chat.codeProcessingWindowOptions[index].value
+                            )
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Concorrência Java fixa: 1 processo, com prioridade baixa. Heap, CPU, disco e janela são congelados ao iniciar."
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                Rectangle {
+                    objectName: "vrUltraCodeProcessingProgress"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 8
+                    radius: 4
+                    color: frontend.palette.border
+
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(100, chat.codeProcessingProgress)) / 100
+                        height: parent.height
+                        radius: parent.radius
+                        color: frontend.palette.brandOrange
+                    }
+                }
+
+                Text {
+                    objectName: "vrUltraCodeProcessingStatus"
+                    Layout.fillWidth: true
+                    text: chat.codeProcessingStatus
+                    color: chat.codeProcessingCanRetry
+                        || text.indexOf("Falha") === 0
+                        || text.indexOf("desatualizada") >= 0
+                        ? frontend.palette.warning
+                        : frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: chat.codeProcessingFrozenManifestHash.length > 0
+                    text: "Execução congelada em " + chat.codeProcessingFrozenRelease
+                        + " · manifesto "
+                        + chat.codeProcessingFrozenManifestHash.substring(0, 12)
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    objectName: "vrUltraCodeProcessingCurrentBatch"
+                    Layout.fillWidth: true
+                    visible: chat.codeProcessingCurrentJar.length > 0
+                    text: "JAR atual/próximo: " + chat.codeProcessingCurrentJar
+                        + (chat.codeProcessingCurrentBatch.length > 0
+                            ? " · lote " + chat.codeProcessingCurrentBatch
+                            : "")
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    elide: Text.ElideMiddle
+                }
+
+                Text {
+                    objectName: "vrUltraCodeProcessingTelemetry"
+                    Layout.fillWidth: true
+                    visible: chat.codeProcessingTelemetrySummary.length > 0
+                    text: chat.codeProcessingTelemetrySummary
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    objectName: "vrUltraCodeProcessingEta"
+                    Layout.fillWidth: true
+                    visible: chat.codeProcessingTotalJars > 0
+                        && chat.codeProcessingProgress < 100
+                    text: chat.codeProcessingEtaSummary
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                VrComboBox {
+                    id: codeProcessingRetryPicker
+                    objectName: "vrUltraCodeProcessingRetryPicker"
+                    Layout.fillWidth: true
+                    visible: chat.codeProcessingCanRetry
+                    enabled: !chat.codeProcessingRunning
+                    model: chat.codeProcessingAttentionBatches
+                    textRole: "label"
+                    currentIndex: {
+                        for (var index = 0; index < chat.codeProcessingAttentionBatches.length; ++index) {
+                            if (chat.codeProcessingAttentionBatches[index].batchId === chat.codeProcessingRetryBatch)
+                                return index
+                        }
+                        return 0
+                    }
+                    onActivated: index => chat.setCodeProcessingRetryBatch(
+                        chat.codeProcessingAttentionBatches[index].batchId
+                    )
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    VrButton {
+                        objectName: "vrUltraStartCodeProcessing"
+                        Layout.fillWidth: true
+                        text: chat.codeProcessingProgress >= 100
+                            ? "Concluído"
+                            : chat.codeProcessingCoveredJars > 0
+                                || chat.codeProcessingFrozenManifestHash.length > 0
+                            ? "Retomar"
+                            : "Iniciar"
+                        variant: "primary"
+                        enabled: chat.codeAnalysisReleaseFresh
+                            && !chat.codeProcessingRunning
+                            && !chat.codeProcessingStatusLoading
+                            && !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingCanRetry
+                            && chat.codeProcessingProgress < 100
+                        onClicked: chat.startCodeProcessing()
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraPauseCodeProcessing"
+                        Layout.fillWidth: true
+                        text: chat.codeProcessingPauseRequested ? "Pausa solicitada" : "Pausar"
+                        enabled: chat.codeProcessingRunning
+                            && !chat.codeProcessingPauseRequested
+                        onClicked: chat.pauseCodeProcessing()
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraRetryCodeProcessing"
+                        Layout.fillWidth: true
+                        text: "Retry selecionado"
+                        enabled: chat.codeProcessingCanRetry
+                            && !chat.codeProcessingRunning
+                            && !chat.codeProcessingStatusLoading
+                        onClicked: chat.retryCodeProcessing()
+                    }
+                }
+            }
+        }
+
+            Item { Layout.preferredHeight: Theme.spaceMd }
+        }
     }
 
     Component.onCompleted: {
         chat.refreshModels()
         chat.refreshCodeAnalysisReleases()
+        chat.refreshCodeProcessingStatus()
     }
 }

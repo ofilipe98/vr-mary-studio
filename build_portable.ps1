@@ -101,6 +101,7 @@ try {
         chromium_included = $true
         ffmpeg_included = $true
         excluded_knowledge_sources = if ($IncludeKnowledgeBase) { @() } else { @("kb", "wiki") }
+        excluded_local_data = @("ERP", "indice/codigo", "releases", ".state", "TrabalhoVR")
         channel = $ResolvedChannel
         branch = $CurrentBranch
         revision = $Revision

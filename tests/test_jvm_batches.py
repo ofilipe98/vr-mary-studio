@@ -108,6 +108,9 @@ def test_planner_is_deterministic_deduplicates_content_and_keeps_provenance(
     assert first["plan_id"] == second["plan_id"]
     assert first["class_content_count"] == 4
     assert first["batch_count"] == 3
+    assert first["current_batch"]["state"] == "pending"
+    assert first["current_batch"]["jar_relative_path"] in {"A.jar", "B.jar"}
+    assert first["current_batch"]["batch_id"]
     with DecompilationBatchStore(tmp_path).connect() as connection:
         assert connection.execute("SELECT count(*) FROM class_occurrences").fetchone()[0] == 5
         family_batch = connection.execute(
@@ -254,6 +257,8 @@ def test_executor_marks_success_and_reuses_completed_content(tmp_path: Path) -> 
     assert result["executed"][0]["tool"] == "vineflower"
     assert result["executed"][0]["expected_source_files"] == 2
     assert result["executed"][0]["actual_source_files"] == 2
+    assert result["executed"][0]["telemetry"]["duration_ms"] == 5
+    assert result["executed"][0]["telemetry"]["timed_out"] is False
     assert adapter.requests[0].max_heap_mb == 768
     assert adapter.requests[0].timeout_seconds == 12
     assert adapter.requests[0].input_path.is_file()
@@ -323,6 +328,8 @@ def test_retry_requires_failed_or_partial_batch(tmp_path: Path) -> None:
             (batch_id,),
         )
         connection.commit()
+    blocked = DecompilationBatchStore(tmp_path).status(plan["plan_id"])
+    assert blocked["attention_batches"][0]["jar_relative_path"] == "A.jar"
     retried = executor.retry(batch_id)
     assert retried["batches_by_state"] == {"pending": 1}
 

@@ -20,7 +20,10 @@ from .code_analysis_benchmark import (
     preflight_benchmark_suite,
 )
 from .code_coverage import CodeCoverageError, ErpCodeCoverage
+from .code_field_validation import CodeFieldValidationError, CodeFieldValidator
 from .code_index import JavaCodeIndex
+from .code_index_transfer import CodeIndexTransfer, CodeIndexTransferError
+from .code_offline_preflight import OfflineCodePreflight
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
 from .erp_releases import ErpReleaseCatalog, ErpReleaseError
@@ -138,6 +141,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pasta dos JARs; padrão: ERP/releases/<release>/jars",
     )
     erp_import.add_argument("--expected-jars", type=int, default=46)
+    erp_snapshot = sub.add_parser(
+        "snapshot-erp-release",
+        help="Copia e verifica uma release local antes de inventariar os JARs",
+    )
+    erp_snapshot.add_argument("release_id")
+    erp_snapshot.add_argument(
+        "--source",
+        default=r"C:\vr\exec",
+        help=(
+            r"Pasta de origem ou um único arquivo JAR com --expected-jars 1; "
+            r"padrão: C:\vr\exec"
+        ),
+    )
+    erp_snapshot.add_argument("--expected-jars", type=int, default=46)
     erp_status = sub.add_parser(
         "status-erp-release",
         help="Verifica o frescor de uma ou de todas as releases indexadas",
@@ -203,10 +220,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirma explicitamente a remoção do índice regenerável",
     )
+    storage_budget = sub.add_parser(
+        "set-erp-code-storage-budget",
+        help="Define o limite local do Ã­ndice entre 1x e 10x o tamanho da release",
+    )
+    storage_budget.add_argument("--multiplier", type=int, required=True)
     sub.add_parser(
         "doctor-code-analysis",
         help="Verifica Java 17 isolado, Vineflower e CFR sem alterar o sistema",
     )
+    offline_preflight = sub.add_parser(
+        "preflight-erp-code-offline",
+        help="Valida release, toolchain e capacidade sem rede, modelo ou decompilação",
+    )
+    offline_preflight.add_argument("release_id")
     batch_plan = sub.add_parser(
         "plan-erp-decompilation",
         help="Planeja lotes determinísticos e retomáveis para decompilar uma release",
@@ -228,6 +255,13 @@ def build_parser() -> argparse.ArgumentParser:
     batch_run.add_argument("--limit", type=int, default=1)
     batch_run.add_argument("--heap-mb", type=int, default=2048)
     batch_run.add_argument("--timeout", type=int, default=300)
+    batch_run.add_argument("--cpu-cores", type=int, choices=(1, 2, 4), default=1)
+    batch_run.add_argument("--priority", choices=("low", "normal"), default="low")
+    batch_run.add_argument(
+        "--processing-window",
+        choices=("always", "night", "off_hours"),
+        default="always",
+    )
     batch_status = sub.add_parser(
         "status-erp-decompilation",
         help="Mostra o progresso de um ou de todos os planos de decompilação",
@@ -256,6 +290,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mostra cobertura do índice pesquisável de código",
     )
     code_status.add_argument("release_id", nargs="?", default="")
+    code_export = sub.add_parser(
+        "export-erp-code-index",
+        help="Exporta um Ã­ndice offline verificado por hash, sem incluir os JARs",
+    )
+    code_export.add_argument("release_id")
+    code_export.add_argument("destination")
+    code_import = sub.add_parser(
+        "import-erp-code-index",
+        help="Importa um Ã­ndice somente se release e hashes locais coincidirem",
+    )
+    code_import.add_argument("package")
+    code_import.add_argument("--release", default="")
+    field_validation = sub.add_parser(
+        "validate-erp-code-field",
+        help="Valida offline cobertura, isolamento, hashes, citaÃ§Ãµes e telemetria",
+    )
+    field_validation.add_argument("--release", action="append", required=True)
+    field_validation.add_argument("--probe-symbol", default="")
+    field_validation.add_argument("--require-distinct-hashes", action="store_true")
     coverage_status = sub.add_parser(
         "status-erp-code-coverage",
         help="Mostra progresso e capacidade para cobrir os JARs de uma release",
@@ -273,6 +326,13 @@ def build_parser() -> argparse.ArgumentParser:
     coverage_advance.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     coverage_advance.add_argument("--heap-mb", type=int, default=2048)
     coverage_advance.add_argument("--timeout", type=int, default=300)
+    coverage_advance.add_argument("--cpu-cores", type=int, choices=(1, 2, 4), default=1)
+    coverage_advance.add_argument("--priority", choices=("low", "normal"), default="low")
+    coverage_advance.add_argument(
+        "--processing-window",
+        choices=("always", "night", "off_hours"),
+        default="always",
+    )
     coverage_advance.add_argument(
         "--approve-processing",
         action="store_true",
@@ -772,6 +832,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["state"] == "ready" else 2
+    elif args.command == "snapshot-erp-release":
+        catalog = ErpReleaseCatalog(settings.root, args.expected_jars)
+        try:
+            result = catalog.snapshot_release(args.release_id, args.source)
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["state"] == "ready" else 2
     elif args.command == "status-erp-release":
         catalog = ErpReleaseCatalog(settings.root)
         try:
@@ -842,8 +911,31 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "set-erp-code-storage-budget":
+        try:
+            result = ErpReleaseCatalog(settings.root).set_storage_budget_multiplier(
+                args.multiplier
+            )
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "doctor-code-analysis":
         result = JvmToolchain(settings.root).doctor()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
+    elif args.command == "preflight-erp-code-offline":
+        try:
+            result = OfflineCodePreflight(settings.root).run(args.release_id)
+        except (
+            CodeCoverageError,
+            DecompilationBatchError,
+            ErpReleaseError,
+            OSError,
+            ValueError,
+        ) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready"] else 2
     elif args.command == "plan-erp-decompilation":
@@ -865,6 +957,9 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 max_heap_mb=args.heap_mb,
                 timeout_seconds=args.timeout,
+                max_cpu_cores=args.cpu_cores,
+                process_priority=args.priority,
+                processing_window=args.processing_window,
             )
         except (DecompilationBatchError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
@@ -910,6 +1005,36 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status-erp-code":
         result = JavaCodeIndex(settings.root).status(args.release_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "export-erp-code-index":
+        try:
+            result = CodeIndexTransfer(settings.root).export_release(
+                args.release_id, args.destination
+            )
+        except (CodeIndexTransferError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "import-erp-code-index":
+        try:
+            result = CodeIndexTransfer(settings.root).import_package(
+                args.package, release_id=args.release
+            )
+        except (CodeIndexTransferError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "validate-erp-code-field":
+        try:
+            result = CodeFieldValidator(settings.root).validate(
+                args.release,
+                probe_symbol=args.probe_symbol,
+                require_distinct_hashes=args.require_distinct_hashes,
+            )
+        except (CodeFieldValidationError, ErpReleaseError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     elif args.command == "status-erp-code-coverage":
         try:
             result = ErpCodeCoverage(settings.root).status(args.release_id)
@@ -929,6 +1054,9 @@ def main(argv: list[str] | None = None) -> int:
                 max_bytes=args.max_bytes,
                 max_heap_mb=args.heap_mb,
                 timeout_seconds=args.timeout,
+                max_cpu_cores=args.cpu_cores,
+                process_priority=args.priority,
+                processing_window=args.processing_window,
             )
         except (CodeCoverageError, DecompilationBatchError, ErpReleaseError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))

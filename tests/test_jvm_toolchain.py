@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 from vrsoft_extractor.mary.jvm_toolchain import (
     CfrAdapter,
+    DecompilerAdapter,
     DecompileRequest,
     JavaRuntimeResolver,
     JvmToolchain,
@@ -12,6 +15,21 @@ from vrsoft_extractor.mary.jvm_toolchain import (
     VineflowerAdapter,
     parse_java_version,
 )
+
+
+class _PythonProcessAdapter(DecompilerAdapter):
+    name = "python-test"
+
+    def command(self, request: DecompileRequest) -> list[str]:
+        script = (
+            "import pathlib,time; "
+            "data=bytearray(8*1024*1024); "
+            f"path=pathlib.Path({str(request.output_dir / 'Result.java')!r}); "
+            "path.parent.mkdir(parents=True,exist_ok=True); "
+            "path.write_text('class Result {}',encoding='utf-8'); "
+            "time.sleep(0.2); print(len(data))"
+        )
+        return [sys.executable, "-c", script]
 
 
 def test_parse_java_version_handles_legacy_and_modern_formats() -> None:
@@ -108,3 +126,29 @@ def test_decompiler_rejects_unapproved_binary(tmp_path: Path) -> None:
     assert status.available is False
     assert status.checksum_verified is False
     assert "Checksum" in status.error
+
+
+def test_decompiler_records_local_process_memory_cpu_and_disk(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.jar"
+    input_path.write_bytes(b"input-bytecode")
+    tool_path = tmp_path / "tool.jar"
+    tool_path.write_bytes(b"test-tool")
+    adapter = _PythonProcessAdapter(
+        ToolStatus("java", True, sys.executable, "17-test"),
+        tool_path,
+    )
+
+    result = adapter.decompile(
+        DecompileRequest(input_path, tmp_path / "out", timeout_seconds=5)
+    )
+
+    assert result.status == "completed"
+    assert result.input_bytes == len(b"input-bytecode")
+    assert result.output_bytes >= len("class Result {}")
+    assert result.duration_ms >= 100
+    assert result.timed_out is False
+    if os.name == "nt":
+        assert result.metrics_available is True
+        assert result.peak_rss_bytes > 0
+        assert result.cpu_user_ms + result.cpu_kernel_ms >= 0
+        assert result.cpu_limit_applied is True

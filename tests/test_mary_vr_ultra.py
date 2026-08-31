@@ -273,6 +273,7 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
             {
                 "source_key": "a" * 64,
                 "release_id": release_id,
+                "release_hash": "b" * 64,
                 "jar_relative_path": "VRPdv.jar",
                 "qualified_name": "br.vr.CaixaService",
                 "line_start": 10,
@@ -290,12 +291,21 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
     monkeypatch.setattr(
         "vrsoft_extractor.mary.orchestrator.JavaCodeIndex.search", fake_search
     )
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.ErpReleaseCatalog.status",
+        lambda self, release_id: {
+            "release_id": release_id,
+            "freshness": "fresh",
+            "release_manifest_sha256": "b" * 64,
+        },
+    )
     _run_send(
         orchestrator,
         cid,
         events,
         code_analysis_enabled=True,
         code_analysis_release="2026.08.29",
+        code_analysis_manifest_sha256="b" * 64,
     )
 
     assert calls and all(release == "2026.08.29" for _query, release in calls)
@@ -305,6 +315,13 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
         and event.payload.get("worker_id") == "fanout_codigo"
     ]
     assert code_started
+    research_run_id = [
+        event.payload["run_id"]
+        for event in events
+        if event.kind == "research_started"
+    ][-1]
+    assert code_started[-1].payload["run_id"] == research_run_id
+    assert code_started[-1].payload["release_manifest_sha256"] == "b" * 64
     completed = [event for event in events if event.kind == "research_completed"][-1]
     assert completed.payload["code_agent"] == "found"
     code_completed = [
@@ -313,6 +330,53 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
         and event.payload.get("worker_id") == "fanout_codigo"
     ][-1]
     assert "VRPdv.jar" in code_completed.payload["citations"][0]
+
+
+def test_code_agent_rejects_stale_frozen_release_and_fanout_continues(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    search_called = False
+
+    def fake_search(*_args, **_kwargs):
+        nonlocal search_called
+        search_called = True
+        return []
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.JavaCodeIndex.search", fake_search
+    )
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.ErpReleaseCatalog.status",
+        lambda self, release_id: {
+            "release_id": release_id,
+            "freshness": "stale",
+            "release_manifest_sha256": "b" * 64,
+        },
+    )
+
+    _run_send(
+        orchestrator,
+        cid,
+        events,
+        code_analysis_enabled=True,
+        code_analysis_release="2026.08.29",
+        code_analysis_manifest_sha256="b" * 64,
+    )
+
+    assert not search_called
+    failed = [
+        event
+        for event in events
+        if event.kind == "agent_failed"
+        and event.payload.get("worker_id") == "fanout_codigo"
+    ][-1]
+    assert failed.payload["release_id"] == "2026.08.29"
+    assert failed.payload["release_manifest_sha256"] == "b" * 64
+    assert "mudaram" in failed.payload["error"]
+    assert any(event.kind == "turn_completed" for event in events)
 
 
 def test_code_agent_failure_degrades_without_stopping_synthesis(

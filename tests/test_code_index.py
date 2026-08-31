@@ -242,6 +242,81 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert constructors[0]["confidence"] == 0.8
 
 
+def test_identical_jar_reuses_search_index_under_new_release_identity(
+    tmp_path: Path,
+) -> None:
+    index, first_jar, first_plan_id = _indexed_project(tmp_path)
+    first = index.index_plan(first_plan_id)
+    second_jar = tmp_path / "ERP" / "releases" / "r2" / "jars" / "ERP.jar"
+    second_jar.parent.mkdir(parents=True)
+    second_jar.write_bytes(first_jar.read_bytes())
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    catalog.import_release("r2")
+
+    second_plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan("r2")
+    reused = JavaCodeIndex(tmp_path, catalog=catalog).index_plan(
+        second_plan["plan_id"]
+    )
+    matches = index.search("calcularTotal", release_id="r2")
+
+    assert first["indexed_sources"] == 2
+    assert second_plan["state"] == "completed"
+    assert second_plan["batch_count"] == 0
+    assert reused["reused_sources"] == 2
+    assert reused["indexed_sources"] == 0
+    assert reused["errors"] == []
+    assert index.status("r2")["sources"] == 2
+    assert matches[0]["release_id"] == "r2"
+    assert matches[0]["tool"] == "reused"
+    assert "ERP release r2" in matches[0]["citation"]
+
+    removed = catalog.remove_index("r1", approved=True)
+    preserved = index.search("calcularTotal", release_id="r2")
+    assert removed["preserved_shared_decompilation_dirs"] == 1
+    assert preserved[0]["release_id"] == "r2"
+
+
+def test_approved_release_removal_purges_scoped_search_and_processing_rows(
+    tmp_path: Path,
+) -> None:
+    index, jar_path, plan_id = _indexed_project(tmp_path)
+    index.index_plan(plan_id)
+
+    removed = index.catalog.remove_index("r1", approved=True)
+
+    assert removed["removed_search_sources"] == 2
+    assert removed["removed_processing_plans"] == 1
+    assert removed["source_jars_removed"] is False
+    assert jar_path.is_file()
+    assert index.status("r1")["sources"] == 0
+    assert index.store.status() == []
+
+
+def test_legacy_source_identity_migrates_without_redecompilation(
+    tmp_path: Path,
+) -> None:
+    index, _jar_path, plan_id = _indexed_project(tmp_path)
+    index.index_plan(plan_id)
+    with index.store.connect() as connection:
+        connection.execute(
+            """UPDATE code_sources
+               SET schema_version = 5, source_key = 'legacy-' || id"""
+        )
+        connection.commit()
+
+    status = index.status("r1")
+    matches = index.search("calcularTotal", release_id="r1")
+    with index.store.connect() as connection:
+        rows = connection.execute(
+            "SELECT schema_version, source_key FROM code_sources ORDER BY id"
+        ).fetchall()
+
+    assert status["sources"] == 2
+    assert matches[0]["release_id"] == "r1"
+    assert {int(row["schema_version"]) for row in rows} == {6}
+    assert all(not str(row["source_key"]).startswith("legacy-") for row in rows)
+
+
 def test_search_warns_when_jar_is_newer_than_index(tmp_path: Path) -> None:
     index, jar_path, plan_id = _indexed_project(tmp_path)
     index.index_plan(plan_id)

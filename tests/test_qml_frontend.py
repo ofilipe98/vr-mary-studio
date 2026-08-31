@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import unittest
 import zipfile
 from pathlib import Path
@@ -16,12 +17,17 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from vrsoft_extractor.mary import brand
+from vrsoft_extractor.mary.code_processing_audit import CodeProcessingAudit
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
-from vrsoft_extractor.mary.frontend.chat import ChatBridge, markdown_for_display
+from vrsoft_extractor.mary.frontend.chat import (
+    DEFAULT_ERP_JAR_SOURCE_PATH,
+    ChatBridge,
+    markdown_for_display,
+)
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.models import RuntimeEvent
 
@@ -30,6 +36,31 @@ class QmlFrontendTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        # ChatBridge owns timers, provider reader threads and optional local
+        # processing workers.  Tests used to rely on QObject/Python garbage
+        # collection, which is non-deterministic and can leave native Qt work
+        # alive after a TemporaryDirectory has been removed on Windows.
+        self._chat_bridges: list[ChatBridge] = []
+        original_init = ChatBridge.__init__
+
+        def tracked_init(instance, *args, **kwargs):
+            original_init(instance, *args, **kwargs)
+            self._chat_bridges.append(instance)
+
+        self._chat_bridge_init_patch = patch.object(
+            ChatBridge,
+            "__init__",
+            tracked_init,
+        )
+        self._chat_bridge_init_patch.start()
+
+    def tearDown(self):
+        self._chat_bridge_init_patch.stop()
+        for bridge in reversed(self._chat_bridges):
+            bridge.close()
+        self.application.processEvents()
 
     def _settings(self, root: Path) -> MarySettings:
         return MarySettings(
@@ -437,8 +468,62 @@ class QmlFrontendTest(unittest.TestCase):
             settings_page.setProperty("tabIndex", 2)
             self.application.processEvents()
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsPage"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsScroll"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryCard"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryPicker"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraJarScopePicker"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSingleJarRow"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSingleJarPath"))
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraSelectSingleJarButton")
+            )
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraReleaseIdField"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraAddReleaseButton"))
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraReleaseSnapshotStatus")
+            )
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeProcessingCard"))
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingProgress")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingCurrentBatch")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingTelemetry")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingEta")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingHeapPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingTimeoutPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingCpuPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingDiskPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingWindowPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingRetryPicker")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraStartCodeProcessing")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraPauseCodeProcessing")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraRetryCodeProcessing")
+            )
             settings_navigation = window.findChild(QObject, "settingsNavigation")
             self.assertIsNotNone(settings_navigation)
             self.assertEqual(
@@ -1029,6 +1114,8 @@ class QmlFrontendTest(unittest.TestCase):
                 [item["releaseId"] for item in reopened.codeAnalysisReleaseItems],
                 ["2026.08.29", "current"],
             )
+            bridge.close()
+            reopened.close()
 
     def test_code_analysis_release_selector_rejects_unknown_and_marks_stale(self):
         with TemporaryDirectory() as temporary:
@@ -1058,6 +1145,700 @@ class QmlFrontendTest(unittest.TestCase):
                 bridge.codeAnalysisReleaseItems[0]["freshness"], "stale"
             )
             self.assertIn("desatualizado", bridge.codeAnalysisReleaseItems[0]["label"])
+            bridge.setCodeAnalysisEnabled(True)
+            self.assertFalse(bridge.codeAnalysisEnabled)
+
+    def test_code_processing_limits_are_safe_and_persisted_per_workspace(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertEqual(bridge.codeProcessingMaxHeapMb, 2048)
+            self.assertEqual(bridge.codeProcessingTimeoutSeconds, 300)
+            self.assertEqual(bridge.codeProcessingMaxCpuCores, 1)
+            self.assertEqual(bridge.codeProcessingDiskMultiplier, 10)
+            self.assertEqual(bridge.codeProcessingWindow, "always")
+            self.assertEqual(
+                [item["value"] for item in bridge.codeProcessingHeapOptions],
+                [1024, 2048, 4096],
+            )
+            self.assertEqual(
+                [item["value"] for item in bridge.codeProcessingTimeoutOptions],
+                [300, 600, 1200],
+            )
+            self.assertEqual(
+                [item["value"] for item in bridge.codeProcessingCpuCoreOptions],
+                [1, 2, 4],
+            )
+            self.assertEqual(
+                [item["label"] for item in bridge.codeProcessingCpuCoreOptions],
+                ["1 núcleo(s)", "2 núcleo(s)", "4 núcleo(s)"],
+            )
+            self.assertEqual(
+                [item["value"] for item in bridge.codeProcessingDiskMultiplierOptions],
+                [5, 8, 10],
+            )
+            self.assertEqual(
+                [item["label"] for item in bridge.codeProcessingDiskMultiplierOptions],
+                ["Até 5x", "Até 8x", "Até 10x"],
+            )
+            self.assertEqual(
+                [item["value"] for item in bridge.codeProcessingWindowOptions],
+                ["always", "night", "off_hours"],
+            )
+            bridge.setCodeProcessingMaxHeapMb(4096)
+            bridge.setCodeProcessingTimeoutSeconds(1200)
+            bridge.setCodeProcessingMaxCpuCores(2)
+            bridge.setCodeProcessingDiskMultiplier(8)
+            bridge.setCodeProcessingWindow("off_hours")
+
+            reopened = ChatBridge(settings, database, preferences)
+            self.assertEqual(reopened.codeProcessingMaxHeapMb, 4096)
+            self.assertEqual(reopened.codeProcessingTimeoutSeconds, 1200)
+            self.assertEqual(reopened.codeProcessingMaxCpuCores, 2)
+            self.assertEqual(reopened.codeProcessingDiskMultiplier, 8)
+            self.assertEqual(reopened.codeProcessingWindow, "off_hours")
+            reopened.setCodeProcessingMaxHeapMb(1234)
+            reopened.setCodeProcessingTimeoutSeconds(1)
+            reopened.setCodeProcessingMaxCpuCores(3)
+            reopened.setCodeProcessingDiskMultiplier(11)
+            reopened.setCodeProcessingWindow("invalid")
+            self.assertEqual(reopened.codeProcessingMaxHeapMb, 4096)
+            self.assertEqual(reopened.codeProcessingTimeoutSeconds, 1200)
+            self.assertEqual(reopened.codeProcessingMaxCpuCores, 2)
+            self.assertEqual(reopened.codeProcessingDiskMultiplier, 8)
+            self.assertEqual(reopened.codeProcessingWindow, "off_hours")
+            bridge.close()
+            reopened.close()
+
+    def test_jar_source_defaults_to_vr_exec_and_is_scoped_by_workspace(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "current")
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertEqual(bridge.codeAnalysisJarSource, "vr_exec")
+            self.assertEqual(
+                Path(bridge.codeAnalysisJarSourcePath),
+                DEFAULT_ERP_JAR_SOURCE_PATH.resolve(strict=False),
+            )
+            self.assertEqual(
+                [item["value"] for item in bridge.codeAnalysisJarSourceItems],
+                ["vr_exec", "workspace"],
+            )
+
+            bridge.setCodeAnalysisJarSource("workspace")
+            expected_workspace = (
+                settings.erp_releases_dir / "current" / "jars"
+            ).resolve()
+            self.assertEqual(bridge.codeAnalysisJarSource, "workspace")
+            self.assertEqual(
+                Path(bridge.codeAnalysisJarSourcePath), expected_workspace
+            )
+            reopened = ChatBridge(settings, database, preferences)
+            self.assertEqual(reopened.codeAnalysisJarSource, "workspace")
+
+            other_settings = self._settings(root / "other")
+            other_database = MaryDatabase(
+                other_settings.database_path,
+                root=other_settings.root,
+                backup_portable_migration=False,
+            )
+            other = ChatBridge(other_settings, other_database, preferences)
+            self.assertEqual(other.codeAnalysisJarSource, "vr_exec")
+
+    def test_single_jar_snapshot_runs_locally_in_background_and_refreshes_selector(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "vr" / "exec"
+            jar = source / "ERP.jar"
+            jar.parent.mkdir(parents=True)
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr(
+                    "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n"
+                )
+                archive.writestr("br/vr/App.class", b"release")
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+
+            with patch(
+                "vrsoft_extractor.mary.frontend.chat.DEFAULT_ERP_JAR_SOURCE_PATH",
+                source,
+            ):
+                bridge = ChatBridge(settings, database, preferences)
+                bridge.setCodeAnalysisSnapshotScope("single_jar")
+                self.assertTrue(bridge.setCodeAnalysisSingleJarPath(str(jar)))
+                self.assertEqual(bridge.codeAnalysisSnapshotExpectedJarCount, 1)
+                with patch.object(bridge._orchestrator, "send") as model_send:
+                    self.assertTrue(bridge.snapshotCodeAnalysisRelease("2026.08.30"))
+                    self.assertTrue(bridge.releaseSnapshotRunning)
+                    self.assertFalse(bridge.snapshotCodeAnalysisRelease("outra"))
+                    for _attempt in range(100):
+                        self.application.processEvents()
+                        QTest.qWait(25)
+                        if not bridge.releaseSnapshotRunning:
+                            break
+
+                    self.assertFalse(bridge.releaseSnapshotRunning)
+                    self.assertEqual(bridge.codeAnalysisRelease, "2026.08.30")
+                    self.assertIn(
+                        "1 JAR copiado e verificado localmente",
+                        bridge.releaseSnapshotStatus,
+                    )
+                    self.assertEqual(
+                        [
+                            item["releaseId"]
+                            for item in bridge.codeAnalysisReleaseItems
+                        ],
+                        ["2026.08.30"],
+                    )
+                    model_send.assert_not_called()
+
+                managed = (
+                    settings.erp_releases_dir
+                    / "2026.08.30"
+                    / "jars"
+                    / "ERP.jar"
+                )
+                before = managed.read_bytes()
+                self.assertTrue(bridge.snapshotCodeAnalysisRelease("2026.08.30"))
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(25)
+                    if not bridge.releaseSnapshotRunning:
+                        break
+                self.assertFalse(bridge.releaseSnapshotRunning)
+                self.assertIn("já está inventariada", bridge.releaseSnapshotStatus)
+                self.assertEqual(managed.read_bytes(), before)
+                manifest = ErpReleaseCatalog(settings.root).load_manifest("2026.08.30")
+                self.assertEqual(manifest["analysis_scope"], "single_jar")
+                self.assertEqual(manifest["expected_jar_count"], 1)
+                bridge.close()
+
+    def test_local_code_processing_completes_without_model_or_network(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database, preferences)
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+
+            class FakeToolchain:
+                def __init__(self, _root):
+                    pass
+
+                def doctor(self):
+                    return {
+                        "java": {"available": True},
+                        "vineflower": {"available": True},
+                        "cfr": {"available": False},
+                    }
+
+            class FakeExecutor:
+                def retry(self, _batch_id):
+                    raise AssertionError("retry não esperado")
+
+            class FakeCoverage:
+                def __init__(self):
+                    self.covered = 0
+                    self.executor = FakeExecutor()
+                    self.advance_kwargs = []
+
+                def payload(self):
+                    return {
+                        "release_manifest_sha256": manifest_hash,
+                        "expected_jar_count": 2,
+                        "covered_jar_count": self.covered,
+                        "remaining_jar_count": 2 - self.covered,
+                        "active_plans": [],
+                        "blocked_plans": [],
+                    }
+
+                def status(self, _release_id):
+                    return self.payload()
+
+                def advance(self, _release_id, **_kwargs):
+                    self.advance_kwargs.append(dict(_kwargs))
+                    self.covered += 1
+                    return {
+                        "coverage": self.payload(),
+                        "executed": [
+                            {
+                                "state": "completed",
+                                "telemetry": {
+                                    "duration_ms": 250,
+                                    "peak_rss_bytes": 64 * 1024 * 1024,
+                                    "cpu_user_ms": 100,
+                                    "cpu_kernel_ms": 25,
+                                    "input_bytes": 1024,
+                                    "output_bytes": 2048,
+                                    "timed_out": False,
+                                    "metrics_available": True,
+                                },
+                            }
+                        ],
+                    }
+
+            manager = FakeCoverage()
+            bridge.setCodeProcessingMaxHeapMb(4096)
+            bridge.setCodeProcessingTimeoutSeconds(600)
+            bridge.setCodeProcessingMaxCpuCores(2)
+            with (
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    FakeToolchain,
+                ),
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    return_value=manager,
+                ),
+                patch.object(bridge._orchestrator, "send") as model_send,
+            ):
+                self.assertTrue(bridge.startCodeProcessing())
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if not bridge.codeProcessingRunning:
+                        break
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertEqual(
+                bridge.codeProcessingProgress,
+                100,
+                msg=bridge.codeProcessingStatus,
+            )
+            self.assertEqual(bridge.codeProcessingCoveredJars, 2)
+            self.assertIn("concluído", bridge.codeProcessingStatus)
+            self.assertEqual(bridge.codeProcessingFrozenRelease, "r1")
+            self.assertEqual(bridge.codeProcessingFrozenManifestHash, manifest_hash)
+            self.assertTrue(manager.advance_kwargs)
+            self.assertEqual(
+                {
+                    (
+                        item["max_heap_mb"],
+                        item["timeout_seconds"],
+                        item["max_cpu_cores"],
+                        item["process_priority"],
+                        item["processing_window"],
+                    )
+                    for item in manager.advance_kwargs
+                },
+                {(4096, 600, 2, "low", "always")},
+            )
+            self.assertEqual(bridge.codeProcessingTelemetry["processed_batches"], 2)
+            self.assertEqual(bridge.codeProcessingTelemetry["peak_rss_bytes"], 64 * 1024 * 1024)
+            self.assertEqual(bridge.codeProcessingTelemetry["output_bytes"], 4096)
+            self.assertIn("pico Java 64.0 MB", bridge.codeProcessingTelemetrySummary)
+            model_send.assert_not_called()
+            audit_path = (
+                settings.root / "indice" / "codigo" / "processing-runs.jsonl"
+            )
+            audit = [
+                json.loads(line)
+                for line in audit_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                [item["event"] for item in audit],
+                ["started", "toolchain_validated", "progress", "progress", "completed"],
+            )
+            self.assertEqual({item["release_id"] for item in audit}, {"r1"})
+            self.assertEqual(
+                {item["release_manifest_sha256"] for item in audit},
+                {manifest_hash},
+            )
+            self.assertEqual(len({item["run_id"] for item in audit}), 1)
+            self.assertEqual(audit[0]["details"]["max_heap_mb"], 4096)
+            self.assertEqual(audit[0]["details"]["timeout_seconds"], 600)
+            self.assertEqual(audit[0]["details"]["global_java_concurrency"], 1)
+            self.assertEqual(
+                audit[-1]["details"]["telemetry"]["processed_batches"], 2
+            )
+            bridge.close()
+
+    def test_local_code_processing_pause_is_cooperative_between_batches(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database)
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+            batch_started = threading.Event()
+            allow_batch_finish = threading.Event()
+
+            class FakeToolchain:
+                def __init__(self, _root):
+                    pass
+
+                def doctor(self):
+                    return {
+                        "java": {"available": True},
+                        "vineflower": {"available": True},
+                        "cfr": {"available": True},
+                    }
+
+            class FakeCoverage:
+                def __init__(self):
+                    self.covered = 0
+                    self.executor = object()
+
+                def payload(self):
+                    return {
+                        "release_manifest_sha256": manifest_hash,
+                        "expected_jar_count": 2,
+                        "covered_jar_count": self.covered,
+                        "remaining_jar_count": 2 - self.covered,
+                        "active_plans": [],
+                        "blocked_plans": [],
+                    }
+
+                def status(self, _release_id):
+                    return self.payload()
+
+                def advance(self, _release_id, **_kwargs):
+                    batch_started.set()
+                    allow_batch_finish.wait(timeout=2)
+                    self.covered = 1
+                    return {
+                        "coverage": self.payload(),
+                        "executed": [{"state": "completed"}],
+                    }
+
+            with (
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    FakeToolchain,
+                ),
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    return_value=FakeCoverage(),
+                ),
+            ):
+                self.assertTrue(bridge.startCodeProcessing())
+                self.assertTrue(batch_started.wait(timeout=2))
+                bridge.pauseCodeProcessing()
+                self.assertTrue(bridge.codeProcessingPauseRequested)
+                self.assertIn("lote Java atual", bridge.codeProcessingStatus)
+                allow_batch_finish.set()
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if not bridge.codeProcessingRunning:
+                        break
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertFalse(bridge.codeProcessingPauseRequested)
+            self.assertEqual(bridge.codeProcessingCoveredJars, 1)
+            self.assertIn("pausado entre lotes", bridge.codeProcessingStatus)
+            bridge.close()
+
+    def test_local_code_processing_stops_before_planning_without_toolchain(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database)
+
+            class MissingToolchain:
+                def __init__(self, _root):
+                    pass
+
+                def doctor(self):
+                    return {
+                        "java": {"available": False},
+                        "vineflower": {"available": False},
+                        "cfr": {"available": False},
+                    }
+
+            with (
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    MissingToolchain,
+                ),
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage"
+                ) as coverage,
+            ):
+                self.assertTrue(bridge.startCodeProcessing())
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if not bridge.codeProcessingRunning:
+                        break
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertIn("Java 17 isolado", bridge.codeProcessingStatus)
+            coverage.assert_not_called()
+            audit_path = (
+                settings.root / "indice" / "codigo" / "processing-runs.jsonl"
+            )
+            self.assertEqual(
+                [
+                    json.loads(line)["event"]
+                    for line in audit_path.read_text(encoding="utf-8").splitlines()
+                ],
+                ["started", "failed"],
+            )
+            bridge.close()
+
+    def test_local_code_processing_retries_first_attention_batch(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database)
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+
+            class FakeToolchain:
+                def __init__(self, _root):
+                    pass
+
+                def doctor(self):
+                    return {
+                        "java": {"available": True},
+                        "vineflower": {"available": True},
+                        "cfr": {"available": True},
+                    }
+
+            class FakeExecutor:
+                def __init__(self, owner):
+                    self.owner = owner
+                    self.retried = []
+
+                def retry(self, batch_id):
+                    self.retried.append(batch_id)
+                    self.owner.blocked = False
+
+            class FakeCoverage:
+                def __init__(self):
+                    self.covered = 0
+                    self.blocked = True
+                    self.executor = FakeExecutor(self)
+
+                def payload(self):
+                    return {
+                        "release_manifest_sha256": manifest_hash,
+                        "expected_jar_count": 1,
+                        "covered_jar_count": self.covered,
+                        "remaining_jar_count": 1 - self.covered,
+                        "active_plans": [],
+                        "blocked_plans": (
+                            [
+                                {
+                                    "selected_jars": ["VRPdv.jar"],
+                                    "attention_batches": [
+                                        {
+                                            "batch_id": "batch-1",
+                                            "jar_relative_path": "VRPdv.jar",
+                                            "ordinal": 0,
+                                            "state": "failed",
+                                        },
+                                        {
+                                            "batch_id": "batch-2",
+                                            "jar_relative_path": "VRPdv.jar",
+                                            "ordinal": 1,
+                                            "state": "partial",
+                                        },
+                                    ],
+                                }
+                            ]
+                            if self.blocked
+                            else []
+                        ),
+                    }
+
+                def status(self, _release_id):
+                    return self.payload()
+
+                def advance(self, _release_id, **_kwargs):
+                    self.covered = 1
+                    return {
+                        "coverage": self.payload(),
+                        "executed": [{"state": "completed"}],
+                    }
+
+            manager = FakeCoverage()
+            with patch(
+                "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                return_value=manager,
+            ):
+                bridge.refreshCodeProcessingStatus()
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if not bridge.codeProcessingStatusLoading:
+                        break
+            self.assertTrue(bridge.codeProcessingCanRetry)
+            self.assertEqual(
+                [item["batchId"] for item in bridge.codeProcessingAttentionBatches],
+                ["batch-1", "batch-2"],
+            )
+            bridge.setCodeProcessingRetryBatch("batch-2")
+            self.assertEqual(bridge.codeProcessingRetryBatch, "batch-2")
+            self.assertEqual(bridge.codeProcessingCurrentBatch, "batch-2")
+
+            with (
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    FakeToolchain,
+                ),
+                patch(
+                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    return_value=manager,
+                ),
+            ):
+                self.assertTrue(bridge.retryCodeProcessing())
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if not bridge.codeProcessingRunning:
+                        break
+
+            self.assertEqual(manager.executor.retried, ["batch-2"])
+            self.assertEqual(
+                bridge.codeProcessingProgress,
+                100,
+                msg=bridge.codeProcessingStatus,
+            )
+            self.assertFalse(bridge.codeProcessingCanRetry)
+            audit = [
+                json.loads(line)
+                for line in (
+                    settings.root / "indice" / "codigo" / "processing-runs.jsonl"
+                ).read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(audit[0]["details"]["retry_batch_id"], "batch-2")
+            retried_event = next(
+                item for item in audit if item["event"] == "batch_retried"
+            )
+            self.assertEqual(retried_event["details"]["batch_id"], "batch-2")
+            bridge.close()
+
+    def test_local_code_processing_restores_last_run_and_current_batch(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+            CodeProcessingAudit(settings.root).record(
+                "paused",
+                run_id="processing-run-1",
+                release_id="r1",
+                manifest_sha256=manifest_hash,
+                details={
+                    "covered_jar_count": 1,
+                    "expected_jar_count": 2,
+                    "telemetry": {
+                        "processed_batches": 1,
+                        "wall_duration_ms": 2500,
+                        "peak_rss_bytes": 32 * 1024 * 1024,
+                        "cpu_user_ms": 500,
+                        "cpu_kernel_ms": 100,
+                        "output_bytes": 1024,
+                        "metrics_available": True,
+                    },
+                },
+            )
+            coverage = {
+                "release_manifest_sha256": manifest_hash,
+                "expected_jar_count": 2,
+                "covered_jar_count": 1,
+                "remaining_jar_count": 1,
+                "remaining_jars": ["VRPdv.jar"],
+                "active_plans": [
+                    {
+                        "current_batch": {
+                            "batch_id": "batch-7",
+                            "jar_relative_path": "VRPdv.jar",
+                            "state": "pending",
+                        },
+                        "attention_batches": [],
+                    }
+                ],
+                "blocked_plans": [],
+            }
+
+            with patch(
+                "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage"
+            ) as coverage_manager:
+                coverage_manager.return_value.status.return_value = coverage
+                bridge = ChatBridge(settings, database)
+                bridge.refreshCodeProcessingStatus()
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    if bridge.codeProcessingFrozenRelease == "r1":
+                        break
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertEqual(bridge.codeProcessingFrozenRelease, "r1")
+            self.assertEqual(bridge.codeProcessingFrozenManifestHash, manifest_hash)
+            self.assertEqual(bridge.codeProcessingCurrentJar, "VRPdv.jar")
+            self.assertEqual(bridge.codeProcessingCurrentBatch, "batch-7")
+            self.assertIn("pausado entre lotes", bridge.codeProcessingStatus)
+            self.assertIn("pico Java 32.0 MB", bridge.codeProcessingTelemetrySummary)
+            bridge.close()
 
     def test_code_analysis_cannot_be_enabled_without_inventoried_release(self):
         with TemporaryDirectory() as temporary:

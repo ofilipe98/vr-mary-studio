@@ -19,6 +19,7 @@ from .erp_releases import (
     normalize_class_entry,
     sha256_file,
 )
+from .code_processing_policy import processing_window_status
 from .jvm_toolchain import DecompileRequest, DecompileResult, JvmToolchain
 
 
@@ -213,6 +214,7 @@ class DecompilationBatchStore:
             {
                 "batch_id": item["batch_id"],
                 "ordinal": int(item["ordinal"]),
+                "jar_relative_path": item["jar_relative_path"],
                 "state": item["state"],
                 "class_version": int(item["class_version"]),
                 "attempt_count": int(item["attempt_count"]),
@@ -227,6 +229,34 @@ class DecompilationBatchStore:
                 (row["plan_id"],),
             )
         ]
+        current_row = connection.execute(
+            """SELECT batch_id, ordinal, jar_relative_path, state, class_version,
+                      class_count, attempt_count
+               FROM decompilation_batches
+               WHERE plan_id = ? AND state IN ('running', 'pending', 'failed', 'partial')
+               ORDER BY CASE state
+                          WHEN 'running' THEN 0
+                          WHEN 'pending' THEN 1
+                          WHEN 'failed' THEN 2
+                          ELSE 3
+                        END,
+                        ordinal
+               LIMIT 1""",
+            (row["plan_id"],),
+        ).fetchone()
+        current_batch = (
+            {
+                "batch_id": current_row["batch_id"],
+                "ordinal": int(current_row["ordinal"]),
+                "jar_relative_path": current_row["jar_relative_path"],
+                "state": current_row["state"],
+                "class_version": int(current_row["class_version"]),
+                "class_count": int(current_row["class_count"]),
+                "attempt_count": int(current_row["attempt_count"]),
+            }
+            if current_row is not None
+            else {}
+        )
         return {
             "plan_id": row["plan_id"],
             "schema_version": int(row["schema_version"]),
@@ -242,6 +272,7 @@ class DecompilationBatchStore:
             "expected_source_files": int(totals["expected_sources"]),
             "actual_source_files": int(totals["actual_sources"]),
             "batches_by_state": counts,
+            "current_batch": current_batch,
             "attention_batches": attention_batches,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -300,6 +331,7 @@ class DecompilationBatchPlanner:
             "plan",
             {
                 "schema": PROCESSING_SCHEMA_VERSION,
+                "release_id": release_id,
                 "release_hash": release_hash,
                 "artifacts": [
                     [path, str(artifact.get("sha256") or "")]
@@ -600,6 +632,9 @@ class DecompilationBatchExecutor:
         limit: int = 1,
         max_heap_mb: int = 2048,
         timeout_seconds: int = 300,
+        max_cpu_cores: int = 1,
+        process_priority: str = "low",
+        processing_window: str = "always",
     ) -> dict[str, Any]:
         limit = max(1, int(limit))
         results: list[dict[str, Any]] = []
@@ -608,6 +643,12 @@ class DecompilationBatchExecutor:
             self._verify_release(plan)
             self._recover_interrupted(plan_id)
             for _ in range(limit):
+                window = processing_window_status(processing_window)
+                if not window["allowed"]:
+                    raise DecompilationBatchError(
+                        "Processamento fora da janela ociosa configurada: "
+                        + str(window["label"])
+                    )
                 batch = self._claim_next(plan_id)
                 if batch is None:
                     break
@@ -617,6 +658,8 @@ class DecompilationBatchExecutor:
                         batch,
                         max_heap_mb=max_heap_mb,
                         timeout_seconds=timeout_seconds,
+                        max_cpu_cores=max_cpu_cores,
+                        process_priority=process_priority,
                     )
                 )
             self._refresh_plan_state(plan_id)
@@ -624,6 +667,11 @@ class DecompilationBatchExecutor:
             "plan": self.store.status(plan_id),
             "executed": results,
             "global_concurrency": 1,
+            "max_cpu_cores": max(1, int(max_cpu_cores)),
+            "process_priority": (
+                "low" if str(process_priority).casefold() == "low" else "normal"
+            ),
+            "processing_window": str(processing_window),
         }
 
     def retry(self, batch_id: str) -> dict[str, Any]:
@@ -733,6 +781,8 @@ class DecompilationBatchExecutor:
         *,
         max_heap_mb: int,
         timeout_seconds: int,
+        max_cpu_cores: int,
+        process_priority: str,
     ) -> dict[str, Any]:
         manifest = self.catalog.load_manifest(plan["release_id"])
         source = _source_path(self.root, manifest)
@@ -808,6 +858,12 @@ class DecompilationBatchExecutor:
                     output_dir=output_dir,
                     timeout_seconds=max(1, int(timeout_seconds)),
                     max_heap_mb=max(512, int(max_heap_mb)),
+                    max_cpu_cores=max(1, int(max_cpu_cores)),
+                    process_priority=(
+                        "low"
+                        if str(process_priority).casefold() == "low"
+                        else "normal"
+                    ),
                 )
             )
             attempts.append(result)
@@ -975,6 +1031,7 @@ class DecompilationBatchExecutor:
             "expected_source_files": expected,
             "actual_source_files": actual,
             "attempts": [asdict(item) for item in attempts],
+            "telemetry": _decompilation_telemetry(attempts),
         }
 
     def _finish_failed(
@@ -1014,6 +1071,7 @@ class DecompilationBatchExecutor:
             "expected_source_files": expected,
             "actual_source_files": actual,
             "attempts": [asdict(item) for item in attempts],
+            "telemetry": _decompilation_telemetry(attempts),
         }
 
     def _refresh_plan_state(self, plan_id: str) -> None:
@@ -1169,6 +1227,28 @@ def _java_source_paths(path: Path) -> set[str]:
         item.relative_to(path).as_posix()
         for item in path.rglob("*")
         if item.is_file() and item.suffix.casefold() in DECOMPILED_SOURCE_SUFFIXES
+    }
+
+
+def _decompilation_telemetry(
+    attempts: Sequence[DecompileResult],
+) -> dict[str, int | bool]:
+    return {
+        "duration_ms": sum(max(0, int(item.duration_ms)) for item in attempts),
+        "peak_rss_bytes": max(
+            (max(0, int(item.peak_rss_bytes)) for item in attempts), default=0
+        ),
+        "cpu_user_ms": sum(max(0, int(item.cpu_user_ms)) for item in attempts),
+        "cpu_kernel_ms": sum(
+            max(0, int(item.cpu_kernel_ms)) for item in attempts
+        ),
+        "input_bytes": max(
+            (max(0, int(item.input_bytes)) for item in attempts), default=0
+        ),
+        "output_bytes": sum(max(0, int(item.output_bytes)) for item in attempts),
+        "timed_out": any(bool(item.timed_out) for item in attempts),
+        "metrics_available": any(bool(item.metrics_available) for item in attempts),
+        "cpu_limit_applied": any(bool(item.cpu_limit_applied) for item in attempts),
     }
 
 

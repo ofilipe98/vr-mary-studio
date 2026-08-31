@@ -14,6 +14,7 @@ from typing import Any, Iterable
 
 from .config import MarySettings
 from .code_index import JavaCodeIndex
+from .erp_releases import ErpReleaseCatalog
 from .db import MaryDatabase
 from .chat_tools import (
     ToolExecutionError,
@@ -289,6 +290,7 @@ class ChatOrchestrator:
         force_research: bool = False,
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
         response_mode: str = "auto",
     ) -> None:
         conversation = self.database.get_conversation(conversation_id)
@@ -579,6 +581,9 @@ class ChatOrchestrator:
                                 and resolved_vr_mode == "ultra"
                             ),
                             code_analysis_release=code_analysis_release,
+                            code_analysis_manifest_sha256=(
+                                code_analysis_manifest_sha256
+                            ),
                         )
                     else:
                         provider.send_message(
@@ -771,6 +776,7 @@ class ChatOrchestrator:
         *,
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
     ) -> None:
         """Parallel per-module researchers feeding one buffered synthesis."""
         run_id = uuid.uuid4().hex
@@ -864,7 +870,9 @@ class ChatOrchestrator:
                     "parent_id": "vr_fanout",
                     "worker_id": "fanout_codigo",
                     "worker_name": "Agente de Código",
+                    "run_id": run_id,
                     "release_id": code_analysis_release,
+                    "release_manifest_sha256": code_analysis_manifest_sha256,
                 }
             )
         runtime_stages.append(
@@ -1048,6 +1056,26 @@ class ChatOrchestrator:
                     ]
                 )
                 try:
+                    expected_release_hash = str(
+                        code_analysis_manifest_sha256 or ""
+                    ).strip()
+                    if expected_release_hash:
+                        release_status = ErpReleaseCatalog(
+                            self.settings.root
+                        ).status(code_analysis_release)
+                        current_release_hash = str(
+                            release_status.get("release_manifest_sha256") or ""
+                        )
+                        if release_status.get("freshness") != "fresh":
+                            raise RuntimeError(
+                                "Os JARs da release mudaram depois da seleção; "
+                                "o Agente de Código não usará um índice possivelmente desatualizado."
+                            )
+                        if current_release_hash != expected_release_hash:
+                            raise RuntimeError(
+                                "O hash do manifesto mudou depois do início do turno; "
+                                "o Agente de Código foi interrompido."
+                            )
                     code_results: list[dict[str, Any]] = []
                     seen_code: set[str] = set()
                     for code_query in _code_scope_queries(scoped_text):
@@ -1056,6 +1084,12 @@ class ChatOrchestrator:
                             release_id=code_analysis_release,
                             limit=3,
                         ):
+                            if (
+                                expected_release_hash
+                                and str(result.get("release_hash") or "")
+                                != expected_release_hash
+                            ):
+                                continue
                             key = str(result.get("source_key") or "")
                             if key and key not in seen_code:
                                 seen_code.add(key)
@@ -1147,7 +1181,8 @@ class ChatOrchestrator:
 Objetivo: analisar somente os trechos Java já selecionados pelos agentes de
 Schema/KB/Wiki e apontar comportamento relevante à solicitação.
 Fonte permitida: apenas as evidências de código abaixo, da release
-{code_analysis_release}. Não pesquise arquivos nem amplie o escopo.
+{code_analysis_release}, manifesto {expected_release_hash or "não informado"},
+execução {run_id}. Não pesquise arquivos nem amplie o escopo.
 Limites: não presuma ordem de classpath; diferencie fato, inferência e hipótese;
 sinalize lacunas ou contradições. Cite somente evidence_ids fornecidos.
 

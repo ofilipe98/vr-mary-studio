@@ -145,14 +145,30 @@ A interface Qt Quick/QML é o único frontend desktop.
 ### Releases do ERP para análise de código
 
 Cada versão do ERP deve ficar isolada em `VRProject/ERP/releases/<release>/jars`.
-O inventário registra os 46 JARs, hashes SHA-256, tamanho, classes, informações
+No escopo **Release completa**, o inventário registra os 46 JARs, hashes SHA-256, tamanho, classes, informações
 do `MANIFEST.MF`, duplicidades de classe e sinais heurísticos de ofuscação. Os
 JARs fornecidos manualmente nunca são removidos pelo Studio.
+
+Para uma investigação focada, a interface também oferece o escopo **Somente um
+JAR**. O analista escolhe explicitamente o arquivo, que recebe um manifesto
+`single_jar` e cobertura `1/1`. Esse índice pode ser usado pelo Agente de Código,
+mas permanece identificado como parcial e não representa a cobertura completa
+do ERP.
 
 ```powershell
 # Importar e validar uma release completa
 .\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
   --root VRProject import-erp-release 2026.08.28
+
+# Origem padrão do analista: copia e valida sem modificar C:\vr\exec
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject snapshot-erp-release 2026.08.28 `
+  --source "C:\vr\exec"
+
+# Escopo parcial: copia e valida somente o JAR explicitamente selecionado
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject snapshot-erp-release 2026.08.28-vrpdv `
+  --source "C:\vr\exec\VRPdv.jar" --expected-jars 1
 
 # Verificação rápida por tamanho e data, ou verificação integral por hash
 .\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
@@ -164,8 +180,9 @@ JARs fornecidos manualmente nunca são removidos pelo Studio.
 ```
 
 Para importar temporariamente uma pasta fora do layout padrão, use `--path`.
-Uma release com quantidade diferente de 46 JARs ou algum arquivo inválido é
-registrada como `incomplete` e não deve ser selecionada pelo Agente de Código.
+Uma release completa com quantidade diferente de 46 JARs ou algum arquivo
+inválido é registrada como `incomplete`. O escopo de JAR único só é considerado
+pronto quando o arquivo foi escolhido explicitamente e validado como JAR.
 O catálogo mantém no máximo três releases e usa como orçamento inicial do
 índice dez vezes o tamanho da primeira release importada; ele nunca remove uma
 versão automaticamente para abrir espaço.
@@ -178,6 +195,16 @@ validado antes do uso:
 ```powershell
 .\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
   --root VRProject doctor-code-analysis
+```
+
+Antes de iniciar uma cobertura real, o preflight offline valida identidade,
+escopo declarado (46 JARs ou um JAR explicitamente selecionado), hashes,
+frescor, toolchain, capacidade e classpath. Ele não chama modelo, não acessa
+rede, não decompila e não modifica a origem:
+
+```powershell
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject preflight-erp-code-offline <release_id>
 ```
 
 Antes de decompilar uma release, o Gate 1 mede conteúdos únicos e conflitos de
@@ -435,6 +462,87 @@ nos campos manuais e produz o manifesto SHA-256 junto com a suíte. O pacote de
 revisão e a chave continuam locais e não devem ser compartilhados. Detalhes em
 `design/GATE17_FINALIZACAO_REVISAO_TICKETS_2026-08-30.md`.
 
+Para uso por vários analistas, a indexação de releases é local e independente
+de LLM. Cada workspace mantém seu próprio catálogo de até três releases e a
+release ativa fica vinculada ao workspace. O congelamento de release e hash em
+cada execução já cobre o job local e o Agente de Código do fan-out. O
+pipeline obrigatório usa apenas SHA-256, leitura de ZIP/JAR, Java 17,
+Vineflower/CFR, AST/grafo e SQLite/FTS. Modelos entram somente depois, na
+consulta e síntese; indisponibilidade de provedor não pode impedir uma release
+de chegar a `ready`. O plano de produto e migração do portátil genérico está em
+`design/GATE18_INDEXACAO_LOCAL_POR_ANALISTA_2026-08-30.md`.
+
+Na máquina do analista, a origem padrão dos JARs é `C:\vr\exec`. A tela de
+configuração permite alternar entre esse diretório e a estrutura atual
+do workspace. A importação lê a origem sem modificá-la e cria um snapshot local
+por `release_id` e hash antes de iniciar o índice.
+
+Em **Escopo da análise**, escolha **Release completa · 46 JARs** para cobertura
+integral ou **Somente um JAR** para selecionar um arquivo no diálogo. No segundo
+caso, informe um `release_id` próprio, escolha o JAR e use **Adicionar release**.
+O seletor identifica a base como `escopo: 1 JAR`, evitando apresentá-la como uma
+release ERP completa.
+
+Essa primeira fatia já está disponível na configuração do VR Ultra. A escolha é
+persistida por workspace, mostra existência e contagem de JARs e não muda
+silenciosamente quando `C:\vr\exec` está ausente. O comando de snapshot exige a
+contagem configurada, valida os ZIP/JARs, copia para a área gerenciada e compara
+SHA-256 antes de inventariar a release. A mesma operação está disponível pelo
+campo de release e pelo botão **Adicionar release**; ela roda em background,
+bloqueia importações simultâneas e atualiza o seletor quando termina. Nenhuma
+etapa chama modelo.
+
+A aba VR Ultra também executa agora essa fila local em background. **Iniciar** ou
+**Retomar** avança planos persistidos um lote por vez; **Pausar** espera o Java
+atual terminar e para antes do lote seguinte; o seletor de falhas permite
+escolher qual estado `failed/partial` será reenfileirado. A tela também configura
+heap de 1/2/4 GB, timeout de 5/10/20 minutos, afinidade de 1/2/4 núcleos,
+orçamento de disco de 5/8/10× e janela de execução (`sempre`, `00h–06h` ou
+`18h–06h`). Tudo é persistido por workspace e congelado no início do job. A
+concorrência Java permanece fixa em 1 processo e o subprocesso usa prioridade
+baixa por padrão.
+Antes de começar, o Studio exige Java 17 e ao
+menos um decompilador verificado, congela `release_id` e SHA-256 do manifesto e
+grava os eventos em
+`VRProject\indice\codigo\processing-runs.jsonl`. A consulta de cobertura também
+roda fora da thread da interface. Ao reabrir o Studio, a aba restaura a última
+release/hash, o estado retomável e o JAR/lote atual ou próximo, sem reiniciar o
+processamento. Em cada análise VR Ultra, o Agente de Código recebe a release, o
+hash congelado e o `run_id` do fan-out; se a origem estiver desatualizada ou o
+hash divergir, apenas esse worker falha e a síntese continua com as demais
+fontes. Cada tentativa de decompilação também registra duração, pico de memória
+do subprocesso, tempo de CPU, bytes de entrada/saída e timeout. A aba agrega os
+valores por job e restaura o último resumo a partir da auditoria local.
+Com histórico suficiente, a mesma auditoria calcula um ETA pela mediana local
+de tempo por novo JAR coberto, exibindo quantidade de amostras e confiança sem
+inventar estimativa na primeira execução.
+
+JARs idênticos entre releases reutilizam a decompilação e o índice pesquisável
+por SHA-256, mas recebem novas linhas vinculadas ao `release_id` de destino para
+preservar filtros e citações. O schema do índice inclui `release_id` na chave;
+duas releases com os mesmos bytes não colidem. A remoção aprovada limpa planos e
+fontes pesquisáveis da release, preserva os JARs de origem e mantém artefatos
+compartilhados ainda referenciados.
+
+O índice também pode ser transportado opcionalmente em pacote `.vridx`. O
+pacote não contém JARs, é verificado por SHA-256 em streaming e só é importado
+quando `release_id`, manifesto e hashes de cada artefato coincidem com a release
+local fresca. Esse atalho não substitui a indexação local.
+
+```powershell
+# Ajustar o orçamento gerado (máximo contratual: 10×)
+.\.venv\Scripts\vr-norte.exe --root VRProject set-erp-code-storage-budget --multiplier 8
+
+# Exportar/importar o índice offline sem transportar os JARs
+.\.venv\Scripts\vr-norte.exe --root VRProject export-erp-code-index 4.1.0 D:\Transfer\4.1.0.vridx
+.\.venv\Scripts\vr-norte.exe --root VRProject import-erp-code-index D:\Transfer\4.1.0.vridx --release 4.1.0
+
+# Relatório offline de aceite e isolamento entre releases
+.\.venv\Scripts\vr-norte.exe --root VRProject validate-erp-code-field `
+  --release 4.1.0 --release 4.2.0 --probe-symbol VendaController `
+  --require-distinct-hashes
+```
+
 CLI da base:
 
 ```powershell
@@ -587,6 +695,9 @@ distribuí-lo. Credenciais e CLIs de provedores de chat não são incorporados.
 ## Fluxo de versões
 
 - `main` contém apenas a versão estável aprovada.
+- Candidatas beta aprovadas explicitamente usam o formato PEP 440
+  `major.minor.patchbN`, por exemplo `0.4.21b1`, e podem ser promovidas para
+  `main` para homologação controlada.
 - O ciclo `0.4` usa uma versão-base estável sem sufixo e revisões incrementais
   com hífen: `0.4`, `0.4-1`, `0.4-2` e assim sucessivamente.
 - Logo após cada promoção, `dev` avança para a próxima revisão desse ciclo. Por

@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
+from .code_processing_audit import CodeProcessingAudit
 from .erp_releases import ErpReleaseCatalog
 from .jvm_batches import (
     DEFAULT_MAX_BYTES,
@@ -114,6 +115,11 @@ class ErpCodeCoverage:
         classpath = ClasspathPolicyStore(
             self.root, catalog=self.catalog
         ).status(release_id)
+        eta = CodeProcessingAudit(self.root).estimate_remaining(
+            release_id=release_id,
+            manifest_sha256=release_hash,
+            remaining_jar_count=len(remaining),
+        )
         return {
             "release": release,
             "release_manifest_sha256": release_hash,
@@ -140,6 +146,7 @@ class ErpCodeCoverage:
             "classpath_order_known": bool(classpath.get("classpath_order_known")),
             "classpath_status": str(classpath.get("classpath_status") or "unknown"),
             "classpath": classpath,
+            "eta": eta,
         }
 
     def advance(
@@ -154,6 +161,9 @@ class ErpCodeCoverage:
         max_bytes: int = DEFAULT_MAX_BYTES,
         max_heap_mb: int = 2048,
         timeout_seconds: int = 300,
+        max_cpu_cores: int = 1,
+        process_priority: str = "low",
+        processing_window: str = "always",
     ) -> dict[str, Any]:
         if not approved:
             raise CodeCoverageError(
@@ -238,6 +248,9 @@ class ErpCodeCoverage:
             limit=max(1, int(batch_limit)),
             max_heap_mb=max_heap_mb,
             timeout_seconds=timeout_seconds,
+            max_cpu_cores=max_cpu_cores,
+            process_priority=process_priority,
+            processing_window=processing_window,
         )
         indexed = self.code_index.index_plan(plan_id)
         after = self.status(release_id)

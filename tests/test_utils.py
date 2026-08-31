@@ -39,24 +39,29 @@ class UtilsTest(unittest.TestCase):
             r"filevers=\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)",
             executable_version,
         )
-        parsed_version = re.fullmatch(r"(\d+)\.(\d+)(?:-(\d+))?", project_version)
+        revision_version = re.fullmatch(
+            r"(\d+)\.(\d+)(?:-(\d+))?", project_version
+        )
+        beta_version = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)b(\d+)", project_version
+        )
 
         self.assertIsNotNone(match)
         self.assertIsNotNone(product_match)
         self.assertIsNotNone(file_match)
         self.assertIsNotNone(fixed_match)
-        self.assertIsNotNone(parsed_version)
+        self.assertTrue(revision_version or beta_version)
         self.assertEqual(project_version, __version__)
         self.assertEqual(match.group(1), __version__)
         self.assertEqual(product_match.group(1), __version__)
         self.assertEqual(file_match.group(1), __version__)
-        major, minor, revision = parsed_version.groups()
-        expected_fixed = (
-            int(major),
-            int(minor),
-            0,
-            int(revision or 0),
-        )
+        if beta_version:
+            major, minor, patch, beta = beta_version.groups()
+            expected_fixed = (int(major), int(minor), int(patch), int(beta))
+        else:
+            assert revision_version is not None
+            major, minor, revision = revision_version.groups()
+            expected_fixed = (int(major), int(minor), 0, int(revision or 0))
         self.assertEqual(
             tuple(int(value) for value in fixed_match.groups()), expected_fixed
         )
