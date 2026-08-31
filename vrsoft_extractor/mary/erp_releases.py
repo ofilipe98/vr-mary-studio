@@ -27,6 +27,15 @@ DEFAULT_MAX_RELEASES = 3
 DEFAULT_STORAGE_BUDGET_MULTIPLIER = 10
 _RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_SAFE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_VR_VERSION_KEYS = (
+    "versao.major",
+    "versao.minor",
+    "versao.release",
+    "versao.build",
+    "versao.beta",
+    "app.data",
+)
 
 
 class ErpReleaseError(RuntimeError):
@@ -85,6 +94,98 @@ class ErpReleaseCatalog:
             self.paths.artifacts,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    def detect_package(self, source_dir: str | Path) -> dict[str, Any]:
+        """Read only application release metadata from JAR-local properties."""
+
+        source = Path(source_dir).resolve()
+        if source.is_file():
+            if source.suffix.casefold() != ".jar":
+                raise ErpReleaseError(f"O arquivo selecionado não é um JAR: {source}")
+            source_root = source.parent
+            jar_paths = [source]
+        elif source.is_dir():
+            source_root = source
+            jar_paths = self._source_jars(source)
+        else:
+            raise ErpReleaseError(f"Origem dos JARs não encontrada: {source}")
+        if not jar_paths:
+            raise ErpReleaseError(f"Nenhum JAR encontrado em: {source}")
+
+        components: list[dict[str, Any]] = []
+        seen_applications: dict[str, str] = {}
+        duplicate_applications: list[str] = []
+        for jar_path in jar_paths:
+            identity = detect_jar_release(jar_path)
+            relative = jar_path.relative_to(source_root).as_posix()
+            identity["source_relative_path"] = relative
+            identity["source_path"] = self._portable_path(jar_path)
+            application_key = str(identity["application_key"])
+            previous = seen_applications.setdefault(application_key, relative)
+            if previous != relative:
+                duplicate_applications.append(str(identity["application"]))
+            components.append(identity)
+
+        if duplicate_applications:
+            raise ErpReleaseError(
+                "O pacote contém mais de um JAR para a mesma aplicação: "
+                + ", ".join(sorted(set(duplicate_applications), key=str.casefold))
+                + ". Separe os pacotes antes de importar."
+            )
+        detected_count = sum(bool(item.get("version_detected")) for item in components)
+        latest_date = max(
+            (str(item.get("application_date_iso") or "") for item in components),
+            default="",
+        )
+        identity_hash = package_identity_hash(components)
+        if len(components) == 1:
+            suggested_release_id = component_release_id(components[0], identity_hash)
+        else:
+            date_label = latest_date.replace("-", ".") if latest_date else "sem-data"
+            suggested_release_id = validate_release_id(
+                f"erp-{date_label}-{identity_hash[:8]}"
+            )
+        return {
+            "source_dir": self._portable_path(source),
+            "jar_count": len(components),
+            "expected_jar_count": self.expected_jar_count,
+            "complete": len(components) == self.expected_jar_count,
+            "partial": len(components) < self.expected_jar_count,
+            "detected_version_count": detected_count,
+            "fallback_count": len(components) - detected_count,
+            "latest_application_date": latest_date,
+            "package_identity_sha256": identity_hash,
+            "suggested_release_id": suggested_release_id,
+            "components": components,
+        }
+
+    def count_source_jars(self, source_dir: str | Path) -> int:
+        source = Path(source_dir).resolve()
+        if source.is_file():
+            return int(source.suffix.casefold() == ".jar")
+        return len(self._source_jars(source)) if source.is_dir() else 0
+
+    def _source_jars(self, source: Path) -> list[Path]:
+        """List input JARs without re-importing managed snapshots below releases/."""
+
+        source = source.resolve()
+        managed_root = self.paths.source_releases.resolve()
+        paths: list[Path] = []
+        for path in source.rglob("*"):
+            if not path.is_file() or path.suffix.casefold() != ".jar":
+                continue
+            relative = path.relative_to(source)
+            if source == managed_root:
+                parts = relative.parts
+                if len(parts) >= 3 and parts[1].casefold() == "jars":
+                    continue
+                if parts and parts[0].startswith("."):
+                    continue
+            paths.append(path)
+        return sorted(
+            paths,
+            key=lambda path: path.relative_to(source).as_posix().casefold(),
+        )
 
     def import_release(
         self,
@@ -324,12 +425,18 @@ class ErpReleaseCatalog:
                 shutil.rmtree(staging_root)
             raise
 
-        manifest = self.import_release(
-            release_id,
-            destination,
-            source_origin_dir=source,
-            analysis_scope=analysis_scope,
-        )
+        try:
+            manifest = self.import_release(
+                release_id,
+                destination,
+                source_origin_dir=source,
+                analysis_scope=analysis_scope,
+            )
+        except Exception:
+            _require_child(release_root, self.paths.source_releases)
+            if release_root.is_dir():
+                shutil.rmtree(release_root)
+            raise
         manifest["snapshot"] = {
             "created_at": manifest["indexed_at"],
             "source_dir": self._portable_path(source),
@@ -342,6 +449,298 @@ class ErpReleaseCatalog:
         }
         _atomic_write_json(self.paths.manifest_for(release_id), manifest)
         return manifest
+
+    def snapshot_detected_release(
+        self,
+        source_dir: str | Path,
+        *,
+        release_id: str = "",
+        base_release_id: str = "",
+        analysis_scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a categorized snapshot, composing partial VR update packages."""
+
+        source = Path(source_dir).resolve()
+        package = self.detect_package(source)
+        single_jar = source.is_file() or analysis_scope == "single_jar"
+        package_components = list(package["components"])
+        source_root = source.parent if source.is_file() else source
+        provided: dict[str, dict[str, Any]] = {}
+        for component in package_components:
+            jar_path = (source_root / str(component["source_relative_path"])).resolve()
+            _require_child(jar_path, source_root)
+            before = jar_path.stat()
+            digest = sha256_file(jar_path)
+            after = jar_path.stat()
+            if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+                raise ErpReleaseError(
+                    "Um JAR mudou durante a detecção; tente novamente quando a "
+                    "atualização do ERP terminar."
+                )
+            key = str(component["application_key"])
+            provided[key] = {
+                "component": component,
+                "path": jar_path,
+                "sha256": digest,
+                "size_bytes": after.st_size,
+                "origin": "package",
+                "source_release_id": "",
+            }
+
+        base_manifest: dict[str, Any] | None = None
+        combined: dict[str, dict[str, Any]] = {}
+        if not single_jar and len(provided) < self.expected_jar_count:
+            base_manifest = self._complete_base_manifest(base_release_id)
+            base_source = self._resolve_source(str(base_manifest.get("source_dir") or ""))
+            if not base_source.is_dir():
+                raise ErpReleaseError(
+                    f"A base completa {base_manifest['release_id']} não está disponível."
+                )
+            for artifact in base_manifest.get("artifacts") or []:
+                if not isinstance(artifact, dict) or not artifact.get("relative_path"):
+                    continue
+                base_jar = (base_source / str(artifact["relative_path"])).resolve()
+                _require_child(base_jar, base_source)
+                if not base_jar.is_file():
+                    raise ErpReleaseError(
+                        "A base completa perdeu o JAR: " + str(artifact["relative_path"])
+                    )
+                component = _component_from_artifact(artifact, base_jar)
+                key = str(component["application_key"])
+                combined[key] = {
+                    "component": component,
+                    "path": base_jar,
+                    "sha256": str(artifact.get("sha256") or sha256_file(base_jar)),
+                    "size_bytes": int(artifact.get("size_bytes") or base_jar.stat().st_size),
+                    "origin": "base",
+                    "source_release_id": str(base_manifest["release_id"]),
+                }
+        combined.update(provided)
+
+        expected = 1 if single_jar else self.expected_jar_count
+        if len(combined) != expected:
+            if len(provided) < expected and base_manifest is None:
+                raise ErpReleaseError(
+                    "O pacote é parcial e não existe uma release-base completa. "
+                    "Importe primeiro o pacote mais atual com todos os JARs."
+                )
+            raise ErpReleaseError(
+                f"A composição deveria resultar em {expected} aplicações/JARs; "
+                f"resultou em {len(combined)}. Verifique aplicações novas ou ausentes."
+            )
+
+        categorized: list[dict[str, Any]] = []
+        for item in combined.values():
+            target_relative = categorized_jar_path(
+                item["component"],
+                item["path"].name,
+            ).as_posix()
+            categorized.append({**item, "target_relative_path": target_relative})
+        categorized.sort(key=lambda item: item["target_relative_path"].casefold())
+        composite_hash = aggregate_release_hash(
+            {
+                "relative_path": item["target_relative_path"],
+                "sha256": item["sha256"],
+                "size_bytes": item["size_bytes"],
+            }
+            for item in categorized
+        )
+        if release_id:
+            selected_release_id = validate_release_id(release_id)
+        elif single_jar:
+            selected_release_id = validate_release_id(
+                f"{component_release_id(categorized[0]['component'])}-{composite_hash[:8]}"
+            )
+        else:
+            latest_date = str(package.get("latest_application_date") or "")
+            date_label = latest_date.replace("-", ".") if latest_date else "sem-data"
+            selected_release_id = validate_release_id(
+                f"erp-{date_label}-{composite_hash[:8]}"
+            )
+
+        existing_manifest = self.paths.manifest_for(selected_release_id)
+        if existing_manifest.is_file():
+            existing = self.load_manifest(selected_release_id)
+            if str(existing.get("release_manifest_sha256") or "") == composite_hash:
+                return existing
+            raise ErpReleaseError(
+                f"A release {selected_release_id} já existe com outro conteúdo."
+            )
+        self.ensure_dirs()
+        indexed = {
+            path.name
+            for path in self.paths.indexed_releases.iterdir()
+            if path.is_dir() and (path / "manifest.json").is_file()
+        }
+        if selected_release_id not in indexed and len(indexed) >= self.max_releases:
+            raise ErpReleaseError(
+                f"O limite de {self.max_releases} releases indexadas foi atingido; "
+                "remova uma delas com aprovação antes de importar outra."
+            )
+
+        destination = self.paths.source_for(selected_release_id).resolve()
+        release_root = destination.parent
+        if release_root.exists():
+            raise ErpReleaseError(
+                f"A pasta da release já existe e não será sobrescrita: {release_root}"
+            )
+        staging_root = self.paths.source_releases / (
+            f".{selected_release_id}.snapshot-{uuid4().hex}"
+        )
+        staging_jars = staging_root / "jars"
+        materialization: list[dict[str, str]] = []
+        try:
+            for item in categorized:
+                target = staging_jars / item["target_relative_path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                # A snapshot must remain immutable even if an updater edits a
+                # source JAR in place. Hard links would violate that guarantee.
+                shutil.copy2(item["path"], target)
+                method = "copy"
+                if target.stat().st_size != int(item["size_bytes"]):
+                    raise ErpReleaseError(
+                        f"Tamanho divergente no snapshot: {item['target_relative_path']}"
+                    )
+                if sha256_file(target) != item["sha256"]:
+                    raise ErpReleaseError(
+                        f"SHA-256 divergente no snapshot: {item['target_relative_path']}"
+                    )
+                materialization.append(
+                    {"jar": item["target_relative_path"], "method": method}
+                )
+            if release_root.exists():
+                raise ErpReleaseError(
+                    "A pasta gerenciada da release surgiu durante o snapshot; "
+                    "nenhum arquivo existente foi sobrescrito."
+                )
+            staging_root.replace(release_root)
+        except Exception:
+            if staging_root.is_dir():
+                shutil.rmtree(staging_root)
+            raise
+
+        effective_scope = (
+            "single_jar"
+            if single_jar
+            else "incremental_release"
+            if base_manifest is not None
+            else "full_release"
+        )
+        try:
+            manifest = self.import_release(
+                selected_release_id,
+                destination,
+                source_origin_dir=source,
+                analysis_scope=effective_scope,
+            )
+        except Exception:
+            _require_child(release_root, self.paths.source_releases)
+            if release_root.is_dir():
+                shutil.rmtree(release_root)
+            raise
+        provenance = {
+            str(item["component"]["application_key"]): item for item in categorized
+        }
+        for artifact in manifest.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            item = provenance.get(str(artifact.get("application_key") or ""))
+            if item:
+                artifact["provenance"] = {
+                    "origin": item["origin"],
+                    "source_release_id": item["source_release_id"],
+                    "package_source": self._portable_path(source),
+                }
+        warnings = list(manifest.get("warnings") or [])
+        warnings.extend(
+            str(item["component"].get("warning") or "")
+            for item in categorized
+            if item["component"].get("warning")
+        )
+        if base_manifest is not None:
+            warnings.append(
+                f"Pacote incremental composto sobre a base {base_manifest['release_id']}; "
+                f"{len(provided)} aplicação(ões) atualizada(s)."
+            )
+        manifest.update(
+            {
+                "release_manifest_sha256": composite_hash,
+                "auto_detected": True,
+                "categorization": "application/version",
+                "base_release_id": (
+                    str(base_manifest["release_id"]) if base_manifest else ""
+                ),
+                "package_jar_count": len(provided),
+                "updated_applications": sorted(
+                    (str(item["component"]["application"]) for item in provided.values()),
+                    key=str.casefold,
+                ),
+                "carried_forward_jar_count": len(combined) - len(provided),
+                "component_versions": [
+                    {
+                        "application": item["component"]["application"],
+                        "version": item["component"]["application_version"],
+                        "properties_entry": item["component"]["version_properties_entry"],
+                        "version_detected": item["component"]["version_detected"],
+                        "jar": item["target_relative_path"],
+                        "origin": item["origin"],
+                        "source_release_id": item["source_release_id"],
+                    }
+                    for item in categorized
+                ],
+                "warnings": list(dict.fromkeys(warnings)),
+                "snapshot": {
+                    "created_at": manifest["indexed_at"],
+                    "source_dir": self._portable_path(source),
+                    "destination_dir": self._portable_path(destination),
+                    "package_jar_count": len(provided),
+                    "composed_jar_count": len(combined),
+                    "base_release_id": (
+                        str(base_manifest["release_id"]) if base_manifest else ""
+                    ),
+                    "hardlinked_jar_count": sum(
+                        item["method"] == "hardlink" for item in materialization
+                    ),
+                    "copied_jar_count": sum(
+                        item["method"] == "copy" for item in materialization
+                    ),
+                    "verified": True,
+                },
+            }
+        )
+        _atomic_write_json(self.paths.manifest_for(selected_release_id), manifest)
+        return manifest
+
+    def _complete_base_manifest(self, release_id: str = "") -> dict[str, Any]:
+        candidates: list[dict[str, Any]] = []
+        if release_id:
+            candidates = [self.load_manifest(validate_release_id(release_id))]
+        else:
+            if self.paths.indexed_releases.is_dir():
+                for path in self.paths.indexed_releases.glob("*/manifest.json"):
+                    try:
+                        candidates.append(
+                            json.loads(path.read_text(encoding="utf-8"))
+                        )
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        continue
+            candidates.sort(
+                key=lambda item: str(item.get("indexed_at") or ""),
+                reverse=True,
+            )
+        for manifest in candidates:
+            if (
+                str(manifest.get("state") or "") == "ready"
+                and int(manifest.get("jar_count") or 0) == self.expected_jar_count
+                and int(manifest.get("invalid_jar_count") or 0) == 0
+            ):
+                return manifest
+        requested = f" {release_id}" if release_id else ""
+        raise ErpReleaseError(
+            "Nenhuma release-base completa"
+            + requested
+            + " está disponível. Importe primeiro o pacote com todos os JARs."
+        )
 
     def status(self, release_id: str, *, full_hash: bool = False) -> dict[str, Any]:
         manifest = self.load_manifest(release_id)
@@ -419,6 +818,10 @@ class ErpReleaseCatalog:
                             "warnings": [str(exc)],
                         }
                     )
+        statuses.sort(
+            key=lambda item: str(item.get("indexed_at") or ""),
+            reverse=True,
+        )
         return statuses
 
     def storage_status(self) -> dict[str, Any]:
@@ -808,11 +1211,23 @@ class ErpReleaseCatalog:
         error = ""
         class_names: list[str] = []
         manifest: dict[str, str] = {}
+        identity: dict[str, Any] = {
+            "application": jar_path.stem,
+            "application_key": _safe_component(jar_path.stem).casefold(),
+            "application_version": "unknown",
+            "application_date": "",
+            "application_date_iso": "",
+            "version_properties_entry": "",
+            "version_detected": False,
+            "version_components": {},
+            "warning": "",
+        }
         if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
             error = "O arquivo mudou durante a importação."
         else:
             try:
                 with zipfile.ZipFile(jar_path) as archive:
+                    identity = _detect_jar_release_from_archive(jar_path, archive)
                     members = archive.namelist()
                     class_names = sorted(
                         name[:-6].replace("/", ".")
@@ -839,6 +1254,7 @@ class ErpReleaseCatalog:
                 "Implementation-Version", ""
             ),
             "manifest_class_path": manifest.get("Class-Path", "").split(),
+            **identity,
             "error": error,
         }
         return artifact, class_names
@@ -915,6 +1331,199 @@ def validate_release_id(value: str) -> str:
             "hífen ou underscore."
         )
     return release_id
+
+
+def parse_java_properties(value: bytes) -> dict[str, str]:
+    """Parse the small, non-secret version subset used by VR properties files."""
+
+    text = value.decode("iso-8859-1").replace("\r\n", "\n").replace("\r", "\n")
+    logical_lines: list[str] = []
+    pending = ""
+    for raw_line in text.split("\n"):
+        line = pending + raw_line
+        trailing = len(line) - len(line.rstrip("\\"))
+        if trailing % 2:
+            pending = line[:-1]
+            continue
+        pending = ""
+        logical_lines.append(line)
+    if pending:
+        logical_lines.append(pending)
+
+    parsed: dict[str, str] = {}
+    for raw_line in logical_lines:
+        line = raw_line.strip()
+        if not line or line.startswith(("#", "!")):
+            continue
+        match = re.match(r"^([^:=\s]+)\s*(?:[:=]|\s)\s*(.*)$", line)
+        if not match:
+            continue
+        key = match.group(1).strip()
+        if key not in _VR_VERSION_KEYS:
+            continue
+        parsed[key] = _decode_java_property_escapes(match.group(2).strip())
+    return parsed
+
+
+def detect_jar_release(path: str | Path) -> dict[str, Any]:
+    """Identify the owning VR application without exposing unrelated properties."""
+
+    jar_path = Path(path).resolve()
+    try:
+        with zipfile.ZipFile(jar_path) as archive:
+            return _detect_jar_release_from_archive(jar_path, archive)
+    except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
+        raise ErpReleaseError(
+            f"JAR ilegível ao detectar release: {jar_path.name} "
+            f"({type(exc).__name__}: {exc})"
+        ) from exc
+
+
+def _detect_jar_release_from_archive(
+    jar_path: Path,
+    archive: zipfile.ZipFile,
+) -> dict[str, Any]:
+    application = jar_path.stem
+    application_key = _safe_component(application).casefold()
+    expected_property = f"{application.casefold()}.properties"
+    property_entry = ""
+    properties: dict[str, str] = {}
+    candidates = sorted(
+        (
+            info
+            for info in archive.infolist()
+            if not info.is_dir()
+            and Path(info.filename).name.casefold() == expected_property
+        ),
+        key=lambda info: ("/" in info.filename, info.filename.casefold()),
+    )
+    if candidates:
+        selected = candidates[0]
+        property_entry = selected.filename
+        properties = parse_java_properties(archive.read(selected))
+
+    components = {
+        "major": properties.get("versao.major", ""),
+        "minor": properties.get("versao.minor", ""),
+        "release": properties.get("versao.release", ""),
+        "build": properties.get("versao.build", "0"),
+        "beta": properties.get("versao.beta", "0"),
+    }
+    required = (components["major"], components["minor"], components["release"])
+    version_detected = bool(property_entry and all(required))
+    version = "unknown"
+    if version_detected:
+        version = ".".join(
+            (
+                components["major"],
+                components["minor"],
+                components["release"],
+                components["build"] or "0",
+            )
+        )
+        if components["beta"] not in {"", "0"}:
+            version += f"-beta{components['beta']}"
+    raw_date = properties.get("app.data", "")
+    application_date_iso = ""
+    if raw_date:
+        try:
+            application_date_iso = datetime.strptime(raw_date, "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            application_date_iso = ""
+    warning = ""
+    if not property_entry:
+        warning = (
+            f"{jar_path.name} não possui {expected_property}; aplicação identificada "
+            "pelo nome e versão diferenciada pelo SHA-256."
+        )
+    elif not version_detected:
+        warning = f"{property_entry} não contém a versão VR completa."
+    return {
+        "application": application,
+        "application_key": application_key,
+        "application_version": version,
+        "application_date": raw_date,
+        "application_date_iso": application_date_iso,
+        "version_properties_entry": property_entry,
+        "version_detected": version_detected,
+        "version_components": components,
+        "warning": warning,
+    }
+
+
+def package_identity_hash(components: Iterable[dict[str, Any]]) -> str:
+    identity = [
+        {
+            "application_key": str(item.get("application_key") or ""),
+            "application_version": str(item.get("application_version") or "unknown"),
+            "source_relative_path": str(item.get("source_relative_path") or ""),
+        }
+        for item in components
+    ]
+    encoded = json.dumps(
+        sorted(identity, key=lambda item: item["application_key"]),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def component_release_id(component: dict[str, Any], identity_hash: str = "") -> str:
+    application = _safe_component(str(component.get("application") or "jar"))
+    version = _safe_component(str(component.get("application_version") or "unknown"))
+    suffix = f"-{identity_hash[:8]}" if version == "unknown" and identity_hash else ""
+    return validate_release_id(f"{application}-{version}{suffix}"[:80])
+
+
+def categorized_jar_path(component: dict[str, Any], jar_name: str) -> Path:
+    application = _safe_component(str(component.get("application") or Path(jar_name).stem))
+    version = _safe_component(str(component.get("application_version") or "unknown"))
+    return Path(application) / version / Path(jar_name).name
+
+
+def _component_from_artifact(
+    artifact: dict[str, Any],
+    jar_path: Path,
+) -> dict[str, Any]:
+    if artifact.get("application_key") and artifact.get("application_version"):
+        return {
+            "application": str(artifact.get("application") or jar_path.stem),
+            "application_key": str(artifact["application_key"]),
+            "application_version": str(artifact["application_version"]),
+            "application_date": str(artifact.get("application_date") or ""),
+            "application_date_iso": str(artifact.get("application_date_iso") or ""),
+            "version_properties_entry": str(
+                artifact.get("version_properties_entry") or ""
+            ),
+            "version_detected": bool(artifact.get("version_detected")),
+            "version_components": dict(artifact.get("version_components") or {}),
+            "warning": str(artifact.get("warning") or ""),
+        }
+    return detect_jar_release(jar_path)
+
+
+def _safe_component(value: str) -> str:
+    cleaned = _SAFE_COMPONENT_RE.sub("-", str(value or "").strip()).strip("-._")
+    return cleaned or "unknown"
+
+
+def _decode_java_property_escapes(value: str) -> str:
+    def replace_unicode(match: re.Match[str]) -> str:
+        try:
+            return chr(int(match.group(1), 16))
+        except ValueError:
+            return match.group(0)
+
+    decoded = re.sub(r"\\u([0-9a-fA-F]{4})", replace_unicode, value)
+    return (
+        decoded.replace(r"\t", "\t")
+        .replace(r"\n", "\n")
+        .replace(r"\r", "\r")
+        .replace(r"\:", ":")
+        .replace(r"\=", "=")
+        .replace(r"\\", "\\")
+    )
 
 
 def sha256_file(path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:

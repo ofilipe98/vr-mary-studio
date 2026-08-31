@@ -1247,9 +1247,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
 
             bridge.setCodeAnalysisJarSource("workspace")
-            expected_workspace = (
-                settings.erp_releases_dir / "current" / "jars"
-            ).resolve()
+            expected_workspace = settings.erp_releases_dir.resolve()
             self.assertEqual(bridge.codeAnalysisJarSource, "workspace")
             self.assertEqual(
                 Path(bridge.codeAnalysisJarSourcePath), expected_workspace
@@ -1324,6 +1322,8 @@ class QmlFrontendTest(unittest.TestCase):
                     settings.erp_releases_dir
                     / "2026.08.30"
                     / "jars"
+                    / "ERP"
+                    / "unknown"
                     / "ERP.jar"
                 )
                 before = managed.read_bytes()
@@ -1334,12 +1334,75 @@ class QmlFrontendTest(unittest.TestCase):
                     if not bridge.releaseSnapshotRunning:
                         break
                 self.assertFalse(bridge.releaseSnapshotRunning)
-                self.assertIn("já está inventariada", bridge.releaseSnapshotStatus)
+                self.assertIn("detectada e adicionada", bridge.releaseSnapshotStatus)
                 self.assertEqual(managed.read_bytes(), before)
                 manifest = ErpReleaseCatalog(settings.root).load_manifest("2026.08.30")
                 self.assertEqual(manifest["analysis_scope"], "single_jar")
                 self.assertEqual(manifest["expected_jar_count"], 1)
                 bridge.close()
+
+    def test_single_jar_snapshot_auto_detects_application_release_without_llm(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jar = root / "vr" / "exec" / "VRPdv.jar"
+            jar.parent.mkdir(parents=True)
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr(
+                    "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n"
+                )
+                archive.writestr("br/vr/App.class", b"release")
+                archive.writestr(
+                    "vrpdv.properties",
+                    "\n".join(
+                        (
+                            "versao.major=4",
+                            "versao.minor=4",
+                            "versao.release=25",
+                            "versao.build=0",
+                            "versao.beta=0",
+                            "app.data=31/08/2026",
+                        )
+                    ),
+                )
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(settings, database)
+            bridge.setCodeAnalysisSnapshotScope("single_jar")
+            self.assertTrue(bridge.setCodeAnalysisSingleJarPath(str(jar)))
+
+            with patch.object(bridge._orchestrator, "send") as model_send:
+                self.assertTrue(bridge.snapshotCodeAnalysisRelease(""))
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(25)
+                    if not bridge.releaseSnapshotRunning:
+                        break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertTrue(bridge.codeAnalysisRelease.startswith("VRPdv-4.4.25.0-"))
+            self.assertIn("detectada e adicionada", bridge.releaseSnapshotStatus)
+            model_send.assert_not_called()
+            manifest = ErpReleaseCatalog(settings.root).load_manifest(
+                bridge.codeAnalysisRelease
+            )
+            self.assertTrue(manifest["auto_detected"])
+            self.assertEqual(manifest["updated_applications"], ["VRPdv"])
+            bridge.close()
+
+    def test_vr_ultra_release_import_explains_auto_detection_and_partial_packages(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Pacote completo ou incremental", qml)
+        self.assertIn("Automático: aplicação e versão do vr*.properties", qml)
+        self.assertIn("pacote incremental: os demais JARs virão da base completa", qml)
+        self.assertIn("Detectar e adicionar", qml)
+        self.assertNotIn("releaseIdField.text.trim().length > 0", qml)
 
     def test_local_code_processing_completes_without_model_or_network(self):
         with TemporaryDirectory() as temporary:

@@ -11,7 +11,9 @@ from vrsoft_extractor.mary.cli import build_parser, main as cli_main
 from vrsoft_extractor.mary.erp_releases import (
     ErpReleaseCatalog,
     ErpReleaseError,
+    detect_jar_release,
     normalize_class_entry,
+    parse_java_properties,
     parse_manifest_bytes,
 )
 
@@ -35,6 +37,164 @@ def _jar(
         archive.writestr("META-INF/MANIFEST.MF", "\r\n".join(manifest) + "\r\n")
         for class_name in classes:
             archive.writestr(class_name, b"bytecode")
+
+
+def _vr_jar(
+    path: Path,
+    version: tuple[int, int, int, int],
+    *,
+    app_date: str = "31/08/2026",
+) -> None:
+    _jar(path, version=".".join(str(item) for item in version))
+    major, minor, release, build = version
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr(
+            f"{path.stem.casefold()}.properties",
+            "\n".join(
+                (
+                    f"versao.major = {major}",
+                    f"versao.minor = {minor}",
+                    f"versao.release = {release}",
+                    f"versao.build = {build}",
+                    "versao.beta = 0",
+                    f"app.data = {app_date}",
+                    "posthog.api.key = must-not-be-returned",
+                )
+            ),
+        )
+
+
+def test_detect_jar_release_uses_matching_vr_properties_without_leaking_other_keys(
+    tmp_path: Path,
+) -> None:
+    jar = tmp_path / "VRMaster.jar"
+    _vr_jar(jar, (4, 4, 102, 0))
+
+    identity = detect_jar_release(jar)
+
+    assert identity["application"] == "VRMaster"
+    assert identity["application_version"] == "4.4.102.0"
+    assert identity["application_date_iso"] == "2026-08-31"
+    assert identity["version_properties_entry"] == "vrmaster.properties"
+    assert identity["version_detected"] is True
+    assert "posthog" not in json.dumps(identity).casefold()
+
+
+def test_java_properties_parser_keeps_only_release_metadata() -> None:
+    parsed = parse_java_properties(
+        b"versao.major=4\nversao.minor : 4\napp.data=31/08/2026\nsecret=x\n"
+    )
+
+    assert parsed == {
+        "versao.major": "4",
+        "versao.minor": "4",
+        "app.data": "31/08/2026",
+    }
+
+
+def test_detect_package_builds_automatic_id_and_falls_back_for_missing_properties(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "package"
+    _vr_jar(source / "VRMaster.jar", (4, 4, 102, 0))
+    _jar(source / "lib" / "VRMobileServer.jar")
+
+    package = ErpReleaseCatalog(tmp_path, expected_jar_count=2).detect_package(source)
+
+    assert package["complete"] is True
+    assert package["detected_version_count"] == 1
+    assert package["fallback_count"] == 1
+    assert package["suggested_release_id"].startswith("erp-2026.08.31-")
+    mobile = next(
+        item for item in package["components"] if item["application"] == "VRMobileServer"
+    )
+    assert mobile["application_version"] == "unknown"
+    assert "SHA-256" in mobile["warning"]
+
+
+def test_detected_snapshot_categorizes_full_package_by_application_and_version(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "full"
+    _vr_jar(source / "VRMaster.jar", (4, 4, 102, 0))
+    _vr_jar(source / "lib" / "VRCore.jar", (4, 4, 7, 3), app_date="30/08/2026")
+    catalog = ErpReleaseCatalog(workspace, expected_jar_count=2)
+
+    manifest = catalog.snapshot_detected_release(source)
+
+    release_id = manifest["release_id"]
+    managed = workspace / "ERP" / "releases" / release_id / "jars"
+    assert manifest["state"] == "ready"
+    assert manifest["auto_detected"] is True
+    assert manifest["categorization"] == "application/version"
+    assert manifest["base_release_id"] == ""
+    assert manifest["package_jar_count"] == 2
+    assert manifest["carried_forward_jar_count"] == 0
+    assert (managed / "VRMaster" / "4.4.102.0" / "VRMaster.jar").is_file()
+    assert (managed / "VRCore" / "4.4.7.3" / "VRCore.jar").is_file()
+    assert {item["application"] for item in manifest["component_versions"]} == {
+        "VRMaster",
+        "VRCore",
+    }
+
+
+def test_detected_snapshot_composes_partial_package_over_latest_complete_base(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    full = tmp_path / "full"
+    _vr_jar(full / "VRMaster.jar", (4, 4, 101, 0), app_date="30/08/2026")
+    _vr_jar(full / "VRCore.jar", (4, 4, 7, 3), app_date="30/08/2026")
+    catalog = ErpReleaseCatalog(workspace, expected_jar_count=2)
+    base = catalog.snapshot_detected_release(full)
+
+    update = tmp_path / "update"
+    _vr_jar(update / "VRMaster.jar", (4, 4, 102, 0))
+    composed = catalog.snapshot_detected_release(update)
+
+    assert composed["analysis_scope"] == "incremental_release"
+    assert composed["base_release_id"] == base["release_id"]
+    assert composed["updated_applications"] == ["VRMaster"]
+    assert composed["package_jar_count"] == 1
+    assert composed["carried_forward_jar_count"] == 1
+    assert composed["jar_count"] == 2
+    versions = {
+        item["application"]: (item["version"], item["origin"])
+        for item in composed["component_versions"]
+    }
+    assert versions == {
+        "VRCore": ("4.4.7.3", "base"),
+        "VRMaster": ("4.4.102.0", "package"),
+    }
+    managed = workspace / "ERP" / "releases" / composed["release_id"] / "jars"
+    assert (managed / "VRMaster" / "4.4.102.0" / "VRMaster.jar").is_file()
+    assert (managed / "VRCore" / "4.4.7.3" / "VRCore.jar").is_file()
+
+
+def test_detected_partial_package_requires_complete_base(tmp_path: Path) -> None:
+    source = tmp_path / "partial"
+    _vr_jar(source / "VRMaster.jar", (4, 4, 102, 0))
+
+    with pytest.raises(ErpReleaseError, match="release-base completa"):
+        ErpReleaseCatalog(tmp_path / "workspace", expected_jar_count=2).snapshot_detected_release(
+            source
+        )
+
+
+def test_detected_single_jar_uses_application_release_and_hash(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    jar = tmp_path / "VRPdv.jar"
+    _vr_jar(jar, (4, 4, 25, 0))
+
+    manifest = ErpReleaseCatalog(
+        workspace,
+        expected_jar_count=1,
+    ).snapshot_detected_release(jar, analysis_scope="single_jar")
+
+    assert manifest["release_id"].startswith("VRPdv-4.4.25.0-")
+    assert manifest["analysis_scope"] == "single_jar"
+    assert manifest["updated_applications"] == ["VRPdv"]
 
 
 def test_import_release_builds_deterministic_manifest_and_artifact_cache(
@@ -406,3 +566,68 @@ def test_snapshot_release_cli_defaults_to_vr_exec() -> None:
     args = build_parser().parse_args(["snapshot-erp-release", "r1"])
 
     assert args.source == r"C:\vr\exec"
+
+
+def test_detect_release_cli_reports_versions_without_model(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "package"
+    _vr_jar(source / "VRMaster.jar", (4, 4, 102, 0))
+
+    assert cli_main(
+        [
+            "--root",
+            str(workspace),
+            "detect-erp-release",
+            "--source",
+            str(source),
+            "--expected-jars",
+            "1",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["complete"] is True
+    assert payload["components"][0]["application"] == "VRMaster"
+    assert payload["components"][0]["application_version"] == "4.4.102.0"
+
+
+def test_snapshot_release_cli_auto_detects_when_id_is_omitted(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    jar = tmp_path / "VRPdv.jar"
+    _vr_jar(jar, (4, 4, 25, 0))
+
+    assert cli_main(
+        [
+            "--root",
+            str(workspace),
+            "snapshot-erp-release",
+            "--source",
+            str(jar),
+            "--expected-jars",
+            "1",
+        ]
+    ) == 0
+    statuses = ErpReleaseCatalog(workspace, expected_jar_count=1).list_statuses()
+    assert len(statuses) == 1
+    release_id = statuses[0]["release_id"]
+    assert release_id.startswith("VRPdv-4.4.25.0-")
+    managed = workspace / "ERP" / "releases" / release_id / "jars"
+    assert (managed / "VRPdv" / "4.4.25.0" / "VRPdv.jar").is_file()
+
+
+def test_detected_snapshot_rolls_back_managed_copy_when_inventory_fails(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    jar = tmp_path / "VRMaster.jar"
+    _vr_jar(jar, (4, 4, 102, 0))
+    catalog = ErpReleaseCatalog(workspace, expected_jar_count=1)
+
+    with patch.object(catalog, "import_release", side_effect=RuntimeError("falha")):
+        with pytest.raises(RuntimeError, match="falha"):
+            catalog.snapshot_detected_release(jar, analysis_scope="single_jar")
+
+    releases = workspace / "ERP" / "releases"
+    assert not any(path.is_dir() for path in releases.iterdir())

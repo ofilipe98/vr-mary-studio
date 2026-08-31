@@ -371,7 +371,7 @@ Item {
                     enabled: !chat.releaseSnapshotRunning
                         && !chat.codeProcessingRunning
                     model: [
-                        { "label": "Release completa · 46 JARs", "value": "full_release" },
+                        { "label": "Pacote completo ou incremental", "value": "full_release" },
                         { "label": "Somente um JAR", "value": "single_jar" }
                     ]
                     textRole: "label"
@@ -391,19 +391,18 @@ Item {
                         if (chat.codeAnalysisSnapshotScope === "single_jar")
                             return item.path + " · " + item.status
                                 + " · escolha um JAR abaixo"
-                        var expected = item.jarCount === chat.codeAnalysisExpectedJarCount
-                            ? ""
-                            : " · esperado: " + chat.codeAnalysisExpectedJarCount
-                        return item.path + " · " + item.status + expected
+                        var composition = item.jarCount > 0
+                            && item.jarCount < chat.codeAnalysisExpectedJarCount
+                            ? " · pacote incremental: os demais JARs virão da base completa"
+                            : ""
+                        return item.path + " · " + item.status + composition
                     }
                     color: {
                         var index = jarSourcePicker.currentIndex
                         if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
                             return frontend.palette.mutedText
                         var item = chat.codeAnalysisJarSourceItems[index]
-                        return item.exists
-                            && (chat.codeAnalysisSnapshotScope === "single_jar"
-                                || item.jarCount === chat.codeAnalysisExpectedJarCount)
+                        return item.exists && item.jarCount > 0
                             ? frontend.palette.mutedText
                             : frontend.palette.warning
                     }
@@ -444,23 +443,21 @@ Item {
                         objectName: "vrUltraReleaseIdField"
                         Layout.fillWidth: true
                         placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
-                            ? "Identificador próprio (ex.: 4.4.101-VRPdv)"
-                            : "Identificador da release (ex.: 2026.08.30)"
+                            ? "Automático: aplicação e versão do vr*.properties"
+                            : "ID automático; informe somente se quiser personalizar"
                         enabled: !chat.releaseSnapshotRunning
                             && !chat.codeProcessingRunning
                         onAccepted: {
-                            if (text.trim().length)
-                                chat.snapshotCodeAnalysisRelease(text.trim())
+                            chat.snapshotCodeAnalysisRelease(text.trim())
                         }
                     }
 
                     VrButton {
                         objectName: "vrUltraAddReleaseButton"
-                        text: chat.releaseSnapshotRunning ? "Adicionando…" : "Adicionar release"
+                        text: chat.releaseSnapshotRunning ? "Detectando…" : "Detectar e adicionar"
                         variant: "primary"
                         enabled: !chat.releaseSnapshotRunning
                             && !chat.codeProcessingRunning
-                            && releaseIdField.text.trim().length > 0
                             && (chat.codeAnalysisSnapshotScope !== "single_jar"
                                 || chat.codeAnalysisSingleJarPath.length > 0)
                         onClicked: chat.snapshotCodeAnalysisRelease(releaseIdField.text.trim())

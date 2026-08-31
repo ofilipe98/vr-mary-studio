@@ -3347,7 +3347,7 @@ class ChatBridge(QObject):
 
     @Slot(str, result=bool)
     def snapshotCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
-        """Copy and inventory the selected local JAR directory off the UI thread."""
+        """Detect, categorize and inventory local JARs off the UI thread."""
 
         selected_release = str(release_id or "").strip()
         single_jar = self._code_analysis_snapshot_scope == ERP_JAR_SCOPE_SINGLE
@@ -3357,10 +3357,6 @@ class ChatBridge(QObject):
             else self.codeAnalysisJarSourcePath
         )
         if self._release_snapshot_running or self._code_processing_running:
-            return False
-        if not selected_release:
-            self._release_snapshot_status = "Informe o identificador da release."
-            self.stateChanged.emit()
             return False
         if not source:
             self._release_snapshot_status = (
@@ -3381,9 +3377,9 @@ class ChatBridge(QObject):
         self._release_snapshot_started_at = time.monotonic()
         self._release_snapshot_status = (
             (
-                f"Copiando e verificando {Path(source).name} localmente..."
+                f"Detectando aplicação e versão de {Path(source).name} localmente..."
                 if single_jar
-                else f"Copiando e verificando a release {selected_release} localmente..."
+                else "Detectando aplicações e compondo a release localmente..."
             )
         )
         self.stateChanged.emit()
@@ -3395,9 +3391,9 @@ class ChatBridge(QObject):
                 manifest = ErpReleaseCatalog(
                     workspace,
                     expected_jar_count=(1 if single_jar else EXPECTED_ERP_JAR_COUNT),
-                ).snapshot_release(
-                    selected_release,
+                ).snapshot_detected_release(
                     source,
+                    release_id=selected_release,
                     analysis_scope=(
                         ERP_JAR_SCOPE_SINGLE
                         if single_jar
@@ -3417,8 +3413,13 @@ class ChatBridge(QObject):
             results.put(
                 {
                     "ok": True,
-                    "release_id": selected_release,
+                    "release_id": str(manifest.get("release_id") or selected_release),
                     "jar_count": int(manifest.get("jar_count") or 0),
+                    "package_jar_count": int(manifest.get("package_jar_count") or 0),
+                    "base_release_id": str(manifest.get("base_release_id") or ""),
+                    "updated_applications": list(
+                        manifest.get("updated_applications") or []
+                    ),
                 }
             )
             self._releaseSnapshotReady.emit()
@@ -3458,15 +3459,21 @@ class ChatBridge(QObject):
             self._refresh_code_analysis_jar_sources()
             self.refreshCodeProcessingStatus()
             jar_count = int(latest.get("jar_count") or 0)
+            package_jar_count = int(latest.get("package_jar_count") or jar_count)
+            base_release_id = str(latest.get("base_release_id") or "")
+            updated = [str(item) for item in latest.get("updated_applications") or []]
             jar_label = "JAR copiado e verificado" if jar_count == 1 else "JARs copiados e verificados"
             self._release_snapshot_status = (
-                f"Release {release_id} adicionada: {jar_count} {jar_label} "
-                "localmente."
+                f"Release {release_id} detectada e adicionada: {jar_count} {jar_label} "
+                f"localmente; pacote recebido com {package_jar_count}."
+                + (f" Base completa: {base_release_id}." if base_release_id else "")
+                + (f" Atualizados: {', '.join(updated)}." if updated else "")
             )
         else:
             detail = str(latest.get("error") or "falha desconhecida")
+            release_label = release_id or "automática"
             self._release_snapshot_status = (
-                f"Não foi possível adicionar a release {release_id}: {detail}"
+                f"Não foi possível adicionar a release {release_label}: {detail}"
             )
         self.stateChanged.emit()
 
@@ -3476,12 +3483,7 @@ class ChatBridge(QObject):
         return f"research/workspaces/{workspace_id}/{name}"
 
     def _refresh_code_analysis_jar_sources(self) -> None:
-        release_id = self._code_analysis_release
-        workspace_path = (
-            self._settings.erp_releases_dir / release_id / "jars"
-            if release_id
-            else self._settings.erp_releases_dir
-        )
+        workspace_path = self._settings.erp_releases_dir
         options = (
             (
                 ERP_JAR_SOURCE_VR_EXEC,
@@ -3495,18 +3497,11 @@ class ChatBridge(QObject):
             ),
         )
         items: list[dict[str, Any]] = []
+        catalog = ErpReleaseCatalog(self._settings.root)
         for value, label, path in options:
             resolved = path.resolve(strict=False)
             exists = resolved.is_dir()
-            jar_count = (
-                sum(
-                    1
-                    for item in resolved.rglob("*")
-                    if item.is_file() and item.suffix.casefold() == ".jar"
-                )
-                if exists
-                else 0
-            )
+            jar_count = catalog.count_source_jars(resolved) if exists else 0
             status = (
                 f"{jar_count} JAR(s) encontrados"
                 if exists
@@ -3556,6 +3551,8 @@ class ChatBridge(QObject):
             scope_label = (
                 "escopo: 1 JAR"
                 if analysis_scope == ERP_JAR_SCOPE_SINGLE
+                else "release incremental"
+                if analysis_scope == "incremental_release"
                 else "release completa"
             )
             classpath_status = str(classpath.get("classpath_status") or "unknown")

@@ -144,10 +144,27 @@ A interface Qt Quick/QML é o único frontend desktop.
 
 ### Releases do ERP para análise de código
 
-Cada versão do ERP deve ficar isolada em `VRProject/ERP/releases/<release>/jars`.
-No escopo **Release completa**, o inventário registra os 46 JARs, hashes SHA-256, tamanho, classes, informações
-do `MANIFEST.MF`, duplicidades de classe e sinais heurísticos de ofuscação. Os
-JARs fornecidos manualmente nunca são removidos pelo Studio.
+O Studio detecta localmente a aplicação e a versão pelo arquivo correspondente
+ao JAR, por exemplo `VRMaster.jar` + `vrmaster.properties` e
+`VRConcentrador.jar` + `vrconcentrador.properties`. Somente os campos
+`versao.*` e `app.data` são lidos; outras propriedades não entram no manifesto e
+nenhuma LLM participa desse processamento. Quando o arquivo correspondente não
+existe, a aplicação ainda é identificada pelo nome do JAR e a revisão permanece
+`unknown`, diferenciada pelo SHA-256.
+
+Cada snapshot fica isolado em
+`VRProject/ERP/releases/<release>/jars/<aplicação>/<versão>/<jar>`. O ID pode ser
+informado manualmente, mas o padrão é gerá-lo automaticamente a partir das
+versões detectadas, data mais recente e hash da composição.
+
+O escopo **Pacote completo ou incremental** aceita tanto os 46 JARs quanto os
+pacotes parciais liberados pelo desenvolvimento. Um pacote parcial substitui
+somente as aplicações presentes e herda os demais JARs da release-base completa
+mais recente. O manifesto registra `base_release_id`, aplicações atualizadas,
+JARs herdados e a origem de cada artefato. Sem uma base completa, o pacote
+parcial é recusado explicitamente. O inventário final registra hashes SHA-256,
+tamanho, classes, `MANIFEST.MF`, duplicidades e sinais heurísticos de ofuscação.
+Os JARs de origem nunca são alterados ou removidos pelo Studio.
 
 Para uma investigação focada, a interface também oferece o escopo **Somente um
 JAR**. O analista escolhe explicitamente o arquivo, que recebe um manifesto
@@ -156,18 +173,24 @@ mas permanece identificado como parcial e não representa a cobertura completa
 do ERP.
 
 ```powershell
-# Importar e validar uma release completa
+# Detectar aplicações e versões sem copiar ou chamar modelo
 .\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
-  --root VRProject import-erp-release 2026.08.28
-
-# Origem padrão do analista: copia e valida sem modificar C:\vr\exec
-.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
-  --root VRProject snapshot-erp-release 2026.08.28 `
+  --root VRProject detect-erp-release `
   --source "C:\vr\exec"
 
-# Escopo parcial: copia e valida somente o JAR explicitamente selecionado
+# Detectar, categorizar e criar ID automático; aceita pacote completo ou parcial
 .\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
-  --root VRProject snapshot-erp-release 2026.08.28-vrpdv `
+  --root VRProject snapshot-erp-release `
+  --source "C:\vr\exec"
+
+# Personalizar o ID sem perder detecção/categorização automática
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject snapshot-erp-release minha-release `
+  --source "C:\vr\exec" --auto-detect
+
+# Escopo de um JAR: ID automático VRPdv-<versão>-<hash>
+.\.venv\Scripts\python.exe -m vrsoft_extractor.mary.cli `
+  --root VRProject snapshot-erp-release `
   --source "C:\vr\exec\VRPdv.jar" --expected-jars 1
 
 # Verificação rápida por tamanho e data, ou verificação integral por hash
@@ -179,9 +202,9 @@ do ERP.
   --root VRProject remove-erp-release-index 2026.08.28 --approve
 ```
 
-Para importar temporariamente uma pasta fora do layout padrão, use `--path`.
-Uma release completa com quantidade diferente de 46 JARs ou algum arquivo
-inválido é registrada como `incomplete`. O escopo de JAR único só é considerado
+O comando legado `import-erp-release` continua disponível para inventários já
+organizados. Um pacote incremental só fica `ready` depois que a composição com
+a base resultar nos 46 JARs válidos. O escopo de JAR único só é considerado
 pronto quando o arquivo foi escolhido explicitamente e validado como JAR.
 O catálogo mantém no máximo três releases e usa como orçamento inicial do
 índice dez vezes o tamanho da primeira release importada; ele nunca remove uma
