@@ -74,7 +74,7 @@ Item {
         collapsedNodeIds = values
     }
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     ColumnLayout {
         anchors.fill: parent
@@ -90,10 +90,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 54
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -131,10 +129,8 @@ Item {
             visible: root.filtersVisible
             Layout.fillWidth: true
             Layout.preferredHeight: 54
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 7
@@ -170,7 +166,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 32
             radius: 7
-            color: frontend.palette.surfaceRaised
+            color: frontend.palette.chatSidebar
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 12
@@ -199,10 +195,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             clip: true
 
             ColumnLayout {
@@ -211,7 +205,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
-                    color: frontend.palette.surfaceRaised
+                    color: frontend.palette.chatSidebar
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 8
@@ -345,10 +339,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 74
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             ScrollView {
                 anchors.fill: parent
                 anchors.margins: 10

@@ -59,7 +59,7 @@ Item {
         applyFilters()
     }
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     ColumnLayout {
         anchors.fill: parent
@@ -75,10 +75,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 52
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -98,10 +96,8 @@ Item {
             visible: root.filtersVisible
             Layout.fillWidth: true
             Layout.preferredHeight: 168
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -194,10 +190,8 @@ Item {
                 SplitView.minimumWidth: 620
                 SplitView.preferredWidth: 840
                 SplitView.fillWidth: true
-                radius: Theme.radiusCard
-                color: frontend.palette.surface
-                border.width: 1
-                border.color: frontend.palette.border
+                color: "transparent"
+                border.width: 0
                 clip: true
 
                 ColumnLayout {
@@ -207,7 +201,7 @@ Item {
                         visible: studio.reviewTotal > 0
                         Layout.fillWidth: true
                         Layout.preferredHeight: 36
-                        color: frontend.palette.surfaceRaised
+                        color: frontend.palette.chatSidebar
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 5
@@ -288,10 +282,8 @@ Item {
                 visible: studio.reviewTotal > 0
                 SplitView.minimumWidth: 330
                 SplitView.preferredWidth: 380
-                radius: Theme.radiusCard
-                color: frontend.palette.surface
-                border.width: 1
-                border.color: frontend.palette.border
+                color: "transparent"
+                border.width: 0
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12

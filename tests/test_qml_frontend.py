@@ -2714,8 +2714,14 @@ class QmlFrontendTest(unittest.TestCase):
                     break
 
             self.assertTrue(updates)
+            folder = next(item for item in values if item["label"] == "src")
+            self.assertTrue(folder["isDirectory"])
+            self.assertEqual(folder["depth"], 0)
             selected = next(item for item in values if item["label"] == "src/main.py")
             self.assertEqual(Path(selected["path"]), expected)
+            self.assertFalse(selected["isDirectory"])
+            self.assertEqual(selected["parent"], "src")
+            self.assertEqual(selected["depth"], 1)
 
     def test_chat_drop_stages_existing_local_files_without_picker(self):
         with TemporaryDirectory() as temporary:
@@ -2773,14 +2779,16 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual((bridge._provider, bridge._model), ("claude", "b"))
             self.assertEqual(bridge.researchModelKeys, ["codex:a"])
 
-    def test_model_picker_keeps_provider_filters_without_hover_dialogs(self):
+    def test_model_picker_opens_favorites_and_builds_enabled_provider_filters(self):
         picker_qml = (
             MAIN_QML.parent / "components" / "VrModelPicker.qml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('property string providerFilter: "all"', picker_qml)
+        self.assertIn('property string providerFilter: "favorites"', picker_qml)
         self.assertIn('{key: "favorites"', picker_qml)
-        self.assertIn('{key: "codex"', picker_qml)
+        self.assertIn("model: control.providerTabs()", picker_qml)
+        self.assertIn("if (item.inactive === true) return false", picker_qml)
+        self.assertNotIn('{key: "all"', picker_qml)
         self.assertNotIn("ToolTip.visible", picker_qml)
         self.assertIn("CloseOnPressOutsideParent", picker_qml)
 
@@ -2788,6 +2796,41 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "ChatPreview.qml"
         ).read_text(encoding="utf-8")
         self.assertNotIn("createLinearGradient", chat_qml)
+
+    def test_draft_catalog_moves_away_from_a_disabled_provider(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("providers/claude/enabled", False)
+            preferences.sync()
+            bridge = ChatBridge(settings, database, preferences)
+            bridge._draft = True
+            bridge._provider = "claude"
+            bridge._model = "claude-sonnet"
+            bridge._model_items = [{
+                "key": "claude:claude-sonnet",
+                "provider": "claude",
+                "value": "claude-sonnet",
+                "label": "Claude Sonnet",
+            }]
+
+            bridge._apply_model_catalog([{
+                "key": "codex:gpt-test",
+                "provider": "codex",
+                "value": "gpt-test",
+                "label": "GPT Test",
+            }])
+
+            self.assertEqual((bridge._provider, bridge._model), ("codex", "gpt-test"))
+            self.assertFalse(any(item.get("inactive") for item in bridge.modelItems))
 
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (

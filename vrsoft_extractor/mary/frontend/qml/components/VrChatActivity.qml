@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
 
@@ -146,12 +145,6 @@ Rectangle {
                     property bool detailExpanded: false
                     readonly property bool isCommand:
                         String(modelData.itemType || "") === "commandExecution"
-                    readonly property string commandLine: {
-                        if (!isCommand) return ""
-                        var detail = String(modelData.detail || "")
-                        var line = detail.length ? detail.split("\n")[0].trim() : ""
-                        return line.length > 1 ? line : ""
-                    }
                     Layout.fillWidth: true
                     spacing: 4
 
@@ -167,17 +160,16 @@ Rectangle {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: activityItem.commandLine.length > 0
-                                ? "> " + activityItem.commandLine
-                                : (activityItem.modelData.text || "Atividade")
+                            text: activityItem.isCommand
+                                ? "bash" : (activityItem.modelData.text || "Atividade")
                             color: activityItem.modelData.state === "running"
                                 ? frontend.palette.text : frontend.palette.mutedText
-                            font.family: activityItem.commandLine.length > 0
+                            font.family: activityItem.isCommand
                                 ? "Cascadia Mono" : Theme.fontFamily
                             font.pixelSize: Theme.fontSize(
-                                activityItem.commandLine.length > 0 ? 9 : 10)
+                                activityItem.isCommand ? 10 : 10)
                             font.weight: activityItem.modelData.state === "running"
-                                && activityItem.commandLine.length === 0
+                                && !activityItem.isCommand
                                 ? Font.DemiBold : Font.Normal
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2

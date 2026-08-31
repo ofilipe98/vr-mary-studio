@@ -5,7 +5,7 @@ import "../components"
 import "../theme"
 
 Item {
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
@@ -18,10 +18,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: Theme.radiusCard
-            color: frontend.palette.surfaceRaised
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             ScrollView {
                 anchors.fill: parent
                 anchors.margins: 14

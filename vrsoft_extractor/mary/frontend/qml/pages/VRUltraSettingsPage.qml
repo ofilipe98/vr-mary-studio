@@ -83,10 +83,8 @@ Item {
             objectName: "vrUltraSeniorProfileCard"
             Layout.fillWidth: true
             Layout.preferredHeight: 146
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 anchors.fill: parent
@@ -148,10 +146,8 @@ Item {
             objectName: "vrUltraAgentPool"
             Layout.fillWidth: true
             Layout.preferredHeight: 152
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 anchors.fill: parent
@@ -230,10 +226,8 @@ Item {
             objectName: "vrUltraCodeAnalysisCard"
             Layout.fillWidth: true
             Layout.preferredHeight: codeAnalysisContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: codeAnalysisContent
@@ -324,10 +318,8 @@ Item {
             objectName: "vrUltraJarDirectoryCard"
             Layout.fillWidth: true
             Layout.preferredHeight: jarDirectoryContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: jarDirectoryContent
@@ -494,10 +486,8 @@ Item {
             objectName: "vrUltraCodeProcessingCard"
             Layout.fillWidth: true
             Layout.preferredHeight: codeProcessingContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: codeProcessingContent

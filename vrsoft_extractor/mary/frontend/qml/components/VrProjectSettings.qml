@@ -208,7 +208,7 @@ Item {
                     spacing: 8
                     Item { Layout.fillWidth: true }
                     VrModelPicker {
-                        implicitWidth: 136
+                        implicitWidth: 188
                         implicitHeight: 30
                         outlined: true
                         popupAbove: false
@@ -217,8 +217,26 @@ Item {
                         onActivated: index => chat.setModel(index)
                         onFavoriteToggled: index => chat.toggleModelFavorite(index)
                     }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                Layout.preferredHeight: 58
+                spacing: 32
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+                    Text { text: "Esforço do modelo padrão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Define o nível de raciocínio inicial das novas conversas deste projeto."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
+                }
+                RowLayout {
+                    Layout.preferredWidth: 256
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
                     VrReasoningPicker {
-                        implicitWidth: 88
+                        implicitWidth: 188
                         implicitHeight: 30
                         outlined: true
                         popupAbove: false

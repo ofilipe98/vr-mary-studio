@@ -5,7 +5,7 @@ import "../components"
 import "../theme"
 
 Item {
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     ColumnLayout {
         anchors.fill: parent
@@ -21,10 +21,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 54
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -61,7 +59,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 28
             radius: 7
-            color: frontend.palette.surfaceRaised
+            color: frontend.palette.chatSidebar
             Text {
                 anchors.fill: parent
                 anchors.leftMargin: 12
@@ -77,10 +75,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: frontend.palette.surface
-            radius: Theme.radiusCard
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ScrollView {
                 anchors.fill: parent

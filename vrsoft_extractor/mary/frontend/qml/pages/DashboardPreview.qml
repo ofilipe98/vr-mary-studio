@@ -7,7 +7,7 @@ import "../theme"
 Item {
     id: root
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     ColumnLayout {
         anchors.fill: parent
@@ -35,10 +35,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumHeight: 150
-                    radius: Theme.radiusCard
-                    color: frontend.palette.surface
-                    border.width: 1
-                    border.color: frontend.palette.border
+                    color: "transparent"
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -89,6 +86,14 @@ Item {
                             }
                         }
                     }
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: 1
+                        color: frontend.palette.chatDivider
+                    }
                 }
             }
         }
@@ -115,10 +120,7 @@ Item {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: 80
-                    radius: Theme.radiusCard
-                    color: frontend.palette.surface
-                    border.width: 1
-                    border.color: frontend.palette.border
+                    color: "transparent"
                     Column {
                         anchors.fill: parent
                         anchors.margins: 10
@@ -133,10 +135,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 62
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 10

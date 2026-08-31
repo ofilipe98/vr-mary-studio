@@ -27,6 +27,7 @@ Item {
     property var approvalPayload: ({})
     property var composerSuggestions: []
     property var surfaceFiles: []
+    property var expandedFileFolders: ({})
     property string surfaceFilePath: ""
     property string surfaceFilePreview: ""
     property var contextItems: []
@@ -93,6 +94,11 @@ Item {
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
         }
+    }
+
+    Connections {
+        target: studio
+        function onProvidersChanged() { chat.refreshModels() }
     }
 
     Component.onCompleted: {
@@ -588,6 +594,15 @@ Item {
                                     textDocument,
                                     modelData.content
                                 )
+                                Connections {
+                                    target: frontend
+                                    function onThemeChanged() {
+                                        frontend.styleMessageDocument(
+                                            segmentBody.textDocument,
+                                            modelData.content
+                                        )
+                                    }
+                                }
                             }
                         }
 
@@ -623,7 +638,8 @@ Item {
                                             implicitWidth,
                                             toolSummaryRow.width - 20
                                         )
-                                        text: modelData.label || ""
+                                        text: Number(modelData.commands || 0) > 0
+                                            ? "bash" : (modelData.label || "")
                                         color: frontend.palette.mutedText
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(12)
@@ -658,6 +674,16 @@ Item {
                             }
                             onTextChanged: {
                                 if (visible && messageItem.role !== "user")
+                                    frontend.styleMessageDocument(
+                                        messageBody.textDocument,
+                                        messageItem.displayContent
+                                    )
+                            }
+                        }
+                        Connections {
+                            target: frontend
+                            function onThemeChanged() {
+                                if (messageItem.role !== "user")
                                     frontend.styleMessageDocument(
                                         messageBody.textDocument,
                                         messageItem.displayContent
@@ -774,12 +800,14 @@ Item {
                     ? Math.min(parent.height - height - 48, Math.max(330, parent.height * 0.54))
                     : parent.height - height - 48
                 width: Math.min(770, parent.width - 40)
-                height: chat.attachments.length ? 146 : 110
+                height: chat.attachments.length ? 150 : 116
                 radius: 24
                 color: frontend.palette.chatComposer
                 border.width: 1
                 border.color: root.composerDropActive
-                    ? frontend.palette.focus : frontend.palette.chatBorder
+                    ? frontend.palette.brandOrange
+                    : composerInput.activeFocus
+                        ? frontend.palette.focus : frontend.palette.chatBorder
 
                 DropArea {
                     id: composerDropArea
@@ -914,15 +942,15 @@ Item {
                         implicitWidth: chat.vrMode === "ultra" ? 104 : 58
                         implicitHeight: 32
                         leftPadding: 7; rightPadding: 7
-                        text: chat.vrMode === "ultra" ? "✦ VR Ultra" : "✦ VR"
+                        text: chat.vrMode === "ultra" ? "VR Ultra" : "VR"
                         variant: chat.vrMode === "ultra" ? "primary" : chat.vrMode === "vr" ? "secondary" : "ghost"
                         background: Rectangle {
                             radius: 10
-                            color: chat.vrMode === "ultra"
-                                ? (parent.down ? "#E06500" : frontend.palette.brandOrange)
-                                : chat.vrMode === "vr"
-                                    ? (parent.down ? "#6B310A" : "#4A260F")
-                                    : parent.hovered ? frontend.palette.chatControl : "transparent"
+                            color: chat.vrMode !== "off"
+                                ? (parent.down
+                                    ? Qt.darker(frontend.palette.accessibleOrange, 1.12)
+                                    : frontend.palette.accessibleOrange)
+                                : parent.hovered ? frontend.palette.chatControl : "transparent"
                             border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
                             border.color: chat.vrMode === "ultra"
                                 ? frontend.palette.brandOrange
@@ -934,6 +962,8 @@ Item {
                         id: contextUsageButton
                         objectName: "contextUsageButton"
                         implicitWidth: 30; implicitHeight: 30
+                        visible: chat.contextUsageFraction > 0
+                            || chat.totalProcessedLabel !== "0 tokens"
                         fraction: chat.contextUsageFraction
                         usageLabel: chat.contextUsageCompactLabel
                         totalLabel: chat.totalProcessedLabel
@@ -1511,16 +1541,62 @@ Item {
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             clip: true
-                            spacing: 4
+                            spacing: 0
                             model: root.surfaceFiles
-                            delegate: VrButton {
+                            delegate: Rectangle {
+                                id: fileTreeRow
                                 required property var modelData
                                 width: ListView.view.width
-                                text: modelData.label
-                                textAlignment: Text.AlignLeft
-                                onClicked: {
-                                    root.surfaceFilePath = modelData.path
-                                    root.surfaceFilePreview = chat.readFilePreview(modelData.path)
+                                height: root.fileTreeItemVisible(modelData) ? 30 : 0
+                                visible: height > 0
+                                radius: 6
+                                color: root.surfaceFilePath === modelData.path
+                                    ? frontend.palette.selection
+                                    : fileTreeHover.hovered ? frontend.palette.chatControl : "transparent"
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 6 + Math.min(8, Number(modelData.depth || 0)) * 14
+                                    anchors.rightMargin: 6
+                                    spacing: 5
+                                    VrLineIcon {
+                                        visible: modelData.isDirectory === true
+                                        Layout.preferredWidth: 11
+                                        Layout.preferredHeight: 11
+                                        kind: root.expandedFileFolders[modelData.label]
+                                            ? "chevronDown" : "chevronRight"
+                                        foreground: frontend.palette.mutedText
+                                    }
+                                    Item {
+                                        visible: modelData.isDirectory !== true
+                                        Layout.preferredWidth: 11
+                                        Layout.preferredHeight: 11
+                                    }
+                                    VrLineIcon {
+                                        Layout.preferredWidth: 15
+                                        Layout.preferredHeight: 15
+                                        kind: modelData.isDirectory === true ? "folder" : "files"
+                                        foreground: modelData.isDirectory === true
+                                            ? frontend.palette.brandOrange : frontend.palette.mutedText
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.name || modelData.label
+                                        color: frontend.palette.text
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSize(11)
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                                HoverHandler { id: fileTreeHover }
+                                TapHandler {
+                                    onTapped: {
+                                        if (modelData.isDirectory === true) {
+                                            root.toggleFileFolder(modelData.label)
+                                            return
+                                        }
+                                        root.surfaceFilePath = modelData.path
+                                        root.surfaceFilePreview = chat.readFilePreview(modelData.path)
+                                    }
                                 }
                             }
                         }
@@ -2272,10 +2348,31 @@ Item {
         if (page === 3) {
             root.surfaceFilePath = ""
             root.surfaceFilePreview = ""
+            root.expandedFileFolders = ({})
             root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
         }
         if (page === 5 && root.selectedAgentIndex < 0 && chat.agentItems.length)
             root.selectedAgentIndex = 0
+    }
+
+    function toggleFileFolder(path) {
+        var next = ({})
+        for (var key in root.expandedFileFolders)
+            next[key] = root.expandedFileFolders[key]
+        next[path] = !next[path]
+        root.expandedFileFolders = next
+    }
+
+    function fileTreeItemVisible(item) {
+        if (!item) return false
+        if (fileSearch.text.trim().length > 0) return true
+        var parentPath = String(item.parent || "")
+        while (parentPath.length > 0) {
+            if (!root.expandedFileFolders[parentPath]) return false
+            var separator = parentPath.lastIndexOf("/")
+            parentPath = separator >= 0 ? parentPath.substring(0, separator) : ""
+        }
+        return true
     }
 
     function closeSurface(page) {

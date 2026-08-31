@@ -10,7 +10,7 @@ Item {
     property int tabIndex: 0
     property string pendingDeleteId: ""
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     VrPageColumn {
         spacing: Theme.pageSpacing
@@ -46,6 +46,7 @@ Item {
                     VrCard {
                         id: geralCard
                         Layout.fillWidth: true
+                        flat: true
 
                         GridLayout {
                             Layout.fillWidth: true
@@ -136,27 +137,59 @@ Item {
                         VrButton { text: "Atualizar"; onClicked: studio.refreshProviders() }
                     }
 
-                    Repeater {
-                        model: studio.providerItems
-                        delegate: Rectangle {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 86
-                            radius: Theme.radiusCard
-                            color: frontend.palette.surface
-                            border.width: 1
-                            border.color: frontend.palette.border
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spaceMd
-                                ColumnLayout {
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: providerList.implicitHeight
+                        color: "transparent"
+
+                        ColumnLayout {
+                            id: providerList
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            spacing: 0
+
+                            Repeater {
+                                model: studio.providerItems
+                                delegate: Item {
+                                    required property int index
+                                    required property var modelData
                                     Layout.fillWidth: true
-                                    spacing: 3
-                                    Text { text: modelData.name; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
-                                    Text { text: modelData.description; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                                    Text { text: modelData.status; color: modelData.available && modelData.enabled ? frontend.palette.success : frontend.palette.warning; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; font.weight: Font.DemiBold }
+                                    Layout.preferredHeight: 76
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 10
+                                        anchors.rightMargin: 10
+                                        spacing: 12
+                                        VrProviderIcon {
+                                            Layout.preferredWidth: 24
+                                            Layout.preferredHeight: 24
+                                            provider: modelData.id
+                                        }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 2
+                                            Text { text: modelData.name; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
+                                            Text { text: modelData.description; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            Text { text: String(modelData.status || "").replace(/^●\s*/, ""); color: modelData.available && modelData.enabled ? frontend.palette.success : frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                                        }
+                                        VrSwitch {
+                                            checked: modelData.enabled
+                                            Accessible.name: "Ativar " + modelData.name
+                                            onToggled: studio.setProviderEnabled(modelData.id, checked)
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        visible: index < studio.providerItems.length - 1
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        anchors.leftMargin: 46
+                                        height: 1
+                                        color: frontend.palette.chatDivider
+                                    }
                                 }
-                                VrCheckBox { text: "Ativo"; checked: modelData.enabled; onToggled: studio.setProviderEnabled(modelData.id, checked) }
                             }
                         }
                     }
@@ -180,10 +213,8 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 96
-                        radius: Theme.radiusCard
-                        color: frontend.palette.surface
-                        border.width: 1
-                        border.color: frontend.palette.border
+                        color: "transparent"
+                        border.width: 0
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: Theme.spaceMd
@@ -204,10 +235,8 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 96
-                        radius: Theme.radiusCard
-                        color: frontend.palette.surface
-                        border.width: 1
-                        border.color: frontend.palette.border
+                        color: "transparent"
+                        border.width: 0
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: Theme.spaceMd
@@ -223,10 +252,8 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 96
-                        radius: Theme.radiusCard
-                        color: frontend.palette.surface
-                        border.width: 1
-                        border.color: frontend.palette.border
+                        color: "transparent"
+                        border.width: 0
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: Theme.spaceMd
@@ -288,10 +315,9 @@ Item {
                             required property string updatedAt
                             width: archivedList.width
                             height: 66
-                            radius: Theme.radiusControl
-                            color: frontend.palette.surface
-                            border.width: 1
-                            border.color: frontend.palette.border
+                            radius: 0
+                            color: index % 2 ? frontend.palette.chatSidebar : "transparent"
+                            border.width: 0
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.margins: Theme.spaceSm

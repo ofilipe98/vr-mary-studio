@@ -388,7 +388,7 @@ class ChatBridge(QObject):
         self._extension_catalog_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
         )
-        self._file_suggestions_cache: list[dict[str, str]] = []
+        self._file_suggestions_cache: list[dict[str, Any]] = []
         self._file_suggestions_root: Path | None = None
         self._file_suggestions_generation = 0
         self._file_suggestions_built_at = 0.0
@@ -1280,6 +1280,7 @@ class ChatBridge(QObject):
     @Slot(object)
     def _apply_model_catalog(self, values: object) -> None:
         items = [dict(item) for item in list(values or []) if isinstance(item, dict)]
+        enabled_providers = set(self._enabled_provider_names())
         if self._draft and not self._model:
             preferred = next(
                 (
@@ -1297,7 +1298,19 @@ class ChatBridge(QObject):
         if not any(str(item.get("key") or "") == current_key for item in items):
             current = self._model_items[self.modelIndex] if self._model_items else None
             if current:
-                items.insert(0, dict(current))
+                historical = dict(current)
+                historical["inactive"] = self._provider not in enabled_providers
+                items.insert(0, historical)
+        if self._draft and self._provider not in enabled_providers and items:
+            preferred = next(
+                (item for item in items if not item.get("inactive")), items[0]
+            )
+            self._provider = str(
+                preferred.get("provider") or next(iter(enabled_providers), "codex")
+            )
+            self._model = str(preferred.get("value") or "")
+            self._remember_current_chat_options()
+            items = [item for item in items if not item.get("inactive")]
         self._model_items = items or self._model_items
         self._restore_effort_for_current_model()
         if not self.serviceTierItems:
@@ -1416,7 +1429,7 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
 
     @Slot(str, result="QVariantList")
-    def fileSuggestions(self, query: str) -> list[dict[str, str]]:  # noqa: N802
+    def fileSuggestions(self, query: str) -> list[dict[str, Any]]:  # noqa: N802
         needle = str(query or "").strip().casefold()
         self._file_suggestions_query = needle
         if self._file_suggestions_stale() and not self._file_suggestions_timer.isActive():
@@ -1425,11 +1438,20 @@ class ChatBridge(QObject):
             # not inherit the refresh delay used after project mutations.
             initial_load = self._file_suggestions_root is None
             self._file_suggestions_timer.start(0 if initial_load else 500)
-        return [
-            {"label": item["relative"], "path": item["path"]}
-            for item in self._file_suggestions_cache
-            if not needle or needle in item["relative"].casefold()
-        ][:40]
+        visible = []
+        for item in self._file_suggestions_cache:
+            is_directory = bool(item.get("isDirectory"))
+            if needle and (is_directory or needle not in item["relative"].casefold()):
+                continue
+            visible.append({
+                "label": item["relative"],
+                "name": item.get("name") or Path(item["relative"]).name,
+                "path": item["path"],
+                "parent": item.get("parent") or "",
+                "depth": int(item.get("depth") or 0),
+                "isDirectory": is_directory,
+            })
+        return visible[:80 if needle else 600]
 
     def _file_suggestions_stale(self) -> bool:
         if self._file_suggestions_loading:
@@ -1467,14 +1489,31 @@ class ChatBridge(QObject):
 
         def scan() -> None:
             ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
-            entries: list[dict[str, str]] = []
+            entries: list[dict[str, Any]] = []
             try:
                 for path in root.rglob("*"):
-                    if any(part in ignored for part in path.parts) or not path.is_file():
+                    relative_path = path.relative_to(root)
+                    if any(part in ignored for part in relative_path.parts):
                         continue
-                    relative = str(path.relative_to(root)).replace("\\", "/")
-                    entries.append({"relative": relative, "path": str(path)})
-                entries.sort(key=lambda item: item["relative"].casefold())
+                    is_directory = path.is_dir()
+                    if not is_directory and not path.is_file():
+                        continue
+                    relative = str(relative_path).replace("\\", "/")
+                    parent = str(relative_path.parent).replace("\\", "/")
+                    if parent == ".":
+                        parent = ""
+                    entries.append({
+                        "relative": relative,
+                        "name": path.name,
+                        "path": str(path),
+                        "parent": parent,
+                        "depth": max(0, len(relative_path.parts) - 1),
+                        "isDirectory": is_directory,
+                    })
+                entries.sort(key=lambda item: (
+                    tuple(part.casefold() for part in Path(item["relative"]).parts),
+                    not bool(item.get("isDirectory")),
+                ))
             except OSError:
                 entries = []
             # A Python worker must not emit through a QObject that may already
@@ -1510,7 +1549,11 @@ class ChatBridge(QObject):
         self._file_suggestions_cache = [
             {
                 "relative": str(item.get("relative") or ""),
+                "name": str(item.get("name") or ""),
                 "path": str(item.get("path") or ""),
+                "parent": str(item.get("parent") or ""),
+                "depth": int(item.get("depth") or 0),
+                "isDirectory": bool(item.get("isDirectory")),
             }
             for item in list(entries or [])
             if isinstance(item, dict) and item.get("relative")
