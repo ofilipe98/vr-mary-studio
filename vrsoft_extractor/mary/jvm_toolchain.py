@@ -400,7 +400,12 @@ class JvmToolchain:
         configured = str(self.environ.get("VR_CODE_TOOLS_DIR") or "").strip()
         if configured:
             candidates.append(Path(configured).expanduser())
-        candidates.append(self.root / "tools" / "code-analysis")
+        candidates.extend(
+            (
+                self.root / "tools" / "code-analysis",
+                self.root / "VRProject" / "tools" / "code-analysis",
+            )
+        )
         app_dirs: list[Path] = []
         if self.app_dir is not None:
             app_dirs.append(self.app_dir)
@@ -410,6 +415,7 @@ class JvmToolchain:
             candidates.extend(
                 (
                     app / "tools" / "code-analysis",
+                    app / "VRProject" / "tools" / "code-analysis",
                     app.parent / "VRProject" / "tools" / "code-analysis",
                 )
             )
