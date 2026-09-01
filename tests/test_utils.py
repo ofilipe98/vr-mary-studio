@@ -79,6 +79,17 @@ class UtilsTest(unittest.TestCase):
             build_script.index("Get-FileHash -LiteralPath $PortableArchive"),
         )
 
+    def test_portable_build_uses_local_vrproject_and_requires_code_toolchain(self):
+        root = Path(__file__).parents[1]
+        build_script = (root / "build_portable.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('Join-Path $ProjectRoot "VRProject"', build_script)
+        self.assertIn('@("--root", $ResolvedVRRoot)', build_script)
+        self.assertNotIn('if ($VRRoot) {\n            $ExportArguments', build_script)
+        self.assertIn('"decompilers\\vineflower-1.12.0.jar"', build_script)
+        self.assertIn('"decompilers\\cfr-0.152.jar"', build_script)
+        self.assertIn('Filter "java.exe"', build_script)
+
     def test_sanitize_filename_removes_windows_invalid_chars(self):
         self.assertEqual(sanitize_filename(' Aula: "PDV" / Frente? '), "Aula_ _PDV_ _ Frente_")
 

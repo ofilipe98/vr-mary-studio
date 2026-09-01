@@ -11,6 +11,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ResolvedVRRoot = if ($VRRoot) {
+    (Resolve-Path -LiteralPath $VRRoot).Path
+}
+else {
+    Join-Path $ProjectRoot "VRProject"
+}
+if (-not (Test-Path -LiteralPath $ResolvedVRRoot -PathType Container)) {
+    throw "VRProject usado na build não foi encontrado: $ResolvedVRRoot"
+}
 $Python = if ($PythonPath) {
     $PythonPath
 }
@@ -134,9 +143,8 @@ try {
             "-m", "vrsoft_extractor.mary.cli",
             "--app-dir", $ProjectRoot
         )
-        if ($VRRoot) {
-            $ExportArguments += @("--root", $VRRoot)
-        }
+        # A build nunca deve herdar o workspace persistido de outra instalação.
+        $ExportArguments += @("--root", $ResolvedVRRoot)
         $ExportArguments += @("export-portable")
         if (-not $IncludeKnowledgeBase) {
             $ExportArguments += @(
@@ -148,6 +156,17 @@ try {
         & $Python @ExportArguments
         if ($LASTEXITCODE -ne 0) {
             throw "Exportacao do projeto VR falhou com codigo $LASTEXITCODE"
+        }
+
+        $PortableCodeTools = Join-Path $PortableVR "tools\code-analysis"
+        $PortableJava = Get-ChildItem -LiteralPath (Join-Path $PortableCodeTools "java17") -Recurse -Filter "java.exe" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        $PortableVineflower = Join-Path $PortableCodeTools "decompilers\vineflower-1.12.0.jar"
+        $PortableCfr = Join-Path $PortableCodeTools "decompilers\cfr-0.152.jar"
+        if (-not $PortableJava -or
+            -not (Test-Path -LiteralPath $PortableVineflower -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $PortableCfr -PathType Leaf)) {
+            throw "A build portátil não incorporou Java 17, Vineflower e CFR do VRProject selecionado: $ResolvedVRRoot"
         }
 
         $PortableArchive = Join-Path $ReleaseRoot "VRNortePortable-$ArtifactLabel.zip"
