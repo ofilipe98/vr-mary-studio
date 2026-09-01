@@ -2370,12 +2370,15 @@ Item {
                         }
                     }
                     HoverHandler { id: sourceHover }
-                    TapHandler {
+                    MouseArea {
+                        objectName: sourceRow.modelData.key === "local"
+                            ? "addProjectLocalFolderButton" : ""
+                        anchors.fill: parent
                         enabled: sourceRow.modelData.enabled
-                        onTapped: {
-                            if (sourceRow.modelData.key === "local") {
-                                root.openLocalFolderBrowser()
-                            }
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        preventStealing: true
+                        onClicked: {
+                            root.activateProjectSource(sourceRow.modelData.key)
                         }
                     }
                 }
@@ -2780,8 +2783,14 @@ Item {
     }
 
     function openLocalFolderBrowser() {
-        chat.beginProjectFolderBrowse()
         root.addProjectView = "folder"
+        chat.beginProjectFolderBrowse()
+    }
+
+    function activateProjectSource(sourceKey) {
+        if (String(sourceKey) !== "local") return false
+        root.openLocalFolderBrowser()
+        return true
     }
 
     function submitMessage() {

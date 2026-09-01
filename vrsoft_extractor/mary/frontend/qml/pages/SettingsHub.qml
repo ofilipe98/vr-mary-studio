@@ -70,13 +70,82 @@ Item {
                     onBrandActivated: frontend.setCurrentPage(1)
                 }
 
-                VrNavItem {
+                Item {
                     Layout.fillWidth: true
-                    title: "Chat VR"
-                    iconSource: frontend.navigationItems[1].icon
-                    selected: false
-                    compact: false
-                    onActivated: frontend.setCurrentPage(1)
+                    Layout.preferredHeight: 36
+
+                    VrTextField {
+                        id: settingsConversationSearch
+                        objectName: "settingsConversationSearch"
+                        anchors.fill: parent
+                        leftPadding: 31
+                        rightPadding: 12
+                        text: chat.search
+                        placeholderText: "Pesquisar conversas"
+                        background: Rectangle {
+                            radius: 8
+                            color: settingsConversationSearch.hovered
+                                || settingsConversationSearch.activeFocus
+                                ? frontend.palette.chatControl : "transparent"
+                            border.width: 1
+                            border.color: settingsConversationSearch.activeFocus
+                                ? frontend.palette.focus : frontend.palette.chatBorder
+                        }
+                        onTextChanged: chat.setSearch(text)
+                    }
+                    VrLineIcon {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 15
+                        height: 15
+                        kind: "search"
+                        foreground: frontend.palette.mutedText
+                    }
+                }
+
+                Connections {
+                    target: chat
+                    function onSearchChanged() {
+                        if (!settingsConversationSearch.activeFocus)
+                            settingsConversationSearch.text = chat.search
+                    }
+                }
+
+                Button {
+                    id: settingsReturnButton
+                    objectName: "settingsReturnButton"
+                    Layout.fillWidth: true
+                    implicitHeight: 36
+                    padding: 8
+                    hoverEnabled: true
+                    Accessible.name: "Retornar ao Chat VR"
+                    onClicked: frontend.setCurrentPage(1)
+                    contentItem: RowLayout {
+                        spacing: 8
+                        VrLineIcon {
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            kind: "back"
+                            foreground: settingsReturnButton.hovered
+                                ? frontend.palette.navText : frontend.palette.navMuted
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Retornar"
+                            color: settingsReturnButton.hovered
+                                ? frontend.palette.navText : frontend.palette.navMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.DemiBold
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: settingsReturnButton.down || settingsReturnButton.hovered
+                            ? frontend.palette.chatControl : "transparent"
+                    }
                 }
 
                 Rectangle {

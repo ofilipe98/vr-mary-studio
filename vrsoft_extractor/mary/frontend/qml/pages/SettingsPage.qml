@@ -24,23 +24,6 @@ Item {
     VrPageColumn {
         spacing: Theme.pageSpacing
 
-        Button {
-            id: settingsBackButton
-            objectName: "settingsBackButton"
-            implicitWidth: settingsBackContent.implicitWidth
-            implicitHeight: 30
-            padding: 0
-            hoverEnabled: true
-            onClicked: frontend.setCurrentPage(1)
-            contentItem: RowLayout {
-                id: settingsBackContent
-                spacing: 6
-                VrLineIcon { Layout.preferredWidth: 14; Layout.preferredHeight: 14; kind: "back"; foreground: settingsBackButton.hovered ? frontend.palette.text : frontend.palette.mutedText }
-                Text { text: "Voltar"; color: settingsBackButton.hovered ? frontend.palette.text : frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-            }
-            background: Item { }
-        }
-
         VrPageHeader {
             Layout.fillWidth: true
             title: "Configurações"

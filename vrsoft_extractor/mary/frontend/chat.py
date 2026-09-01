@@ -3208,8 +3208,19 @@ class ChatBridge(QObject):
                 for name in ("vineflower", "cfr")
             )
             if not java_ready or not decompiler_ready:
+                unavailable = []
+                for name, label in (
+                    ("java", "Java 17 isolado"),
+                    ("vineflower", "Vineflower"),
+                    ("cfr", "CFR"),
+                ):
+                    status = doctor.get(name) or {}
+                    if not bool(status.get("available")):
+                        detail = str(status.get("error") or "indisponível")
+                        unavailable.append(f"{label}: {detail}")
                 raise CodeCoverageError(
-                    "Java 17 isolado e ao menos um decompilador verificado são necessários."
+                    "Java 17 isolado e ao menos um decompilador verificado são necessários. "
+                    + " | ".join(unavailable)
                 )
             audit.record(
                 "toolchain_validated",

@@ -309,7 +309,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(add_project_popup.property("visible"))
             chat_page = window.findChild(QObject, "chatPage")
             self.assertIsNotNone(chat_page)
-            chat_page.openLocalFolderBrowser()
+            self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
             self.assertIsNotNone(window.findChild(QObject, "projectFolderPathField"))
@@ -3205,6 +3205,9 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "SettingsHub.qml"
         ).read_text(encoding="utf-8")
         self.assertIn("visitedPages", hub_qml)
+        self.assertIn('objectName: "settingsConversationSearch"', hub_qml)
+        self.assertIn('objectName: "settingsReturnButton"', hub_qml)
+        self.assertNotIn('title: "Chat VR"', hub_qml)
         self.assertNotIn("Repeater {\n                model: root.hubPages", hub_qml)
         for page in (
             "DashboardPreview.qml",
@@ -3249,6 +3252,8 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
+            self.assertIsNotNone(window.findChild(QObject, "settingsConversationSearch"))
+            self.assertIsNotNone(window.findChild(QObject, "settingsReturnButton"))
             self.assertEqual(tab_bar.property("count"), 6)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
