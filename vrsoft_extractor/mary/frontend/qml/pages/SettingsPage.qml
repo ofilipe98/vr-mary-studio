@@ -10,10 +10,36 @@ Item {
     property int tabIndex: 0
     property string pendingDeleteId: ""
 
+    function applyTypography() {
+        frontend.setTypography(
+            interfaceFontCombo.currentText,
+            Number(interfaceFontSizeCombo.currentText.replace(" px", "")),
+            monospaceFontCombo.currentText,
+            Number(monospaceFontSizeCombo.currentText.replace(" px", "")),
+            wordWrapSwitch.checked)
+    }
+
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     VrPageColumn {
         spacing: Theme.pageSpacing
+
+        Button {
+            id: settingsBackButton
+            objectName: "settingsBackButton"
+            implicitWidth: settingsBackContent.implicitWidth
+            implicitHeight: 30
+            padding: 0
+            hoverEnabled: true
+            onClicked: frontend.setCurrentPage(1)
+            contentItem: RowLayout {
+                id: settingsBackContent
+                spacing: 6
+                VrLineIcon { Layout.preferredWidth: 14; Layout.preferredHeight: 14; kind: "back"; foreground: settingsBackButton.hovered ? frontend.palette.text : frontend.palette.mutedText }
+                Text { text: "Voltar"; color: settingsBackButton.hovered ? frontend.palette.text : frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+            }
+            background: Item { }
+        }
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -24,7 +50,7 @@ Item {
         VrTabBar {
             objectName: "settingsTabBar"
             Layout.fillWidth: true
-            model: ["Geral", "Provedores", "VR Ultra", "Temas", "Projetos arquivados"]
+            model: ["Geral", "Provedores", "VR Ultra", "Aparência", "Browser", "Projetos arquivados"]
             currentIndex: root.tabIndex
             onActivated: index => root.tabIndex = index
         }
@@ -203,12 +229,21 @@ Item {
 
             // ------------------------------------------------------------ Temas
             Item {
-                ColumnLayout {
+                Flickable {
                     anchors.fill: parent
-                    anchors.margins: Theme.spaceXs
+                    clip: true
+                    contentWidth: width
+                    contentHeight: appearanceContent.implicitHeight + Theme.spaceLg
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                ColumnLayout {
+                    id: appearanceContent
+                    width: parent.width - Theme.spaceSm
+                    x: Theme.spaceXs
                     spacing: Theme.spaceMd
                     Text { text: "Aparência"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
-                    Text { text: "Escolha o tema usado em todas as telas do VR Norte Studio."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+                    Text { text: "Tema, movimento e tipografia usados em todas as telas do VR Norte Studio."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
 
                     Rectangle {
                         Layout.fillWidth: true
@@ -283,7 +318,98 @@ Item {
                             }
                         }
                     }
-                    Item { Layout.fillHeight: true }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text { text: "Tipografia"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
+                        Item { Layout.fillWidth: true }
+                        Text { text: "Aplicada imediatamente"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                    }
+                    Text { Layout.fillWidth: true; text: "Ajuste separadamente a leitura da interface e de código, com uma prévia real abaixo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.spaceSm
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Text { text: "Fonte da interface"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                            Text { text: "Mensagens, menus e áreas fora de blocos de código."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                        }
+                        VrComboBox { id: interfaceFontCombo; objectName: "interfaceFontCombo"; Layout.preferredWidth: 190; model: ["Segoe UI", "Arial", "Inter", "Tahoma"]; currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontFamily)); onActivated: root.applyTypography() }
+                        VrComboBox { id: interfaceFontSizeCombo; objectName: "interfaceFontSizeCombo"; Layout.preferredWidth: 112; model: ["12 px", "13 px", "14 px", "15 px", "16 px", "18 px", "20 px", "22 px"]; currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontSize + " px")); onActivated: root.applyTypography() }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.preferredHeight: 58; radius: Theme.radiusControl
+                        color: frontend.palette.chatComposer; border.width: 1; border.color: frontend.palette.chatBorder
+                        Text { anchors.fill: parent; anchors.margins: 12; text: "Prévia da interface — converse, pesquise e revise com conforto."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; verticalAlignment: Text.AlignVCenter }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.spaceSm
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Text { text: "Fonte monoespaçada"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                            Text { text: "Blocos de código, caminhos, diffs e terminal."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                        }
+                        VrComboBox { id: monospaceFontCombo; objectName: "monospaceFontCombo"; Layout.preferredWidth: 190; model: ["Consolas", "Cascadia Code", "Courier New"]; currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontFamily)); onActivated: root.applyTypography() }
+                        VrComboBox { id: monospaceFontSizeCombo; objectName: "monospaceFontSizeCombo"; Layout.preferredWidth: 112; model: ["10 px", "11 px", "12 px", "13 px", "14 px", "16 px", "18 px", "20 px"]; currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontSize + " px")); onActivated: root.applyTypography() }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.preferredHeight: 76; radius: Theme.radiusControl
+                        color: frontend.themeId === "dark_orange" ? "#111113" : "#F4F4F6"; border.width: 1; border.color: frontend.palette.chatBorder
+                        Text { anchors.fill: parent; anchors.margins: 12; text: "const contexto = provider.contextWindow\nreturn contexto ?? ocultarIcone()"; color: frontend.palette.text; font.family: Theme.monospaceFontFamily; font.pixelSize: Theme.monospaceFontSize(12); wrapMode: frontend.wordWrap ? Text.Wrap : Text.NoWrap }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Text { text: "Quebra automática de linha"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
+                            Text { text: "Quebra linhas longas em código e prévias por padrão."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
+                        }
+                        VrSwitch { id: wordWrapSwitch; objectName: "wordWrapSwitch"; checked: frontend.wordWrap; onToggled: root.applyTypography() }
+                    }
+                }
+                }
+            }
+
+            // ----------------------------------------------------------- Browser
+            Item {
+                Flickable {
+                    anchors.fill: parent
+                    clip: true
+                    contentWidth: width
+                    contentHeight: browserContent.implicitHeight + Theme.spaceLg
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                    ColumnLayout {
+                        id: browserContent
+                        width: parent.width - Theme.spaceSm
+                        x: Theme.spaceXs
+                        spacing: 0
+                        Text { Layout.bottomMargin: Theme.spaceLg; text: "Browser"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.preferredHeight: 82
+                            ColumnLayout { Layout.fillWidth: true; Text { text: "Acesso do agente ao browser"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold } Text { Layout.fillWidth: true; text: "Permite que agentes abram e controlem a superfície Browser durante uma sessão."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap } }
+                            VrSwitch { objectName: "browserAgentAccessSwitch"; checked: frontend.browserAgentAccess; onToggled: frontend.setBrowserAgentAccess(checked) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.preferredHeight: 82
+                            ColumnLayout { Layout.fillWidth: true; Text { text: "Viewport padrão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold } Text { text: "Define o tamanho inicial usado em novas superfícies do browser."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize } }
+                            VrComboBox { objectName: "browserViewportCombo"; Layout.preferredWidth: 210; model: ["Preencher painel", "Desktop 1280 × 720", "Desktop 1440 × 900", "Mobile 390 × 844"]; property var values: ["fill", "1280x720", "1440x900", "390x844"]; currentIndex: Math.max(0, values.indexOf(frontend.browserViewport)); onActivated: index => frontend.setBrowserViewport(values[index]) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.preferredHeight: 82
+                            ColumnLayout { Layout.fillWidth: true; Text { text: "Zoom padrão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold } Text { text: "Zoom aplicado a novas abas do browser."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize } }
+                            VrComboBox { objectName: "browserZoomCombo"; Layout.preferredWidth: 210; model: ["75%", "90%", "100%", "110%", "125%", "150%"]; property var values: ["75", "90", "100", "110", "125", "150"]; currentIndex: Math.max(0, values.indexOf(frontend.browserZoom)); onActivated: index => frontend.setBrowserZoom(values[index]) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.preferredHeight: 82
+                            ColumnLayout { Layout.fillWidth: true; Text { text: "Aparência padrão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold } Text { text: "Preferência de cores para páginas compatíveis; Sistema acompanha o aplicativo."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize } }
+                            VrComboBox { objectName: "browserAppearanceCombo"; Layout.preferredWidth: 210; model: ["Sistema", "Claro", "Escuro"]; property var values: ["system", "light", "dark"]; currentIndex: Math.max(0, values.indexOf(frontend.browserAppearance)); onActivated: index => frontend.setBrowserAppearance(values[index]) }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.preferredHeight: 82
+                            ColumnLayout { Layout.fillWidth: true; Text { text: "Mostrar preview automaticamente"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold } Text { Layout.fillWidth: true; text: "Expande o Browser quando uma navegação é iniciada pelo agente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; wrapMode: Text.WordWrap } }
+                            VrSwitch { objectName: "browserAutoShowSwitch"; checked: frontend.browserAutoShowPreview; onToggled: frontend.setBrowserAutoShowPreview(checked) }
+                        }
+                    }
                 }
             }
 
@@ -347,12 +473,9 @@ Item {
         modal: true
         title: "Excluir conversa definitivamente?"
         standardButtons: Dialog.NoButton
-        onAboutToShow: deleteConfirmField.text = ""
         contentItem: ColumnLayout {
             spacing: Theme.spaceMd
             Text { Layout.fillWidth: true; text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
-            Text { Layout.fillWidth: true; text: "Digite EXCLUIR para confirmar."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; font.weight: Font.DemiBold }
-            VrTextField { id: deleteConfirmField; Layout.fillWidth: true; placeholderText: "EXCLUIR" }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Cancelar"; onClicked: deleteDialog.close() }
@@ -360,7 +483,6 @@ Item {
                 VrButton {
                     text: "Excluir definitivamente"
                     variant: "danger"
-                    enabled: deleteConfirmField.text === "EXCLUIR"
                     onClicked: {
                         studio.purgeArchived(root.pendingDeleteId)
                         root.pendingDeleteId = ""

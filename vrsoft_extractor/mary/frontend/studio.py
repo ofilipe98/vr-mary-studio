@@ -111,6 +111,48 @@ class MappingListModel(QAbstractListModel):
         return list(self._items)
 
 
+class BoundedTextListModel(QAbstractListModel):
+    """Append-only, virtualizable text rows for high-volume live output."""
+
+    TextRole = Qt.UserRole + 1
+
+    def __init__(self, maximum: int, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._maximum = max(1, int(maximum))
+        self._items: list[str] = []
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._items)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
+        if not index.isValid() or not 0 <= index.row() < len(self._items):
+            return None
+        if role in {Qt.DisplayRole, self.TextRole}:
+            return self._items[index.row()]
+        return None
+
+    def roleNames(self) -> dict[int, bytes]:  # noqa: N802
+        return {self.TextRole: b"lineText"}
+
+    def clear(self) -> None:
+        if not self._items:
+            return
+        self.beginResetModel()
+        self._items.clear()
+        self.endResetModel()
+
+    def append(self, value: str) -> None:
+        if len(self._items) >= self._maximum:
+            remove_count = len(self._items) - self._maximum + 1
+            self.beginRemoveRows(QModelIndex(), 0, remove_count - 1)
+            del self._items[:remove_count]
+            self.endRemoveRows()
+        row = len(self._items)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._items.append(str(value))
+        self.endInsertRows()
+
+
 class _TaskSignals(QObject):
     finished = Signal(object)
     failed = Signal(str)
@@ -151,6 +193,7 @@ class StudioBridge(QObject):
     reviewFilterValuesChanged = Signal()
     reviewSelectionChanged = Signal()
     conversationRestored = Signal(str)
+    _syncProgressReceived = Signal(str)
 
     def __init__(
         self,
@@ -232,6 +275,7 @@ class StudioBridge(QObject):
         self._sync_running = False
         self._sync_status = "Pronto"
         self._sync_log: list[str] = []
+        self._sync_log_model = BoundedTextListModel(MAX_SYNC_LOG_LINES, self)
         self._schema_path = self._default_schema_path()
         self._settings_values: dict[str, Any] = {}
         self._providers: list[dict[str, Any]] = []
@@ -239,6 +283,7 @@ class StudioBridge(QObject):
             ("conversationId", "title", "project", "provider", "updatedAt"), self
         )
         self._log_lines: list[str] = []
+        self._log_model = BoundedTextListModel(MAX_LOG_LINES, self)
         self._video_process: QProcess | None = None
         self._video_loading = False
         self._video_refresh_task: _Task | None = None
@@ -253,6 +298,7 @@ class StudioBridge(QObject):
         self._video_output_timer.setSingleShot(True)
         self._video_output_timer.setInterval(80)
         self._video_output_timer.timeout.connect(self._flush_video_output)
+        self._syncProgressReceived.connect(self._apply_sync_progress)
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -402,6 +448,10 @@ class StudioBridge(QObject):
     def syncLog(self) -> str:  # noqa: N802
         return "\n".join(self._sync_log)
 
+    @Property(QObject, constant=True)
+    def syncLogModel(self) -> QObject:  # noqa: N802
+        return self._sync_log_model
+
     @Property(str, notify=syncChanged)
     def schemaPath(self) -> str:  # noqa: N802
         return str(self._schema_path)
@@ -421,6 +471,10 @@ class StudioBridge(QObject):
     @Property(str, notify=logsChanged)
     def logText(self) -> str:  # noqa: N802
         return "\n".join(self._log_lines)
+
+    @Property(QObject, constant=True)
+    def logModel(self) -> QObject:  # noqa: N802
+        return self._log_model
 
     @Property(str, notify=terminalChanged)
     def terminalOutput(self) -> str:  # noqa: N802
@@ -1424,6 +1478,7 @@ class StudioBridge(QObject):
         self._sync_running = True
         self._sync_status = f"Sincronizando {label}…"
         self._sync_log = []
+        self._sync_log_model.clear()
         self.syncChanged.emit()
         self.navigationRequested.emit(3)
         task = _Task(operation)
@@ -1438,8 +1493,13 @@ class StudioBridge(QObject):
             value = "[...entrada truncada...]\n" + value[-MAX_LOG_ENTRY_CHARS:]
         self._sync_log.append(value)
         self._sync_log = self._sync_log[-MAX_SYNC_LOG_LINES:]
+        self._sync_log_model.append(value)
 
     def _sync_progress(self, message: str) -> None:
+        self._syncProgressReceived.emit(str(message))
+
+    @Slot(str)
+    def _apply_sync_progress(self, message: str) -> None:
         self._append_sync_log(message)
         self._append_log(str(message))
         self.syncChanged.emit()
@@ -1855,6 +1915,7 @@ class StudioBridge(QObject):
             value = "[...entrada truncada...]\n" + value[-MAX_LOG_ENTRY_CHARS:]
         self._log_lines.append(f"[{timestamp}] {value}")
         self._log_lines = self._log_lines[-MAX_LOG_LINES:]
+        self._log_model.append(self._log_lines[-1])
         self.logsChanged.emit()
 
     @staticmethod

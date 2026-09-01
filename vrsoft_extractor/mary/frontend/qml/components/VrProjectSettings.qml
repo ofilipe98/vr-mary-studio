@@ -53,19 +53,30 @@ Item {
         Button {
             id: projectSettingsBack
             objectName: "projectSettingsBack"
-            implicitWidth: projectsBreadcrumb.implicitWidth
+            implicitWidth: backContent.implicitWidth
             implicitHeight: 30
             padding: 0
             hoverEnabled: true
             onClicked: control.closeRequested()
-            contentItem: Text {
-                id: projectsBreadcrumb
-                text: "Projetos"
-                color: projectSettingsBack.hovered
-                    ? frontend.palette.text : frontend.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
-                verticalAlignment: Text.AlignVCenter
+            contentItem: RowLayout {
+                id: backContent
+                spacing: 6
+                VrLineIcon {
+                    Layout.preferredWidth: 14
+                    Layout.preferredHeight: 14
+                    kind: "back"
+                    foreground: projectSettingsBack.hovered
+                        ? frontend.palette.text : frontend.palette.mutedText
+                }
+                Text {
+                    id: projectsBreadcrumb
+                    text: "Voltar"
+                    color: projectSettingsBack.hovered
+                        ? frontend.palette.text : frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12)
+                    verticalAlignment: Text.AlignVCenter
+                }
             }
             background: Item { }
         }
@@ -305,8 +316,8 @@ Item {
                         Layout.fillWidth: true
                         text: control.projectPath
                         color: pathHover.hovered ? frontend.palette.text : frontend.palette.mutedText
-                        font.family: "Consolas"
-                        font.pixelSize: Theme.fontSize(10)
+                        font.family: Theme.monospaceFontFamily
+                        font.pixelSize: Theme.monospaceFontSize(10)
                         elide: Text.ElideMiddle
                         HoverHandler { id: pathHover }
                         TapHandler { onTapped: control.openFolderRequested() }

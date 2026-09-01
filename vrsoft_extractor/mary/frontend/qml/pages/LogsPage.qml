@@ -20,20 +20,52 @@ Item {
             Layout.fillHeight: true
             color: "transparent"
             border.width: 0
-            ScrollView {
+            ListView {
+                id: logList
+                objectName: "logList"
                 anchors.fill: parent
                 anchors.margins: 14
-                TextArea {
-                    width: parent.width
-                    text: studio.logText.length ? studio.logText : "Nenhum evento nesta sessão. Credenciais configuradas são redigidas automaticamente; não imprima arquivos de sessão no terminal."
-                    color: studio.logText.length ? frontend.palette.text : frontend.palette.mutedText
+                clip: true
+                reuseItems: true
+                cacheBuffer: 240
+                spacing: 2
+                model: studio.logModel
+                property bool followTail: true
+                delegate: TextEdit {
+                    required property string lineText
+                    width: logList.width - 12
+                    height: paintedHeight + 4
+                    text: lineText
+                    textFormat: TextEdit.PlainText
+                    color: frontend.palette.text
                     readOnly: true
+                    activeFocusOnPress: false
                     selectByMouse: true
-                    wrapMode: TextArea.Wrap
-                    background: Item { }
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(13)
+                    wrapMode: TextEdit.WrapAnywhere
+                    font.family: Theme.monospaceFontFamily
+                    font.pixelSize: Theme.monospaceFontSize(11)
                 }
+                ScrollBar.vertical: VrScrollBar { }
+                onMovementStarted: followTail = atYEnd
+                onMovementEnded: followTail = atYEnd
+                onCountChanged: {
+                    if (followTail)
+                        Qt.callLater(function() { logList.positionViewAtEnd() })
+                }
+            }
+
+            VrMiddleAutoScroller {
+                objectName: "logAutoScroller"
+                anchors.fill: logList
+                target: logList
+                enabled: logList.count > 0
+            }
+
+            VrEmptyState {
+                anchors.centerIn: parent
+                visible: logList.count === 0
+                title: "Nenhum evento nesta sessão"
+                description: "Credenciais configuradas são redigidas automaticamente."
             }
         }
     }

@@ -177,11 +177,11 @@ def apply_message_document_style(
             application
             and application.property("vr_theme") == "dark_orange"
         )
-    text_color = QColor("#D4D4D8" if dark else "#27272A")
-    heading_color = QColor("#FAFAFA" if dark else "#18181B")
-    muted_color = QColor("#A1A1AA" if dark else "#52525B")
-    link_color = QColor("#58A6FF" if dark else "#075EAD")
-    code_text = QColor("#E4E4E7" if dark else "#27272A")
+    text_color = QColor("#D6D6D9" if dark else "#27272A")
+    heading_color = QColor("#ECECEF" if dark else "#18181B")
+    muted_color = QColor("#96969F" if dark else "#52525B")
+    link_color = QColor("#73B7FF" if dark else "#075EAD")
+    code_text = QColor("#DEDEE2" if dark else "#27272A")
     code_background = QColor("#26262B" if dark else "#ECECF1")
     quote_background = QColor("#232327" if dark else "#F4F4F7")
     rule_color = QColor("#3F3F46" if dark else "#C9C9D3")
@@ -209,7 +209,7 @@ def apply_message_document_style(
     while block.isValid():
         block_format = block.blockFormat()
         block_format.setLineHeight(
-            155.0,
+            148.0,
             QTextBlockFormat.ProportionalHeight.value,
         )
         heading_level = block_format.headingLevel()
@@ -220,20 +220,20 @@ def apply_message_document_style(
         next_block = block.next()
         if not in_table:
             if heading_level:
-                block_format.setTopMargin(0 if block == document.firstBlock() else 20)
-                block_format.setBottomMargin(9)
+                block_format.setTopMargin(0 if block == document.firstBlock() else 18)
+                block_format.setBottomMargin(8)
             elif text_list is not None:
                 same_list_continues = (
                     next_block.isValid() and next_block.textList() is text_list
                 )
                 block_format.setTopMargin(0)
-                block_format.setBottomMargin(7 if same_list_continues else 14)
+                block_format.setBottomMargin(5 if same_list_continues else 11)
             elif quote_level:
                 quote_continues = next_block.isValid() and bool(
                     quote_level_of(next_block.blockFormat())
                 )
                 block_format.setTopMargin(0 if previous_quote else 12)
-                block_format.setBottomMargin(0 if quote_continues else 14)
+                block_format.setBottomMargin(0 if quote_continues else 11)
                 block_format.setLeftMargin(10)
                 block_format.setRightMargin(6)
                 block_format.setBackground(QBrush(quote_background))
@@ -242,7 +242,7 @@ def apply_message_document_style(
                     next_block.blockFormat()
                 )
                 block_format.setTopMargin(0 if previous_code else 12)
-                block_format.setBottomMargin(0 if code_continues else 12)
+                block_format.setBottomMargin(0 if code_continues else 10)
                 block_format.setLeftMargin(10)
                 block_format.setRightMargin(10)
                 block_format.setBackground(QBrush(code_background))
@@ -254,7 +254,7 @@ def apply_message_document_style(
                 block_format.setBottomMargin(12)
             else:
                 block_format.setTopMargin(0)
-                block_format.setBottomMargin(0 if not next_block.isValid() else 16)
+                block_format.setBottomMargin(0 if not next_block.isValid() else 12)
             previous_quote = bool(quote_level)
             previous_code = code_flag
             block_cursor = QTextCursor(block)
@@ -303,10 +303,11 @@ def apply_message_document_style(
                         10.5,
                     )
                 )
-                fragment_format.setFontWeight(700)
+                fragment_format.setFontWeight(QFont.Weight.DemiBold)
                 fragment_format.setForeground(heading_color)
             elif fragment_format.isAnchor():
                 fragment_format.setForeground(link_color)
+                fragment_format.setFontUnderline(True)
             elif in_quote:
                 fragment_format.setForeground(muted_color)
             else:

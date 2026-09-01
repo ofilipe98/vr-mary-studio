@@ -3,8 +3,9 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    readonly property string fontFamily: Qt.platform.os === "windows" ? "Segoe UI" : "sans-serif"
-    readonly property real baseTextScale: 1.10
+    readonly property string fontFamily: frontend.interfaceFontFamily
+    readonly property string monospaceFontFamily: frontend.monospaceFontFamily
+    readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120
     property real viewportHeight: 700
     readonly property real automaticScale: automaticScaleForSize(
@@ -13,6 +14,7 @@ QtObject {
     readonly property real selectedScale: frontend.uiScale === "auto"
         ? automaticScale : frontend.uiScaleFactor
     readonly property real textScale: baseTextScale * selectedScale
+        * (frontend.interfaceFontSize / 14.0)
 
     function automaticScaleForSize(width, height) {
         var relativeSize = Math.min(Number(width) / 1120, Number(height) / 700)
@@ -22,6 +24,11 @@ QtObject {
 
     function fontSize(pixelSize) {
         return Math.max(1, Math.round(Number(pixelSize) * textScale))
+    }
+
+    function monospaceFontSize(pixelSize) {
+        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
+            * selectedScale * (frontend.monospaceFontSize / 12.0)))
     }
 
     readonly property int spaceXs: 4

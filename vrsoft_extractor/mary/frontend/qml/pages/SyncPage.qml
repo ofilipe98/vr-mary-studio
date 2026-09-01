@@ -78,26 +78,51 @@ Item {
             color: "transparent"
             border.width: 0
 
-            ScrollView {
+            ListView {
+                id: syncLogList
+                objectName: "syncLogList"
                 anchors.fill: parent
                 anchors.margins: 12
-                visible: studio.syncLog.length > 0
-                TextArea {
-                    width: parent.width
-                    text: studio.syncLog
+                visible: count > 0
+                clip: true
+                reuseItems: true
+                cacheBuffer: 240
+                spacing: 2
+                model: studio.syncLogModel
+                property bool followTail: true
+                delegate: TextEdit {
+                    required property string lineText
+                    width: syncLogList.width - 12
+                    height: paintedHeight + 4
+                    text: lineText
+                    textFormat: TextEdit.PlainText
                     readOnly: true
+                    activeFocusOnPress: false
                     selectByMouse: true
-                    wrapMode: TextArea.Wrap
+                    wrapMode: TextEdit.WrapAnywhere
                     color: frontend.palette.text
-                    background: Item { }
-                    font.family: "Cascadia Mono"
-                    font.pixelSize: Theme.fontSize(12)
+                    font.family: Theme.monospaceFontFamily
+                    font.pixelSize: Theme.monospaceFontSize(11)
                 }
+                ScrollBar.vertical: VrScrollBar { }
+                onMovementStarted: followTail = atYEnd
+                onMovementEnded: followTail = atYEnd
+                onCountChanged: {
+                    if (followTail)
+                        Qt.callLater(function() { syncLogList.positionViewAtEnd() })
+                }
+            }
+
+            VrMiddleAutoScroller {
+                objectName: "syncAutoScroller"
+                anchors.fill: syncLogList
+                target: syncLogList
+                enabled: syncLogList.visible
             }
 
             VrEmptyState {
                 anchors.centerIn: parent
-                visible: studio.syncLog.length === 0
+                visible: syncLogList.count === 0
                 title: studio.syncRunning ? "Sincronizando fontes…" : "Nenhuma sincronização nesta sessão"
                 description: studio.syncRunning ? "O progresso aparecerá aqui." : "Escolha uma fonte ou sincronize tudo"
                 actionText: studio.syncRunning ? "" : "Sincronizar tudo"

@@ -182,6 +182,11 @@ Canvas {
             ctx.quadraticCurveTo(15.9, 21, 16, 20); ctx.lineTo(17, 8); ctx.stroke()
             line(5.5, 7, 18.5, 7); line(9.5, 4, 14.5, 4)
             line(10.5, 10, 10.8, 18); line(13.5, 10, 13.2, 18)
+        } else if (kind === "pin") {
+            ctx.beginPath(); ctx.moveTo(8, 4.5); ctx.lineTo(16, 4.5)
+            ctx.lineTo(15, 9); ctx.lineTo(18.5, 12.5); ctx.lineTo(5.5, 12.5)
+            ctx.lineTo(9, 9); ctx.closePath(); ctx.stroke()
+            line(12, 12.5, 12, 20)
         }
     }
 }

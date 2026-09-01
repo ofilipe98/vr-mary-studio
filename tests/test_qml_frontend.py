@@ -146,10 +146,25 @@ class QmlFrontendTest(unittest.TestCase):
 
             bridge.setTheme("dark_orange")
             bridge.toggleNavigation()
+            bridge.setTypography("Arial", 16, "Cascadia Code", 13, False)
+            bridge.setBrowserZoom("125")
+            bridge.setBrowserViewport("390x844")
+            bridge.setBrowserAppearance("dark")
+            bridge.setBrowserAgentAccess(False)
+            bridge.setBrowserAutoShowPreview(False)
 
             self.assertEqual(bridge.themeId, "dark_orange")
             self.assertEqual(preferences.value("appearance/theme"), "dark_orange")
             self.assertIsNotNone(preferences.value("appearance/nav_collapsed"))
+            self.assertEqual(bridge.interfaceFontFamily, "Arial")
+            self.assertEqual(bridge.interfaceFontSize, 16)
+            self.assertEqual(bridge.monospaceFontFamily, "Cascadia Code")
+            self.assertFalse(bridge.wordWrap)
+            self.assertEqual(bridge.browserZoom, "125")
+            self.assertEqual(bridge.browserViewport, "390x844")
+            self.assertEqual(bridge.browserAppearance, "dark")
+            self.assertFalse(bridge.browserAgentAccess)
+            self.assertFalse(bridge.browserAutoShowPreview)
 
     def test_ui_scale_preference_persists_and_ignores_invalid_values(self):
         with TemporaryDirectory() as temporary:
@@ -2375,6 +2390,9 @@ class QmlFrontendTest(unittest.TestCase):
             settings = self._settings(root)
             settings.root.mkdir(parents=True)
             (settings.root / "Notas Fiscal.md").write_text("# Notas", encoding="utf-8")
+            ignored = settings.root / ".git" / "objects"
+            ignored.mkdir(parents=True)
+            (ignored / "fiscal-ignorado.txt").write_text("objeto", encoding="utf-8")
             database = MaryDatabase(
                 settings.database_path,
                 root=settings.root,
@@ -2403,6 +2421,28 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(results[0]["path"].endswith("Notas Fiscal.md"))
             self.assertTrue(updates)
             self.assertEqual(updates[-1], results)
+            self.assertNotIn(".git", "\n".join(item["path"] for item in results))
+
+    def test_chat_qml_exposes_refined_search_profiles_links_and_scrolling(self):
+        chat_qml = (MAIN_QML.parent / "pages" / "ChatPreview.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('objectName: "conversationSearch"', chat_qml)
+        self.assertIn('iconKind: "newChat"', chat_qml)
+        self.assertNotRegex(chat_qml, r'(?m)^\s+text: "Nova conversa"$')
+        self.assertIn('objectName: "chatSettingsButton"', chat_qml)
+        self.assertIn('Accessible.name: "Abrir Configurações"', chat_qml)
+        self.assertLess(
+            chat_qml.index('objectName: "conversationSearch"'),
+            chat_qml.index('objectName: "newChatButton"'),
+        )
+        self.assertIn('objectName: "expertProfileStrip"', chat_qml)
+        self.assertIn('chat.vrMode !== "off"', chat_qml)
+        self.assertIn("Qt.PointingHandCursor", chat_qml)
+        self.assertIn('objectName: "messageAutoScroller"', chat_qml)
+        self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
+        self.assertIn("function greetingText()", chat_qml)
 
     def test_studio_bridge_loads_pages_lazily_and_tracks_video_descendants(self):
         with TemporaryDirectory() as temporary:
@@ -2497,6 +2537,37 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertNotIn("endoo-super-secret", studio.logText)
             self.assertIn("[REDACTED]", studio.logText)
 
+    def test_live_sync_and_log_models_append_without_resetting_the_view(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            studio = StudioBridge(settings, database)
+            sync_resets = []
+            sync_insertions = []
+            studio.syncLogModel.modelReset.connect(lambda: sync_resets.append(True))
+            studio.syncLogModel.rowsInserted.connect(
+                lambda _parent, first, last: sync_insertions.append((first, last))
+            )
+
+            studio._apply_sync_progress("item 1 sincronizado")
+            studio._apply_sync_progress("item 2 sincronizado")
+
+            self.assertEqual(studio.syncLogModel.rowCount(), 2)
+            self.assertEqual(
+                studio.syncLogModel.data(
+                    studio.syncLogModel.index(1, 0), Qt.UserRole + 1
+                ),
+                "item 2 sincronizado",
+            )
+            self.assertEqual(sync_resets, [])
+            self.assertEqual(sync_insertions, [(0, 0), (1, 1)])
+            self.assertEqual(studio.logModel.rowCount(), 2)
+
     def test_review_actions_target_preview_unless_selection_is_explicit(self):
         review_qml = (
             MAIN_QML.parent / "pages" / "ReviewPage.qml"
@@ -2574,12 +2645,12 @@ class QmlFrontendTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("Arquivar conversa", chat_qml)
-        self.assertNotIn("Mover para lixeira", chat_qml)
+        self.assertIn("Excluir conversa", chat_qml)
         self.assertIn("Keys.onReturnPressed", chat_qml)
         self.assertIn("Keys.onEnterPressed", chat_qml)
         self.assertIn("onLinkActivated", chat_qml)
         self.assertIn("onLinkActivated", knowledge_qml)
-        self.assertIn("Digite EXCLUIR", settings_qml)
+        self.assertNotIn("Digite EXCLUIR", settings_qml)
         self.assertIn('objectName: "conversationSidebarToggle"', chat_qml)
         self.assertNotIn(
             "conversationSidebar.x + conversationSidebar.width", chat_qml
@@ -2811,6 +2882,121 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(added, 1)
             self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
 
+    def test_unsent_text_and_images_are_persisted_as_a_separate_draft(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "rascunho.png"
+            image.write_bytes(b"png")
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.addDroppedAttachments([QUrl.fromLocalFile(str(image))])
+
+            self.assertTrue(bridge.saveCurrentDraft("Texto ainda não enviado"))
+            self.assertEqual(bridge.conversationCount, 1)
+            draft = bridge.conversations.item(0)
+            self.assertTrue(draft["editing"])
+            self.assertEqual(draft["section"], "Rascunhos")
+            conversation_id = draft["conversationId"]
+
+            bridge.startNewChat()
+            self.assertEqual(bridge.attachments, [])
+            restored: list[str] = []
+            bridge.draftRestored.connect(restored.append)
+            bridge.selectConversationId(conversation_id)
+            self.assertEqual(restored[-1], "Texto ainda não enviado")
+            self.assertEqual(bridge.attachments[0]["path"], str(image))
+
+            reloaded = ChatBridge(settings, database, preferences)
+            self.assertTrue(reloaded.conversations.item(0)["editing"])
+
+    def test_pinned_conversations_sort_before_regular_active_chats(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            first = database.create_conversation(
+                "Primeira", "codex", "modelo", settings.root
+            )
+            second = database.create_conversation(
+                "Segunda", "codex", "modelo", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge.selectConversationId(first)
+            bridge.togglePinnedCurrent()
+
+            self.assertEqual(bridge.conversations.item(0)["conversationId"], first)
+            self.assertTrue(bridge.conversations.item(0)["pinned"])
+            self.assertEqual(bridge.conversations.item(1)["conversationId"], second)
+
+    def test_context_uses_provider_model_metadata_and_hides_without_it(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Contexto", "codex", "gpt-provider", settings.root
+            )
+            database.update_conversation(
+                conversation_id,
+                context_used_tokens=25_800,
+                context_window_tokens=200_000,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge.selectConversationId(conversation_id)
+            bridge._model_items = [{
+                "key": "codex:gpt-provider",
+                "provider": "codex",
+                "value": "gpt-provider",
+                "displayName": "GPT Provider",
+                "contextWindow": 258_000,
+            }]
+
+            self.assertTrue(bridge.hasContextWindow)
+            self.assertEqual(bridge.contextUsageFraction, 0.1)
+            self.assertIn("258.000", bridge.contextUsageLabel)
+            bridge._model_items[0].pop("contextWindow")
+            self.assertFalse(bridge.hasContextWindow)
+
+            browser_event = RuntimeEvent(
+                conversation_id,
+                "tool_event",
+                payload={
+                    "item": {
+                        "type": "browser_navigation",
+                        "url": "https://example.com/preview",
+                    }
+                },
+            )
+            self.assertEqual(
+                bridge._browser_address_from_event(browser_event),
+                "https://example.com/preview",
+            )
+
     def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3001,7 +3187,9 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertNotIn("variant: root.tabIndex === index", settings_qml)
         self.assertIn("objectName: \"settingsTabBar\"", settings_qml)
         self.assertIn("variant: \"danger\"", settings_qml)
-        self.assertIn("enabled: deleteConfirmField.text === \"EXCLUIR\"", settings_qml)
+        self.assertNotIn("deleteConfirmField", settings_qml)
+        self.assertIn('"Aparência", "Browser"', settings_qml)
+        self.assertIn('objectName: "interfaceFontCombo"', settings_qml)
         self.assertIn("Escala da interface", settings_qml)
         self.assertIn("objectName: \"uiScaleCombo\"", settings_qml)
         self.assertIn("VrPageColumn {", settings_qml)
@@ -3061,7 +3249,7 @@ class QmlFrontendTest(unittest.TestCase):
             window = engine.rootObjects()[0]
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
-            self.assertEqual(tab_bar.property("count"), 5)
+            self.assertEqual(tab_bar.property("count"), 6)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
             self.assertIsNotNone(ui_scale_combo)

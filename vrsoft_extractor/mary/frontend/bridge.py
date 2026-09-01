@@ -55,6 +55,11 @@ UI_SCALE_OPTIONS = (
     "150",
 )
 UI_SCALE_PREFERENCE_VERSION = 2
+INTERFACE_FONT_OPTIONS = ("Segoe UI", "Arial", "Inter", "Tahoma")
+MONOSPACE_FONT_OPTIONS = ("Consolas", "Cascadia Code", "Courier New")
+BROWSER_VIEWPORT_OPTIONS = ("fill", "1280x720", "1440x900", "390x844")
+BROWSER_ZOOM_OPTIONS = ("75", "90", "100", "110", "125", "150")
+BROWSER_APPEARANCE_OPTIONS = ("system", "light", "dark")
 
 
 def normalized_ui_scale(value: object, default: str = "auto") -> str:
@@ -71,6 +76,8 @@ class FrontendBridge(QObject):
     navigationCollapsedChanged = Signal()
     reduceMotionChanged = Signal()
     uiScaleChanged = Signal()
+    typographyChanged = Signal()
+    browserPreferencesChanged = Signal()
 
     def __init__(
         self,
@@ -115,6 +122,36 @@ class FrontendBridge(QObject):
             self._ui_scale = normalized_ui_scale(
                 self._preferences.value("appearance/ui_scale", "auto")
             )
+        self._interface_font_family = self._stored_choice(
+            "appearance/interface_font_family", "Segoe UI", INTERFACE_FONT_OPTIONS
+        )
+        self._interface_font_size = self._stored_int(
+            "appearance/interface_font_size", 14, 11, 22
+        )
+        self._monospace_font_family = self._stored_choice(
+            "appearance/monospace_font_family", "Consolas", MONOSPACE_FONT_OPTIONS
+        )
+        self._monospace_font_size = self._stored_int(
+            "appearance/monospace_font_size", 12, 10, 20
+        )
+        self._word_wrap = _stored_bool(
+            self._preferences.value("appearance/word_wrap", True), True
+        )
+        self._browser_agent_access = _stored_bool(
+            self._preferences.value("browser/agent_access", True), True
+        )
+        self._browser_viewport = self._stored_choice(
+            "browser/default_viewport", "fill", BROWSER_VIEWPORT_OPTIONS
+        )
+        self._browser_zoom = self._stored_choice(
+            "browser/default_zoom", "100", BROWSER_ZOOM_OPTIONS
+        )
+        self._browser_appearance = self._stored_choice(
+            "browser/appearance", "system", BROWSER_APPEARANCE_OPTIONS
+        )
+        self._browser_auto_show = _stored_bool(
+            self._preferences.value("browser/auto_show_preview", True), True
+        )
         self._palette_cache: dict[str, str] | None = None
         page_names = [title for title, _icon in NAVIGATION_ITEMS]
         try:
@@ -122,6 +159,19 @@ class FrontendBridge(QObject):
         except ValueError:
             self._current_page = 0
         self._styling_document = False
+
+    def _stored_choice(
+        self, key: str, default: str, choices: tuple[str, ...]
+    ) -> str:
+        value = str(self._preferences.value(key, default) or default)
+        return value if value in choices else default
+
+    def _stored_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(self._preferences.value(key, default) or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
 
     @Property(str, constant=True)
     def appName(self) -> str:  # noqa: N802 - QML property naming
@@ -190,6 +240,50 @@ class FrontendBridge(QObject):
     @Property(float, notify=uiScaleChanged)
     def uiScaleFactor(self) -> float:  # noqa: N802 - QML property naming
         return 1.0 if self._ui_scale == "auto" else int(self._ui_scale) / 100.0
+
+    @Property(str, notify=typographyChanged)
+    def interfaceFontFamily(self) -> str:  # noqa: N802
+        return self._interface_font_family
+
+    @Property(int, notify=typographyChanged)
+    def interfaceFontSize(self) -> int:  # noqa: N802
+        return self._interface_font_size
+
+    @Property(str, notify=typographyChanged)
+    def monospaceFontFamily(self) -> str:  # noqa: N802
+        return self._monospace_font_family
+
+    @Property(int, notify=typographyChanged)
+    def monospaceFontSize(self) -> int:  # noqa: N802
+        return self._monospace_font_size
+
+    @Property(bool, notify=typographyChanged)
+    def wordWrap(self) -> bool:  # noqa: N802
+        return self._word_wrap
+
+    @Property(bool, notify=browserPreferencesChanged)
+    def browserAgentAccess(self) -> bool:  # noqa: N802
+        return self._browser_agent_access
+
+    @Property(str, notify=browserPreferencesChanged)
+    def browserViewport(self) -> str:  # noqa: N802
+        return self._browser_viewport
+
+    @Property(float, notify=browserPreferencesChanged)
+    def browserZoomFactor(self) -> float:  # noqa: N802
+        return int(self._browser_zoom) / 100.0
+
+    @Property(str, notify=browserPreferencesChanged)
+    def browserZoom(self) -> str:  # noqa: N802
+        return self._browser_zoom
+
+    @Property(str, notify=browserPreferencesChanged)
+    def browserAppearance(self) -> str:  # noqa: N802
+        return self._browser_appearance
+
+    @Property(bool, notify=browserPreferencesChanged)
+    def browserAutoShowPreview(self) -> bool:  # noqa: N802
+        return self._browser_auto_show
 
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:  # noqa: N802
@@ -281,3 +375,89 @@ class FrontendBridge(QObject):
         )
         self._preferences.sync()
         self.uiScaleChanged.emit()
+
+    @Slot(str, int, str, int, bool)
+    def setTypography(
+        self,
+        interface_family: str,
+        interface_size: int,
+        monospace_family: str,
+        monospace_size: int,
+        word_wrap: bool,
+    ) -> None:  # noqa: N802
+        interface = (
+            interface_family
+            if interface_family in INTERFACE_FONT_OPTIONS
+            else "Segoe UI"
+        )
+        monospace = (
+            monospace_family
+            if monospace_family in MONOSPACE_FONT_OPTIONS
+            else "Consolas"
+        )
+        values = (
+            interface,
+            max(11, min(22, int(interface_size))),
+            monospace,
+            max(10, min(20, int(monospace_size))),
+            bool(word_wrap),
+        )
+        current = (
+            self._interface_font_family,
+            self._interface_font_size,
+            self._monospace_font_family,
+            self._monospace_font_size,
+            self._word_wrap,
+        )
+        if values == current:
+            return
+        (
+            self._interface_font_family,
+            self._interface_font_size,
+            self._monospace_font_family,
+            self._monospace_font_size,
+            self._word_wrap,
+        ) = values
+        for key, value in (
+            ("appearance/interface_font_family", interface),
+            ("appearance/interface_font_size", values[1]),
+            ("appearance/monospace_font_family", monospace),
+            ("appearance/monospace_font_size", values[3]),
+            ("appearance/word_wrap", values[4]),
+        ):
+            self._preferences.setValue(key, value)
+        self._preferences.sync()
+        self.typographyChanged.emit()
+
+    @Slot(bool)
+    def setBrowserAgentAccess(self, enabled: bool) -> None:  # noqa: N802
+        self._set_browser_preference("_browser_agent_access", "browser/agent_access", bool(enabled))
+
+    @Slot(str)
+    def setBrowserViewport(self, value: str) -> None:  # noqa: N802
+        selected = value if value in BROWSER_VIEWPORT_OPTIONS else "fill"
+        self._set_browser_preference("_browser_viewport", "browser/default_viewport", selected)
+
+    @Slot(str)
+    def setBrowserZoom(self, value: str) -> None:  # noqa: N802
+        selected = value if value in BROWSER_ZOOM_OPTIONS else "100"
+        self._set_browser_preference("_browser_zoom", "browser/default_zoom", selected)
+
+    @Slot(str)
+    def setBrowserAppearance(self, value: str) -> None:  # noqa: N802
+        selected = value if value in BROWSER_APPEARANCE_OPTIONS else "system"
+        self._set_browser_preference("_browser_appearance", "browser/appearance", selected)
+
+    @Slot(bool)
+    def setBrowserAutoShowPreview(self, enabled: bool) -> None:  # noqa: N802
+        self._set_browser_preference(
+            "_browser_auto_show", "browser/auto_show_preview", bool(enabled)
+        )
+
+    def _set_browser_preference(self, attribute: str, key: str, value: object) -> None:
+        if getattr(self, attribute) == value:
+            return
+        setattr(self, attribute, value)
+        self._preferences.setValue(key, value)
+        self._preferences.sync()
+        self.browserPreferencesChanged.emit()

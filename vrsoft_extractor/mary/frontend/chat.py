@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import queue
 import re
 import sqlite3
@@ -78,6 +79,7 @@ _GLUED_SENTENCE_RE = re.compile(
 )
 ERP_JAR_SOURCE_VR_EXEC = "vr_exec"
 ERP_JAR_SOURCE_WORKSPACE = "workspace"
+MAX_FILE_SUGGESTION_ENTRIES = 50_000
 ERP_JAR_SCOPE_FULL_RELEASE = "full_release"
 ERP_JAR_SCOPE_SINGLE = "single_jar"
 DEFAULT_ERP_JAR_SOURCE_PATH = Path(r"C:\vr\exec")
@@ -180,6 +182,10 @@ class ConversationListModel(_MappingListModel):
         "workspace",
         "projectLabel",
         "updatedAt",
+        "editing",
+        "pinned",
+        "section",
+        "startedAtEpoch",
     )
 
 
@@ -241,6 +247,8 @@ class ChatBridge(QObject):
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     conversationArchived = Signal(str)
+    draftRestored = Signal(str)
+    browserNavigationRequested = Signal(str)
 
     def __init__(
         self,
@@ -268,6 +276,7 @@ class ChatBridge(QObject):
         self._selected: dict[str, Any] = {}
         self._draft = False
         self._active_turns: set[str] = set()
+        self._active_turn_started_epochs: dict[str, float] = {}
         self._turn_running = False
         self._running_conversation_id = ""
         self._closed = False
@@ -381,6 +390,8 @@ class ChatBridge(QObject):
         self._load_research_config()
         self._apply_research_config()
         self._attachments: list[dict[str, str]] = []
+        self._draft_records = self._load_draft_records()
+        self._pinned_conversation_ids = self._load_pinned_conversation_ids()
         self._extension_items: list[dict[str, Any]] = []
         self._selected_extension_keys: set[str] = set()
         self._extensions_loading = False
@@ -514,6 +525,10 @@ class ChatBridge(QObject):
     @Property(bool, notify=selectionChanged)
     def isDraft(self) -> bool:  # noqa: N802
         return self._draft
+
+    @Property(bool, notify=selectionChanged)
+    def selectedPinned(self) -> bool:  # noqa: N802
+        return self._selected_conversation_id() in self._pinned_conversation_ids
 
     @Property(str, notify=selectionChanged)
     def selectedTitle(self) -> str:  # noqa: N802
@@ -968,32 +983,32 @@ class ChatBridge(QObject):
     @Property(float, notify=stateChanged)
     def contextUsageFraction(self) -> float:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return 0.0
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        return min(1.0, used / window) if window else 0.0
+        return min(1.0, used / window)
+
+    @Property(bool, notify=stateChanged)
+    def hasContextWindow(self) -> bool:  # noqa: N802
+        return self._provider_context_window() > 0
 
     @Property(str, notify=stateChanged)
     def contextUsageLabel(self) -> str:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return "Aguardando dados"
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        if not window:
-            return "Aguardando dados"
         return f"{used:,} / {window:,} tokens".replace(",", ".")
 
     @Property(str, notify=stateChanged)
     def contextUsageCompactLabel(self) -> str:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return "Aguardando dados"
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        if not window:
-            return "Aguardando dados"
         percentage = min(100, round(used * 100 / window))
         return f"{percentage}% · {self._compact_tokens(used)}/{self._compact_tokens(window)}"
 
@@ -1001,7 +1016,24 @@ class ChatBridge(QObject):
     def contextUsageNote(self) -> str:  # noqa: N802
         item = self._current_model_item()
         model_name = str(item.get("displayName") or self._model or "modelo")
-        return f"O contexto de {model_name} é compactado automaticamente quando necessário."
+        return f"Limite informado pelo provedor para {model_name}. Compactação ocorre quando necessário."
+
+    def _provider_context_window(self) -> int:
+        item = self._current_model_item()
+        candidates = (
+            item.get("contextWindow"),
+            item.get("context_window"),
+            item.get("contextWindowTokens"),
+            item.get("inputTokenLimit"),
+        )
+        for value in candidates:
+            try:
+                parsed = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return 0
 
     @Property(str, notify=stateChanged)
     def totalProcessedLabel(self) -> str:  # noqa: N802
@@ -1245,6 +1277,24 @@ class ChatBridge(QObject):
                     if not model_id:
                         continue
                     display_name = str(raw.get("displayName") or raw.get("display_name") or model_id)
+                    raw_limit = raw.get("limit") or raw.get("limits") or {}
+                    if not isinstance(raw_limit, dict):
+                        raw_limit = {}
+                    context_window = next(
+                        (
+                            value
+                            for value in (
+                                raw.get("contextWindow"),
+                                raw.get("context_window"),
+                                raw.get("contextWindowTokens"),
+                                raw.get("inputTokenLimit"),
+                                raw_limit.get("context"),
+                                raw_limit.get("contextWindow"),
+                            )
+                            if value not in (None, "")
+                        ),
+                        0,
+                    )
                     items.append({
                         "label": f"{display_name} · {provider_label}",
                         "displayName": display_name,
@@ -1255,6 +1305,7 @@ class ChatBridge(QObject):
                         "key": f"{provider_name}:{model_id}",
                         "efforts": raw.get("supportedReasoningEfforts") or raw.get("supported_reasoning_efforts") or [],
                         "serviceTiers": raw.get("serviceTiers") or raw.get("service_tiers") or [],
+                        "contextWindow": context_window,
                     })
             results.put(items)
 
@@ -1491,25 +1542,40 @@ class ChatBridge(QObject):
             ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
             entries: list[dict[str, Any]] = []
             try:
-                for path in root.rglob("*"):
-                    relative_path = path.relative_to(root)
-                    if any(part in ignored for part in relative_path.parts):
-                        continue
-                    is_directory = path.is_dir()
-                    if not is_directory and not path.is_file():
-                        continue
-                    relative = str(relative_path).replace("\\", "/")
-                    parent = str(relative_path.parent).replace("\\", "/")
-                    if parent == ".":
-                        parent = ""
-                    entries.append({
-                        "relative": relative,
-                        "name": path.name,
-                        "path": str(path),
-                        "parent": parent,
-                        "depth": max(0, len(relative_path.parts) - 1),
-                        "isDirectory": is_directory,
-                    })
+                stop_scan = False
+                for current, directory_names, file_names in os.walk(
+                    root, topdown=True, followlinks=False
+                ):
+                    directory_names[:] = sorted(
+                        (
+                            name
+                            for name in directory_names
+                            if name.casefold() not in ignored
+                        ),
+                        key=str.casefold,
+                    )
+                    current_path = Path(current)
+                    for name, is_directory in (
+                        *((name, True) for name in directory_names),
+                        *((name, False) for name in sorted(file_names, key=str.casefold)),
+                    ):
+                        path = current_path / name
+                        relative_path = path.relative_to(root)
+                        relative = relative_path.as_posix()
+                        parent = relative_path.parent.as_posix()
+                        entries.append({
+                            "relative": relative,
+                            "name": name,
+                            "path": str(path),
+                            "parent": "" if parent == "." else parent,
+                            "depth": max(0, len(relative_path.parts) - 1),
+                            "isDirectory": is_directory,
+                        })
+                        if len(entries) >= MAX_FILE_SUGGESTION_ENTRIES:
+                            stop_scan = True
+                            break
+                    if stop_scan:
+                        break
                 entries.sort(key=lambda item: (
                     tuple(part.casefold() for part in Path(item["relative"]).parts),
                     not bool(item.get("isDirectory")),
@@ -1728,6 +1794,9 @@ class ChatBridge(QObject):
             for row in rows
             if str(row["status"] or "idle") == "running"
         }
+        for conversation_id in tuple(self._active_turn_started_epochs):
+            if conversation_id not in self._active_turns:
+                self._active_turn_started_epochs.pop(conversation_id, None)
         conversations: list[dict[str, Any]] = []
         for row in rows:
             workspace = self._settings.resolve_path(row["workspace"])
@@ -1747,9 +1816,20 @@ class ChatBridge(QObject):
             status = str(row["status"] or "idle")
             provider_label = PROVIDER_LABELS.get(provider, provider.title())
             model_name = str(row["model"] or provider_label)
+            conversation_id = str(row["id"])
+            if status == "running" and conversation_id not in self._active_turn_started_epochs:
+                try:
+                    started_epoch = datetime.fromisoformat(
+                        str(row["updated_at"] or "")
+                    ).timestamp()
+                except (TypeError, ValueError):
+                    started_epoch = time.time()
+                self._active_turn_started_epochs[conversation_id] = started_epoch
+            editing = conversation_id in self._draft_records
+            pinned = conversation_id in self._pinned_conversation_ids
             conversations.append(
                 {
-                    "conversationId": str(row["id"]),
+                    "conversationId": conversation_id,
                     "title": str(row["title"] or "Nova conversa"),
                     "subtitle": f"{project_label} · {provider_label} · {STATUS_LABELS.get(status, status.title())}",
                     "provider": provider_label,
@@ -1760,8 +1840,20 @@ class ChatBridge(QObject):
                     "workspace": str(workspace),
                     "projectLabel": project_label,
                     "updatedAt": str(row["updated_at"] or ""),
+                    "editing": editing,
+                    "pinned": pinned,
+                    "section": "Rascunhos" if editing else "Conversas",
+                    "startedAtEpoch": self._active_turn_started_epochs.get(
+                        conversation_id, 0.0
+                    ),
                 }
             )
+        conversations.sort(
+            key=lambda item: (
+                0 if item["editing"] else 1,
+                0 if item["pinned"] else 1,
+            )
+        )
         self._all_conversations = conversations
         self._apply_filter(selected_id)
 
@@ -1889,6 +1981,100 @@ class ChatBridge(QObject):
         self.refresh()
         return True
 
+    def _load_draft_records(self) -> dict[str, dict[str, Any]]:
+        raw = self._preferences.value("chat/drafts", "{}")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return {
+            str(key): dict(value)
+            for key, value in values.items()
+            if str(key).strip() and isinstance(value, dict)
+        }
+
+    def _persist_draft_records(self) -> None:
+        self._preferences.setValue(
+            "chat/drafts",
+            json.dumps(self._draft_records, ensure_ascii=False, sort_keys=True),
+        )
+        self._preferences.sync()
+
+    def _load_pinned_conversation_ids(self) -> set[str]:
+        raw = self._preferences.value("chat/pinned_conversations", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return set()
+        return {str(value) for value in values if str(value).strip()}
+
+    def _persist_pinned_conversation_ids(self) -> None:
+        self._preferences.setValue(
+            "chat/pinned_conversations",
+            json.dumps(sorted(self._pinned_conversation_ids), ensure_ascii=False),
+        )
+        self._preferences.sync()
+
+    @Slot(str, result=bool)
+    def saveCurrentDraft(self, text: str) -> bool:  # noqa: N802
+        content = str(text or "")
+        conversation_id = self._selected_conversation_id()
+        if not content.strip() and not self._attachments:
+            if conversation_id and conversation_id in self._draft_records:
+                self._draft_records.pop(conversation_id, None)
+                self._persist_draft_records()
+                self.refresh()
+            return False
+        if not conversation_id:
+            workspace = self._project_scope or self._settings.root
+            try:
+                conversation_id = self._orchestrator.new_conversation(
+                    self._provider,
+                    self._model,
+                    self._effort,
+                    service_tier=self._service_tier,
+                    approval_profile=self._approval_profile,
+                    defer_provider_start=True,
+                    workspace=workspace,
+                    vr_mode=self._vr_mode,
+                )
+            except Exception as exc:
+                self._status_text = f"Falha ao salvar rascunho: {exc}"
+                self.stateChanged.emit()
+                return False
+        attachments = [dict(item) for item in self._attachments]
+        self._draft_records[conversation_id] = {
+            "text": content,
+            "attachments": attachments,
+            "savedAt": datetime.now().astimezone().isoformat(),
+        }
+        row = self._database.get_conversation(conversation_id)
+        has_messages = bool(self._database.messages(conversation_id))
+        if row is not None and not has_messages:
+            first_line = next(
+                (line.strip() for line in content.splitlines() if line.strip()), ""
+            )
+            title = first_line or (attachments[0]["name"] if attachments else "Nova conversa")
+            self._database.update_conversation(
+                conversation_id, title=title[:72].rstrip()
+            )
+        self._persist_draft_records()
+        self.refresh()
+        return True
+
+    @Slot()
+    def togglePinnedCurrent(self) -> None:  # noqa: N802
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id:
+            return
+        if conversation_id in self._pinned_conversation_ids:
+            self._pinned_conversation_ids.remove(conversation_id)
+        else:
+            self._pinned_conversation_ids.add(conversation_id)
+        self._persist_pinned_conversation_ids()
+        self.refresh()
+        self.selectionChanged.emit()
+
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
         self._remember_current_chat_options()
@@ -1944,6 +2130,7 @@ class ChatBridge(QObject):
         self._load_research_config()
         self._apply_research_config()
         self._attachments = []
+        self.draftRestored.emit("")
         self._activity_steps = []
         self._activity_items = []
         self._reasoning_text = ""
@@ -2001,6 +2188,21 @@ class ChatBridge(QObject):
             self._invalidate_file_suggestions()
         self._selected_index = index
         self._selected = dict(selected)
+        draft_record = self._draft_records.get(str(selected["conversationId"]))
+        if changing_conversation:
+            if draft_record is not None:
+                self._attachments = [
+                    {
+                        "name": str(item.get("name") or Path(str(item.get("path") or "")).name),
+                        "path": str(item.get("path") or ""),
+                    }
+                    for item in list(draft_record.get("attachments") or [])
+                    if isinstance(item, dict) and str(item.get("path") or "")
+                ]
+                self.draftRestored.emit(str(draft_record.get("text") or ""))
+            else:
+                self._attachments = []
+                self.draftRestored.emit("")
         row = self._database.get_conversation(str(selected["conversationId"]))
         if row is not None:
             self._provider = str(row["provider"] or "codex")
@@ -2035,6 +2237,20 @@ class ChatBridge(QObject):
                 ),
             )
         self.stateChanged.emit()
+
+    @Slot(str)
+    def selectConversationId(self, conversation_id: str) -> None:  # noqa: N802
+        target = str(conversation_id or "")
+        index = next(
+            (
+                item_index
+                for item_index, item in enumerate(self._conversations._items)
+                if str(item.get("conversationId") or "") == target
+            ),
+            -1,
+        )
+        if index >= 0:
+            self.selectConversation(index)
 
     @Slot(int)
     def setEffort(self, index: int) -> None:  # noqa: N802
@@ -3892,6 +4108,7 @@ class ChatBridge(QObject):
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
         self._active_turns.add(conversation_id)
+        self._active_turn_started_epochs[conversation_id] = time.time()
         self._sync_selected_turn_state()
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
@@ -3945,12 +4162,16 @@ class ChatBridge(QObject):
                     else "auto"
                 ),
             )
+            if conversation_id in self._draft_records:
+                self._draft_records.pop(conversation_id, None)
+                self._persist_draft_records()
             self._attachments = []
             self._selected_extension_keys = set()
             self.refresh()
             self.stateChanged.emit()
         except Exception as exc:
             self._active_turns.discard(conversation_id)
+            self._active_turn_started_epochs.pop(conversation_id, None)
             self._sync_selected_turn_state()
             self._status_text = f"Falha: {exc}"
             self.refresh()
@@ -3983,6 +4204,10 @@ class ChatBridge(QObject):
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
             return
+        self._draft_records.pop(conversation_id, None)
+        self._pinned_conversation_ids.discard(conversation_id)
+        self._persist_draft_records()
+        self._persist_pinned_conversation_ids()
         self.refresh()
         self.conversationArchived.emit(conversation_id)
         self.startNewChat()
@@ -3998,6 +4223,10 @@ class ChatBridge(QObject):
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
             return
+        self._draft_records.pop(conversation_id, None)
+        self._pinned_conversation_ids.discard(conversation_id)
+        self._persist_draft_records()
+        self._persist_pinned_conversation_ids()
         self.refresh()
         self.startNewChat()
 
@@ -4062,6 +4291,10 @@ class ChatBridge(QObject):
             self._status_text = "Pensando…"
             self._schedule_state_update()
         elif event.kind in {"tool_event", "provider_reconnecting", "provider_reconnected"}:
+            if event.kind == "tool_event":
+                browser_address = self._browser_address_from_event(event)
+                if browser_address:
+                    self.browserNavigationRequested.emit(browser_address)
             self._status_text = (
                 "Executando uma ação…"
                 if event.kind == "tool_event"
@@ -4071,6 +4304,7 @@ class ChatBridge(QObject):
         elif event.kind == "response_empty":
             self._status_text = "O provedor concluiu sem conteúdo."
             self.stateChanged.emit()
+
         elif event.kind == "research_failed":
             self._status_text = f"Pesquisa falhou: {short_event_text(event.text)}"
             self.stateChanged.emit()
@@ -4081,6 +4315,27 @@ class ChatBridge(QObject):
             self._queue_terminal_state(event.kind)
         elif event.kind in {"error", "orchestration_cancelled"}:
             self._queue_terminal_state(event.kind)
+
+    @staticmethod
+    def _browser_address_from_event(event: RuntimeEvent) -> str:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        item = payload.get("item") or {}
+        if not isinstance(item, dict):
+            item = {}
+        item_type = str(
+            item.get("type") or payload.get("type") or payload.get("tool") or ""
+        ).casefold()
+        if not any(
+            marker in item_type
+            for marker in ("browser", "webfetch", "web_fetch")
+        ):
+            return ""
+        for mapping in (item, payload):
+            for key in ("url", "address", "uri"):
+                value = str(mapping.get(key) or "").strip()
+                if value.startswith(("http://", "https://", "localhost")):
+                    return value
+        return ""
 
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
         if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
@@ -4099,6 +4354,7 @@ class ChatBridge(QObject):
 
     def _finish_background_turn(self, conversation_id: str) -> None:
         self._active_turns.discard(str(conversation_id or ""))
+        self._active_turn_started_epochs.pop(str(conversation_id or ""), None)
         self._sync_selected_turn_state()
         self.stateChanged.emit()
         self.refresh()
@@ -4208,6 +4464,7 @@ class ChatBridge(QObject):
     def _finalize_terminal_state(self, kind: str) -> None:
         conversation_id = self._selected_conversation_id()
         self._active_turns.discard(conversation_id)
+        self._active_turn_started_epochs.pop(conversation_id, None)
         self._sync_selected_turn_state()
         self._status_text = (
             "Erro"

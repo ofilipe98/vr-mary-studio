@@ -4,6 +4,24 @@ import QtWebEngine
 WebEngineView {
     id: root
 
+    readonly property bool fillViewport: frontend.browserViewport === "fill"
+    readonly property var viewportParts: frontend.browserViewport.split("x")
+    readonly property real requestedWidth: fillViewport
+        ? (parent ? parent.width : 1) : Number(viewportParts[0] || 1)
+    readonly property real requestedHeight: fillViewport
+        ? (parent ? parent.height : 1) : Number(viewportParts[1] || 1)
+
+    width: requestedWidth
+    height: requestedHeight
+    transformOrigin: Item.TopLeft
+    scale: fillViewport || !parent ? 1 : Math.min(
+        1, parent.width / requestedWidth, parent.height / requestedHeight)
+
+    zoomFactor: frontend.browserZoomFactor
+    backgroundColor: frontend.browserAppearance === "dark"
+        ? "#090909" : frontend.browserAppearance === "light"
+        ? "#FFFFFF" : frontend.palette.chatBackground
+
     signal addressChanged(string value)
 
     function navigate(value) {

@@ -39,8 +39,8 @@ ACCENT_SOFT_HOVER = "#EAEAF0"
 DARK_BACKGROUND = "#000000"
 DARK_SURFACE = "#131110"
 DARK_SURFACE_RAISED = "#1B1816"
-DARK_TEXT = "#E4E4E7"
-DARK_MUTED = "#A1A1AA"
+DARK_TEXT = "#D6D6D9"
+DARK_MUTED = "#96969F"
 DARK_BORDER = "#2C2823"
 DARK_STATUS_GOOD = "#56D18B"
 DARK_STATUS_WARN = "#FFB55C"
@@ -65,12 +65,12 @@ def brand_palette(theme_id: str) -> dict[str, str]:
         # Chat VR intentionally uses a more immersive, neutral-black stack
         # than the data pages in Dark & Orange. These values mirror the
         # existing Qt Widgets screen instead of inheriting the generic theme.
-        "chatBackground": "#000000" if dark else BACKGROUND,
-        "chatSidebar": "#09090B" if dark else "#FFFFFF",
-        "chatComposer": "#141416" if dark else "#FFFFFF",
-        "chatControl": "#27272A" if dark else "#ECECF1",
-        "chatBorder": "#2A2A2E" if dark else "#D7D7DF",
-        "chatDivider": "#202023" if dark else "#D7D7DF",
+        "chatBackground": "#0C0C0D" if dark else BACKGROUND,
+        "chatSidebar": "#101011" if dark else "#FFFFFF",
+        "chatComposer": "#202021" if dark else "#FFFFFF",
+        "chatControl": "#2B2B2D" if dark else "#ECECF1",
+        "chatBorder": "#38383B" if dark else "#D7D7DF",
+        "chatDivider": "#252527" if dark else "#D7D7DF",
         "text": DARK_TEXT if dark else BRAND_NAVY,
         "mutedText": DARK_MUTED if dark else TEXT_MUTED,
         "border": "#2C2823" if dark else "#D7D7DF",
