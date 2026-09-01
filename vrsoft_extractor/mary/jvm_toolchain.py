@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -72,9 +73,16 @@ class DecompileResult:
 class JavaRuntimeResolver:
     """Find Java 17+ without mutating JAVA_HOME or the system installation."""
 
-    def __init__(self, root: str | Path, environ: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        environ: dict[str, str] | None = None,
+        *,
+        tool_dirs: Iterable[str | Path] = (),
+    ) -> None:
         self.root = Path(root).resolve()
         self.environ = dict(os.environ if environ is None else environ)
+        self.tool_dirs = tuple(Path(path).resolve() for path in tool_dirs)
 
     def resolve(self) -> ToolStatus:
         failures: list[str] = []
@@ -98,10 +106,21 @@ class JavaRuntimeResolver:
         configured = str(self.environ.get("VR_CODE_JAVA_HOME") or "").strip()
         if configured:
             yield Path(configured).expanduser() / "bin" / _java_executable(), "configured"
-        bundled = self.root / "tools" / "code-analysis" / "java17"
-        yield bundled / "bin" / _java_executable(), "bundled"
-        for candidate in sorted(bundled.glob(f"*/bin/{_java_executable()}")):
-            yield candidate, "bundled-archive"
+        seen: set[Path] = set()
+        bundled_dirs = self.tool_dirs or (
+            self.root / "tools" / "code-analysis",
+        )
+        for tool_dir in bundled_dirs:
+            bundled = tool_dir / "java17"
+            direct = bundled / "bin" / _java_executable()
+            if direct not in seen:
+                seen.add(direct)
+                yield direct, "bundled"
+            for candidate in sorted(bundled.glob(f"*/bin/{_java_executable()}")):
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                yield candidate, "bundled-archive"
         yield self.root / "tools" / "java17" / "bin" / _java_executable(), "bundled-legacy"
         system = shutil.which("java")
         if system:
@@ -314,16 +333,27 @@ class CfrAdapter(DecompilerAdapter):
 
 
 class JvmToolchain:
-    def __init__(self, root: str | Path, environ: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        environ: dict[str, str] | None = None,
+        *,
+        app_dir: str | Path | None = None,
+    ) -> None:
         self.root = Path(root).resolve()
         self.environ = dict(os.environ if environ is None else environ)
+        self.app_dir = Path(app_dir).resolve() if app_dir is not None else None
 
     @property
     def tools_dir(self) -> Path:
-        return self.root / "tools" / "code-analysis"
+        return self._tool_dirs()[0]
 
     def doctor(self) -> dict[str, object]:
-        java = JavaRuntimeResolver(self.root, self.environ).resolve()
+        java = JavaRuntimeResolver(
+            self.root,
+            self.environ,
+            tool_dirs=self._tool_dirs(),
+        ).resolve()
         vineflower = VineflowerAdapter(java, self._vineflower_path()).status()
         cfr = CfrAdapter(java, self._cfr_path()).status()
         return {
@@ -335,7 +365,11 @@ class JvmToolchain:
         }
 
     def adapters(self) -> tuple[VineflowerAdapter, CfrAdapter]:
-        java = JavaRuntimeResolver(self.root, self.environ).resolve()
+        java = JavaRuntimeResolver(
+            self.root,
+            self.environ,
+            tool_dirs=self._tool_dirs(),
+        ).resolve()
         return (
             VineflowerAdapter(java, self._vineflower_path()),
             CfrAdapter(java, self._cfr_path()),
@@ -343,15 +377,51 @@ class JvmToolchain:
 
     def _vineflower_path(self) -> Path:
         configured = str(self.environ.get("VR_VINEFLOWER_JAR") or "").strip()
-        return Path(configured).expanduser() if configured else (
-            self.tools_dir / "decompilers" / f"vineflower-{VINEFLOWER_VERSION}.jar"
+        if configured:
+            return Path(configured).expanduser()
+        return self._first_tool(
+            Path("decompilers") / f"vineflower-{VINEFLOWER_VERSION}.jar"
         )
 
     def _cfr_path(self) -> Path:
         configured = str(self.environ.get("VR_CFR_JAR") or "").strip()
-        return Path(configured).expanduser() if configured else (
-            self.tools_dir / "decompilers" / f"cfr-{CFR_VERSION}.jar"
-        )
+        if configured:
+            return Path(configured).expanduser()
+        return self._first_tool(Path("decompilers") / f"cfr-{CFR_VERSION}.jar")
+
+    def _first_tool(self, relative: Path) -> Path:
+        candidates = [tool_dir / relative for tool_dir in self._tool_dirs()]
+        return next((path for path in candidates if path.is_file()), candidates[0])
+
+    def _tool_dirs(self) -> tuple[Path, ...]:
+        """Find project-local and Studio-portable tools without changing Java."""
+
+        candidates: list[Path] = []
+        configured = str(self.environ.get("VR_CODE_TOOLS_DIR") or "").strip()
+        if configured:
+            candidates.append(Path(configured).expanduser())
+        candidates.append(self.root / "tools" / "code-analysis")
+        app_dirs: list[Path] = []
+        if self.app_dir is not None:
+            app_dirs.append(self.app_dir)
+        if getattr(sys, "frozen", False):
+            app_dirs.append(Path(sys.executable).resolve().parent)
+        for app in app_dirs:
+            candidates.extend(
+                (
+                    app / "tools" / "code-analysis",
+                    app.parent / "VRProject" / "tools" / "code-analysis",
+                )
+            )
+        unique: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique.append(resolved)
+        return tuple(unique)
 
 
 def inspect_java(path: Path, *, source: str = "") -> ToolStatus:

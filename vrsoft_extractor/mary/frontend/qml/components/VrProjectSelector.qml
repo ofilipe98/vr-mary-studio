@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -26,7 +28,15 @@ Button {
         return true
     }
 
-    implicitHeight: 34
+    function clickProjectButton(index) {
+        var row = projectList.itemAtIndex(index)
+        if (!row)
+            return false
+        row.activateSelection()
+        return true
+    }
+
+    implicitHeight: Theme.compactControlHeight
     leftPadding: 8
     rightPadding: 8
     hoverEnabled: true
@@ -62,12 +72,12 @@ Button {
     }
 
     background: Rectangle {
-        radius: 9
+        radius: Theme.radiusSmall
         color: control.down || control.hovered || selectorPopup.opened
-            ? frontend.palette.chatControl : "transparent"
+            ? frontend.palette.chatControl : frontend.palette.surfaceRaised
         border.width: 1
         border.color: control.activeFocus
-            ? frontend.palette.focus : frontend.palette.chatBorder
+            ? frontend.palette.focus : frontend.palette.border
     }
 
     Popup {
@@ -98,6 +108,10 @@ Button {
                 readonly property bool configurable: String(modelData.path || "").length > 0
                 function activateSettings() {
                     control.settingsRequested(projectRow.index)
+                    selectorPopup.close()
+                }
+                function activateSelection() {
+                    control.activated(projectRow.index)
                     selectorPopup.close()
                 }
                 function clickSettings() {
@@ -167,10 +181,7 @@ Button {
                     anchors.right: parent.right
                     anchors.rightMargin: projectRow.configurable ? 28
                         : projectRow.selected ? 20 : 0
-                    onClicked: {
-                        selectorPopup.close()
-                        control.activated(projectRow.index)
-                    }
+                    onClicked: projectRow.activateSelection()
                 }
             }
         }

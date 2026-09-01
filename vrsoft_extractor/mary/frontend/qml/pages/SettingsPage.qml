@@ -10,6 +10,10 @@ Item {
     property int tabIndex: 0
     property string pendingDeleteId: ""
 
+    function openSearchResult(index) {
+        root.tabIndex = Math.max(0, Math.min(5, Number(index)))
+    }
+
     function applyTypography() {
         frontend.setTypography(
             interfaceFontCombo.currentText,

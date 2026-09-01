@@ -294,7 +294,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
-            self.assertIsNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
             self.assertIsNotNone(window.findChild(QObject, "chatComposerDropArea"))
             self.assertIsNotNone(window.findChild(QObject, "chatAttachmentList"))
             self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
@@ -309,6 +309,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(add_project_popup.property("visible"))
             chat_page = window.findChild(QObject, "chatPage")
             self.assertIsNotNone(chat_page)
+            chat_bridge.setSeniorProfileEnabled(True)
+            chat_bridge.setVrResponseMode("support")
+            chat_page.activateExpertProfile("support")
+            self.assertFalse(chat_bridge.seniorProfileEnabled)
+            self.assertEqual(chat_bridge.vrResponseMode, "auto")
             self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
@@ -331,6 +336,12 @@ class QmlFrontendTest(unittest.TestCase):
             project_selector_menu = window.findChild(QObject, "projectSelectorMenu")
             self.assertIsNotNone(project_selector_menu)
             self.assertTrue(project_selector_menu.property("visible"))
+            self.assertTrue(chat_page.clickProjectSelectorItem(project_index))
+            self.application.processEvents()
+            self.assertEqual(chat_bridge.currentProjectIndex, project_index)
+            self.assertFalse(project_selector_menu.property("visible"))
+            chat_page.openProjectSelectorMenu()
+            self.application.processEvents()
             chat_page.clickProjectSettingsButton(project_index)
             self.application.processEvents()
             project_settings_page = window.findChild(QObject, "projectSettingsPage")
@@ -1438,7 +1449,7 @@ class QmlFrontendTest(unittest.TestCase):
             ]
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1587,7 +1598,7 @@ class QmlFrontendTest(unittest.TestCase):
             allow_batch_finish = threading.Event()
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1665,7 +1676,7 @@ class QmlFrontendTest(unittest.TestCase):
             bridge = ChatBridge(settings, database)
 
             class MissingToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1722,7 +1733,7 @@ class QmlFrontendTest(unittest.TestCase):
             ]
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -2979,6 +2990,10 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(bridge.hasContextWindow)
             self.assertEqual(bridge.contextUsageFraction, 0.1)
             self.assertIn("258.000", bridge.contextUsageLabel)
+            database.update_conversation(conversation_id, context_used_tokens=0)
+            self.assertFalse(bridge.hasContextWindow)
+            database.update_conversation(conversation_id, context_used_tokens=25_800)
+            self.assertTrue(bridge.hasContextWindow)
             bridge._model_items[0].pop("contextWindow")
             self.assertFalse(bridge.hasContextWindow)
 
@@ -3250,12 +3265,39 @@ class QmlFrontendTest(unittest.TestCase):
                 [warning.toString() for warning in engine._qml_warnings],
             )
             window = engine.rootObjects()[0]
+            window.show()
+            QTest.qWait(100)
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
-            self.assertIsNotNone(window.findChild(QObject, "settingsConversationSearch"))
-            self.assertIsNotNone(window.findChild(QObject, "settingsReturnButton"))
+            settings_search = window.findChild(QObject, "settingsConversationSearch")
+            settings_return = window.findChild(QObject, "settingsReturnButton")
+            settings_navigation = window.findChild(QObject, "settingsNavigation")
+            settings_results = window.findChild(QObject, "settingsSearchResults")
+            settings_hub = window.findChild(QObject, "settingsHub")
+            self.assertIsNotNone(settings_search)
+            self.assertIsNotNone(settings_return)
+            self.assertIsNotNone(settings_navigation)
+            self.assertIsNotNone(settings_results)
+            self.assertIsNotNone(settings_hub)
+            self.assertTrue(settings_return.property("visible"))
+            self.assertGreater(
+                settings_return.property("y"),
+                settings_navigation.property("height") * 0.65,
+            )
+            settings_search.setProperty("text", "JAR")
+            self.application.processEvents()
+            self.assertTrue(settings_results.property("visible"))
+            self.assertGreater(settings_results.property("count"), 0)
+            self.assertEqual(chat_bridge.search, "")
             self.assertEqual(tab_bar.property("count"), 6)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
+            self.assertTrue(settings_hub.activateSettingSearchResult(0))
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 2)
+            settings_search.clear()
+            self.application.processEvents()
+            tab_bar.activate(0)
+            self.application.processEvents()
             ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
             self.assertIsNotNone(ui_scale_combo)
             scale_preview = window.findChild(QObject, "uiScalePreviewText")
@@ -3309,6 +3351,14 @@ class QmlFrontendTest(unittest.TestCase):
             QTest.keyClick(quick_window, Qt.Key_Return)
             self.application.processEvents()
             self.assertEqual(tab_bar.property("currentIndex"), 1)
+
+            settings_return.click()
+            self.application.processEvents()
+            self.assertEqual(bridge.currentPage, 1)
+            self.assertFalse(settings_return.property("visible"))
+            chat_settings = window.findChild(QObject, "chatSettingsButton")
+            self.assertIsNotNone(chat_settings)
+            self.assertTrue(chat_settings.property("visible"))
 
     def test_all_pages_load_in_engine_with_centered_page_column(self):
         with TemporaryDirectory() as temporary:

@@ -991,7 +991,12 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def hasContextWindow(self) -> bool:  # noqa: N802
-        return self._provider_context_window() > 0
+        row = self._selected_database_row()
+        return bool(
+            row is not None
+            and int(row["context_used_tokens"] or 0) > 0
+            and self._provider_context_window() > 0
+        )
 
     @Property(str, notify=stateChanged)
     def contextUsageLabel(self) -> str:  # noqa: N802
@@ -3201,7 +3206,11 @@ class ChatBridge(QObject):
             "wall_duration_ms": 0,
         }
         try:
-            doctor = JvmToolchain(self._settings.root).doctor()
+            toolchain = JvmToolchain(
+                self._settings.root,
+                app_dir=self._settings.app_dir,
+            )
+            doctor = toolchain.doctor()
             java_ready = bool((doctor.get("java") or {}).get("available"))
             decompiler_ready = any(
                 bool((doctor.get(name) or {}).get("available"))
@@ -3238,7 +3247,15 @@ class ChatBridge(QObject):
                 storage_budget_multiplier=disk_multiplier,
             )
             catalog.set_storage_budget_multiplier(disk_multiplier)
-            manager = ErpCodeCoverage(self._settings.root, catalog=catalog)
+            manager = ErpCodeCoverage(
+                self._settings.root,
+                catalog=catalog,
+                adapters=(
+                    toolchain.adapters()
+                    if hasattr(toolchain, "adapters")
+                    else None
+                ),
+            )
             coverage = manager.status(release_id)
             self._require_frozen_code_manifest(coverage, manifest_hash)
             if retry_batch_id:

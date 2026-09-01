@@ -116,6 +116,41 @@ def test_doctor_requires_java_and_both_pinned_decompilers(tmp_path: Path) -> Non
     assert report["system_java_unchanged"] is True
 
 
+def test_toolchain_finds_portable_tools_next_to_app_directory(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "analyst-workspace"
+    app_dir = tmp_path / "portable" / "App"
+    tools = tmp_path / "portable" / "VRProject" / "tools" / "code-analysis"
+    java = tools / "java17" / "jdk-17" / "bin" / "java.exe"
+    vineflower = tools / "decompilers" / "vineflower-1.12.0.jar"
+    cfr = tools / "decompilers" / "cfr-0.152.jar"
+    for path in (java, vineflower, cfr):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"tool")
+    available_java = ToolStatus(
+        name="java",
+        available=True,
+        path=str(java),
+        version="17-test",
+        source="bundled-archive",
+    )
+
+    toolchain = JvmToolchain(workspace, {}, app_dir=app_dir)
+    with patch(
+        "vrsoft_extractor.mary.jvm_toolchain.inspect_java",
+        return_value=available_java,
+    ), patch.object(VineflowerAdapter, "expected_sha256", ""), patch.object(
+        CfrAdapter, "expected_sha256", ""
+    ):
+        report = toolchain.doctor()
+
+    assert report["ready"] is True
+    assert report["java"]["path"] == str(java)
+    assert report["vineflower"]["path"] == str(vineflower.resolve())
+    assert report["cfr"]["path"] == str(cfr.resolve())
+
+
 def test_decompiler_rejects_unapproved_binary(tmp_path: Path) -> None:
     java = ToolStatus("java", True, str(tmp_path / "java.exe"), "17.0.12")
     jar = tmp_path / "vineflower-1.12.0.jar"

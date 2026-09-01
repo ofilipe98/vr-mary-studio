@@ -191,13 +191,14 @@ Item {
                             rightPadding: 25
                             placeholderText: "Pesquisar conversas"
                             background: Rectangle {
-                                radius: 8
+                                radius: Theme.radiusSmall
                                 color: conversationSearch.hovered
                                     || conversationSearch.activeFocus
-                                    ? frontend.palette.chatControl : "transparent"
+                                    ? frontend.palette.chatControl
+                                    : frontend.palette.surfaceRaised
                                 border.width: 1
                                 border.color: conversationSearch.activeFocus
-                                    ? frontend.palette.focus : frontend.palette.chatBorder
+                                    ? frontend.palette.focus : frontend.palette.border
                             }
                             onTextChanged: searchDelay.restart()
                         }
@@ -1051,6 +1052,20 @@ Item {
                     anchors.rightMargin: 12
                     anchors.bottomMargin: 8
                     spacing: 5
+                    VrIconButton {
+                        id: attachButton
+                        objectName: "chatAttachButton"
+                        implicitWidth: 32
+                        implicitHeight: 32
+                        iconKind: "attachment"
+                        iconSize: 17
+                        foreground: frontend.palette.mutedText
+                        enabled: !chat.turnRunning
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Anexar arquivos"
+                        Accessible.name: "Anexar arquivos"
+                        onClicked: chat.chooseAttachments()
+                    }
                     VrModelPicker {
                         id: modelSelector
                         objectName: "chatModelPicker"
@@ -1139,7 +1154,7 @@ Item {
                 visible: chat.vrMode !== "off"
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 y: composerCard.y + composerCard.height + 8
-                width: Math.min(composerCard.width, profileRow.implicitWidth)
+                width: composerCard.width
                 height: 34
 
                 Row {
@@ -1151,6 +1166,7 @@ Item {
                         model: root.expertProfiles
                         delegate: Rectangle {
                             id: expertChip
+                            objectName: "expertProfile_" + modelData.key
                             required property var modelData
                             readonly property bool selected: root.expertProfileSelected(
                                 modelData.key)
@@ -2710,6 +2726,10 @@ Item {
         return projectSelector.clickSettingsButton(index)
     }
 
+    function clickProjectSelectorItem(index) {
+        return projectSelector.clickProjectButton(index)
+    }
+
     function openProjectSettings(index) {
         var source = chat.projectItems || []
         if (index <= 0 || index >= source.length) return
@@ -2913,6 +2933,10 @@ Item {
     }
 
     function activateExpertProfile(key) {
+        if (root.expertProfileSelected(key)) {
+            chat.setSeniorProfileEnabled(false)
+            return
+        }
         chat.setSeniorProfileEnabled(true)
         chat.setVrResponseMode(key === "senior" ? "auto" : key)
     }

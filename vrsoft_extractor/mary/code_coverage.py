@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
@@ -33,6 +33,7 @@ class ErpCodeCoverage:
         store: DecompilationBatchStore | None = None,
         planner: DecompilationBatchPlanner | None = None,
         executor: DecompilationBatchExecutor | None = None,
+        adapters: Sequence[Any] | None = None,
         code_index: JavaCodeIndex | None = None,
     ) -> None:
         self.root = Path(root).resolve()
@@ -42,7 +43,10 @@ class ErpCodeCoverage:
             self.root, catalog=self.catalog, store=self.store
         )
         self.executor = executor or DecompilationBatchExecutor(
-            self.root, catalog=self.catalog, store=self.store
+            self.root,
+            catalog=self.catalog,
+            store=self.store,
+            adapters=adapters,
         )
         self.code_index = code_index or JavaCodeIndex(
             self.root, catalog=self.catalog, store=self.store
