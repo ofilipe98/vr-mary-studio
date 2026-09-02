@@ -242,6 +242,77 @@ def test_index_is_idempotent_and_search_returns_grounded_citation(
     assert constructors[0]["confidence"] == 0.8
 
 
+def test_index_plan_can_index_only_newly_completed_batches(tmp_path: Path) -> None:
+    jar = tmp_path / "ERP" / "releases" / "r1" / "jars" / "ERP.jar"
+    _jar(jar)
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    catalog.import_release("r1")
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", max_classes=1, max_bytes=1024
+    )
+
+    class InputAwareAdapter:
+        name = "vineflower"
+
+        def decompile(self, request: DecompileRequest) -> DecompileResult:
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(request.input_path) as archive:
+                families = {
+                    name.removesuffix(".class").split("$", 1)[0]
+                    for name in archive.namelist()
+                    if name.endswith(".class")
+                }
+            for family in families:
+                target = request.output_dir / f"{family}.java"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                package, _, simple = family.replace("/", ".").rpartition(".")
+                target.write_text(
+                    f"package {package};\npublic class {simple} {{}}\n",
+                    encoding="utf-8",
+                )
+            return DecompileResult(
+                tool=self.name,
+                status="completed",
+                duration_ms=1,
+                exit_code=0,
+                output_dir=str(request.output_dir),
+            )
+
+    executor = DecompilationBatchExecutor(
+        tmp_path, catalog=catalog, adapters=(InputAwareAdapter(),)
+    )
+    executor.run(plan["plan_id"], limit=1)
+    index = JavaCodeIndex(tmp_path, catalog=catalog)
+    with index.store.connect() as connection:
+        batch_ids = [
+            str(row[0])
+            for row in connection.execute(
+                """SELECT batch_id FROM decompilation_batches
+                   WHERE plan_id = ? ORDER BY ordinal""",
+                (plan["plan_id"],),
+            )
+        ]
+
+    first = index.index_plan(plan["plan_id"], batch_ids=(batch_ids[0],))
+    with index.store.connect() as connection:
+        first_origins = {
+            str(row[0]) for row in connection.execute("SELECT DISTINCT batch_id FROM code_sources")
+        }
+    executor.run(plan["plan_id"], limit=1)
+    second = index.index_plan(plan["plan_id"], batch_ids=(batch_ids[1],))
+    with index.store.connect() as connection:
+        final_origins = {
+            str(row[0]) for row in connection.execute("SELECT DISTINCT batch_id FROM code_sources")
+        }
+
+    assert first["incremental"] is True
+    assert first["completed_batches"] == 1
+    assert first_origins == {batch_ids[0]}
+    assert second["incremental"] is True
+    assert second["completed_batches"] == 1
+    assert final_origins == set(batch_ids)
+
+
 def test_identical_jar_reuses_search_index_under_new_release_identity(
     tmp_path: Path,
 ) -> None:

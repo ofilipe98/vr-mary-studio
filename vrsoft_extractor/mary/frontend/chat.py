@@ -686,8 +686,8 @@ class ChatBridge(QObject):
     def codeProcessingStatus(self) -> str:  # noqa: N802
         return self._code_processing_status
 
-    @Property(int, notify=stateChanged)
-    def codeProcessingProgress(self) -> int:  # noqa: N802
+    @Property(float, notify=stateChanged)
+    def codeProcessingProgress(self) -> float:  # noqa: N802
         return self._code_processing_progress
 
     @Property(int, notify=stateChanged)
@@ -751,7 +751,14 @@ class ChatBridge(QObject):
     @Property("QVariantList", notify=stateChanged)
     def codeProcessingCpuCoreOptions(self) -> list[dict[str, Any]]:  # noqa: N802
         return [
-            {"label": f"{value} núcleo(s)", "value": value}
+            {
+                "label": (
+                    f"{value} núcleo(s) · Turbo"
+                    if value >= 4
+                    else f"{value} núcleo(s)"
+                ),
+                "value": value,
+            }
             for value in CODE_PROCESSING_CPU_CORE_OPTIONS
         ]
 
@@ -2960,8 +2967,16 @@ class ChatBridge(QObject):
         self._code_processing_capacity = dict(coverage.get("capacity") or {})
         self._code_processing_total_jars = total
         self._code_processing_covered_jars = min(covered, total) if total else covered
+        reported_progress = coverage.get("progress_percent")
+        if reported_progress is None:
+            calculated_progress = covered * 100 / total if total else 0.0
+        else:
+            calculated_progress = float(reported_progress)
+        calculated_progress = round(max(0.0, min(100.0, calculated_progress)), 1)
         self._code_processing_progress = (
-            min(100, int(round(covered * 100 / total))) if total else 0
+            max(float(self._code_processing_progress), calculated_progress)
+            if self._code_processing_running
+            else calculated_progress
         )
         attention_items: list[dict[str, Any]] = []
         for plan in blocked:
@@ -3132,6 +3147,8 @@ class ChatBridge(QObject):
         max_heap_mb = self._code_processing_max_heap_mb
         timeout_seconds = self._code_processing_timeout_seconds
         max_cpu_cores = self._code_processing_max_cpu_cores
+        parallel_workers = 2 if max_cpu_cores >= 4 else 1
+        process_priority = "normal" if parallel_workers > 1 else "low"
         disk_multiplier = self._code_processing_disk_multiplier
         processing_window = self._code_processing_window
         try:
@@ -3145,10 +3162,10 @@ class ChatBridge(QObject):
                     "max_heap_mb": max_heap_mb,
                     "timeout_seconds": timeout_seconds,
                     "max_cpu_cores": max_cpu_cores,
-                    "process_priority": "low",
+                    "process_priority": process_priority,
                     "disk_budget_multiplier": disk_multiplier,
                     "processing_window": processing_window,
-                    "global_java_concurrency": 1,
+                    "global_java_concurrency": parallel_workers,
                     "covered_jar_count": self._code_processing_covered_jars,
                     "expected_jar_count": self._code_processing_total_jars,
                 },
@@ -3177,6 +3194,8 @@ class ChatBridge(QObject):
                 max_heap_mb,
                 timeout_seconds,
                 max_cpu_cores,
+                parallel_workers,
+                process_priority,
                 disk_multiplier,
                 processing_window,
             ),
@@ -3192,7 +3211,7 @@ class ChatBridge(QObject):
         self._code_processing_pause_requested = True
         self._code_processing_pause_event.set()
         self._code_processing_status = (
-            "Pausa solicitada; o lote Java atual será concluído com segurança."
+            "Pausa solicitada; os lotes Java atuais serão concluídos com segurança."
         )
         self.stateChanged.emit()
 
@@ -3204,6 +3223,8 @@ class ChatBridge(QObject):
         max_heap_mb: int,
         timeout_seconds: int,
         max_cpu_cores: int,
+        parallel_workers: int,
+        process_priority: str,
         disk_multiplier: int,
         processing_window: str,
     ) -> None:
@@ -3404,12 +3425,16 @@ class ChatBridge(QObject):
                     release_id,
                     approved=True,
                     jars_per_plan=1,
-                    batch_limit=1,
+                    batch_limit=parallel_workers,
                     max_heap_mb=max_heap_mb,
                     timeout_seconds=timeout_seconds,
                     max_cpu_cores=max_cpu_cores,
-                    process_priority="low",
+                    parallel_workers=parallel_workers,
+                    process_priority=process_priority,
                     processing_window=processing_window,
+                    progress=lambda item: publish(
+                        {"kind": "phase_progress", **dict(item)}
+                    ),
                 )
                 coverage = dict(advanced.get("coverage") or {})
                 self._require_frozen_code_manifest(coverage, manifest_hash)
@@ -3584,6 +3609,23 @@ class ChatBridge(QObject):
                     f"Processando {self._code_processing_release}: "
                     f"{self._code_processing_covered_jars}/"
                     f"{self._code_processing_total_jars} JARs indexados."
+                )
+            elif kind == "phase_progress":
+                current = max(0, int(event.get("current") or 0))
+                total = max(1, int(event.get("total") or 1))
+                ratio = min(1.0, current / total)
+                phase = str(event.get("phase") or "")
+                if phase == "scanning":
+                    candidate = round(3.0 * ratio, 1)
+                    action = "Lendo classes do JAR"
+                else:
+                    candidate = round(3.0 + (2.0 * ratio), 1)
+                    action = "Montando lotes de descompilação"
+                self._code_processing_progress = max(
+                    float(self._code_processing_progress), candidate
+                )
+                self._code_processing_status = (
+                    f"{action}: {min(current, total)}/{total} classes."
                 )
             elif kind == "batch_started":
                 target = self._code_processing_current_jar or "próximo JAR"

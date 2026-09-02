@@ -88,6 +88,10 @@ def test_coverage_advances_one_approved_jar_end_to_end(tmp_path: Path) -> None:
 
     assert before["covered_jar_count"] == 0
     assert before["remaining_jar_count"] == 2
+    assert before["expected_class_count"] == 2
+    assert before["discovered_class_count"] == 0
+    assert before["processed_class_count"] == 0
+    assert before["progress_percent"] == 0.0
     with pytest.raises(CodeCoverageError, match="aprovação explícita"):
         manager.advance("r1", relative_jars=("A.jar",))
 
@@ -106,6 +110,9 @@ def test_coverage_advances_one_approved_jar_end_to_end(tmp_path: Path) -> None:
     assert result["coverage"]["covered_jars"] == ["A.jar"]
     assert result["coverage"]["remaining_jars"] == ["B.jar"]
     assert result["coverage"]["indexed_source_jars"] == ["A.jar"]
+    assert result["coverage"]["discovered_class_count"] == 1
+    assert result["coverage"]["processed_class_count"] == 1
+    assert result["coverage"]["progress_percent"] == 50.0
 
 
 def test_first_plan_uses_selected_quota_without_double_counting_existing_index(
@@ -206,3 +213,119 @@ def test_partial_plan_is_blocked_and_never_counted_as_covered(tmp_path: Path) ->
     assert status["blocked_plans"][0]["attention_batches"]
     with pytest.raises(CodeCoverageError, match="exige revisão/retry"):
         manager.advance("r1", approved=True)
+
+
+def test_completed_plan_without_batches_or_sources_is_rebuilt(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    stale = manager.planner.plan(
+        "r1",
+        ("A.jar",),
+        max_classes=10,
+        max_bytes=1024,
+    )
+    plan_id = stale["plan_id"]
+    with manager.store.connect() as connection:
+        connection.execute(
+            "DELETE FROM batch_members WHERE batch_id IN "
+            "(SELECT batch_id FROM decompilation_batches WHERE plan_id = ?)",
+            (plan_id,),
+        )
+        connection.execute(
+            "DELETE FROM decompilation_batches WHERE plan_id = ?", (plan_id,)
+        )
+        connection.execute(
+            "UPDATE decompilation_plans SET state = 'completed' WHERE plan_id = ?",
+            (plan_id,),
+        )
+        connection.commit()
+
+    invalid = manager.status("r1")
+
+    assert invalid["covered_jar_count"] == 0
+    assert invalid["remaining_jars"] == ["A.jar", "B.jar"]
+    assert invalid["indexed_source_jar_count"] == 0
+
+    rebuilt = manager.advance(
+        "r1",
+        approved=True,
+        relative_jars=("A.jar",),
+        batch_limit=10,
+        max_classes=10,
+        max_bytes=1024,
+    )
+
+    assert rebuilt["plan_id"] == plan_id
+    assert rebuilt["coverage"]["covered_jars"] == ["A.jar"]
+    assert rebuilt["coverage"]["indexed_source_jars"] == ["A.jar"]
+    assert manager.store.status(plan_id)["batch_count"] > 0
+
+
+def test_planning_plan_without_batches_resumes_without_rescanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(tmp_path)
+    stale = manager.planner.plan(
+        "r1", ("A.jar",), max_classes=10, max_bytes=1024
+    )
+    plan_id = stale["plan_id"]
+    with manager.store.connect() as connection:
+        connection.execute(
+            "DELETE FROM batch_members WHERE batch_id IN "
+            "(SELECT batch_id FROM decompilation_batches WHERE plan_id = ?)",
+            (plan_id,),
+        )
+        connection.execute(
+            "DELETE FROM decompilation_batches WHERE plan_id = ?", (plan_id,)
+        )
+        connection.execute(
+            "UPDATE decompilation_plans SET state = 'planning' WHERE plan_id = ?",
+            (plan_id,),
+        )
+        connection.commit()
+
+    def unexpected_scan(*_args, **_kwargs):
+        raise AssertionError("classes já inventariadas não devem ser lidas novamente")
+
+    monkeypatch.setattr(manager.planner, "_scan_occurrences", unexpected_scan)
+    events: list[dict] = []
+
+    resumed = manager.planner.plan(
+        "r1",
+        ("A.jar",),
+        max_classes=10,
+        max_bytes=1024,
+        progress=events.append,
+    )
+
+    assert resumed["plan_id"] == plan_id
+    assert resumed["batch_count"] > 0
+    assert events[0] == {
+        "phase": "scanning",
+        "current": 1,
+        "total": 1,
+        "resumed": True,
+    }
+    assert events[-1]["phase"] == "batch_planning"
+    assert events[-1]["current"] == events[-1]["total"]
+
+
+def test_planner_reports_class_scan_and_batch_planning_progress(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    events: list[dict] = []
+
+    manager.planner.plan(
+        "r1",
+        ("A.jar",),
+        max_classes=10,
+        max_bytes=1024,
+        progress=events.append,
+    )
+
+    scan_events = [item for item in events if item["phase"] == "scanning"]
+    planning_events = [
+        item for item in events if item["phase"] == "batch_planning"
+    ]
+    assert scan_events[0]["current"] == 0
+    assert scan_events[-1]["current"] == scan_events[-1]["total"] == 1
+    assert planning_events[0]["current"] == 0
+    assert planning_events[-1]["current"] == planning_events[-1]["total"]

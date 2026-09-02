@@ -7,11 +7,13 @@ import json
 import os
 import sqlite3
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from threading import Lock
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 from .erp_releases import (
     ErpReleaseCatalog,
@@ -24,7 +26,7 @@ from .jvm_toolchain import DecompileRequest, DecompileResult, JvmToolchain
 
 
 PROCESSING_SCHEMA_VERSION = 2
-DEFAULT_MAX_CLASSES = 500
+DEFAULT_MAX_CLASSES = 1000
 DEFAULT_MAX_BYTES = 32 * 1024 * 1024
 DECOMPILED_SOURCE_SUFFIXES = frozenset({".java", ".kt"})
 
@@ -298,6 +300,7 @@ class DecompilationBatchPlanner:
         *,
         max_classes: int = DEFAULT_MAX_CLASSES,
         max_bytes: int = DEFAULT_MAX_BYTES,
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         max_classes = max(1, int(max_classes))
         max_bytes = max(1, int(max_bytes))
@@ -342,48 +345,135 @@ class DecompilationBatchPlanner:
             },
         )
 
+        expected_classes = sum(
+            int(artifact.get("class_count") or 0) for _path, artifact in selected
+        )
+        resume_empty_plan = False
+        scanned_classes = 0
         with self.store.connect() as connection:
             existing = connection.execute(
                 "SELECT 1 FROM decompilation_plans WHERE plan_id = ?", (plan_id,)
             ).fetchone()
             if existing:
-                return self.store._plan_status(
+                existing_plan = connection.execute(
+                    "SELECT * FROM decompilation_plans WHERE plan_id = ?", (plan_id,)
+                ).fetchone()
+                status = self.store._plan_status(
                     connection,
+                    existing_plan,
+                )
+                pending_classes = int(
                     connection.execute(
-                        "SELECT * FROM decompilation_plans WHERE plan_id = ?", (plan_id,)
-                    ).fetchone(),
+                        """SELECT count(*)
+                           FROM class_occurrences o
+                           JOIN plan_artifacts a
+                             ON a.plan_id = ?
+                            AND a.relative_path = o.jar_relative_path
+                            AND a.artifact_sha256 = o.artifact_sha256
+                           JOIN class_contents c
+                             ON c.content_sha256 = o.content_sha256
+                           WHERE o.release_hash = ?
+                             AND (c.state != 'completed'
+                                  OR c.processing_schema_version != ?)""",
+                        (plan_id, release_hash, PROCESSING_SCHEMA_VERSION),
+                    ).fetchone()[0]
                 )
-
-            now = _utc_now()
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """INSERT INTO decompilation_plans
-                   (plan_id, schema_version, release_id, release_hash, state,
-                    max_classes, max_bytes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?)""",
-                (
-                    plan_id,
-                    PROCESSING_SCHEMA_VERSION,
-                    release_id,
-                    release_hash,
-                    max_classes,
-                    max_bytes,
-                    now,
-                    now,
-                ),
-            )
-            for ordinal, (relative_path, artifact) in enumerate(selected):
+                scanned_classes = int(
+                    connection.execute(
+                        """SELECT count(*)
+                           FROM class_occurrences o
+                           JOIN plan_artifacts a
+                             ON a.plan_id = ?
+                            AND a.relative_path = o.jar_relative_path
+                            AND a.artifact_sha256 = o.artifact_sha256
+                           WHERE o.release_hash = ?""",
+                        (plan_id, release_hash),
+                    ).fetchone()[0]
+                )
+                resume_empty_plan = bool(
+                    int(status["batch_count"]) == 0
+                    and expected_classes > 0
+                    and (
+                        status["state"] in {"planning", "failed"}
+                        or pending_classes > 0
+                        or (expected_classes > 0 and scanned_classes == 0)
+                    )
+                )
+                if not resume_empty_plan:
+                    return status
                 connection.execute(
-                    """INSERT INTO plan_artifacts
-                       (plan_id, ordinal, relative_path, artifact_sha256)
-                       VALUES (?, ?, ?, ?)""",
-                    (plan_id, ordinal, relative_path, str(artifact["sha256"])),
+                    """UPDATE decompilation_plans
+                       SET state = 'planning', updated_at = ? WHERE plan_id = ?""",
+                    (_utc_now(), plan_id),
                 )
-            connection.commit()
+                connection.commit()
+
+            if not resume_empty_plan:
+                now = _utc_now()
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """INSERT INTO decompilation_plans
+                       (plan_id, schema_version, release_id, release_hash, state,
+                        max_classes, max_bytes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?)""",
+                    (
+                        plan_id,
+                        PROCESSING_SCHEMA_VERSION,
+                        release_id,
+                        release_hash,
+                        max_classes,
+                        max_bytes,
+                        now,
+                        now,
+                    ),
+                )
+                for ordinal, (relative_path, artifact) in enumerate(selected):
+                    connection.execute(
+                        """INSERT INTO plan_artifacts
+                           (plan_id, ordinal, relative_path, artifact_sha256)
+                           VALUES (?, ?, ?, ?)""",
+                        (plan_id, ordinal, relative_path, str(artifact["sha256"])),
+                    )
+                connection.commit()
+                scanned_classes = int(
+                    connection.execute(
+                        """SELECT count(*)
+                           FROM class_occurrences o
+                           JOIN plan_artifacts a
+                             ON a.plan_id = ?
+                            AND a.relative_path = o.jar_relative_path
+                            AND a.artifact_sha256 = o.artifact_sha256
+                           WHERE o.release_hash = ?""",
+                        (plan_id, release_hash),
+                    ).fetchone()[0]
+                )
 
         try:
-            self._scan_occurrences(release_id, release_hash, manifest, selected)
-            self._create_batches(plan_id, release_hash, selected, max_classes, max_bytes)
+            if scanned_classes < expected_classes:
+                self._scan_occurrences(
+                    release_id,
+                    release_hash,
+                    manifest,
+                    selected,
+                    progress=progress,
+                )
+            elif progress is not None:
+                progress(
+                    {
+                        "phase": "scanning",
+                        "current": expected_classes,
+                        "total": expected_classes,
+                        "resumed": True,
+                    }
+                )
+            self._create_batches(
+                plan_id,
+                release_hash,
+                selected,
+                max_classes,
+                max_bytes,
+                progress=progress,
+            )
         except Exception as exc:
             with self.store.connect() as connection:
                 connection.execute(
@@ -405,8 +495,16 @@ class DecompilationBatchPlanner:
         release_hash: str,
         manifest: dict[str, Any],
         selected: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         source = _source_path(self.root, manifest)
+        expected_classes = sum(
+            int(artifact.get("class_count") or 0) for _path, artifact in selected
+        )
+        scanned_classes = 0
+        if progress is not None:
+            progress({"phase": "scanning", "current": 0, "total": expected_classes})
         for relative_path, artifact in selected:
             jar_path = _safe_child(source / relative_path, source)
             if sha256_file(jar_path) != str(artifact["sha256"]):
@@ -423,6 +521,7 @@ class DecompilationBatchPlanner:
                         bytecode = archive.read(info)
                         logical_name, class_version = normalized
                         content_hash = hashlib.sha256(bytecode).hexdigest()
+                        scanned_classes += 1
                         rows.append(
                             (
                                 content_hash,
@@ -437,6 +536,15 @@ class DecompilationBatchPlanner:
                                 class_version,
                             )
                         )
+                        if progress is not None and scanned_classes % 256 == 0:
+                            progress(
+                                {
+                                    "phase": "scanning",
+                                    "current": scanned_classes,
+                                    "total": expected_classes,
+                                    "jar": relative_path,
+                                }
+                            )
             except (OSError, RuntimeError, zipfile.BadZipFile, KeyError) as exc:
                 raise DecompilationBatchError(
                     f"Falha ao ler {relative_path}: {type(exc).__name__}: {exc}"
@@ -462,6 +570,14 @@ class DecompilationBatchPlanner:
                     rows,
                 )
                 connection.commit()
+        if progress is not None:
+            progress(
+                {
+                    "phase": "scanning",
+                    "current": scanned_classes,
+                    "total": expected_classes,
+                }
+            )
 
     def _create_batches(
         self,
@@ -470,7 +586,11 @@ class DecompilationBatchPlanner:
         selected: Sequence[tuple[str, dict[str, Any]]],
         max_classes: int,
         max_bytes: int,
+        *,
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
+        if progress is not None:
+            progress({"phase": "batch_planning", "current": 0, "total": 1})
         with self.store.connect() as connection:
             occurrences = connection.execute(
                 """SELECT o.*
@@ -491,10 +611,27 @@ class DecompilationBatchPlanner:
 
             representatives: list[sqlite3.Row] = []
             seen: set[str] = set()
-            for row in occurrences:
+            occurrence_count = len(occurrences)
+            if progress is not None:
+                progress(
+                    {
+                        "phase": "batch_planning",
+                        "current": 0,
+                        "total": max(1, occurrence_count),
+                    }
+                )
+            for occurrence_ordinal, row in enumerate(occurrences, start=1):
                 if row["content_sha256"] not in seen:
                     seen.add(row["content_sha256"])
                     representatives.append(row)
+                if progress is not None and occurrence_ordinal % 1000 == 0:
+                    progress(
+                        {
+                            "phase": "batch_planning",
+                            "current": occurrence_ordinal,
+                            "total": max(1, occurrence_count),
+                        }
+                    )
 
             by_artifact: dict[str, list[sqlite3.Row]] = {
                 relative_path: [] for relative_path, _ in selected
@@ -609,6 +746,14 @@ class DecompilationBatchPlanner:
                 (state, now, plan_id),
             )
             connection.commit()
+        if progress is not None:
+            progress(
+                {
+                    "phase": "batch_planning",
+                    "current": max(1, occurrence_count),
+                    "total": max(1, occurrence_count),
+                }
+            )
 
 
 class DecompilationBatchExecutor:
@@ -624,6 +769,7 @@ class DecompilationBatchExecutor:
         self.catalog = catalog or ErpReleaseCatalog(self.root)
         self.store = store or DecompilationBatchStore(self.root)
         self.adapters = tuple(adapters or JvmToolchain(self.root).adapters())
+        self._database_write_lock = Lock()
 
     def run(
         self,
@@ -633,15 +779,19 @@ class DecompilationBatchExecutor:
         max_heap_mb: int = 2048,
         timeout_seconds: int = 300,
         max_cpu_cores: int = 1,
+        max_workers: int = 1,
         process_priority: str = "low",
         processing_window: str = "always",
     ) -> dict[str, Any]:
         limit = max(1, int(limit))
+        worker_count = min(limit, max(1, int(max_workers)))
+        cores_per_worker = max(1, int(max_cpu_cores) // worker_count)
         results: list[dict[str, Any]] = []
         with _exclusive_file_lock(self.store.lock_path):
             plan = self._load_plan(plan_id)
             self._verify_release(plan)
             self._recover_interrupted(plan_id)
+            claimed: list[sqlite3.Row] = []
             for _ in range(limit):
                 window = processing_window_status(processing_window)
                 if not window["allowed"]:
@@ -652,22 +802,47 @@ class DecompilationBatchExecutor:
                 batch = self._claim_next(plan_id)
                 if batch is None:
                     break
-                results.append(
+                claimed.append(batch)
+            if worker_count > 1 and len(claimed) > 1:
+                with ThreadPoolExecutor(
+                    max_workers=min(worker_count, len(claimed)),
+                    thread_name_prefix="vr-decompile",
+                ) as pool:
+                    futures = [
+                        pool.submit(
+                            self._execute_batch,
+                            plan,
+                            batch,
+                            max_heap_mb=max_heap_mb,
+                            timeout_seconds=timeout_seconds,
+                            max_cpu_cores=cores_per_worker,
+                            cpu_core_offset=(ordinal % worker_count)
+                            * cores_per_worker,
+                            process_priority=process_priority,
+                        )
+                        for ordinal, batch in enumerate(claimed)
+                    ]
+                    results.extend(future.result() for future in futures)
+            else:
+                results.extend(
                     self._execute_batch(
                         plan,
                         batch,
                         max_heap_mb=max_heap_mb,
                         timeout_seconds=timeout_seconds,
-                        max_cpu_cores=max_cpu_cores,
+                        max_cpu_cores=cores_per_worker,
+                        cpu_core_offset=0,
                         process_priority=process_priority,
                     )
+                    for batch in claimed
                 )
             self._refresh_plan_state(plan_id)
         return {
             "plan": self.store.status(plan_id),
             "executed": results,
-            "global_concurrency": 1,
+            "global_concurrency": min(worker_count, max(1, len(claimed))),
             "max_cpu_cores": max(1, int(max_cpu_cores)),
+            "cpu_cores_per_worker": cores_per_worker,
             "process_priority": (
                 "low" if str(process_priority).casefold() == "low" else "normal"
             ),
@@ -782,6 +957,7 @@ class DecompilationBatchExecutor:
         max_heap_mb: int,
         timeout_seconds: int,
         max_cpu_cores: int,
+        cpu_core_offset: int,
         process_priority: str,
     ) -> dict[str, Any]:
         manifest = self.catalog.load_manifest(plan["release_id"])
@@ -859,6 +1035,7 @@ class DecompilationBatchExecutor:
                     timeout_seconds=max(1, int(timeout_seconds)),
                     max_heap_mb=max(512, int(max_heap_mb)),
                     max_cpu_cores=max(1, int(max_cpu_cores)),
+                    cpu_core_offset=max(0, int(cpu_core_offset)),
                     process_priority=(
                         "low"
                         if str(process_priority).casefold() == "low"
@@ -1000,31 +1177,33 @@ class DecompilationBatchExecutor:
         actual: int,
     ) -> dict[str, Any]:
         now = _utc_now()
-        with self.store.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            for member in members:
+        with self._database_write_lock:
+            with self.store.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                for member in members:
+                    connection.execute(
+                        """UPDATE class_contents
+                           SET state = 'completed', output_reference = ?,
+                               processing_schema_version = ?, updated_at = ?
+                           WHERE content_sha256 = ?""",
+                        (
+                            reference,
+                            PROCESSING_SCHEMA_VERSION,
+                            now,
+                            member["content_sha256"],
+                        ),
+                    )
                 connection.execute(
-                    """UPDATE class_contents
-                       SET state = 'completed', output_reference = ?,
-                           processing_schema_version = ?, updated_at = ?
-                       WHERE content_sha256 = ?""",
-                    (
-                        reference,
-                        PROCESSING_SCHEMA_VERSION,
-                        now,
-                        member["content_sha256"],
-                    ),
+                    """UPDATE decompilation_batches
+                       SET state = 'completed', tool = ?, output_reference = ?,
+                           last_error = '', expected_source_files = ?,
+                           actual_source_files = ?, updated_at = ? WHERE batch_id = ?""",
+                    (tool, reference, expected, actual, now, batch["batch_id"]),
                 )
-            connection.execute(
-                """UPDATE decompilation_batches
-                   SET state = 'completed', tool = ?, output_reference = ?,
-                       last_error = '', expected_source_files = ?,
-                       actual_source_files = ?, updated_at = ? WHERE batch_id = ?""",
-                (tool, reference, expected, actual, now, batch["batch_id"]),
-            )
-            connection.commit()
+                connection.commit()
         return {
             "batch_id": batch["batch_id"],
+            "class_count": int(batch["class_count"]),
             "state": "completed",
             "tool": tool,
             "output_reference": reference,
@@ -1047,25 +1226,27 @@ class DecompilationBatchExecutor:
         )
         partial = actual > 0
         state = "partial" if partial else "failed"
-        with self.store.connect() as connection:
-            connection.execute(
-                """UPDATE decompilation_batches
-                   SET state = ?, tool = ?, last_error = ?,
-                       expected_source_files = ?, actual_source_files = ?, updated_at = ?
-                   WHERE batch_id = ?""",
-                (
-                    state,
-                    attempts[-1].tool if attempts else "",
-                    error[-8000:],
-                    expected,
-                    actual,
-                    _utc_now(),
-                    batch["batch_id"],
-                ),
-            )
-            connection.commit()
+        with self._database_write_lock:
+            with self.store.connect() as connection:
+                connection.execute(
+                    """UPDATE decompilation_batches
+                       SET state = ?, tool = ?, last_error = ?,
+                           expected_source_files = ?, actual_source_files = ?, updated_at = ?
+                       WHERE batch_id = ?""",
+                    (
+                        state,
+                        attempts[-1].tool if attempts else "",
+                        error[-8000:],
+                        expected,
+                        actual,
+                        _utc_now(),
+                        batch["batch_id"],
+                    ),
+                )
+                connection.commit()
         return {
             "batch_id": batch["batch_id"],
+            "class_count": int(batch["class_count"]),
             "state": state,
             "error": error,
             "expected_source_files": expected,
@@ -1104,8 +1285,8 @@ def _class_family(
     known_names: Iterable[str] = (),
 ) -> str:
     package, separator, simple = str(logical_name).rpartition(".")
+    known = _known_name_set(known_names)
     if simple.startswith("$"):
-        known = {str(item) for item in known_names}
         candidates = [
             simple[:index]
             for index, character in enumerate(simple)
@@ -1120,7 +1301,6 @@ def _class_family(
             simple,
         )
     else:
-        known = {str(item) for item in known_names}
         candidates = [
             simple[:index]
             for index, character in enumerate(simple)
@@ -1142,7 +1322,7 @@ def _java_source_candidates(
     known_names: Iterable[str] = (),
 ) -> set[str]:
     package, separator, simple = str(logical_name).rpartition(".")
-    known = {str(item) for item in known_names}
+    known = _known_name_set(known_names)
     candidates: list[str] = []
     for index, character in enumerate(simple):
         if character != "$" or index <= 0:
@@ -1173,6 +1353,14 @@ def _missing_java_sources(
             continue
         missing.add(_class_family(logical_name, known).replace(".", "/") + ".java")
     return missing
+
+
+def _known_name_set(known_names: Iterable[str]) -> set[str] | frozenset[str]:
+    """Reuse large namespace sets instead of copying them once per class."""
+
+    if isinstance(known_names, (set, frozenset)):
+        return known_names
+    return {str(item) for item in known_names}
 
 
 def _java_source_path_key(

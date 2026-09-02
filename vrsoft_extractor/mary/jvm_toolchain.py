@@ -44,6 +44,7 @@ class DecompileRequest:
     timeout_seconds: int = 900
     max_heap_mb: int = 4096
     max_cpu_cores: int = 1
+    cpu_core_offset: int = 0
     process_priority: str = "low"
 
 
@@ -221,7 +222,9 @@ class DecompilerAdapter:
                 creationflags=_process_creation_flags(request.process_priority),
             )
             cpu_limit_applied = _limit_process_cpu(
-                process.pid, request.max_cpu_cores
+                process.pid,
+                request.max_cpu_cores,
+                offset=request.cpu_core_offset,
             )
             sampler = _ProcessSampler(process.pid)
 
@@ -501,7 +504,7 @@ def _process_creation_flags(priority: str) -> int:
     return flags
 
 
-def _limit_process_cpu(pid: int, max_cpu_cores: int) -> bool:
+def _limit_process_cpu(pid: int, max_cpu_cores: int, *, offset: int = 0) -> bool:
     requested = max(1, int(max_cpu_cores))
     available = max(1, int(os.cpu_count() or 1))
     selected = min(requested, available)
@@ -533,7 +536,12 @@ def _limit_process_cpu(pid: int, max_cpu_cores: int) -> bool:
                     ctypes.c_size_t,
                 ]
                 kernel32.SetProcessAffinityMask.restype = ctypes.c_int
-                mask = (1 << selected) - 1
+                start = max(0, int(offset)) % available
+                selected_cores = {
+                    (start + core_index) % available
+                    for core_index in range(selected)
+                }
+                mask = sum(1 << core_index for core_index in selected_cores)
                 return bool(kernel32.SetProcessAffinityMask(handle, mask))
             finally:
                 kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
@@ -543,7 +551,11 @@ def _limit_process_cpu(pid: int, max_cpu_cores: int) -> bool:
             return False
     try:
         if hasattr(os, "sched_setaffinity"):
-            os.sched_setaffinity(pid, set(range(selected)))
+            start = max(0, int(offset)) % available
+            os.sched_setaffinity(
+                pid,
+                {(start + core_index) % available for core_index in range(selected)},
+            )
             return True
     except (OSError, ValueError):
         return False

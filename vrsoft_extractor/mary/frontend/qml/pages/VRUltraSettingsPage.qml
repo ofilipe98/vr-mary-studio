@@ -516,7 +516,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Decompilação, AST/grafo e FTS rodam na máquina do analista. A pausa ocorre com segurança entre lotes."
+                    text: "Decompilação, AST/grafo e FTS rodam na máquina do analista. A pausa ocorre com segurança entre grupos de lotes."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.captionSize
@@ -677,7 +677,9 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Concorrência Java fixa: 1 processo, com prioridade baixa. Heap, CPU, disco e janela são congelados ao iniciar."
+                    text: chat.codeProcessingMaxCpuCores >= 4
+                        ? "Modo Turbo: 2 processos Java, 2 núcleos por processo e prioridade normal. AST/FTS usa escrita SQLite serializada."
+                        : "Modo equilibrado: 1 processo Java com prioridade baixa. Selecione 4 núcleos para ativar o Turbo."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.captionSize
@@ -699,7 +701,9 @@ Item {
 
                     Text {
                         objectName: "vrUltraCodeProcessingProgressLabel"
-                        text: chat.codeProcessingProgress + "% · "
+                        text: Number(chat.codeProcessingProgress).toFixed(
+                            chat.codeProcessingProgress >= 100 ? 0 : 1
+                        ) + "% · "
                             + chat.codeProcessingCoveredJars + "/"
                             + chat.codeProcessingTotalJars + " JARs"
                         color: frontend.palette.mutedText
@@ -717,7 +721,9 @@ Item {
                     to: 100
                     value: Math.max(0, Math.min(100, chat.codeProcessingProgress))
                     Accessible.name: "Progresso do processamento local do índice"
-                    Accessible.description: chat.codeProcessingProgress + "% · "
+                    Accessible.description: Number(chat.codeProcessingProgress).toFixed(
+                        chat.codeProcessingProgress >= 100 ? 0 : 1
+                    ) + "% · "
                         + chat.codeProcessingCoveredJars + " de "
                         + chat.codeProcessingTotalJars + " JARs concluídos"
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
@@ -71,16 +71,34 @@ class ErpCodeCoverage:
             if item.get("release_id") == release_id
             and item.get("release_manifest_sha256") == release_hash
         ]
-        covered = {
-            str(jar)
-            for plan in plans
-            if plan.get("state") == "completed"
-            for jar in plan.get("selected_jars") or []
-        }
         code_status = self.code_index.coverage(release_id)
         indexed_origins = set(code_status.get("indexed_source_jars") or [])
+        covered = set(code_status.get("covered_jars") or [])
         covered.intersection_update(all_jars)
         remaining = sorted(all_jars - covered, key=str.casefold)
+        expected_classes = sum(
+            max(0, int(item.get("class_count") or 0)) for item in artifacts
+        )
+        with self.store.connect() as connection:
+            class_progress = connection.execute(
+                """SELECT count(*) AS discovered,
+                          coalesce(sum(
+                              CASE WHEN c.state = 'completed'
+                                     AND c.processing_schema_version = ?
+                                   THEN 1 ELSE 0 END
+                          ), 0) AS processed
+                   FROM class_occurrences o
+                   JOIN class_contents c
+                     ON c.content_sha256 = o.content_sha256
+                   WHERE o.release_hash = ?""",
+                (PROCESSING_SCHEMA_VERSION, release_hash),
+            ).fetchone()
+        discovered_classes = min(
+            expected_classes, max(0, int(class_progress["discovered"] or 0))
+        )
+        processed_classes = min(
+            expected_classes, max(0, int(class_progress["processed"] or 0))
+        )
         active = [
             plan
             for plan in plans
@@ -123,6 +141,17 @@ class ErpCodeCoverage:
         else:
             capacity_state = "ready"
         total = len(all_jars)
+        if expected_classes:
+            # Inventory/planning accounts for a small, visible part of the work;
+            # decompilation and source indexing remain the dominant component.
+            weighted_done = processed_classes + (discovered_classes * 0.05)
+            progress_percent = round(
+                min(99.9, weighted_done * 100 / (expected_classes * 1.05)), 1
+            )
+        else:
+            progress_percent = round(len(covered) * 100 / total, 1) if total else 0.0
+        if not remaining and total:
+            progress_percent = 100.0
         classpath = ClasspathPolicyStore(
             self.root, catalog=self.catalog
         ).status(release_id)
@@ -137,6 +166,10 @@ class ErpCodeCoverage:
             "expected_jar_count": total,
             "covered_jar_count": len(covered),
             "coverage_ratio": round(len(covered) / total, 6) if total else 0.0,
+            "expected_class_count": expected_classes,
+            "discovered_class_count": discovered_classes,
+            "processed_class_count": processed_classes,
+            "progress_percent": progress_percent,
             "covered_jars": sorted(covered, key=str.casefold),
             "remaining_jar_count": len(remaining),
             "remaining_jars": remaining,
@@ -173,8 +206,10 @@ class ErpCodeCoverage:
         max_heap_mb: int = 2048,
         timeout_seconds: int = 300,
         max_cpu_cores: int = 1,
+        parallel_workers: int = 1,
         process_priority: str = "low",
         processing_window: str = "always",
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if not approved:
             raise CodeCoverageError(
@@ -251,6 +286,7 @@ class ErpCodeCoverage:
                 selected,
                 max_classes=max_classes,
                 max_bytes=max_bytes,
+                progress=progress,
             )
             plan_id = str(plan["plan_id"])
 
@@ -260,17 +296,31 @@ class ErpCodeCoverage:
             max_heap_mb=max_heap_mb,
             timeout_seconds=timeout_seconds,
             max_cpu_cores=max_cpu_cores,
+            max_workers=parallel_workers,
             process_priority=process_priority,
             processing_window=processing_window,
         )
-        indexed = self.code_index.index_plan(plan_id)
+        executed = [
+            item
+            for item in execution.get("executed") or []
+            if isinstance(item, dict)
+        ]
+        completed_batch_ids = [
+            str(item.get("batch_id") or "")
+            for item in executed
+            if item.get("batch_id") and item.get("state") == "completed"
+        ]
+        indexed = self.code_index.index_plan(
+            plan_id,
+            batch_ids=completed_batch_ids,
+        )
         after = self.status(release_id)
         plan_state = str((execution.get("plan") or {}).get("state") or "unknown")
         return {
             "state": plan_state,
             "plan_id": plan_id,
             "selected_jars": selected,
-            "executed": execution.get("executed") or [],
+            "executed": executed,
             "indexed": indexed,
             "coverage": after,
         }

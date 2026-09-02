@@ -361,6 +361,9 @@ def build_parser() -> argparse.ArgumentParser:
     coverage_advance.add_argument("--heap-mb", type=int, default=2048)
     coverage_advance.add_argument("--timeout", type=int, default=300)
     coverage_advance.add_argument("--cpu-cores", type=int, choices=(1, 2, 4), default=1)
+    coverage_advance.add_argument(
+        "--parallel-workers", type=int, choices=(1, 2), default=1
+    )
     coverage_advance.add_argument("--priority", choices=("low", "normal"), default="low")
     coverage_advance.add_argument(
         "--processing-window",
@@ -1021,6 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_heap_mb=args.heap_mb,
                 timeout_seconds=args.timeout,
                 max_cpu_cores=args.cpu_cores,
+                parallel_workers=args.parallel_workers,
                 process_priority=args.priority,
                 processing_window=args.processing_window,
             )

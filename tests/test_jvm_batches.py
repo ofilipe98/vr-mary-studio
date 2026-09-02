@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -151,6 +153,19 @@ def test_class_family_preserves_legal_leading_dollar_names() -> None:
     ) == "br.vr.Outer"
 
 
+def test_class_family_reuses_large_namespace_set_without_iterating_it() -> None:
+    class MembershipOnlySet(set[str]):
+        def __iter__(self):
+            raise AssertionError("o conjunto de nomes não deve ser copiado por classe")
+
+    known = MembershipOnlySet({"br.vr.Outer", "br.vr.Outer$Inner"})
+
+    assert _class_family("br.vr.Outer$Inner", known) == "br.vr.Outer"
+    assert "br/vr/Outer.java" in _java_source_candidates(
+        "br.vr.Outer$Inner", known
+    )
+
+
 def test_nested_class_accepts_any_decompiler_source_boundary() -> None:
     known = {
         "br.vr.Outer",
@@ -269,6 +284,53 @@ def test_executor_marks_success_and_reuses_completed_content(tmp_path: Path) -> 
             for row in connection.execute("SELECT state FROM class_contents")
         }
         assert states == {"completed"}
+
+
+def test_executor_runs_two_batches_in_parallel_with_disjoint_cpu_sets(
+    tmp_path: Path,
+) -> None:
+    catalog = _catalog(tmp_path)
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", max_classes=1, max_bytes=1024
+    )
+
+    class ConcurrentAdapter(_FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__("vineflower")
+            self.lock = threading.Lock()
+            self.active = 0
+            self.peak = 0
+
+        def decompile(self, request: DecompileRequest) -> DecompileResult:
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            try:
+                time.sleep(0.1)
+                return super().decompile(request)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    adapter = ConcurrentAdapter()
+    result = DecompilationBatchExecutor(
+        tmp_path, catalog=catalog, adapters=(adapter,)
+    ).run(
+        plan["plan_id"],
+        limit=2,
+        max_cpu_cores=4,
+        max_workers=2,
+        process_priority="normal",
+    )
+
+    assert len(result["executed"]) == 2
+    assert {item["state"] for item in result["executed"]} == {"completed"}
+    assert result["global_concurrency"] == 2
+    assert result["cpu_cores_per_worker"] == 2
+    assert adapter.peak == 2
+    assert {request.max_cpu_cores for request in adapter.requests} == {2}
+    assert {request.cpu_core_offset for request in adapter.requests} == {0, 2}
+    assert {request.process_priority for request in adapter.requests} == {"normal"}
 
 
 def test_executor_uses_cfr_fallback_after_primary_failure(tmp_path: Path) -> None:

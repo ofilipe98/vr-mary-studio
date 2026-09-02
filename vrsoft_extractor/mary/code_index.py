@@ -233,8 +233,17 @@ class JavaCodeIndex:
                     (source_key, CODE_INDEX_SCHEMA_VERSION, row["id"]),
                 )
 
-    def index_plan(self, plan_id: str) -> dict[str, Any]:
+    def index_plan(
+        self,
+        plan_id: str,
+        *,
+        batch_ids: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
         self.initialize()
+        incremental = batch_ids is not None
+        requested_batch_ids = tuple(
+            dict.fromkeys(str(item) for item in (batch_ids or ()) if str(item))
+        )
         with self.store.connect() as connection:
             plan = connection.execute(
                 "SELECT * FROM decompilation_plans WHERE plan_id = ?", (plan_id,)
@@ -245,12 +254,34 @@ class JavaCodeIndex:
                 raise DecompilationBatchError(
                     "O plano usa um schema de processamento antigo e não pode ser indexado."
                 )
+            batch_filter = ""
+            batch_parameters: list[Any] = [plan_id]
+            if incremental:
+                if requested_batch_ids:
+                    placeholders = ",".join("?" for _ in requested_batch_ids)
+                    batch_filter = f"""AND (
+                        b.batch_id IN ({placeholders})
+                        OR (SELECT count(*) FROM code_sources s
+                            WHERE s.batch_id = b.batch_id
+                              AND s.schema_version = ?)
+                           < b.actual_source_files
+                    )"""
+                    batch_parameters.extend(requested_batch_ids)
+                    batch_parameters.append(CODE_INDEX_SCHEMA_VERSION)
+                else:
+                    batch_filter = """AND (
+                        SELECT count(*) FROM code_sources s
+                        WHERE s.batch_id = b.batch_id
+                          AND s.schema_version = ?
+                    ) < b.actual_source_files"""
+                    batch_parameters.append(CODE_INDEX_SCHEMA_VERSION)
             batches = connection.execute(
-                """SELECT * FROM decompilation_batches
-                   WHERE plan_id = ? AND state = 'completed'
-                     AND output_reference != '' AND tool != 'reused'
-                   ORDER BY ordinal""",
-                (plan_id,),
+                f"""SELECT b.* FROM decompilation_batches b
+                    WHERE b.plan_id = ? AND b.state = 'completed'
+                      AND b.output_reference != '' AND b.tool != 'reused'
+                      {batch_filter}
+                    ORDER BY b.ordinal""",
+                batch_parameters,
             ).fetchall()
             plan_artifacts = connection.execute(
                 """SELECT relative_path, artifact_sha256 FROM plan_artifacts
@@ -331,6 +362,7 @@ class JavaCodeIndex:
             "release_id": plan["release_id"],
             "release_manifest_sha256": plan["release_hash"],
             "completed_batches": len(batches),
+            "incremental": incremental,
             "indexed_sources": indexed,
             "unchanged_sources": unchanged,
             "reused_sources": reused,
@@ -819,13 +851,37 @@ class JavaCodeIndex:
                        FROM plan_artifacts a
                        JOIN decompilation_plans p ON p.plan_id = a.plan_id
                        WHERE p.release_id = ? AND p.release_hash = ?
-                         AND p.schema_version = ? AND p.state = 'completed'""",
-                    (release_id, release_hash, PROCESSING_SCHEMA_VERSION),
+                          AND p.schema_version = ? AND p.state = 'completed'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM class_occurrences o
+                              JOIN class_contents c
+                                ON c.content_sha256 = o.content_sha256
+                              WHERE o.release_hash = p.release_hash
+                                AND o.jar_relative_path = a.relative_path
+                                AND o.artifact_sha256 = a.artifact_sha256
+                                AND (c.state != 'completed'
+                                     OR c.processing_schema_version != ?)
+                          )""",
+                    (
+                        release_id,
+                        release_hash,
+                        PROCESSING_SCHEMA_VERSION,
+                        PROCESSING_SCHEMA_VERSION,
+                    ),
                 )
             }
-        # Searchable rows from a partially completed plan do not prove that its
-        # JAR is fully covered. Only a completed current-schema plan does.
-        covered = completed_jars & manifest_jars
+        # A completed plan is not sufficient evidence on its own. The classes
+        # must be processed with the current schema and the JAR must either have
+        # searchable sources or contain no class entries at all.
+        empty_jars = {
+            str(item.get("relative_path") or "")
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict)
+            and item.get("relative_path")
+            and int(item.get("class_count") or 0) == 0
+        }
+        covered = completed_jars & manifest_jars & (indexed_jars | empty_jars)
         remaining = manifest_jars - covered
         total = len(manifest_jars)
         return {

@@ -1215,7 +1215,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(
                 [item["label"] for item in bridge.codeProcessingCpuCoreOptions],
-                ["1 núcleo(s)", "2 núcleo(s)", "4 núcleo(s)"],
+                ["1 núcleo(s)", "2 núcleo(s)", "4 núcleo(s) · Turbo"],
             )
             self.assertEqual(
                 [item["value"] for item in bridge.codeProcessingDiskMultiplierOptions],
@@ -1234,6 +1234,7 @@ class QmlFrontendTest(unittest.TestCase):
                     "expected_jar_count": 1,
                     "covered_jar_count": 0,
                     "remaining_jar_count": 1,
+                    "progress_percent": 4.8,
                     "capacity": {
                         "used_bytes": 1024,
                         "budget_bytes": 4096,
@@ -1245,18 +1246,19 @@ class QmlFrontendTest(unittest.TestCase):
                 }
             )
             self.assertTrue(bridge.codeProcessingCanCleanOrphans)
+            self.assertEqual(bridge.codeProcessingProgress, 4.8)
             self.assertIn("Dados ativos: 0.0 MB de 0.0 MB", bridge.codeProcessingCapacitySummary)
             self.assertEqual(bridge.codeProcessingCapacity["orphaned_bytes"], 2048)
             bridge.setCodeProcessingMaxHeapMb(4096)
             bridge.setCodeProcessingTimeoutSeconds(1200)
-            bridge.setCodeProcessingMaxCpuCores(2)
+            bridge.setCodeProcessingMaxCpuCores(4)
             bridge.setCodeProcessingDiskMultiplier(8)
             bridge.setCodeProcessingWindow("off_hours")
 
             reopened = ChatBridge(settings, database, preferences)
             self.assertEqual(reopened.codeProcessingMaxHeapMb, 4096)
             self.assertEqual(reopened.codeProcessingTimeoutSeconds, 1200)
-            self.assertEqual(reopened.codeProcessingMaxCpuCores, 2)
+            self.assertEqual(reopened.codeProcessingMaxCpuCores, 4)
             self.assertEqual(reopened.codeProcessingDiskMultiplier, 8)
             self.assertEqual(reopened.codeProcessingWindow, "off_hours")
             reopened.setCodeProcessingMaxHeapMb(1234)
@@ -1266,7 +1268,7 @@ class QmlFrontendTest(unittest.TestCase):
             reopened.setCodeProcessingWindow("invalid")
             self.assertEqual(reopened.codeProcessingMaxHeapMb, 4096)
             self.assertEqual(reopened.codeProcessingTimeoutSeconds, 1200)
-            self.assertEqual(reopened.codeProcessingMaxCpuCores, 2)
+            self.assertEqual(reopened.codeProcessingMaxCpuCores, 4)
             self.assertEqual(reopened.codeProcessingDiskMultiplier, 8)
             self.assertEqual(reopened.codeProcessingWindow, "off_hours")
             bridge.close()
@@ -1696,7 +1698,7 @@ class QmlFrontendTest(unittest.TestCase):
             manager = FakeCoverage()
             bridge.setCodeProcessingMaxHeapMb(4096)
             bridge.setCodeProcessingTimeoutSeconds(600)
-            bridge.setCodeProcessingMaxCpuCores(2)
+            bridge.setCodeProcessingMaxCpuCores(4)
             with (
                 patch(
                     "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
@@ -1733,12 +1735,14 @@ class QmlFrontendTest(unittest.TestCase):
                         item["max_heap_mb"],
                         item["timeout_seconds"],
                         item["max_cpu_cores"],
+                        item["parallel_workers"],
                         item["process_priority"],
+                        item["batch_limit"],
                         item["processing_window"],
                     )
                     for item in manager.advance_kwargs
                 },
-                {(4096, 600, 2, "low", "always")},
+                {(4096, 600, 4, 2, "normal", 2, "always")},
             )
             self.assertEqual(bridge.codeProcessingTelemetry["processed_batches"], 2)
             self.assertEqual(bridge.codeProcessingTelemetry["peak_rss_bytes"], 64 * 1024 * 1024)
@@ -1764,7 +1768,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(len({item["run_id"] for item in audit}), 1)
             self.assertEqual(audit[0]["details"]["max_heap_mb"], 4096)
             self.assertEqual(audit[0]["details"]["timeout_seconds"], 600)
-            self.assertEqual(audit[0]["details"]["global_java_concurrency"], 1)
+            self.assertEqual(audit[0]["details"]["global_java_concurrency"], 2)
             self.assertEqual(
                 audit[-1]["details"]["telemetry"]["processed_batches"], 2
             )
@@ -1839,7 +1843,7 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertTrue(batch_started.wait(timeout=2))
                 bridge.pauseCodeProcessing()
                 self.assertTrue(bridge.codeProcessingPauseRequested)
-                self.assertIn("lote Java atual", bridge.codeProcessingStatus)
+                self.assertIn("lotes Java atuais", bridge.codeProcessingStatus)
                 allow_batch_finish.set()
                 for _attempt in range(100):
                     self.application.processEvents()
