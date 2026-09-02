@@ -3672,6 +3672,69 @@ class ChatBridge(QObject):
         threading.Thread(target=snapshot, daemon=True).start()
         return True
 
+    @Slot(str, result=bool)
+    def removeCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
+        """Remove an inventoried release after confirmation in the UI."""
+
+        selected_release = str(release_id or "").strip()
+        if (
+            not selected_release
+            or self._release_snapshot_running
+            or self._code_processing_running
+        ):
+            return False
+
+        available = {
+            str(item.get("releaseId") or "")
+            for item in self._code_analysis_release_items
+        }
+        if selected_release not in available:
+            self._release_snapshot_status = (
+                f"Não foi possível remover a release {selected_release}: "
+                "ela não está mais inventariada."
+            )
+            self.stateChanged.emit()
+            return False
+
+        self._release_snapshot_running = True
+        self._release_snapshot_started_at = time.monotonic()
+        self._release_snapshot_status = (
+            f"Removendo o índice da release {selected_release} localmente..."
+        )
+        self.stateChanged.emit()
+        results = self._release_snapshot_results
+        workspace = self._settings.root
+
+        def remove() -> None:
+            try:
+                result = ErpReleaseCatalog(workspace).remove_index(
+                    selected_release,
+                    approved=True,
+                )
+            except Exception as exc:
+                results.put(
+                    {
+                        "operation": "remove",
+                        "ok": False,
+                        "release_id": selected_release,
+                        "error": str(exc),
+                    }
+                )
+                self._releaseSnapshotReady.emit()
+                return
+            results.put(
+                {
+                    "operation": "remove",
+                    "ok": True,
+                    **result,
+                }
+            )
+            self._releaseSnapshotReady.emit()
+
+        self._release_snapshot_poll_timer.start()
+        threading.Thread(target=remove, daemon=True).start()
+        return True
+
     @Slot()
     def _poll_release_snapshot(self) -> None:
         latest: dict[str, Any] | None = None
@@ -3687,6 +3750,33 @@ class ChatBridge(QObject):
         self._release_snapshot_started_at = 0.0
         self._release_snapshot_poll_timer.stop()
         release_id = str(latest.get("release_id") or "")
+        if str(latest.get("operation") or "") == "remove":
+            if bool(latest.get("ok")):
+                self._refresh_code_analysis_releases()
+                self._preferences.setValue(
+                    self._workspace_research_preference("code_analysis_release"),
+                    self._code_analysis_release,
+                )
+                self._preferences.setValue(
+                    "research/code_analysis_enabled",
+                    self._code_analysis_enabled,
+                )
+                self._preferences.sync()
+                self._refresh_code_analysis_jar_sources()
+                self.refreshCodeProcessingStatus()
+                reclaimed = int(latest.get("reclaimed_bytes") or 0)
+                self._release_snapshot_status = (
+                    f"Release {release_id} removida do índice. "
+                    f"{reclaimed / (1024 * 1024):.1f} MB liberados; "
+                    "os JARs de origem foram preservados."
+                )
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível remover a release {release_id}: {detail}"
+                )
+            self.stateChanged.emit()
+            return
         if bool(latest.get("ok")):
             self._refresh_code_analysis_releases()
             available = {

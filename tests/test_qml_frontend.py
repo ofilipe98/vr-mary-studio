@@ -1430,6 +1430,56 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Detectar e adicionar", qml)
         self.assertNotIn("releaseIdField.text.trim().length > 0", qml)
 
+    def test_vr_ultra_release_removal_requires_confirmation(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "vrUltraRemoveReleaseButton"', qml)
+        self.assertIn('objectName: "vrUltraRemoveReleaseDialog"', qml)
+        self.assertIn("Os JARs de origem serão preservados", qml)
+        self.assertIn("chat.removeCodeAnalysisRelease(releaseId)", qml)
+
+    def test_release_removal_runs_in_background_and_selects_remaining_release(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            self._import_release(settings, "r2")
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.setCodeAnalysisRelease("r1")
+
+            self.assertTrue(bridge.removeCodeAnalysisRelease("r1"))
+            self.assertTrue(bridge.releaseSnapshotRunning)
+            self.assertFalse(bridge.removeCodeAnalysisRelease("r2"))
+            for _attempt in range(100):
+                self.application.processEvents()
+                QTest.qWait(25)
+                if not bridge.releaseSnapshotRunning:
+                    break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertEqual(bridge.codeAnalysisRelease, "r2")
+            self.assertEqual(
+                [item["releaseId"] for item in bridge.codeAnalysisReleaseItems],
+                ["r2"],
+            )
+            self.assertIn("Release r1 removida do índice", bridge.releaseSnapshotStatus)
+            self.assertIn("JARs de origem foram preservados", bridge.releaseSnapshotStatus)
+            self.assertFalse(
+                (settings.root / "indice" / "codigo" / "releases" / "r1").exists()
+            )
+            self.assertTrue((settings.erp_releases_dir / "r1" / "jars").is_dir())
+            bridge.close()
+
     def test_local_code_processing_completes_without_model_or_network(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

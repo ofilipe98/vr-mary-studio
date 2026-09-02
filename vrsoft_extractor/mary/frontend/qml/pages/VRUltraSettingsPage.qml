@@ -7,6 +7,7 @@ import "../theme"
 Item {
     id: root
     objectName: "vrUltraSettingsPage"
+    property string pendingReleaseRemoval: ""
 
     readonly property int selectedModelIndex: {
         if (!chat.researchModelKeys.length) return -1
@@ -293,6 +294,19 @@ Item {
                         onActivated: index => {
                             if (index < chat.codeAnalysisReleaseItems.length)
                                 chat.setCodeAnalysisRelease(chat.codeAnalysisReleaseItems[index].releaseId)
+                        }
+                    }
+                    VrButton {
+                        objectName: "vrUltraRemoveReleaseButton"
+                        text: "Remover"
+                        variant: "danger"
+                        enabled: chat.codeAnalysisReleaseItems.length > 0
+                            && chat.codeAnalysisRelease.length > 0
+                            && !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingRunning
+                        onClicked: {
+                            root.pendingReleaseRemoval = chat.codeAnalysisRelease
+                            removeReleaseDialog.open()
                         }
                     }
                 }
@@ -821,5 +835,50 @@ Item {
         chat.refreshModels()
         chat.refreshCodeAnalysisReleases()
         chat.refreshCodeProcessingStatus()
+    }
+
+    Dialog {
+        id: removeReleaseDialog
+        objectName: "vrUltraRemoveReleaseDialog"
+        anchors.centerIn: parent
+        width: Math.min(500, root.width - Theme.spaceLg * 2)
+        modal: true
+        title: "Remover release do índice?"
+        standardButtons: Dialog.NoButton
+        onClosed: root.pendingReleaseRemoval = ""
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+            Text {
+                Layout.fillWidth: true
+                text: "A release " + root.pendingReleaseRemoval
+                    + " e seus dados de análise serão removidos. "
+                    + "Os JARs de origem serão preservados."
+                color: frontend.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.bodySize
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                VrButton { text: "Cancelar"; onClicked: removeReleaseDialog.close() }
+                Item { Layout.fillWidth: true }
+                VrButton {
+                    objectName: "vrUltraConfirmRemoveReleaseButton"
+                    text: "Remover release"
+                    variant: "danger"
+                    onClicked: {
+                        var releaseId = root.pendingReleaseRemoval
+                        removeReleaseDialog.close()
+                        chat.removeCodeAnalysisRelease(releaseId)
+                    }
+                }
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.danger
+            radius: Theme.radiusPopup
+        }
     }
 }
