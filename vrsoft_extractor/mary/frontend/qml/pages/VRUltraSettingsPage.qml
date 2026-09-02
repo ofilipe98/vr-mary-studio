@@ -684,18 +684,79 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
-                Rectangle {
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Progresso do índice"
+                        color: frontend.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                        font.weight: Font.DemiBold
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Text {
+                        objectName: "vrUltraCodeProcessingProgressLabel"
+                        text: chat.codeProcessingProgress + "% · "
+                            + chat.codeProcessingCoveredJars + "/"
+                            + chat.codeProcessingTotalJars + " JARs"
+                        color: frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                    }
+                }
+
+                ProgressBar {
+                    id: codeProcessingProgress
                     objectName: "vrUltraCodeProcessingProgress"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 8
-                    radius: 4
-                    color: frontend.palette.border
+                    Layout.preferredHeight: 12
+                    from: 0
+                    to: 100
+                    value: Math.max(0, Math.min(100, chat.codeProcessingProgress))
+                    Accessible.name: "Progresso do processamento local do índice"
+                    Accessible.description: chat.codeProcessingProgress + "% · "
+                        + chat.codeProcessingCoveredJars + " de "
+                        + chat.codeProcessingTotalJars + " JARs concluídos"
 
-                    Rectangle {
-                        width: parent.width * Math.max(0, Math.min(100, chat.codeProcessingProgress)) / 100
-                        height: parent.height
-                        radius: parent.radius
-                        color: frontend.palette.brandOrange
+                    background: Rectangle {
+                        radius: height / 2
+                        color: frontend.palette.border
+                    }
+
+                    contentItem: Item {
+                        clip: true
+
+                        Rectangle {
+                            width: codeProcessingProgress.visualPosition * parent.width
+                            height: parent.height
+                            radius: height / 2
+                            color: frontend.palette.brandOrange
+                        }
+
+                        Rectangle {
+                            id: processingPulse
+                            visible: chat.codeProcessingRunning
+                            width: Math.max(28, Math.min(96, parent.width * 0.22))
+                            height: parent.height
+                            radius: height / 2
+                            color: frontend.palette.text
+                            opacity: 0.32
+
+                            SequentialAnimation on x {
+                                running: chat.codeProcessingRunning
+                                    && codeProcessingProgress.visible
+                                loops: Animation.Infinite
+                                NumberAnimation {
+                                    from: -processingPulse.width
+                                    to: codeProcessingProgress.width
+                                    duration: 1150
+                                    easing.type: Easing.InOutSine
+                                }
+                            }
+                        }
                     }
                 }
 

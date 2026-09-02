@@ -212,7 +212,13 @@ Item {
             }
 
             // --------------------------------------------------------- VR Ultra
-            VRUltraSettingsPage { }
+            Loader {
+                id: vrUltraSettingsLoader
+                objectName: "vrUltraSettingsLoader"
+                active: root.tabIndex === 2
+                asynchronous: true
+                sourceComponent: vrUltraSettingsComponent
+            }
 
             // ------------------------------------------------------------ Temas
             Item {
@@ -449,6 +455,11 @@ Item {
                 }
             }
         }
+    }
+
+    Component {
+        id: vrUltraSettingsComponent
+        VRUltraSettingsPage { }
     }
 
     Timer { id: archiveDelay; interval: 180; onTriggered: studio.refreshArchived(archivedSearch.text) }

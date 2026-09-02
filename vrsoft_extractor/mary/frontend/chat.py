@@ -338,13 +338,11 @@ class ChatBridge(QObject):
         self._code_analysis_snapshot_scope = ERP_JAR_SCOPE_FULL_RELEASE
         self._code_analysis_single_jar_path = ""
         self._release_snapshot_running = False
-        self._release_snapshot_started_at = 0.0
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
         )
         self._code_processing_running = False
-        self._code_processing_started_at = 0.0
         self._code_processing_pause_requested = False
         self._code_processing_status_loading = False
         self._code_processing_status_generation = 0
@@ -434,13 +432,17 @@ class ChatBridge(QObject):
         self._release_snapshot_poll_timer.timeout.connect(
             self._poll_release_snapshot
         )
-        self._releaseSnapshotReady.connect(self._poll_release_snapshot)
+        self._releaseSnapshotReady.connect(
+            self._poll_release_snapshot, Qt.ConnectionType.QueuedConnection
+        )
         self._code_processing_poll_timer = QTimer(self)
         self._code_processing_poll_timer.setInterval(100)
         self._code_processing_poll_timer.timeout.connect(
             self._poll_code_processing
         )
-        self._codeProcessingReady.connect(self._poll_code_processing)
+        self._codeProcessingReady.connect(
+            self._poll_code_processing, Qt.ConnectionType.QueuedConnection
+        )
         self._code_processing_status_poll_timer = QTimer(self)
         self._code_processing_status_poll_timer.setInterval(50)
         self._code_processing_status_poll_timer.timeout.connect(
@@ -657,15 +659,6 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def releaseSnapshotRunning(self) -> bool:  # noqa: N802
-        if self._release_snapshot_running:
-            time.sleep(0.001)
-        if (
-            self._release_snapshot_running
-            and self._release_snapshot_started_at > 0
-            and time.monotonic() - self._release_snapshot_started_at >= 0.05
-            and not self._release_snapshot_results.empty()
-        ):
-            self._poll_release_snapshot()
         return self._release_snapshot_running
 
     @Property(str, notify=stateChanged)
@@ -679,15 +672,6 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def codeProcessingRunning(self) -> bool:  # noqa: N802
-        if self._code_processing_running:
-            time.sleep(0.001)
-        if (
-            self._code_processing_running
-            and self._code_processing_started_at > 0
-            and time.monotonic() - self._code_processing_started_at >= 0.05
-            and not self._code_processing_results.empty()
-        ):
-            self._poll_code_processing()
         return self._code_processing_running
 
     @Property(bool, notify=stateChanged)
@@ -3176,7 +3160,6 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
             return False
         self._code_processing_running = True
-        self._code_processing_started_at = time.monotonic()
         self._code_processing_pause_requested = False
         self._code_processing_pause_event.clear()
         self._code_processing_status = (
@@ -3416,6 +3399,7 @@ class ChatBridge(QObject):
                     )
                     return
 
+                publish({"kind": "batch_started", "coverage": coverage})
                 advanced = manager.advance(
                     release_id,
                     approved=True,
@@ -3601,6 +3585,13 @@ class ChatBridge(QObject):
                     f"{self._code_processing_covered_jars}/"
                     f"{self._code_processing_total_jars} JARs indexados."
                 )
+            elif kind == "batch_started":
+                target = self._code_processing_current_jar or "próximo JAR"
+                self._code_processing_status = (
+                    f"Processando {self._code_processing_release}: {target} · "
+                    f"{self._code_processing_covered_jars}/"
+                    f"{self._code_processing_total_jars} JARs concluídos."
+                )
             elif kind == "paused":
                 self._code_processing_running = False
                 self._code_processing_pause_requested = False
@@ -3625,7 +3616,6 @@ class ChatBridge(QObject):
                     + str(event.get("error") or "erro desconhecido")
                 )
         if not self._code_processing_running:
-            self._code_processing_started_at = 0.0
             self._code_processing_poll_timer.stop()
             self._refresh_code_analysis_releases()
         self.stateChanged.emit()
@@ -3659,7 +3649,6 @@ class ChatBridge(QObject):
                 return False
 
         self._release_snapshot_running = True
-        self._release_snapshot_started_at = time.monotonic()
         self._release_snapshot_status = (
             (
                 f"Detectando aplicação e versão de {Path(source).name} localmente..."
@@ -3738,7 +3727,6 @@ class ChatBridge(QObject):
             return False
 
         self._release_snapshot_running = True
-        self._release_snapshot_started_at = time.monotonic()
         self._release_snapshot_status = (
             f"Removendo o índice da release {selected_release} localmente..."
         )
@@ -3787,7 +3775,6 @@ class ChatBridge(QObject):
         ):
             return False
         self._release_snapshot_running = True
-        self._release_snapshot_started_at = time.monotonic()
         self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
         self.stateChanged.emit()
         results = self._release_snapshot_results
@@ -3827,7 +3814,6 @@ class ChatBridge(QObject):
             return
 
         self._release_snapshot_running = False
-        self._release_snapshot_started_at = 0.0
         self._release_snapshot_poll_timer.stop()
         release_id = str(latest.get("release_id") or "")
         if str(latest.get("operation") or "") == "clean_orphans":

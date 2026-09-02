@@ -492,7 +492,11 @@ class QmlFrontendTest(unittest.TestCase):
             settings_page = window.findChild(QObject, "settingsPage")
             self.assertIsNotNone(settings_page)
             settings_page.setProperty("tabIndex", 2)
-            self.application.processEvents()
+            for _attempt in range(40):
+                self.application.processEvents()
+                if window.findChild(QObject, "vrUltraSettingsPage") is not None:
+                    break
+                QTest.qWait(10)
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsPage"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsScroll"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
@@ -513,6 +517,9 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeProcessingCard"))
             self.assertIsNotNone(
                 window.findChild(QObject, "vrUltraCodeProcessingProgress")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCodeProcessingProgressLabel")
             )
             self.assertIsNotNone(
                 window.findChild(QObject, "vrUltraCodeProcessingCurrentBatch")
@@ -1344,6 +1351,7 @@ class QmlFrontendTest(unittest.TestCase):
                     for _attempt in range(100):
                         self.application.processEvents()
                         QTest.qWait(25)
+                        threading.Event().wait(0.001)
                         if not bridge.releaseSnapshotRunning:
                             break
 
@@ -1375,6 +1383,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(25)
+                    threading.Event().wait(0.001)
                     if not bridge.releaseSnapshotRunning:
                         break
                 self.assertFalse(bridge.releaseSnapshotRunning)
@@ -1423,6 +1432,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(25)
+                    threading.Event().wait(0.001)
                     if not bridge.releaseSnapshotRunning:
                         break
 
@@ -1469,6 +1479,55 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("chat.cleanCodeProcessingOrphans()", qml)
         self.assertIn("Bancos compartilhados", qml)
 
+    def test_local_code_processing_ui_uses_explicit_progress_and_lazy_tab(self):
+        qml_root = MAIN_QML.parent
+        settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
+            encoding="utf-8"
+        )
+        ultra_qml = (
+            qml_root / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "vrUltraSettingsLoader"', settings_qml)
+        self.assertIn("active: root.tabIndex === 2", settings_qml)
+        self.assertIn("asynchronous: true", settings_qml)
+        self.assertIn("ProgressBar {", ultra_qml)
+        self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', ultra_qml)
+        self.assertIn("chat.codeProcessingCoveredJars", ultra_qml)
+        self.assertIn("running: chat.codeProcessingRunning", ultra_qml)
+
+    def test_background_state_properties_do_not_block_or_poll_the_ui_thread(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge._release_snapshot_running = True
+            bridge._code_processing_running = True
+
+            with (
+                patch("vrsoft_extractor.mary.frontend.chat.time.sleep") as sleep,
+                patch.object(bridge, "_poll_release_snapshot") as poll_snapshot,
+                patch.object(bridge, "_poll_code_processing") as poll_processing,
+            ):
+                self.assertTrue(bridge.releaseSnapshotRunning)
+                self.assertTrue(bridge.codeProcessingRunning)
+
+            sleep.assert_not_called()
+            poll_snapshot.assert_not_called()
+            poll_processing.assert_not_called()
+            bridge._release_snapshot_running = False
+            bridge._code_processing_running = False
+            bridge.close()
+
     def test_orphan_cleanup_runs_in_background_and_preserves_source_jar(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1508,6 +1567,7 @@ class QmlFrontendTest(unittest.TestCase):
             for _attempt in range(100):
                 self.application.processEvents()
                 QTest.qWait(25)
+                threading.Event().wait(0.001)
                 if not bridge.releaseSnapshotRunning:
                     break
 
@@ -1541,6 +1601,7 @@ class QmlFrontendTest(unittest.TestCase):
             for _attempt in range(100):
                 self.application.processEvents()
                 QTest.qWait(25)
+                threading.Event().wait(0.001)
                 if not bridge.releaseSnapshotRunning:
                     break
 
@@ -1651,6 +1712,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if not bridge.codeProcessingRunning:
                         break
 
@@ -1782,6 +1844,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if not bridge.codeProcessingRunning:
                         break
 
@@ -1827,6 +1890,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if not bridge.codeProcessingRunning:
                         break
 
@@ -1937,6 +2001,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if not bridge.codeProcessingStatusLoading:
                         break
             self.assertTrue(bridge.codeProcessingCanRetry)
@@ -1962,6 +2027,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if not bridge.codeProcessingRunning:
                         break
 
@@ -2045,6 +2111,7 @@ class QmlFrontendTest(unittest.TestCase):
                 for _attempt in range(100):
                     self.application.processEvents()
                     QTest.qWait(20)
+                    threading.Event().wait(0.001)
                     if bridge.codeProcessingFrozenRelease == "r1":
                         break
 
