@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -340,6 +341,62 @@ def test_storage_budget_multiplier_is_configurable_but_capped_at_ten(
     assert status["budget_bytes"] == manifest["source_size_bytes"] * 5
     with pytest.raises(ErpReleaseError, match="entre 1x e 10x"):
         catalog.set_storage_budget_multiplier(11)
+
+
+def test_storage_budget_sums_all_retained_release_sources(tmp_path: Path) -> None:
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    first_source = tmp_path / "ERP" / "releases" / "r1" / "jars"
+    second_source = tmp_path / "ERP" / "releases" / "r2" / "jars"
+    _jar(first_source / "A.jar", classes=("br/vr/A.class",))
+    _jar(second_source / "B.jar", classes=("br/vr/B.class", "br/vr/C.class"))
+    first = catalog.import_release("r1")
+    second = catalog.import_release("r2")
+
+    status = catalog.set_storage_budget_multiplier(8)
+
+    assert status["budget_bytes"] == (
+        first["source_size_bytes"] + second["source_size_bytes"]
+    ) * 8
+    catalog.remove_index("r1", approved=True)
+    assert catalog.storage_status()["budget_bytes"] == second["source_size_bytes"] * 8
+
+
+def test_orphan_cleanup_preserves_live_payload_and_source_jars(tmp_path: Path) -> None:
+    source = tmp_path / "ERP" / "releases" / "r1" / "jars"
+    jar = source / "ERP.jar"
+    _jar(jar)
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    catalog.import_release("r1")
+    decompilation = tmp_path / "indice" / "codigo" / "decompilation"
+    live = decompilation / "plan-live"
+    orphan = decompilation / "plan-orphan"
+    live.mkdir(parents=True)
+    orphan.mkdir(parents=True)
+    (live / "Live.java").write_bytes(b"live")
+    (orphan / "Old.java").write_bytes(b"orphaned")
+    database = tmp_path / "indice" / "codigo" / "processing.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE decompilation_plans (plan_id TEXT PRIMARY KEY)")
+        connection.execute(
+            "INSERT INTO decompilation_plans (plan_id) VALUES ('plan-live')"
+        )
+
+    inspection = catalog.inspect_orphaned_index_data()
+
+    assert inspection["live_payload_bytes"] == 4
+    assert [item["path"] for item in inspection["items"]] == [
+        "indice/codigo/decompilation/plan-orphan"
+    ]
+    with pytest.raises(ErpReleaseError, match="aprovação explícita"):
+        catalog.purge_orphaned_index_data()
+
+    result = catalog.purge_orphaned_index_data(approved=True)
+
+    assert result["removed_item_count"] == 1
+    assert not orphan.exists()
+    assert live.is_dir()
+    assert jar.is_file()
+    assert result["source_jars_removed"] is False
 
 
 def test_manifest_parser_unfolds_continuation_lines() -> None:

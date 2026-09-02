@@ -825,7 +825,13 @@ class ErpReleaseCatalog:
         return statuses
 
     def storage_status(self) -> dict[str, Any]:
-        """Report the generated-index quota without counting source JAR folders."""
+        """Report quota payload separately from physical and orphaned data.
+
+        The quota applies to registered decompilation payloads. Shared databases,
+        manifests and audit files are still reported as physical overhead, but do
+        not consume the same allowance again. This keeps a ``10x`` allowance from
+        rejecting a first plan merely because its catalog already exists.
+        """
 
         catalog_path = self.paths.code_index / "catalog.json"
         payload: dict[str, Any] = {}
@@ -834,15 +840,165 @@ class ErpReleaseCatalog:
                 payload = json.loads(catalog_path.read_text(encoding="utf-8"))
             except (OSError, UnicodeError, json.JSONDecodeError):
                 payload = {}
-        used = _directory_size(self.paths.code_index) if self.paths.code_index.is_dir() else 0
-        budget = int(payload.get("storage_budget_bytes") or 0)
+        inventory = self.inspect_orphaned_index_data()
+        physical_used = (
+            _directory_size(self.paths.code_index)
+            if self.paths.code_index.is_dir()
+            else 0
+        )
+        used = int(inventory["live_payload_bytes"])
+        orphaned = int(inventory["orphaned_bytes"])
+        overhead = max(0, physical_used - used - orphaned)
+        multiplier = int(
+            payload.get("storage_budget_multiplier")
+            or self.storage_budget_multiplier
+        )
+        baseline = self._indexed_source_size_bytes()
+        budget = baseline * multiplier
         return {
             "used_bytes": used,
             "budget_bytes": budget,
             "remaining_bytes": max(0, budget - used) if budget else 0,
             "usage_ratio": round(used / budget, 6) if budget else 0.0,
+            "storage_budget_multiplier": multiplier,
+            "baseline_source_size_bytes": baseline,
+            "physical_used_bytes": physical_used,
+            "orphaned_bytes": orphaned,
+            "orphaned_item_count": int(inventory["orphaned_item_count"]),
+            "overhead_bytes": overhead,
+            "orphan_scan_errors": list(inventory["errors"]),
             "max_releases": int(payload.get("max_releases") or self.max_releases),
             "indexed_releases": len(self.list_statuses()),
+        }
+
+    def inspect_orphaned_index_data(self) -> dict[str, Any]:
+        """List removable generated payload that has no live database reference."""
+
+        decompilation_root = self.paths.code_index / "decompilation"
+        artifacts_root = self.paths.artifacts
+        referenced_plans: set[str] = set()
+        referenced_outputs: set[str] = set()
+        errors: list[str] = []
+        database_path = self.paths.code_index / "processing.sqlite"
+        if database_path.is_file():
+            try:
+                connection = sqlite3.connect(database_path, timeout=5)
+                connection.row_factory = sqlite3.Row
+                try:
+                    tables = {
+                        str(row["name"])
+                        for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    if "decompilation_plans" in tables:
+                        referenced_plans.update(
+                            str(row["plan_id"])
+                            for row in connection.execute(
+                                "SELECT plan_id FROM decompilation_plans"
+                            )
+                            if row["plan_id"]
+                        )
+                    if "class_contents" in tables:
+                        referenced_outputs.update(
+                            str(row["output_reference"])
+                            .replace("\\", "/")
+                            .casefold()
+                            for row in connection.execute(
+                                """SELECT DISTINCT output_reference FROM class_contents
+                                   WHERE output_reference != ''"""
+                            )
+                            if row["output_reference"]
+                        )
+                finally:
+                    connection.close()
+            except sqlite3.Error as exc:
+                errors.append(f"processing.sqlite: {exc}")
+
+        items: list[dict[str, Any]] = []
+        live_payload_bytes = 0
+        decompilation_dirs = (
+            sorted(decompilation_root.iterdir(), key=lambda item: item.name.casefold())
+            if decompilation_root.is_dir()
+            else []
+        )
+        for path in decompilation_dirs:
+            if not path.is_dir():
+                continue
+            portable = self._portable_path(path).replace("\\", "/").casefold()
+            referenced = path.name in referenced_plans or any(
+                output == portable or output.startswith(portable + "/")
+                for output in referenced_outputs
+            )
+            size = _directory_size(path)
+            if referenced or errors:
+                live_payload_bytes += size
+            else:
+                items.append(
+                    {
+                        "kind": "decompilation_plan",
+                        "path": self._portable_path(path),
+                        "size_bytes": size,
+                    }
+                )
+
+        referenced_artifacts = self._referenced_artifact_hashes()
+        artifact_dirs = (
+            sorted(artifacts_root.iterdir(), key=lambda item: item.name.casefold())
+            if artifacts_root.is_dir()
+            else []
+        )
+        for path in artifact_dirs:
+            if not path.is_dir() or path.name in referenced_artifacts:
+                continue
+            items.append(
+                {
+                    "kind": "artifact_metadata",
+                    "path": self._portable_path(path),
+                    "size_bytes": _directory_size(path),
+                }
+            )
+
+        return {
+            "items": items,
+            "orphaned_item_count": len(items),
+            "orphaned_bytes": sum(int(item["size_bytes"]) for item in items),
+            "live_payload_bytes": live_payload_bytes,
+            "errors": errors,
+            "source_jars_included": False,
+        }
+
+    def purge_orphaned_index_data(self, *, approved: bool = False) -> dict[str, Any]:
+        """Remove only generated payload proven to be unreferenced."""
+
+        if not approved:
+            raise ErpReleaseError(
+                "A limpeza de artefatos órfãos exige aprovação explícita."
+            )
+        inspection = self.inspect_orphaned_index_data()
+        if inspection["errors"]:
+            raise ErpReleaseError(
+                "A limpeza foi bloqueada porque as referências do índice não "
+                "puderam ser verificadas: " + "; ".join(inspection["errors"])
+            )
+        removed: list[dict[str, Any]] = []
+        for item in inspection["items"]:
+            path = (self.paths.root / str(item["path"])).resolve()
+            if item["kind"] == "decompilation_plan":
+                _require_child(path, (self.paths.code_index / "decompilation").resolve())
+            elif item["kind"] == "artifact_metadata":
+                _require_child(path, self.paths.artifacts.resolve())
+            else:
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+                removed.append(dict(item))
+        return {
+            "removed_items": removed,
+            "removed_item_count": len(removed),
+            "reclaimed_bytes": sum(int(item["size_bytes"]) for item in removed),
+            "source_jars_removed": False,
+            "storage": self.storage_status(),
         }
 
     def set_storage_budget_multiplier(self, multiplier: int) -> dict[str, Any]:
@@ -855,24 +1011,8 @@ class ErpReleaseCatalog:
                 f"{DEFAULT_STORAGE_BUDGET_MULTIPLIER}x o tamanho da release."
             )
         self.storage_budget_multiplier = selected
-        baseline = 0
         catalog_path = self.paths.code_index / "catalog.json"
-        if catalog_path.is_file():
-            try:
-                payload = json.loads(catalog_path.read_text(encoding="utf-8"))
-                baseline = int(payload.get("baseline_source_size_bytes") or 0)
-            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-                baseline = 0
-        if baseline <= 0:
-            manifests = [
-                self.load_manifest(str(item.get("release_id") or ""))
-                for item in self.list_statuses()
-                if item.get("release_id")
-            ]
-            baseline = max(
-                (int(item.get("source_size_bytes") or 0) for item in manifests),
-                default=0,
-            )
+        baseline = self._indexed_source_size_bytes()
         self.ensure_dirs()
         _atomic_write_json(
             catalog_path,
@@ -1068,6 +1208,7 @@ class ErpReleaseCatalog:
                 reclaimed += _directory_size(artifact_dir)
                 shutil.rmtree(artifact_dir)
                 removed_artifacts += 1
+        self._write_catalog_metadata(0)
         return {
             "release_id": release_id,
             "removed": True,
@@ -1275,27 +1416,41 @@ class ErpReleaseCatalog:
 
     def _write_catalog_metadata(self, source_size_bytes: int) -> None:
         path = self.paths.code_index / "catalog.json"
-        baseline = int(source_size_bytes)
+        multiplier = self.storage_budget_multiplier
         if path.is_file():
             try:
                 existing = json.loads(path.read_text(encoding="utf-8"))
-                baseline = max(
-                    baseline,
-                    int(existing.get("baseline_source_size_bytes") or 0),
+                multiplier = int(
+                    existing.get("storage_budget_multiplier") or multiplier
                 )
             except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
                 pass
+        baseline = self._indexed_source_size_bytes()
+        if baseline <= 0:
+            baseline = max(0, int(source_size_bytes))
         _atomic_write_json(
             path,
             {
                 "schema_version": MANIFEST_SCHEMA_VERSION,
                 "max_releases": self.max_releases,
-                "storage_budget_multiplier": self.storage_budget_multiplier,
+                "storage_budget_multiplier": multiplier,
                 "baseline_source_size_bytes": baseline,
-                "storage_budget_bytes": baseline * self.storage_budget_multiplier,
+                "storage_budget_bytes": baseline * multiplier,
                 "updated_at": _utc_now(),
             },
         )
+
+    def _indexed_source_size_bytes(self) -> int:
+        total = 0
+        if not self.paths.indexed_releases.is_dir():
+            return total
+        for path in self.paths.indexed_releases.glob("*/manifest.json"):
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                total += max(0, int(manifest.get("source_size_bytes") or 0))
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                continue
+        return total
 
     def _referenced_artifact_hashes(self) -> set[str]:
         referenced: set[str] = set()

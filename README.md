@@ -206,9 +206,10 @@ O comando legado `import-erp-release` continua disponível para inventários já
 organizados. Um pacote incremental só fica `ready` depois que a composição com
 a base resultar nos 46 JARs válidos. O escopo de JAR único só é considerado
 pronto quando o arquivo foi escolhido explicitamente e validado como JAR.
-O catálogo mantém no máximo três releases e usa como orçamento inicial do
-índice dez vezes o tamanho da primeira release importada; ele nunca remove uma
-versão automaticamente para abrir espaço.
+O catálogo mantém no máximo três releases e calcula o orçamento global pela
+soma das releases mantidas multiplicada pelo limite escolhido. Dados de
+decompilação sem referência ativa são apresentados separadamente como órfãos;
+nenhuma versão ou JAR de origem é removido automaticamente para abrir espaço.
 
 O diagnóstico da toolchain de código procura primeiro um Java 17 isolado em
 `VRProject/tools/code-analysis/java17`, sem alterar o Java global do ERP. As
@@ -520,8 +521,10 @@ A aba VR Ultra também executa agora essa fila local em background. **Iniciar** 
 atual terminar e para antes do lote seguinte; o seletor de falhas permite
 escolher qual estado `failed/partial` será reenfileirado. A tela também configura
 heap de 1/2/4 GB, timeout de 5/10/20 minutos, afinidade de 1/2/4 núcleos,
-orçamento de disco de 5/8/10× e janela de execução (`sempre`, `00h–06h` ou
-`18h–06h`). Tudo é persistido por workspace e congelado no início do job. A
+orçamento de payload de 5/8/10× e janela de execução (`sempre`, `00h–06h` ou
+`18h–06h`). A capacidade mostra dados ativos, ocupação física e artefatos órfãos
+separadamente; a limpeza exige confirmação e preserva bancos compartilhados e
+JARs de origem. Tudo é persistido por workspace e congelado no início do job. A
 concorrência Java permanece fixa em 1 processo e o subprocesso usa prioridade
 baixa por padrão.
 Antes de começar, o Studio exige Java 17 e ao
@@ -555,6 +558,10 @@ local fresca. Esse atalho não substitui a indexação local.
 ```powershell
 # Ajustar o orçamento gerado (máximo contratual: 10×)
 .\.venv\Scripts\vr-norte.exe --root VRProject set-erp-code-storage-budget --multiplier 8
+
+# Auditar e, após revisar a lista, limpar somente payload sem referência ativa
+.\.venv\Scripts\vr-norte.exe --root VRProject inspect-erp-code-orphans
+.\.venv\Scripts\vr-norte.exe --root VRProject clean-erp-code-orphans --approve
 
 # Exportar/importar o índice offline sem transportar os JARs
 .\.venv\Scripts\vr-norte.exe --root VRProject export-erp-code-index 4.1.0 D:\Transfer\4.1.0.vridx

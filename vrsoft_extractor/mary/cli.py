@@ -247,6 +247,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     storage_budget.add_argument("--multiplier", type=int, required=True)
     sub.add_parser(
+        "inspect-erp-code-orphans",
+        help="Lista artefatos gerados que não possuem referência ativa",
+    )
+    orphan_cleanup = sub.add_parser(
+        "clean-erp-code-orphans",
+        help="Remove somente artefatos gerados comprovadamente órfãos",
+    )
+    orphan_cleanup.add_argument(
+        "--approve",
+        action="store_true",
+        help="Confirma explicitamente a limpeza dos dados regeneráveis",
+    )
+    sub.add_parser(
         "doctor-code-analysis",
         help="Verifica Java 17 isolado, Vineflower e CFR sem alterar o sistema",
     )
@@ -952,6 +965,19 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = ErpReleaseCatalog(settings.root).set_storage_budget_multiplier(
                 args.multiplier
+            )
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "inspect-erp-code-orphans":
+        result = ErpReleaseCatalog(settings.root).inspect_orphaned_index_data()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result["errors"] else 2
+    elif args.command == "clean-erp-code-orphans":
+        try:
+            result = ErpReleaseCatalog(settings.root).purge_orphaned_index_data(
+                approved=args.approve
             )
         except ErpReleaseError as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))

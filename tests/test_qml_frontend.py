@@ -1222,6 +1222,24 @@ class QmlFrontendTest(unittest.TestCase):
                 [item["value"] for item in bridge.codeProcessingWindowOptions],
                 ["always", "night", "off_hours"],
             )
+            bridge._apply_code_processing_coverage(
+                {
+                    "expected_jar_count": 1,
+                    "covered_jar_count": 0,
+                    "remaining_jar_count": 1,
+                    "capacity": {
+                        "used_bytes": 1024,
+                        "budget_bytes": 4096,
+                        "physical_used_bytes": 8192,
+                        "orphaned_bytes": 2048,
+                        "orphaned_item_count": 1,
+                        "orphan_scan_errors": [],
+                    },
+                }
+            )
+            self.assertTrue(bridge.codeProcessingCanCleanOrphans)
+            self.assertIn("Dados ativos: 0.0 MB de 0.0 MB", bridge.codeProcessingCapacitySummary)
+            self.assertEqual(bridge.codeProcessingCapacity["orphaned_bytes"], 2048)
             bridge.setCodeProcessingMaxHeapMb(4096)
             bridge.setCodeProcessingTimeoutSeconds(1200)
             bridge.setCodeProcessingMaxCpuCores(2)
@@ -1439,6 +1457,66 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "vrUltraRemoveReleaseDialog"', qml)
         self.assertIn("Os JARs de origem serão preservados", qml)
         self.assertIn("chat.removeCodeAnalysisRelease(releaseId)", qml)
+
+    def test_vr_ultra_orphan_cleanup_requires_confirmation(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "vrUltraCodeProcessingCapacity"', qml)
+        self.assertIn('objectName: "vrUltraCleanCodeProcessingOrphans"', qml)
+        self.assertIn('objectName: "vrUltraCleanOrphansDialog"', qml)
+        self.assertIn("chat.cleanCodeProcessingOrphans()", qml)
+        self.assertIn("Bancos compartilhados", qml)
+
+    def test_orphan_cleanup_runs_in_background_and_preserves_source_jar(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            orphan = (
+                settings.root
+                / "indice"
+                / "codigo"
+                / "decompilation"
+                / "plan-orphan"
+            )
+            orphan.mkdir(parents=True)
+            (orphan / "Old.java").write_text("class Old {}", encoding="utf-8")
+            source_jar = settings.root / "ERP" / "releases" / "r1" / "jars" / "ERP.jar"
+            bridge = ChatBridge(settings, database, preferences)
+            bridge._apply_code_processing_coverage(
+                {
+                    "expected_jar_count": 1,
+                    "covered_jar_count": 0,
+                    "remaining_jar_count": 1,
+                    "capacity": ErpReleaseCatalog(settings.root).storage_status(),
+                }
+            )
+
+            self.assertTrue(bridge.codeProcessingCanCleanOrphans)
+            self.assertTrue(bridge.cleanCodeProcessingOrphans())
+            self.assertTrue(bridge.releaseSnapshotRunning)
+            for _attempt in range(100):
+                self.application.processEvents()
+                QTest.qWait(25)
+                if not bridge.releaseSnapshotRunning:
+                    break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertFalse(orphan.exists())
+            self.assertTrue(source_jar.is_file())
+            self.assertIn("Limpeza concluída", bridge.releaseSnapshotStatus)
+            self.assertIn("JARs de origem foram preservados", bridge.releaseSnapshotStatus)
+            bridge.close()
 
     def test_release_removal_runs_in_background_and_selects_remaining_release(self):
         with TemporaryDirectory() as temporary:

@@ -369,6 +369,7 @@ class ChatBridge(QObject):
         self._code_processing_window = DEFAULT_CODE_PROCESSING_WINDOW
         self._code_processing_telemetry: dict[str, Any] = {}
         self._code_processing_eta: dict[str, Any] = {}
+        self._code_processing_capacity: dict[str, Any] = {}
         self._code_processing_pause_event = threading.Event()
         self._code_processing_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -782,6 +783,36 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def codeProcessingDiskMultiplier(self) -> int:  # noqa: N802
         return self._code_processing_disk_multiplier
+
+    @Property("QVariantMap", notify=stateChanged)
+    def codeProcessingCapacity(self) -> dict[str, Any]:  # noqa: N802
+        return dict(self._code_processing_capacity)
+
+    @Property(str, notify=stateChanged)
+    def codeProcessingCapacitySummary(self) -> str:  # noqa: N802
+        capacity = self._code_processing_capacity
+        if not capacity:
+            return ""
+        used = self._format_megabytes(int(capacity.get("used_bytes") or 0))
+        budget = self._format_megabytes(int(capacity.get("budget_bytes") or 0))
+        physical = self._format_megabytes(
+            int(capacity.get("physical_used_bytes") or 0)
+        )
+        orphaned = self._format_megabytes(
+            int(capacity.get("orphaned_bytes") or 0)
+        )
+        free = self._format_megabytes(int(capacity.get("free_disk_bytes") or 0))
+        return (
+            f"Dados ativos: {used} de {budget} · ocupação física: {physical} · "
+            f"órfãos removíveis: {orphaned} · disco livre: {free}"
+        )
+
+    @Property(bool, notify=stateChanged)
+    def codeProcessingCanCleanOrphans(self) -> bool:  # noqa: N802
+        return bool(
+            int(self._code_processing_capacity.get("orphaned_item_count") or 0) > 0
+            and not self._code_processing_capacity.get("orphan_scan_errors")
+        )
 
     @Property("QVariantList", notify=stateChanged)
     def codeProcessingWindowOptions(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -2915,6 +2946,7 @@ class ChatBridge(QObject):
         self._code_processing_attention_batches = []
         self._code_processing_retry_batch = ""
         self._code_processing_eta = {}
+        self._code_processing_capacity = {}
 
     @staticmethod
     def _format_megabytes(value: int) -> str:
@@ -2933,6 +2965,7 @@ class ChatBridge(QObject):
         blocked = list(coverage.get("blocked_plans") or [])
         active = list(coverage.get("active_plans") or [])
         self._code_processing_eta = dict(coverage.get("eta") or {})
+        self._code_processing_capacity = dict(coverage.get("capacity") or {})
         self._code_processing_total_jars = total
         self._code_processing_covered_jars = min(covered, total) if total else covered
         self._code_processing_progress = (
@@ -3735,6 +3768,45 @@ class ChatBridge(QObject):
         threading.Thread(target=remove, daemon=True).start()
         return True
 
+    @Slot(result=bool)
+    def cleanCodeProcessingOrphans(self) -> bool:  # noqa: N802
+        """Delete only unreferenced generated payload after UI confirmation."""
+
+        if (
+            self._release_snapshot_running
+            or self._code_processing_running
+            or not self.codeProcessingCanCleanOrphans
+        ):
+            return False
+        self._release_snapshot_running = True
+        self._release_snapshot_started_at = time.monotonic()
+        self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
+        self.stateChanged.emit()
+        results = self._release_snapshot_results
+        workspace = self._settings.root
+
+        def clean() -> None:
+            try:
+                result = ErpReleaseCatalog(workspace).purge_orphaned_index_data(
+                    approved=True
+                )
+            except Exception as exc:
+                results.put(
+                    {
+                        "operation": "clean_orphans",
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+                self._releaseSnapshotReady.emit()
+                return
+            results.put({"operation": "clean_orphans", "ok": True, **result})
+            self._releaseSnapshotReady.emit()
+
+        self._release_snapshot_poll_timer.start()
+        threading.Thread(target=clean, daemon=True).start()
+        return True
+
     @Slot()
     def _poll_release_snapshot(self) -> None:
         latest: dict[str, Any] | None = None
@@ -3750,6 +3822,23 @@ class ChatBridge(QObject):
         self._release_snapshot_started_at = 0.0
         self._release_snapshot_poll_timer.stop()
         release_id = str(latest.get("release_id") or "")
+        if str(latest.get("operation") or "") == "clean_orphans":
+            if bool(latest.get("ok")):
+                reclaimed = int(latest.get("reclaimed_bytes") or 0)
+                count = int(latest.get("removed_item_count") or 0)
+                self._release_snapshot_status = (
+                    f"Limpeza concluída: {count} artefato(s) órfão(s), "
+                    f"{reclaimed / (1024 * 1024):.1f} MB liberados. "
+                    "Os JARs de origem foram preservados."
+                )
+                self.refreshCodeProcessingStatus()
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível limpar os artefatos órfãos: {detail}"
+                )
+            self.stateChanged.emit()
+            return
         if str(latest.get("operation") or "") == "remove":
             if bool(latest.get("ok")):
                 self._refresh_code_analysis_releases()

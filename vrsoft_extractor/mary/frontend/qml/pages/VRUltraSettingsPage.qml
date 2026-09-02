@@ -713,6 +713,33 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    Text {
+                        objectName: "vrUltraCodeProcessingCapacity"
+                        Layout.fillWidth: true
+                        text: chat.codeProcessingCapacitySummary
+                        color: chat.codeProcessingCanCleanOrphans
+                            ? frontend.palette.warning
+                            : frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                        wrapMode: Text.WordWrap
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraCleanCodeProcessingOrphans"
+                        visible: chat.codeProcessingCanCleanOrphans
+                        text: "Limpar órfãos"
+                        enabled: !chat.codeProcessingRunning
+                            && !chat.codeProcessingStatusLoading
+                            && !chat.releaseSnapshotRunning
+                        onClicked: cleanOrphansDialog.open()
+                    }
+                }
+
                 Text {
                     Layout.fillWidth: true
                     visible: chat.codeProcessingFrozenManifestHash.length > 0
@@ -801,6 +828,7 @@ Item {
                             && !chat.codeProcessingStatusLoading
                             && !chat.releaseSnapshotRunning
                             && !chat.codeProcessingCanRetry
+                            && chat.codeProcessingCapacity.state !== "insufficient"
                             && chat.codeProcessingProgress < 100
                         onClicked: chat.startCodeProcessing()
                     }
@@ -835,6 +863,48 @@ Item {
         chat.refreshModels()
         chat.refreshCodeAnalysisReleases()
         chat.refreshCodeProcessingStatus()
+    }
+
+    Dialog {
+        id: cleanOrphansDialog
+        objectName: "vrUltraCleanOrphansDialog"
+        anchors.centerIn: parent
+        width: Math.min(500, root.width - Theme.spaceLg * 2)
+        modal: true
+        title: "Limpar artefatos órfãos?"
+        standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+            Text {
+                Layout.fillWidth: true
+                text: "Somente dados gerados sem referência ativa serão removidos. "
+                    + "Bancos compartilhados, releases ativas e JARs de origem serão preservados."
+                color: frontend.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.bodySize
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                VrButton { text: "Cancelar"; onClicked: cleanOrphansDialog.close() }
+                Item { Layout.fillWidth: true }
+                VrButton {
+                    objectName: "vrUltraConfirmCleanOrphansButton"
+                    text: "Limpar órfãos"
+                    variant: "danger"
+                    onClicked: {
+                        cleanOrphansDialog.close()
+                        chat.cleanCodeProcessingOrphans()
+                    }
+                }
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.warning
+            radius: Theme.radiusPopup
+        }
     }
 
     Dialog {
