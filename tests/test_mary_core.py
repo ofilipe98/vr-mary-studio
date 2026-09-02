@@ -1717,6 +1717,80 @@ class MaryCoreTest(unittest.TestCase):
             "\n\nPara colocar imagens, siga estes passos.",
         )
 
+    def test_codex_uses_item_lifecycle_to_classify_commentary_and_final_answer(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        for item_id, phase, delta in (
+            ("commentary-1", "commentary", "Vou verificar a versão."),
+            ("final-1", "final_answer", "A versão foi confirmada."),
+        ):
+            provider._handle_server_message(
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": "native-1",
+                        "item": {
+                            "id": item_id,
+                            "type": "agentMessage",
+                            "phase": phase,
+                            "text": "",
+                        },
+                    },
+                }
+            )
+            provider._handle_server_message(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": "native-1",
+                        "itemId": item_id,
+                        "delta": delta,
+                    },
+                }
+            )
+
+        deltas = [event for event in events if event.kind == "assistant_delta"]
+        self.assertEqual([event.payload["phase"] for event in deltas], [
+            "commentary",
+            "final_answer",
+        ])
+        self.assertEqual(deltas[0].text, "Vou verificar a versão.")
+        self.assertEqual(deltas[1].text, "A versão foi confirmada.")
+
+    def test_codex_exposes_file_patch_updates_as_tool_events(self):
+        provider = CodexProvider()
+        provider._native_to_local["native-1"] = "local-1"
+        events = []
+        provider._callbacks["local-1"] = events.append
+
+        provider._handle_server_message(
+            {
+                "method": "item/fileChange/patchUpdated",
+                "params": {
+                    "threadId": "native-1",
+                    "turnId": "turn-1",
+                    "itemId": "files-1",
+                    "changes": [
+                        {
+                            "path": "tests/test_trace.py",
+                            "kind": "add",
+                            "diff": "@@ -0,0 +1 @@\n+ok = True\n",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(events[0].kind, "tool_event")
+        self.assertEqual(events[0].payload["item"]["type"], "fileChange")
+        self.assertEqual(
+            events[0].payload["item"]["changes"][0]["path"],
+            "tests/test_trace.py",
+        )
+
     def test_effective_thread_settings_event_is_emitted_and_persisted(self):
         provider = CodexProvider()
         provider._native_to_local["native-1"] = "local-1"

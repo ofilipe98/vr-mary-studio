@@ -289,6 +289,8 @@ class ChatBridge(QObject):
         self._approval_request: dict[str, Any] = {}
         self._activity_steps: list[dict[str, str]] = []
         self._activity_items: list[dict[str, str]] = []
+        self._trace_items: list[dict[str, Any]] = []
+        self._trace_sequence = 0
         self._turn_segments: list[dict[str, Any]] = []
         self._turn_text = ""
         self._segment_cursor = 0
@@ -1092,6 +1094,10 @@ class ChatBridge(QObject):
     @Property("QVariantList", notify=stateChanged)
     def activityItems(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_items]
+
+    @Property("QVariantList", notify=stateChanged)
+    def traceItems(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._trace_items]
 
     @Property(str, notify=stateChanged)
     def reasoningText(self) -> str:  # noqa: N802
@@ -2169,6 +2175,7 @@ class ChatBridge(QObject):
         self.draftRestored.emit("")
         self._activity_steps = []
         self._activity_items = []
+        self._reset_trace_state()
         self._reasoning_text = ""
         self._reset_stream_state()
         self._agent_items = []
@@ -2215,6 +2222,7 @@ class ChatBridge(QObject):
             self._reset_stream_state()
             self._activity_steps = []
             self._activity_items = []
+            self._reset_trace_state()
             self._turn_segments = []
             self._turn_text = ""
             self._segment_cursor = 0
@@ -4320,6 +4328,7 @@ class ChatBridge(QObject):
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
         self._activity_items = []
+        self._reset_trace_state()
         self._reasoning_text = ""
         self._reset_stream_state()
         self._activity_started_at = time.monotonic()
@@ -4476,6 +4485,11 @@ class ChatBridge(QObject):
             delta = str(event.text or "")
             if not delta:
                 return
+            if str(event.payload.get("phase") or "") == "commentary":
+                self._record_trace_text_delta(event, item_type="commentary")
+                self._status_text = "Trabalhando…"
+                self._schedule_state_update()
+                return
             self._streaming_text += delta
             self._turn_text += delta
             self._stream_pending_text += delta
@@ -4495,6 +4509,7 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
         elif event.kind == "reasoning_delta":
             self._reasoning_text += str(event.text or "")
+            self._record_trace_text_delta(event, item_type="reasoning")
             self._status_text = "Pensando…"
             self._schedule_state_update()
         elif event.kind in {"tool_event", "provider_reconnecting", "provider_reconnected"}:
@@ -4597,6 +4612,10 @@ class ChatBridge(QObject):
         self._activity_started_at = 0.0
         self._activity_elapsed_seconds = 0
 
+    def _reset_trace_state(self) -> None:
+        self._trace_items = []
+        self._trace_sequence = 0
+
     def _schedule_state_update(self) -> None:
         if not self._state_update_timer.isActive():
             self._state_update_timer.start()
@@ -4658,6 +4677,9 @@ class ChatBridge(QObject):
         for item in self._activity_items:
             if item.get("state") == "running":
                 item["state"] = terminal_state
+        for item in self._trace_items:
+            if item.get("state") == "running":
+                item["state"] = terminal_state
         if self._stream_pending_text:
             self._status_text = "Finalizando resposta…"
             if not self._stream_timer.isActive():
@@ -4712,6 +4734,7 @@ class ChatBridge(QObject):
     def _restore_activity_from_history(self, conversation_id: str) -> None:
         self._activity_steps = []
         self._activity_items = []
+        self._reset_trace_state()
         self._turn_segments = []
         self._turn_text = ""
         self._segment_cursor = 0
@@ -4743,11 +4766,21 @@ class ChatBridge(QObject):
                     payload = {}
                 if kind == "reasoning_delta":
                     self._reasoning_text += text
+                    self._record_trace_text_delta(
+                        RuntimeEvent(conversation_id, kind, text, payload),
+                        item_type="reasoning",
+                    )
                 elif kind == "assistant_delta":
-                    self._turn_text += text
-                    self._streaming_text += text
-                    self._displayed_streaming_text += text
-                    self._advance_default_activity()
+                    if str(payload.get("phase") or "") == "commentary":
+                        self._record_trace_text_delta(
+                            RuntimeEvent(conversation_id, kind, text, payload),
+                            item_type="commentary",
+                        )
+                    else:
+                        self._turn_text += text
+                        self._streaming_text += text
+                        self._displayed_streaming_text += text
+                        self._advance_default_activity()
                 else:
                     self._record_execution_event(
                         RuntimeEvent(conversation_id, kind, text, payload),
@@ -4774,6 +4807,331 @@ class ChatBridge(QObject):
             for item in self._activity_items:
                 if item.get("state") == "running":
                     item["state"] = "completed"
+            for item in self._trace_items:
+                if item.get("state") == "running":
+                    item["state"] = "completed"
+
+    def _next_trace_id(self, prefix: str) -> str:
+        self._trace_sequence += 1
+        return f"{prefix}-{self._trace_sequence}"
+
+    @staticmethod
+    def _trace_payload_item(payload: dict[str, Any]) -> dict[str, Any]:
+        item = payload.get("item") or payload.get("part") or {}
+        return item if isinstance(item, dict) else {}
+
+    def _record_trace_text_delta(
+        self, event: RuntimeEvent, *, item_type: str
+    ) -> None:
+        text = str(event.text or "")
+        if not text:
+            return
+        payload = dict(event.payload or {})
+        raw_item = self._trace_payload_item(payload)
+        method = str(payload.get("method") or "")
+        effective_type = "plan" if method == "item/plan/delta" else item_type
+        identifier = str(
+            payload.get("itemId")
+            or payload.get("item_id")
+            or raw_item.get("id")
+            or ""
+        )
+        summary_index = payload.get("summaryIndex")
+        identity = identifier
+        if effective_type == "reasoning" and summary_index is not None:
+            identity = f"{identifier}:{summary_index}"
+        candidate = next(
+            (
+                item
+                for item in reversed(self._trace_items)
+                if identity
+                and item.get("sourceId") == identity
+                and item.get("kind") == "commentary"
+            ),
+            None,
+        )
+        if candidate is None and not identity:
+            last = self._trace_items[-1] if self._trace_items else None
+            if (
+                last is not None
+                and last.get("kind") == "commentary"
+                and last.get("itemType") == effective_type
+                and last.get("state") == "running"
+            ):
+                candidate = last
+        if candidate is None:
+            candidate = {
+                "id": self._next_trace_id(effective_type),
+                "sourceId": identity,
+                "kind": "commentary",
+                "itemType": effective_type,
+                "text": "",
+                "detail": "",
+                "state": "running",
+            }
+            self._trace_items.append(candidate)
+        candidate["text"] = str(candidate.get("text") or "") + text
+        candidate["state"] = "running"
+        self._trace_items = self._trace_items[-80:]
+
+    @staticmethod
+    def _diff_line_counts(diff: str) -> tuple[int, int]:
+        additions = 0
+        deletions = 0
+        for line in str(diff or "").splitlines():
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if line.startswith("+"):
+                additions += 1
+            elif line.startswith("-"):
+                deletions += 1
+        return additions, deletions
+
+    def _trace_display_path(self, raw_path: str) -> str:
+        value = str(raw_path or "").strip()
+        if not value:
+            return ""
+        path = Path(value)
+        workspace = Path(str(self._selected.get("workspace") or ""))
+        if path.is_absolute() and str(workspace):
+            try:
+                return str(
+                    path.resolve(strict=False).relative_to(
+                        workspace.resolve(strict=False)
+                    )
+                ).replace("\\", "/")
+            except ValueError:
+                pass
+        return value.replace("\\", "/")
+
+    @staticmethod
+    def _trace_folder_summary(files: list[dict[str, Any]]) -> str:
+        counts: dict[str, int] = {}
+        for item in files:
+            path = str(item.get("path") or "")
+            parts = [part for part in path.split("/") if part]
+            folder = parts[0] if len(parts) > 1 else "raiz"
+            counts[folder] = counts.get(folder, 0) + 1
+        return " · ".join(f"{name} {count}" for name, count in counts.items())
+
+    def _record_trace_file_changes(
+        self,
+        item: dict[str, Any],
+        identifier: str,
+        state: str,
+    ) -> None:
+        changes = item.get("changes") or []
+        if not isinstance(changes, list):
+            changes = []
+        card = next(
+            (entry for entry in self._trace_items if entry.get("kind") == "file_changes"),
+            None,
+        )
+        if card is None:
+            card = {
+                "id": self._next_trace_id("files"),
+                "sourceId": identifier,
+                "kind": "file_changes",
+                "itemType": "fileChange",
+                "text": "Arquivos alterados",
+                "detail": "",
+                "state": state,
+                "files": [],
+                "fileCount": 0,
+                "additions": 0,
+                "deletions": 0,
+                "folderSummary": "",
+                "hasDiff": False,
+            }
+            self._trace_items.append(card)
+        known = {
+            str(entry.get("path") or ""): dict(entry)
+            for entry in card.get("files") or []
+            if isinstance(entry, dict)
+        }
+        for raw_change in changes:
+            if not isinstance(raw_change, dict):
+                continue
+            path = self._trace_display_path(str(raw_change.get("path") or ""))
+            if not path:
+                continue
+            diff = str(raw_change.get("diff") or "")
+            additions, deletions = self._diff_line_counts(diff)
+            known[path] = {
+                "path": path,
+                "name": Path(path).name or path,
+                "kind": str(raw_change.get("kind") or "update"),
+                "diff": diff[:20000],
+                "additions": additions,
+                "deletions": deletions,
+            }
+        files = list(known.values())
+        card["files"] = files
+        card["fileCount"] = len(files)
+        card["additions"] = sum(int(entry.get("additions") or 0) for entry in files)
+        card["deletions"] = sum(int(entry.get("deletions") or 0) for entry in files)
+        card["folderSummary"] = self._trace_folder_summary(files)
+        card["hasDiff"] = any(str(entry.get("diff") or "") for entry in files)
+        card["detail"] = "\n\n".join(
+            f"{entry['path']}\n{entry['diff']}" for entry in files if entry.get("diff")
+        )[:40000]
+        card["text"] = (
+            f"{len(files)} arquivo" + ("s alterados" if len(files) != 1 else " alterado")
+            if files
+            else "Arquivos alterados"
+        )
+        card["state"] = state
+
+    @staticmethod
+    def _trace_action_label(item_type: str, count: int) -> str:
+        plural = count != 1
+        if item_type == "commandExecution":
+            return f"Executou {count} comando" + ("s" if plural else "")
+        if item_type in {"webSearch", "web_search"}:
+            return "Pesquisou na web" if count == 1 else f"Fez {count} pesquisas na web"
+        if item_type == "mcpToolCall":
+            return f"Usou {count} ferramenta MCP" + ("s" if plural else "")
+        return f"Usou {count} ferramenta" + ("s" if plural else "")
+
+    def _record_trace_tool_item(
+        self,
+        item: dict[str, Any],
+        identifier: str,
+        lifecycle: str,
+        state: str,
+        detail: str,
+    ) -> None:
+        item_type = str(item.get("type") or "")
+        if item_type == "agentMessage":
+            phase = str(item.get("phase") or "")
+            authoritative = str(item.get("text") or "")
+            if phase == "commentary" and authoritative:
+                source = str(item.get("id") or identifier)
+                existing = next(
+                    (
+                        entry
+                        for entry in reversed(self._trace_items)
+                        if entry.get("kind") == "commentary"
+                        and entry.get("sourceId") == source
+                    ),
+                    None,
+                )
+                if existing is None:
+                    existing = {
+                        "id": self._next_trace_id("commentary"),
+                        "sourceId": source,
+                        "kind": "commentary",
+                        "itemType": "commentary",
+                        "text": authoritative,
+                        "detail": "",
+                        "state": state,
+                    }
+                    self._trace_items.append(existing)
+                elif lifecycle.endswith("completed"):
+                    existing["text"] = authoritative
+                    existing["state"] = state
+            return
+        if item_type == "reasoning":
+            if lifecycle.endswith("completed"):
+                for entry in reversed(self._trace_items):
+                    if entry.get("kind") != "commentary" or entry.get("itemType") not in {
+                        "reasoning",
+                        "plan",
+                    }:
+                        continue
+                    if identifier and not str(entry.get("sourceId") or "").startswith(
+                        identifier
+                    ):
+                        continue
+                    entry["state"] = state
+                    if identifier:
+                        break
+            return
+        if item_type == "fileChange":
+            self._record_trace_file_changes(item, identifier, state)
+            return
+        category = item_type or "tool"
+        target = next(
+            (
+                entry
+                for entry in reversed(self._trace_items)
+                if identifier
+                and identifier in list(entry.get("memberIds") or [])
+            ),
+            None,
+        )
+        if target is None:
+            last = self._trace_items[-1] if self._trace_items else None
+            if (
+                last is not None
+                and last.get("kind") == "action_group"
+                and last.get("itemType") == category
+                and (identifier or not lifecycle.endswith("completed"))
+            ):
+                target = last
+        if target is None:
+            target = {
+                "id": self._next_trace_id("actions"),
+                "sourceId": identifier,
+                "kind": "action_group",
+                "itemType": category,
+                "text": "",
+                "detail": "",
+                "state": state,
+                "memberIds": [],
+            }
+            self._trace_items.append(target)
+        members = list(target.get("memberIds") or [])
+        if identifier and identifier not in members:
+            members.append(identifier)
+        target["memberIds"] = members
+        count = len(members) or 1
+        target["text"] = self._trace_action_label(category, count)
+        if detail:
+            details = [part for part in str(target.get("detail") or "").split("\n\n") if part]
+            if detail not in details:
+                details.append(detail)
+            target["detail"] = "\n\n".join(details)[:12000]
+        target["state"] = state
+        self._trace_items = self._trace_items[-80:]
+
+    def _record_trace_status_event(self, event: RuntimeEvent, message: str) -> None:
+        if not message:
+            return
+        base_kind = str(event.kind or "")
+        for suffix in ("_started", "_completed", "_failed"):
+            if base_kind.endswith(suffix):
+                base_kind = base_kind[: -len(suffix)]
+                break
+        source = str(
+            event.payload.get("agent_id")
+            or event.payload.get("id")
+            or event.payload.get("run_id")
+            or base_kind
+        )
+        existing = next(
+            (
+                item
+                for item in reversed(self._trace_items)
+                if item.get("kind") == "status" and item.get("sourceId") == source
+            ),
+            None,
+        )
+        if existing is None:
+            existing = {
+                "id": self._next_trace_id("status"),
+                "sourceId": source,
+                "kind": "status",
+                "itemType": base_kind,
+                "text": message,
+                "detail": "",
+                "state": self._event_state(event.kind),
+            }
+            self._trace_items.append(existing)
+        else:
+            existing["text"] = message
+            existing["state"] = self._event_state(event.kind)
+        self._trace_items = self._trace_items[-80:]
 
     def _record_execution_event(
         self, event: RuntimeEvent, *, emit_state: bool = True
@@ -4907,6 +5265,7 @@ class ChatBridge(QObject):
                 }
             )
             self._activity_items = self._activity_items[-60:]
+            self._record_trace_status_event(event, message)
         if event.kind.endswith("_completed") and any(
             step.get("state") == "pending" for step in self._activity_steps
         ):
@@ -4976,6 +5335,13 @@ class ChatBridge(QObject):
             if rendered and rendered not in detail_values:
                 detail_values.append(rendered)
         detail = "\n\n".join(detail_values)[:4000]
+        self._record_trace_tool_item(
+            item,
+            identifier,
+            lifecycle,
+            state,
+            detail,
+        )
         existing = next(
             (
                 candidate
@@ -4985,7 +5351,6 @@ class ChatBridge(QObject):
             None,
         )
         if existing is None:
-            self._record_turn_tool_segment(item_type)
             self._activity_items.append(
                 {
                     "id": identifier,
@@ -5234,7 +5599,12 @@ class ChatBridge(QObject):
                 for row in rows
                 if str(row["role"] or "") != "system"
             ]
-        if self._activity_steps or self._activity_items or self._reasoning_text:
+        if (
+            self._activity_steps
+            or self._activity_items
+            or self._trace_items
+            or self._reasoning_text
+        ):
             assistant_index = next(
                 (
                     index

@@ -289,7 +289,6 @@ Item {
                 Button {
                     id: settingsReturnButton
                     objectName: "settingsReturnButton"
-                    visible: root.settingsActive
                     Layout.fillWidth: true
                     implicitHeight: 38
                     padding: 8
@@ -321,19 +320,6 @@ Item {
                         color: settingsReturnButton.down || settingsReturnButton.hovered
                             ? frontend.palette.chatControl : "transparent"
                     }
-                }
-
-                VrIconButton {
-                    visible: !root.settingsActive
-                    Layout.alignment: Qt.AlignLeft
-                    implicitWidth: 38
-                    implicitHeight: 38
-                    iconKind: "settings"
-                    foreground: frontend.palette.navMuted
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Configurações"
-                    Accessible.name: "Abrir Configurações"
-                    onClicked: frontend.setCurrentPage(7)
                 }
             }
         }

@@ -12,20 +12,19 @@ Rectangle {
     property string elapsedLabel: "0s"
     property bool running: false
     property bool expanded: true
-    property int recentCount: 6
+    property int recentCount: 12
     property bool logExpanded: false
     readonly property int hiddenCount: Math.max(0, items.length - recentCount)
     signal toggleRequested()
 
-    implicitHeight: content.implicitHeight + 4
+    implicitHeight: content.implicitHeight
     color: "transparent"
 
     ColumnLayout {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: 5
+        spacing: 10
 
         Rectangle {
             id: activityHeader
@@ -36,18 +35,8 @@ Rectangle {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 3
-                anchors.rightMargin: 5
                 spacing: 8
 
-                VrLineIcon {
-                    Layout.preferredWidth: 14
-                    Layout.preferredHeight: 14
-                    kind: root.running ? "auto"
-                        : root.expanded ? "chevronDown" : "chevronUp"
-                    foreground: root.running
-                        ? frontend.palette.brandOrange : frontend.palette.mutedText
-                }
                 Text {
                     Layout.fillWidth: true
                     text: root.headerText()
@@ -58,13 +47,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
-                Text {
-                    visible: root.items.length > 0
-                    text: root.completedItemCount() + "/" + root.items.length
-                    color: frontend.palette.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(9)
-                }
+
                 VrLineIcon {
                     Layout.preferredWidth: 12
                     Layout.preferredHeight: 12
@@ -78,55 +61,53 @@ Rectangle {
         }
 
         Rectangle {
+            visible: root.expanded
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: frontend.palette.chatDivider
-            opacity: 0.65
+            opacity: 0.55
         }
 
         ColumnLayout {
             visible: root.expanded
             Layout.fillWidth: true
-            Layout.leftMargin: 24
-            Layout.rightMargin: 8
-            spacing: 7
+            spacing: 14
 
-            Text {
-                visible: root.reasoningText.trim().length > 0
+            TextEdit {
+                visible: root.items.length === 0
+                    && root.reasoningText.trim().length > 0
                 Layout.fillWidth: true
                 text: root.reasoningText
-                textFormat: Text.PlainText
+                textFormat: TextEdit.MarkdownText
+                readOnly: true
+                activeFocusOnPress: false
+                wrapMode: TextEdit.Wrap
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
-                lineHeightMode: Text.ProportionalHeight
-                lineHeight: 1.35
-                horizontalAlignment: Text.AlignLeft
-                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.fontSize(13)
             }
 
             Rectangle {
                 visible: root.hiddenCount > 0
                 Layout.fillWidth: true
-                Layout.preferredHeight: 24
+                Layout.preferredHeight: 25
                 radius: 7
                 color: logToggleHover.hovered ? frontend.palette.hover : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
                     spacing: 6
-
                     VrLineIcon {
                         Layout.preferredWidth: 11
                         Layout.preferredHeight: 11
-                        kind: root.logExpanded ? "chevronUp" : "chevronRight"
+                        kind: root.logExpanded ? "chevronDown" : "chevronRight"
                         foreground: frontend.palette.mutedText
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: "+" + root.hiddenCount + " entradas anteriores de log"
+                        text: root.logExpanded
+                            ? "Ocultar atividades anteriores"
+                            : "+" + root.hiddenCount + " atividades anteriores"
                         color: frontend.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
@@ -139,101 +120,170 @@ Rectangle {
 
             Repeater {
                 model: root.visibleItems()
-                delegate: ColumnLayout {
-                    id: activityItem
+
+                Loader {
                     required property var modelData
-                    property bool detailExpanded: false
-                    readonly property bool isCommand:
-                        String(modelData.itemType || "") === "commandExecution"
                     Layout.fillWidth: true
-                    spacing: 4
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        VrLineIcon {
-                            Layout.preferredWidth: 13
-                            Layout.preferredHeight: 13
-                            kind: root.itemIcon(activityItem.modelData)
-                            foreground: root.stateColor(activityItem.modelData.state)
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: activityItem.isCommand
-                                ? "bash" : (activityItem.modelData.text || "Atividade")
-                            color: activityItem.modelData.state === "running"
-                                ? frontend.palette.text : frontend.palette.mutedText
-                            font.family: activityItem.isCommand
-                                ? "Cascadia Mono" : Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(
-                                activityItem.isCommand ? 10 : 10)
-                            font.weight: activityItem.modelData.state === "running"
-                                && !activityItem.isCommand
-                                ? Font.DemiBold : Font.Normal
-                            wrapMode: Text.WordWrap
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            text: root.stateLabel(activityItem.modelData.state)
-                            color: root.stateColor(activityItem.modelData.state)
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(9)
-                        }
-                        VrLineIcon {
-                            visible: String(activityItem.modelData.detail || "").length > 0
-                            Layout.preferredWidth: 11
-                            Layout.preferredHeight: 11
-                            kind: activityItem.detailExpanded ? "chevronDown" : "chevronUp"
-                            foreground: frontend.palette.mutedText
-                        }
-                        TapHandler {
-                            enabled: String(activityItem.modelData.detail || "").length > 0
-                            onTapped: activityItem.detailExpanded = !activityItem.detailExpanded
-                        }
-                    }
-
-                    Rectangle {
-                        visible: activityItem.detailExpanded
-                            && String(activityItem.modelData.detail || "").length > 0
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: detailText.implicitHeight + 14
-                        radius: 7
-                        color: frontend.palette.surfaceRaised
-                        border.width: 1
-                        border.color: frontend.palette.chatBorder
-
-                        Text {
-                            id: detailText
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: 9
-                            anchors.rightMargin: 9
-                            text: activityItem.modelData.detail || ""
-                            color: frontend.palette.mutedText
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: Theme.fontSize(9)
-                            wrapMode: Text.WrapAnywhere
-                        }
+                    sourceComponent: String(modelData.kind || "") === "commentary"
+                        ? commentaryComponent
+                        : String(modelData.kind || "") === "file_changes"
+                            ? changedFilesComponent : actionComponent
+                    onLoaded: {
+                        if (item) item.modelData = modelData
                     }
                 }
             }
         }
     }
 
-    function completedItemCount() {
-        var completed = 0
-        for (var index = 0; index < root.items.length; ++index) {
-            var state = String(root.items[index].state || "")
-            if (state === "completed") completed += 1
+    Component {
+        id: commentaryComponent
+
+        TextEdit {
+            id: commentaryText
+            property var modelData: ({})
+            text: String(modelData.text || "")
+            textFormat: TextEdit.MarkdownText
+            readOnly: true
+            activeFocusOnPress: false
+            selectByMouse: true
+            wrapMode: TextEdit.Wrap
+            color: frontend.palette.text
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSize(13)
+            font.weight: Font.Normal
+            onLinkActivated: link => {
+                if (studio) studio.openExternalUrl(link)
+            }
+            onTextChanged: frontend.styleMessageDocument(
+                textDocument,
+                String(modelData.text || "")
+            )
+            Connections {
+                target: frontend
+                function onThemeChanged() {
+                    frontend.styleMessageDocument(
+                        commentaryText.textDocument,
+                        String(commentaryText.modelData.text || "")
+                    )
+                }
+                function onTypographyChanged() {
+                    frontend.styleMessageDocument(
+                        commentaryText.textDocument,
+                        String(commentaryText.modelData.text || "")
+                    )
+                }
+            }
         }
-        return completed
+    }
+
+    Component {
+        id: actionComponent
+
+        Item {
+            id: actionRoot
+            property var modelData: ({})
+            property bool detailExpanded: false
+            implicitHeight: actionColumn.implicitHeight
+
+            ColumnLayout {
+                id: actionColumn
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: 6
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 27
+                    radius: 7
+                    color: actionHover.hovered ? frontend.palette.hover : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 2
+                        anchors.rightMargin: 2
+                        spacing: 8
+
+                        VrLineIcon {
+                            Layout.preferredWidth: 13
+                            Layout.preferredHeight: 13
+                            kind: root.itemIcon(actionRoot.modelData)
+                            foreground: actionRoot.modelData.state === "running"
+                                ? frontend.palette.brandOrange : frontend.palette.mutedText
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: String(actionRoot.modelData.text || "Atividade")
+                            color: frontend.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(11)
+                            font.weight: actionRoot.modelData.state === "running"
+                                ? Font.DemiBold : Font.Normal
+                            elide: Text.ElideRight
+                        }
+
+                        VrLineIcon {
+                            visible: String(actionRoot.modelData.detail || "").length > 0
+                            Layout.preferredWidth: 11
+                            Layout.preferredHeight: 11
+                            kind: actionRoot.detailExpanded ? "chevronDown" : "chevronRight"
+                            foreground: frontend.palette.mutedText
+                        }
+                    }
+
+                    HoverHandler { id: actionHover }
+                    TapHandler {
+                        enabled: String(actionRoot.modelData.detail || "").length > 0
+                        onTapped: actionRoot.detailExpanded = !actionRoot.detailExpanded
+                    }
+                }
+
+                Rectangle {
+                    visible: actionRoot.detailExpanded
+                        && String(actionRoot.modelData.detail || "").length > 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(actionDetail.implicitHeight + 18, 260)
+                    radius: 8
+                    color: frontend.palette.surfaceRaised
+                    border.width: 1
+                    border.color: frontend.palette.chatBorder
+                    clip: true
+
+                    TextEdit {
+                        id: actionDetail
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        text: String(actionRoot.modelData.detail || "")
+                        textFormat: TextEdit.PlainText
+                        readOnly: true
+                        selectByMouse: true
+                        wrapMode: TextEdit.WrapAnywhere
+                        color: frontend.palette.mutedText
+                        font.family: "Cascadia Mono"
+                        font.pixelSize: Theme.fontSize(9)
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: changedFilesComponent
+
+        VrChangedFilesCard {
+            property var modelData: ({})
+            files: modelData.files || []
+            fileCount: Number(modelData.fileCount || 0)
+            additions: Number(modelData.additions || 0)
+            deletions: Number(modelData.deletions || 0)
+            folderSummary: String(modelData.folderSummary || "")
+            hasDiff: Boolean(modelData.hasDiff)
+        }
     }
 
     function headerText() {
-        if (root.running) return "Trabalhando por " + root.elapsedLabel
+        if (root.running) return "Trabalhando há " + root.elapsedLabel
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
@@ -242,32 +292,16 @@ Rectangle {
 
     function itemIcon(item) {
         var itemType = String(item.itemType || "")
-        if (itemType === "fileChange") return "edit"
         if (itemType === "commandExecution") return "terminal"
         if (itemType === "webSearch" || itemType === "web_search") return "search"
-        if (itemType === "reasoning") return "auto"
-        if (String(item.kind || "") === "tool") return "terminal"
-        return "task"
+        if (itemType === "fileChange") return "edit"
+        if (String(item.kind || "") === "status") return "task"
+        return "auto"
     }
 
     function visibleItems() {
         if (root.logExpanded || root.items.length <= root.recentCount)
             return root.items
         return root.items.slice(root.items.length - root.recentCount)
-    }
-
-    function stateColor(state) {
-        if (state === "completed") return frontend.palette.success
-        if (state === "error" || state === "cancelled") return frontend.palette.danger
-        if (state === "running") return frontend.palette.brandOrange
-        return frontend.palette.mutedText
-    }
-
-    function stateLabel(state) {
-        if (state === "completed") return "concluído"
-        if (state === "error") return "falhou"
-        if (state === "cancelled") return "interrompido"
-        if (state === "running") return "agora"
-        return ""
     }
 }

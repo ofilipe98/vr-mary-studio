@@ -609,7 +609,7 @@ Item {
                         visible: messageItem.role === "activity"
                         width: Math.min(parent.width - 28, 760)
                         anchors.horizontalCenter: parent.horizontalCenter
-                        items: chat.activityItems
+                        items: chat.traceItems
                         reasoningText: chat.reasoningText
                         statusText: chat.statusText
                         elapsedLabel: chat.activityElapsedLabel
@@ -877,7 +877,9 @@ Item {
 
             VrTaskBar {
                 id: taskBar
-                visible: chat.activitySteps.length > 0 && !root.taskBarDismissed
+                visible: chat.turnRunning
+                    && chat.activitySteps.length > 0
+                    && !root.taskBarDismissed
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
                 anchors.bottomMargin: 8

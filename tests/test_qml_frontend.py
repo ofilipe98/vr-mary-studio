@@ -2375,6 +2375,249 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("3 resultados", item["detail"])
             self.assertIn("VRProject/manual.md", bridge.activityItems[1]["detail"])
 
+    def test_chat_bridge_builds_t3_style_trace_without_mixing_final_answer(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Trace", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    "Analisando a estrutura atual.",
+                    {"itemId": "reasoning-1", "summaryIndex": 0},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando iniciado",
+                    {
+                        "lifecycle": "item/started",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "rg -n reasoning vrsoft_extractor",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando concluído",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "rg -n reasoning vrsoft_extractor",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "O trace já preserva a ordem dos eventos.",
+                    {"itemId": "commentary-1", "phase": "commentary"},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Arquivo alterado",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "files-1",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "tests/test_trace.py",
+                                    "kind": "update",
+                                    "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                }
+                            ],
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Implementação concluída.",
+                    {"itemId": "final-1", "phase": "final_answer"},
+                ),
+            ):
+                bridge._on_runtime_event(event)
+
+            self.assertEqual(
+                [item["kind"] for item in bridge.traceItems],
+                ["commentary", "action_group", "commentary", "file_changes"],
+            )
+            self.assertEqual(bridge.traceItems[1]["text"], "Executou 1 comando")
+            self.assertEqual(bridge.traceItems[3]["fileCount"], 1)
+            self.assertEqual(bridge.traceItems[3]["additions"], 1)
+            self.assertEqual(bridge.traceItems[3]["deletions"], 1)
+            self.assertEqual(bridge._streaming_text, "Implementação concluída.")
+            self.assertNotIn("O trace já preserva", bridge._streaming_text)
+
+    def test_chat_bridge_restores_the_same_trace_order_from_runtime_events(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Histórico", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(conversation_id, "user", "Revise o trace")
+            database.add_message(conversation_id, "assistant", "Trace revisado")
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    "Conferindo os eventos.",
+                    {"itemId": "reasoning-1", "summaryIndex": 0},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando concluído",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "pytest -q",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Os testes passaram.",
+                    {"itemId": "commentary-1", "phase": "commentary"},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Trace revisado",
+                    {"itemId": "final-1", "phase": "final_answer"},
+                ),
+                RuntimeEvent(conversation_id, "turn_completed", "Pronto"),
+            ):
+                database.add_event(event)
+
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            self.assertEqual(
+                [item["kind"] for item in bridge.traceItems],
+                ["commentary", "action_group", "commentary"],
+            )
+            self.assertTrue(all(item["state"] == "completed" for item in bridge.traceItems))
+            self.assertEqual(bridge._streaming_text, "Trace revisado")
+
+    def test_changed_files_trace_card_loads_with_real_diff_statistics(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Arquivos", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(conversation_id, "user", "Ajuste o arquivo")
+            database.add_message(conversation_id, "assistant", "Arquivo ajustado")
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Arquivo alterado",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "files-1",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "src/app.py",
+                                    "kind": "update",
+                                    "diff": "@@ -1 +1,2 @@\n-old\n+new\n+extra\n",
+                                }
+                            ],
+                        },
+                    },
+                ),
+                RuntimeEvent(conversation_id, "turn_completed", "Pronto"),
+            ):
+                database.add_event(event)
+
+            frontend_bridge = self._bridge(root, initial_page="Chat VR")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            self.assertEqual(chat_bridge.traceItems[0]["kind"], "file_changes")
+            engine = create_engine(frontend_bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.show()
+            try:
+                def find_qml_item(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_qml_item(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                card = None
+                content_item = window.property("contentItem")
+                for _attempt in range(20):
+                    self.application.processEvents()
+                    card = find_qml_item(content_item, "changedFilesCard")
+                    if card is not None:
+                        break
+                    QTest.qWait(50)
+                self.assertIsNotNone(card)
+                self.assertEqual(card.property("fileCount"), 1)
+                self.assertEqual(card.property("additions"), 2)
+                self.assertEqual(card.property("deletions"), 1)
+                self.assertTrue(card.property("hasDiff"))
+                card.setProperty("diffExpanded", True)
+                self.application.processEvents()
+                QTest.qWait(50)
+                self.assertTrue(card.property("diffExpanded"))
+                diff_body = find_qml_item(content_item, "changedFilesDiffBody")
+                self.assertIsNotNone(diff_body)
+            finally:
+                window.close()
+
     def test_chat_bridge_processes_background_turn_events_without_blocking_composer(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3350,6 +3593,9 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("visitedPages", hub_qml)
         self.assertIn('objectName: "settingsConversationSearch"', hub_qml)
         self.assertIn('objectName: "settingsReturnButton"', hub_qml)
+        self.assertIn('Accessible.name: "Retornar ao Chat VR"', hub_qml)
+        self.assertNotIn('visible: root.settingsActive', hub_qml)
+        self.assertNotIn('Accessible.name: "Abrir Configurações"', hub_qml)
         self.assertNotIn('title: "Chat VR"', hub_qml)
         self.assertNotIn("Repeater {\n                model: root.hubPages", hub_qml)
         for page in (
@@ -3479,6 +3725,10 @@ class QmlFrontendTest(unittest.TestCase):
             QTest.keyClick(quick_window, Qt.Key_Return)
             self.application.processEvents()
             self.assertEqual(tab_bar.property("currentIndex"), 1)
+
+            bridge.setCurrentPage(0)
+            self.application.processEvents()
+            self.assertTrue(settings_return.property("visible"))
 
             settings_return.click()
             self.application.processEvents()
