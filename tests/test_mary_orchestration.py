@@ -1605,6 +1605,43 @@ def test_opencode_native_session_event_is_persisted(tmp_path: Path) -> None:
     assert database.get_conversation(conversation_id)["native_id"] == "ses-persisted"
 
 
+def test_commentary_is_persisted_but_excluded_from_final_answer_buffer(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+
+    orchestrator._handle_event(
+        RuntimeEvent(
+            conversation_id,
+            "assistant_delta",
+            "Vou inspecionar os arquivos.",
+            {"itemId": "commentary-1", "phase": "commentary"},
+        )
+    )
+    orchestrator._handle_event(
+        RuntimeEvent(
+            conversation_id,
+            "assistant_delta",
+            "A correção foi concluída.",
+            {"itemId": "final-1", "phase": "final_answer"},
+        )
+    )
+
+    assert orchestrator._assistant_buffers[conversation_id] == [
+        "A correção foi concluída."
+    ]
+    rows = database.latest_turn_events(conversation_id)
+    assert [str(row["text"]) for row in rows] == [
+        "Vou inspecionar os arquivos.",
+        "A correção foi concluída.",
+    ]
+
+
 @pytest.mark.parametrize(
     ("use_vr", "expected_text"),
     [

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from .classpath import ClasspathPolicyStore
 from .code_index import JavaCodeIndex
@@ -33,6 +33,7 @@ class ErpCodeCoverage:
         store: DecompilationBatchStore | None = None,
         planner: DecompilationBatchPlanner | None = None,
         executor: DecompilationBatchExecutor | None = None,
+        adapters: Sequence[Any] | None = None,
         code_index: JavaCodeIndex | None = None,
     ) -> None:
         self.root = Path(root).resolve()
@@ -42,7 +43,10 @@ class ErpCodeCoverage:
             self.root, catalog=self.catalog, store=self.store
         )
         self.executor = executor or DecompilationBatchExecutor(
-            self.root, catalog=self.catalog, store=self.store
+            self.root,
+            catalog=self.catalog,
+            store=self.store,
+            adapters=adapters,
         )
         self.code_index = code_index or JavaCodeIndex(
             self.root, catalog=self.catalog, store=self.store
@@ -98,10 +102,17 @@ class ErpCodeCoverage:
             and bool(plan.get("attention_batches"))
         ]
         storage = self.catalog.storage_status()
+        expansion_multiplier = max(
+            1,
+            int(
+                storage.get("storage_budget_multiplier")
+                or self.catalog.storage_budget_multiplier
+            ),
+        )
         remaining_source_bytes = sum(
             int(artifact_by_path[jar].get("size_bytes") or 0) for jar in remaining
         )
-        conservative_remaining_bytes = remaining_source_bytes * 10
+        conservative_remaining_bytes = remaining_source_bytes * expansion_multiplier
         forecast_bytes = int(storage.get("used_bytes") or 0) + conservative_remaining_bytes
         budget = int(storage.get("budget_bytes") or 0)
         free_disk = int(shutil.disk_usage(self.root).free)
@@ -276,15 +287,23 @@ class ErpCodeCoverage:
             for item in manifest.get("artifacts", [])
             if isinstance(item, dict)
         }
-        reserve = sum(sizes[item] for item in selected) * 10
         capacity = status["capacity"]
+        expansion_multiplier = max(
+            1,
+            int(
+                capacity.get("storage_budget_multiplier")
+                or self.catalog.storage_budget_multiplier
+            ),
+        )
+        reserve = sum(sizes[item] for item in selected) * expansion_multiplier
         budget = int(capacity.get("budget_bytes") or 0)
         remaining_budget = int(capacity.get("remaining_bytes") or 0)
         free_disk = int(capacity.get("free_disk_bytes") or 0)
         if budget and reserve > remaining_budget:
             raise CodeCoverageError(
                 "O orçamento de índice não comporta a estimativa conservadora "
-                f"de {reserve} bytes para o próximo plano."
+                f"de {reserve} bytes para o próximo plano; disponíveis no limite: "
+                f"{remaining_budget} bytes."
             )
         if reserve > free_disk:
             raise CodeCoverageError(

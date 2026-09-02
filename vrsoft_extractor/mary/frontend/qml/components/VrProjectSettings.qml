@@ -53,19 +53,30 @@ Item {
         Button {
             id: projectSettingsBack
             objectName: "projectSettingsBack"
-            implicitWidth: projectsBreadcrumb.implicitWidth
+            implicitWidth: backContent.implicitWidth
             implicitHeight: 30
             padding: 0
             hoverEnabled: true
             onClicked: control.closeRequested()
-            contentItem: Text {
-                id: projectsBreadcrumb
-                text: "Projetos"
-                color: projectSettingsBack.hovered
-                    ? frontend.palette.text : frontend.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
-                verticalAlignment: Text.AlignVCenter
+            contentItem: RowLayout {
+                id: backContent
+                spacing: 6
+                VrLineIcon {
+                    Layout.preferredWidth: 14
+                    Layout.preferredHeight: 14
+                    kind: "back"
+                    foreground: projectSettingsBack.hovered
+                        ? frontend.palette.text : frontend.palette.mutedText
+                }
+                Text {
+                    id: projectsBreadcrumb
+                    text: "Voltar"
+                    color: projectSettingsBack.hovered
+                        ? frontend.palette.text : frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12)
+                    verticalAlignment: Text.AlignVCenter
+                }
             }
             background: Item { }
         }
@@ -208,7 +219,7 @@ Item {
                     spacing: 8
                     Item { Layout.fillWidth: true }
                     VrModelPicker {
-                        implicitWidth: 136
+                        implicitWidth: 188
                         implicitHeight: 30
                         outlined: true
                         popupAbove: false
@@ -217,8 +228,26 @@ Item {
                         onActivated: index => chat.setModel(index)
                         onFavoriteToggled: index => chat.toggleModelFavorite(index)
                     }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                Layout.preferredHeight: 58
+                spacing: 32
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+                    Text { text: "Esforço do modelo padrão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { Layout.fillWidth: true; text: "Define o nível de raciocínio inicial das novas conversas deste projeto."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); wrapMode: Text.WordWrap }
+                }
+                RowLayout {
+                    Layout.preferredWidth: 256
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
                     VrReasoningPicker {
-                        implicitWidth: 88
+                        implicitWidth: 188
                         implicitHeight: 30
                         outlined: true
                         popupAbove: false
@@ -287,8 +316,8 @@ Item {
                         Layout.fillWidth: true
                         text: control.projectPath
                         color: pathHover.hovered ? frontend.palette.text : frontend.palette.mutedText
-                        font.family: "Consolas"
-                        font.pixelSize: Theme.fontSize(10)
+                        font.family: Theme.monospaceFontFamily
+                        font.pixelSize: Theme.monospaceFontSize(10)
                         elide: Text.ElideMiddle
                         HoverHandler { id: pathHover }
                         TapHandler { onTapped: control.openFolderRequested() }

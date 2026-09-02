@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import queue
 import re
 import sqlite3
@@ -78,6 +79,7 @@ _GLUED_SENTENCE_RE = re.compile(
 )
 ERP_JAR_SOURCE_VR_EXEC = "vr_exec"
 ERP_JAR_SOURCE_WORKSPACE = "workspace"
+MAX_FILE_SUGGESTION_ENTRIES = 50_000
 ERP_JAR_SCOPE_FULL_RELEASE = "full_release"
 ERP_JAR_SCOPE_SINGLE = "single_jar"
 DEFAULT_ERP_JAR_SOURCE_PATH = Path(r"C:\vr\exec")
@@ -180,6 +182,10 @@ class ConversationListModel(_MappingListModel):
         "workspace",
         "projectLabel",
         "updatedAt",
+        "editing",
+        "pinned",
+        "section",
+        "startedAtEpoch",
     )
 
 
@@ -241,6 +247,8 @@ class ChatBridge(QObject):
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     conversationArchived = Signal(str)
+    draftRestored = Signal(str)
+    browserNavigationRequested = Signal(str)
 
     def __init__(
         self,
@@ -268,6 +276,7 @@ class ChatBridge(QObject):
         self._selected: dict[str, Any] = {}
         self._draft = False
         self._active_turns: set[str] = set()
+        self._active_turn_started_epochs: dict[str, float] = {}
         self._turn_running = False
         self._running_conversation_id = ""
         self._closed = False
@@ -280,6 +289,8 @@ class ChatBridge(QObject):
         self._approval_request: dict[str, Any] = {}
         self._activity_steps: list[dict[str, str]] = []
         self._activity_items: list[dict[str, str]] = []
+        self._trace_items: list[dict[str, Any]] = []
+        self._trace_sequence = 0
         self._turn_segments: list[dict[str, Any]] = []
         self._turn_text = ""
         self._segment_cursor = 0
@@ -360,6 +371,7 @@ class ChatBridge(QObject):
         self._code_processing_window = DEFAULT_CODE_PROCESSING_WINDOW
         self._code_processing_telemetry: dict[str, Any] = {}
         self._code_processing_eta: dict[str, Any] = {}
+        self._code_processing_capacity: dict[str, Any] = {}
         self._code_processing_pause_event = threading.Event()
         self._code_processing_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -381,6 +393,8 @@ class ChatBridge(QObject):
         self._load_research_config()
         self._apply_research_config()
         self._attachments: list[dict[str, str]] = []
+        self._draft_records = self._load_draft_records()
+        self._pinned_conversation_ids = self._load_pinned_conversation_ids()
         self._extension_items: list[dict[str, Any]] = []
         self._selected_extension_keys: set[str] = set()
         self._extensions_loading = False
@@ -388,7 +402,7 @@ class ChatBridge(QObject):
         self._extension_catalog_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
         )
-        self._file_suggestions_cache: list[dict[str, str]] = []
+        self._file_suggestions_cache: list[dict[str, Any]] = []
         self._file_suggestions_root: Path | None = None
         self._file_suggestions_generation = 0
         self._file_suggestions_built_at = 0.0
@@ -514,6 +528,10 @@ class ChatBridge(QObject):
     @Property(bool, notify=selectionChanged)
     def isDraft(self) -> bool:  # noqa: N802
         return self._draft
+
+    @Property(bool, notify=selectionChanged)
+    def selectedPinned(self) -> bool:  # noqa: N802
+        return self._selected_conversation_id() in self._pinned_conversation_ids
 
     @Property(str, notify=selectionChanged)
     def selectedTitle(self) -> str:  # noqa: N802
@@ -768,6 +786,36 @@ class ChatBridge(QObject):
     def codeProcessingDiskMultiplier(self) -> int:  # noqa: N802
         return self._code_processing_disk_multiplier
 
+    @Property("QVariantMap", notify=stateChanged)
+    def codeProcessingCapacity(self) -> dict[str, Any]:  # noqa: N802
+        return dict(self._code_processing_capacity)
+
+    @Property(str, notify=stateChanged)
+    def codeProcessingCapacitySummary(self) -> str:  # noqa: N802
+        capacity = self._code_processing_capacity
+        if not capacity:
+            return ""
+        used = self._format_megabytes(int(capacity.get("used_bytes") or 0))
+        budget = self._format_megabytes(int(capacity.get("budget_bytes") or 0))
+        physical = self._format_megabytes(
+            int(capacity.get("physical_used_bytes") or 0)
+        )
+        orphaned = self._format_megabytes(
+            int(capacity.get("orphaned_bytes") or 0)
+        )
+        free = self._format_megabytes(int(capacity.get("free_disk_bytes") or 0))
+        return (
+            f"Dados ativos: {used} de {budget} · ocupação física: {physical} · "
+            f"órfãos removíveis: {orphaned} · disco livre: {free}"
+        )
+
+    @Property(bool, notify=stateChanged)
+    def codeProcessingCanCleanOrphans(self) -> bool:  # noqa: N802
+        return bool(
+            int(self._code_processing_capacity.get("orphaned_item_count") or 0) > 0
+            and not self._code_processing_capacity.get("orphan_scan_errors")
+        )
+
     @Property("QVariantList", notify=stateChanged)
     def codeProcessingWindowOptions(self) -> list[dict[str, Any]]:  # noqa: N802
         return [dict(item) for item in CODE_PROCESSING_WINDOW_OPTIONS]
@@ -968,32 +1016,37 @@ class ChatBridge(QObject):
     @Property(float, notify=stateChanged)
     def contextUsageFraction(self) -> float:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return 0.0
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        return min(1.0, used / window) if window else 0.0
+        return min(1.0, used / window)
+
+    @Property(bool, notify=stateChanged)
+    def hasContextWindow(self) -> bool:  # noqa: N802
+        row = self._selected_database_row()
+        return bool(
+            row is not None
+            and int(row["context_used_tokens"] or 0) > 0
+            and self._provider_context_window() > 0
+        )
 
     @Property(str, notify=stateChanged)
     def contextUsageLabel(self) -> str:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return "Aguardando dados"
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        if not window:
-            return "Aguardando dados"
         return f"{used:,} / {window:,} tokens".replace(",", ".")
 
     @Property(str, notify=stateChanged)
     def contextUsageCompactLabel(self) -> str:  # noqa: N802
         row = self._selected_database_row()
-        if row is None:
+        window = self._provider_context_window()
+        if row is None or not window:
             return "Aguardando dados"
         used = int(row["context_used_tokens"] or 0)
-        window = int(row["context_window_tokens"] or 0)
-        if not window:
-            return "Aguardando dados"
         percentage = min(100, round(used * 100 / window))
         return f"{percentage}% · {self._compact_tokens(used)}/{self._compact_tokens(window)}"
 
@@ -1001,7 +1054,24 @@ class ChatBridge(QObject):
     def contextUsageNote(self) -> str:  # noqa: N802
         item = self._current_model_item()
         model_name = str(item.get("displayName") or self._model or "modelo")
-        return f"O contexto de {model_name} é compactado automaticamente quando necessário."
+        return f"Limite informado pelo provedor para {model_name}. Compactação ocorre quando necessário."
+
+    def _provider_context_window(self) -> int:
+        item = self._current_model_item()
+        candidates = (
+            item.get("contextWindow"),
+            item.get("context_window"),
+            item.get("contextWindowTokens"),
+            item.get("inputTokenLimit"),
+        )
+        for value in candidates:
+            try:
+                parsed = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return 0
 
     @Property(str, notify=stateChanged)
     def totalProcessedLabel(self) -> str:  # noqa: N802
@@ -1024,6 +1094,10 @@ class ChatBridge(QObject):
     @Property("QVariantList", notify=stateChanged)
     def activityItems(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_items]
+
+    @Property("QVariantList", notify=stateChanged)
+    def traceItems(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._trace_items]
 
     @Property(str, notify=stateChanged)
     def reasoningText(self) -> str:  # noqa: N802
@@ -1245,6 +1319,24 @@ class ChatBridge(QObject):
                     if not model_id:
                         continue
                     display_name = str(raw.get("displayName") or raw.get("display_name") or model_id)
+                    raw_limit = raw.get("limit") or raw.get("limits") or {}
+                    if not isinstance(raw_limit, dict):
+                        raw_limit = {}
+                    context_window = next(
+                        (
+                            value
+                            for value in (
+                                raw.get("contextWindow"),
+                                raw.get("context_window"),
+                                raw.get("contextWindowTokens"),
+                                raw.get("inputTokenLimit"),
+                                raw_limit.get("context"),
+                                raw_limit.get("contextWindow"),
+                            )
+                            if value not in (None, "")
+                        ),
+                        0,
+                    )
                     items.append({
                         "label": f"{display_name} · {provider_label}",
                         "displayName": display_name,
@@ -1255,6 +1347,7 @@ class ChatBridge(QObject):
                         "key": f"{provider_name}:{model_id}",
                         "efforts": raw.get("supportedReasoningEfforts") or raw.get("supported_reasoning_efforts") or [],
                         "serviceTiers": raw.get("serviceTiers") or raw.get("service_tiers") or [],
+                        "contextWindow": context_window,
                     })
             results.put(items)
 
@@ -1280,6 +1373,7 @@ class ChatBridge(QObject):
     @Slot(object)
     def _apply_model_catalog(self, values: object) -> None:
         items = [dict(item) for item in list(values or []) if isinstance(item, dict)]
+        enabled_providers = set(self._enabled_provider_names())
         if self._draft and not self._model:
             preferred = next(
                 (
@@ -1297,7 +1391,19 @@ class ChatBridge(QObject):
         if not any(str(item.get("key") or "") == current_key for item in items):
             current = self._model_items[self.modelIndex] if self._model_items else None
             if current:
-                items.insert(0, dict(current))
+                historical = dict(current)
+                historical["inactive"] = self._provider not in enabled_providers
+                items.insert(0, historical)
+        if self._draft and self._provider not in enabled_providers and items:
+            preferred = next(
+                (item for item in items if not item.get("inactive")), items[0]
+            )
+            self._provider = str(
+                preferred.get("provider") or next(iter(enabled_providers), "codex")
+            )
+            self._model = str(preferred.get("value") or "")
+            self._remember_current_chat_options()
+            items = [item for item in items if not item.get("inactive")]
         self._model_items = items or self._model_items
         self._restore_effort_for_current_model()
         if not self.serviceTierItems:
@@ -1416,7 +1522,7 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
 
     @Slot(str, result="QVariantList")
-    def fileSuggestions(self, query: str) -> list[dict[str, str]]:  # noqa: N802
+    def fileSuggestions(self, query: str) -> list[dict[str, Any]]:  # noqa: N802
         needle = str(query or "").strip().casefold()
         self._file_suggestions_query = needle
         if self._file_suggestions_stale() and not self._file_suggestions_timer.isActive():
@@ -1425,11 +1531,20 @@ class ChatBridge(QObject):
             # not inherit the refresh delay used after project mutations.
             initial_load = self._file_suggestions_root is None
             self._file_suggestions_timer.start(0 if initial_load else 500)
-        return [
-            {"label": item["relative"], "path": item["path"]}
-            for item in self._file_suggestions_cache
-            if not needle or needle in item["relative"].casefold()
-        ][:40]
+        visible = []
+        for item in self._file_suggestions_cache:
+            is_directory = bool(item.get("isDirectory"))
+            if needle and (is_directory or needle not in item["relative"].casefold()):
+                continue
+            visible.append({
+                "label": item["relative"],
+                "name": item.get("name") or Path(item["relative"]).name,
+                "path": item["path"],
+                "parent": item.get("parent") or "",
+                "depth": int(item.get("depth") or 0),
+                "isDirectory": is_directory,
+            })
+        return visible[:80 if needle else 600]
 
     def _file_suggestions_stale(self) -> bool:
         if self._file_suggestions_loading:
@@ -1467,14 +1582,46 @@ class ChatBridge(QObject):
 
         def scan() -> None:
             ignored = {".git", ".venv", "__pycache__", "node_modules", ".state"}
-            entries: list[dict[str, str]] = []
+            entries: list[dict[str, Any]] = []
             try:
-                for path in root.rglob("*"):
-                    if any(part in ignored for part in path.parts) or not path.is_file():
-                        continue
-                    relative = str(path.relative_to(root)).replace("\\", "/")
-                    entries.append({"relative": relative, "path": str(path)})
-                entries.sort(key=lambda item: item["relative"].casefold())
+                stop_scan = False
+                for current, directory_names, file_names in os.walk(
+                    root, topdown=True, followlinks=False
+                ):
+                    directory_names[:] = sorted(
+                        (
+                            name
+                            for name in directory_names
+                            if name.casefold() not in ignored
+                        ),
+                        key=str.casefold,
+                    )
+                    current_path = Path(current)
+                    for name, is_directory in (
+                        *((name, True) for name in directory_names),
+                        *((name, False) for name in sorted(file_names, key=str.casefold)),
+                    ):
+                        path = current_path / name
+                        relative_path = path.relative_to(root)
+                        relative = relative_path.as_posix()
+                        parent = relative_path.parent.as_posix()
+                        entries.append({
+                            "relative": relative,
+                            "name": name,
+                            "path": str(path),
+                            "parent": "" if parent == "." else parent,
+                            "depth": max(0, len(relative_path.parts) - 1),
+                            "isDirectory": is_directory,
+                        })
+                        if len(entries) >= MAX_FILE_SUGGESTION_ENTRIES:
+                            stop_scan = True
+                            break
+                    if stop_scan:
+                        break
+                entries.sort(key=lambda item: (
+                    tuple(part.casefold() for part in Path(item["relative"]).parts),
+                    not bool(item.get("isDirectory")),
+                ))
             except OSError:
                 entries = []
             # A Python worker must not emit through a QObject that may already
@@ -1510,7 +1657,11 @@ class ChatBridge(QObject):
         self._file_suggestions_cache = [
             {
                 "relative": str(item.get("relative") or ""),
+                "name": str(item.get("name") or ""),
                 "path": str(item.get("path") or ""),
+                "parent": str(item.get("parent") or ""),
+                "depth": int(item.get("depth") or 0),
+                "isDirectory": bool(item.get("isDirectory")),
             }
             for item in list(entries or [])
             if isinstance(item, dict) and item.get("relative")
@@ -1685,6 +1836,9 @@ class ChatBridge(QObject):
             for row in rows
             if str(row["status"] or "idle") == "running"
         }
+        for conversation_id in tuple(self._active_turn_started_epochs):
+            if conversation_id not in self._active_turns:
+                self._active_turn_started_epochs.pop(conversation_id, None)
         conversations: list[dict[str, Any]] = []
         for row in rows:
             workspace = self._settings.resolve_path(row["workspace"])
@@ -1704,9 +1858,20 @@ class ChatBridge(QObject):
             status = str(row["status"] or "idle")
             provider_label = PROVIDER_LABELS.get(provider, provider.title())
             model_name = str(row["model"] or provider_label)
+            conversation_id = str(row["id"])
+            if status == "running" and conversation_id not in self._active_turn_started_epochs:
+                try:
+                    started_epoch = datetime.fromisoformat(
+                        str(row["updated_at"] or "")
+                    ).timestamp()
+                except (TypeError, ValueError):
+                    started_epoch = time.time()
+                self._active_turn_started_epochs[conversation_id] = started_epoch
+            editing = conversation_id in self._draft_records
+            pinned = conversation_id in self._pinned_conversation_ids
             conversations.append(
                 {
-                    "conversationId": str(row["id"]),
+                    "conversationId": conversation_id,
                     "title": str(row["title"] or "Nova conversa"),
                     "subtitle": f"{project_label} · {provider_label} · {STATUS_LABELS.get(status, status.title())}",
                     "provider": provider_label,
@@ -1717,8 +1882,20 @@ class ChatBridge(QObject):
                     "workspace": str(workspace),
                     "projectLabel": project_label,
                     "updatedAt": str(row["updated_at"] or ""),
+                    "editing": editing,
+                    "pinned": pinned,
+                    "section": "Rascunhos" if editing else "Conversas",
+                    "startedAtEpoch": self._active_turn_started_epochs.get(
+                        conversation_id, 0.0
+                    ),
                 }
             )
+        conversations.sort(
+            key=lambda item: (
+                0 if item["editing"] else 1,
+                0 if item["pinned"] else 1,
+            )
+        )
         self._all_conversations = conversations
         self._apply_filter(selected_id)
 
@@ -1846,6 +2023,100 @@ class ChatBridge(QObject):
         self.refresh()
         return True
 
+    def _load_draft_records(self) -> dict[str, dict[str, Any]]:
+        raw = self._preferences.value("chat/drafts", "{}")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else dict(raw or {})
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return {
+            str(key): dict(value)
+            for key, value in values.items()
+            if str(key).strip() and isinstance(value, dict)
+        }
+
+    def _persist_draft_records(self) -> None:
+        self._preferences.setValue(
+            "chat/drafts",
+            json.dumps(self._draft_records, ensure_ascii=False, sort_keys=True),
+        )
+        self._preferences.sync()
+
+    def _load_pinned_conversation_ids(self) -> set[str]:
+        raw = self._preferences.value("chat/pinned_conversations", "[]")
+        try:
+            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return set()
+        return {str(value) for value in values if str(value).strip()}
+
+    def _persist_pinned_conversation_ids(self) -> None:
+        self._preferences.setValue(
+            "chat/pinned_conversations",
+            json.dumps(sorted(self._pinned_conversation_ids), ensure_ascii=False),
+        )
+        self._preferences.sync()
+
+    @Slot(str, result=bool)
+    def saveCurrentDraft(self, text: str) -> bool:  # noqa: N802
+        content = str(text or "")
+        conversation_id = self._selected_conversation_id()
+        if not content.strip() and not self._attachments:
+            if conversation_id and conversation_id in self._draft_records:
+                self._draft_records.pop(conversation_id, None)
+                self._persist_draft_records()
+                self.refresh()
+            return False
+        if not conversation_id:
+            workspace = self._project_scope or self._settings.root
+            try:
+                conversation_id = self._orchestrator.new_conversation(
+                    self._provider,
+                    self._model,
+                    self._effort,
+                    service_tier=self._service_tier,
+                    approval_profile=self._approval_profile,
+                    defer_provider_start=True,
+                    workspace=workspace,
+                    vr_mode=self._vr_mode,
+                )
+            except Exception as exc:
+                self._status_text = f"Falha ao salvar rascunho: {exc}"
+                self.stateChanged.emit()
+                return False
+        attachments = [dict(item) for item in self._attachments]
+        self._draft_records[conversation_id] = {
+            "text": content,
+            "attachments": attachments,
+            "savedAt": datetime.now().astimezone().isoformat(),
+        }
+        row = self._database.get_conversation(conversation_id)
+        has_messages = bool(self._database.messages(conversation_id))
+        if row is not None and not has_messages:
+            first_line = next(
+                (line.strip() for line in content.splitlines() if line.strip()), ""
+            )
+            title = first_line or (attachments[0]["name"] if attachments else "Nova conversa")
+            self._database.update_conversation(
+                conversation_id, title=title[:72].rstrip()
+            )
+        self._persist_draft_records()
+        self.refresh()
+        return True
+
+    @Slot()
+    def togglePinnedCurrent(self) -> None:  # noqa: N802
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id:
+            return
+        if conversation_id in self._pinned_conversation_ids:
+            self._pinned_conversation_ids.remove(conversation_id)
+        else:
+            self._pinned_conversation_ids.add(conversation_id)
+        self._persist_pinned_conversation_ids()
+        self.refresh()
+        self.selectionChanged.emit()
+
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
         self._remember_current_chat_options()
@@ -1901,8 +2172,10 @@ class ChatBridge(QObject):
         self._load_research_config()
         self._apply_research_config()
         self._attachments = []
+        self.draftRestored.emit("")
         self._activity_steps = []
         self._activity_items = []
+        self._reset_trace_state()
         self._reasoning_text = ""
         self._reset_stream_state()
         self._agent_items = []
@@ -1949,6 +2222,7 @@ class ChatBridge(QObject):
             self._reset_stream_state()
             self._activity_steps = []
             self._activity_items = []
+            self._reset_trace_state()
             self._turn_segments = []
             self._turn_text = ""
             self._segment_cursor = 0
@@ -1958,6 +2232,21 @@ class ChatBridge(QObject):
             self._invalidate_file_suggestions()
         self._selected_index = index
         self._selected = dict(selected)
+        draft_record = self._draft_records.get(str(selected["conversationId"]))
+        if changing_conversation:
+            if draft_record is not None:
+                self._attachments = [
+                    {
+                        "name": str(item.get("name") or Path(str(item.get("path") or "")).name),
+                        "path": str(item.get("path") or ""),
+                    }
+                    for item in list(draft_record.get("attachments") or [])
+                    if isinstance(item, dict) and str(item.get("path") or "")
+                ]
+                self.draftRestored.emit(str(draft_record.get("text") or ""))
+            else:
+                self._attachments = []
+                self.draftRestored.emit("")
         row = self._database.get_conversation(str(selected["conversationId"]))
         if row is not None:
             self._provider = str(row["provider"] or "codex")
@@ -1992,6 +2281,20 @@ class ChatBridge(QObject):
                 ),
             )
         self.stateChanged.emit()
+
+    @Slot(str)
+    def selectConversationId(self, conversation_id: str) -> None:  # noqa: N802
+        target = str(conversation_id or "")
+        index = next(
+            (
+                item_index
+                for item_index, item in enumerate(self._conversations._items)
+                if str(item.get("conversationId") or "") == target
+            ),
+            -1,
+        )
+        if index >= 0:
+            self.selectConversation(index)
 
     @Slot(int)
     def setEffort(self, index: int) -> None:  # noqa: N802
@@ -2651,6 +2954,7 @@ class ChatBridge(QObject):
         self._code_processing_attention_batches = []
         self._code_processing_retry_batch = ""
         self._code_processing_eta = {}
+        self._code_processing_capacity = {}
 
     @staticmethod
     def _format_megabytes(value: int) -> str:
@@ -2669,6 +2973,7 @@ class ChatBridge(QObject):
         blocked = list(coverage.get("blocked_plans") or [])
         active = list(coverage.get("active_plans") or [])
         self._code_processing_eta = dict(coverage.get("eta") or {})
+        self._code_processing_capacity = dict(coverage.get("capacity") or {})
         self._code_processing_total_jars = total
         self._code_processing_covered_jars = min(covered, total) if total else covered
         self._code_processing_progress = (
@@ -2942,15 +3247,30 @@ class ChatBridge(QObject):
             "wall_duration_ms": 0,
         }
         try:
-            doctor = JvmToolchain(self._settings.root).doctor()
+            toolchain = JvmToolchain(
+                self._settings.root,
+                app_dir=self._settings.app_dir,
+            )
+            doctor = toolchain.doctor()
             java_ready = bool((doctor.get("java") or {}).get("available"))
             decompiler_ready = any(
                 bool((doctor.get(name) or {}).get("available"))
                 for name in ("vineflower", "cfr")
             )
             if not java_ready or not decompiler_ready:
+                unavailable = []
+                for name, label in (
+                    ("java", "Java 17 isolado"),
+                    ("vineflower", "Vineflower"),
+                    ("cfr", "CFR"),
+                ):
+                    status = doctor.get(name) or {}
+                    if not bool(status.get("available")):
+                        detail = str(status.get("error") or "indisponível")
+                        unavailable.append(f"{label}: {detail}")
                 raise CodeCoverageError(
-                    "Java 17 isolado e ao menos um decompilador verificado são necessários."
+                    "Java 17 isolado e ao menos um decompilador verificado são necessários. "
+                    + " | ".join(unavailable)
                 )
             audit.record(
                 "toolchain_validated",
@@ -2968,7 +3288,15 @@ class ChatBridge(QObject):
                 storage_budget_multiplier=disk_multiplier,
             )
             catalog.set_storage_budget_multiplier(disk_multiplier)
-            manager = ErpCodeCoverage(self._settings.root, catalog=catalog)
+            manager = ErpCodeCoverage(
+                self._settings.root,
+                catalog=catalog,
+                adapters=(
+                    toolchain.adapters()
+                    if hasattr(toolchain, "adapters")
+                    else None
+                ),
+            )
             coverage = manager.status(release_id)
             self._require_frozen_code_manifest(coverage, manifest_hash)
             if retry_batch_id:
@@ -3304,7 +3632,7 @@ class ChatBridge(QObject):
 
     @Slot(str, result=bool)
     def snapshotCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
-        """Copy and inventory the selected local JAR directory off the UI thread."""
+        """Detect, categorize and inventory local JARs off the UI thread."""
 
         selected_release = str(release_id or "").strip()
         single_jar = self._code_analysis_snapshot_scope == ERP_JAR_SCOPE_SINGLE
@@ -3314,10 +3642,6 @@ class ChatBridge(QObject):
             else self.codeAnalysisJarSourcePath
         )
         if self._release_snapshot_running or self._code_processing_running:
-            return False
-        if not selected_release:
-            self._release_snapshot_status = "Informe o identificador da release."
-            self.stateChanged.emit()
             return False
         if not source:
             self._release_snapshot_status = (
@@ -3338,9 +3662,9 @@ class ChatBridge(QObject):
         self._release_snapshot_started_at = time.monotonic()
         self._release_snapshot_status = (
             (
-                f"Copiando e verificando {Path(source).name} localmente..."
+                f"Detectando aplicação e versão de {Path(source).name} localmente..."
                 if single_jar
-                else f"Copiando e verificando a release {selected_release} localmente..."
+                else "Detectando aplicações e compondo a release localmente..."
             )
         )
         self.stateChanged.emit()
@@ -3352,9 +3676,9 @@ class ChatBridge(QObject):
                 manifest = ErpReleaseCatalog(
                     workspace,
                     expected_jar_count=(1 if single_jar else EXPECTED_ERP_JAR_COUNT),
-                ).snapshot_release(
-                    selected_release,
+                ).snapshot_detected_release(
                     source,
+                    release_id=selected_release,
                     analysis_scope=(
                         ERP_JAR_SCOPE_SINGLE
                         if single_jar
@@ -3374,14 +3698,121 @@ class ChatBridge(QObject):
             results.put(
                 {
                     "ok": True,
-                    "release_id": selected_release,
+                    "release_id": str(manifest.get("release_id") or selected_release),
                     "jar_count": int(manifest.get("jar_count") or 0),
+                    "package_jar_count": int(manifest.get("package_jar_count") or 0),
+                    "base_release_id": str(manifest.get("base_release_id") or ""),
+                    "updated_applications": list(
+                        manifest.get("updated_applications") or []
+                    ),
                 }
             )
             self._releaseSnapshotReady.emit()
 
         self._release_snapshot_poll_timer.start()
         threading.Thread(target=snapshot, daemon=True).start()
+        return True
+
+    @Slot(str, result=bool)
+    def removeCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
+        """Remove an inventoried release after confirmation in the UI."""
+
+        selected_release = str(release_id or "").strip()
+        if (
+            not selected_release
+            or self._release_snapshot_running
+            or self._code_processing_running
+        ):
+            return False
+
+        available = {
+            str(item.get("releaseId") or "")
+            for item in self._code_analysis_release_items
+        }
+        if selected_release not in available:
+            self._release_snapshot_status = (
+                f"Não foi possível remover a release {selected_release}: "
+                "ela não está mais inventariada."
+            )
+            self.stateChanged.emit()
+            return False
+
+        self._release_snapshot_running = True
+        self._release_snapshot_started_at = time.monotonic()
+        self._release_snapshot_status = (
+            f"Removendo o índice da release {selected_release} localmente..."
+        )
+        self.stateChanged.emit()
+        results = self._release_snapshot_results
+        workspace = self._settings.root
+
+        def remove() -> None:
+            try:
+                result = ErpReleaseCatalog(workspace).remove_index(
+                    selected_release,
+                    approved=True,
+                )
+            except Exception as exc:
+                results.put(
+                    {
+                        "operation": "remove",
+                        "ok": False,
+                        "release_id": selected_release,
+                        "error": str(exc),
+                    }
+                )
+                self._releaseSnapshotReady.emit()
+                return
+            results.put(
+                {
+                    "operation": "remove",
+                    "ok": True,
+                    **result,
+                }
+            )
+            self._releaseSnapshotReady.emit()
+
+        self._release_snapshot_poll_timer.start()
+        threading.Thread(target=remove, daemon=True).start()
+        return True
+
+    @Slot(result=bool)
+    def cleanCodeProcessingOrphans(self) -> bool:  # noqa: N802
+        """Delete only unreferenced generated payload after UI confirmation."""
+
+        if (
+            self._release_snapshot_running
+            or self._code_processing_running
+            or not self.codeProcessingCanCleanOrphans
+        ):
+            return False
+        self._release_snapshot_running = True
+        self._release_snapshot_started_at = time.monotonic()
+        self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
+        self.stateChanged.emit()
+        results = self._release_snapshot_results
+        workspace = self._settings.root
+
+        def clean() -> None:
+            try:
+                result = ErpReleaseCatalog(workspace).purge_orphaned_index_data(
+                    approved=True
+                )
+            except Exception as exc:
+                results.put(
+                    {
+                        "operation": "clean_orphans",
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+                self._releaseSnapshotReady.emit()
+                return
+            results.put({"operation": "clean_orphans", "ok": True, **result})
+            self._releaseSnapshotReady.emit()
+
+        self._release_snapshot_poll_timer.start()
+        threading.Thread(target=clean, daemon=True).start()
         return True
 
     @Slot()
@@ -3399,6 +3830,50 @@ class ChatBridge(QObject):
         self._release_snapshot_started_at = 0.0
         self._release_snapshot_poll_timer.stop()
         release_id = str(latest.get("release_id") or "")
+        if str(latest.get("operation") or "") == "clean_orphans":
+            if bool(latest.get("ok")):
+                reclaimed = int(latest.get("reclaimed_bytes") or 0)
+                count = int(latest.get("removed_item_count") or 0)
+                self._release_snapshot_status = (
+                    f"Limpeza concluída: {count} artefato(s) órfão(s), "
+                    f"{reclaimed / (1024 * 1024):.1f} MB liberados. "
+                    "Os JARs de origem foram preservados."
+                )
+                self.refreshCodeProcessingStatus()
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível limpar os artefatos órfãos: {detail}"
+                )
+            self.stateChanged.emit()
+            return
+        if str(latest.get("operation") or "") == "remove":
+            if bool(latest.get("ok")):
+                self._refresh_code_analysis_releases()
+                self._preferences.setValue(
+                    self._workspace_research_preference("code_analysis_release"),
+                    self._code_analysis_release,
+                )
+                self._preferences.setValue(
+                    "research/code_analysis_enabled",
+                    self._code_analysis_enabled,
+                )
+                self._preferences.sync()
+                self._refresh_code_analysis_jar_sources()
+                self.refreshCodeProcessingStatus()
+                reclaimed = int(latest.get("reclaimed_bytes") or 0)
+                self._release_snapshot_status = (
+                    f"Release {release_id} removida do índice. "
+                    f"{reclaimed / (1024 * 1024):.1f} MB liberados; "
+                    "os JARs de origem foram preservados."
+                )
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível remover a release {release_id}: {detail}"
+                )
+            self.stateChanged.emit()
+            return
         if bool(latest.get("ok")):
             self._refresh_code_analysis_releases()
             available = {
@@ -3415,15 +3890,21 @@ class ChatBridge(QObject):
             self._refresh_code_analysis_jar_sources()
             self.refreshCodeProcessingStatus()
             jar_count = int(latest.get("jar_count") or 0)
+            package_jar_count = int(latest.get("package_jar_count") or jar_count)
+            base_release_id = str(latest.get("base_release_id") or "")
+            updated = [str(item) for item in latest.get("updated_applications") or []]
             jar_label = "JAR copiado e verificado" if jar_count == 1 else "JARs copiados e verificados"
             self._release_snapshot_status = (
-                f"Release {release_id} adicionada: {jar_count} {jar_label} "
-                "localmente."
+                f"Release {release_id} detectada e adicionada: {jar_count} {jar_label} "
+                f"localmente; pacote recebido com {package_jar_count}."
+                + (f" Base completa: {base_release_id}." if base_release_id else "")
+                + (f" Atualizados: {', '.join(updated)}." if updated else "")
             )
         else:
             detail = str(latest.get("error") or "falha desconhecida")
+            release_label = release_id or "automática"
             self._release_snapshot_status = (
-                f"Não foi possível adicionar a release {release_id}: {detail}"
+                f"Não foi possível adicionar a release {release_label}: {detail}"
             )
         self.stateChanged.emit()
 
@@ -3433,12 +3914,7 @@ class ChatBridge(QObject):
         return f"research/workspaces/{workspace_id}/{name}"
 
     def _refresh_code_analysis_jar_sources(self) -> None:
-        release_id = self._code_analysis_release
-        workspace_path = (
-            self._settings.erp_releases_dir / release_id / "jars"
-            if release_id
-            else self._settings.erp_releases_dir
-        )
+        workspace_path = self._settings.erp_releases_dir
         options = (
             (
                 ERP_JAR_SOURCE_VR_EXEC,
@@ -3452,18 +3928,11 @@ class ChatBridge(QObject):
             ),
         )
         items: list[dict[str, Any]] = []
+        catalog = ErpReleaseCatalog(self._settings.root)
         for value, label, path in options:
             resolved = path.resolve(strict=False)
             exists = resolved.is_dir()
-            jar_count = (
-                sum(
-                    1
-                    for item in resolved.rglob("*")
-                    if item.is_file() and item.suffix.casefold() == ".jar"
-                )
-                if exists
-                else 0
-            )
+            jar_count = catalog.count_source_jars(resolved) if exists else 0
             status = (
                 f"{jar_count} JAR(s) encontrados"
                 if exists
@@ -3513,6 +3982,8 @@ class ChatBridge(QObject):
             scope_label = (
                 "escopo: 1 JAR"
                 if analysis_scope == ERP_JAR_SCOPE_SINGLE
+                else "release incremental"
+                if analysis_scope == "incremental_release"
                 else "release completa"
             )
             classpath_status = str(classpath.get("classpath_status") or "unknown")
@@ -3852,10 +4323,12 @@ class ChatBridge(QObject):
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
         self._active_turns.add(conversation_id)
+        self._active_turn_started_epochs[conversation_id] = time.time()
         self._sync_selected_turn_state()
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
         self._activity_items = []
+        self._reset_trace_state()
         self._reasoning_text = ""
         self._reset_stream_state()
         self._activity_started_at = time.monotonic()
@@ -3905,12 +4378,16 @@ class ChatBridge(QObject):
                     else "auto"
                 ),
             )
+            if conversation_id in self._draft_records:
+                self._draft_records.pop(conversation_id, None)
+                self._persist_draft_records()
             self._attachments = []
             self._selected_extension_keys = set()
             self.refresh()
             self.stateChanged.emit()
         except Exception as exc:
             self._active_turns.discard(conversation_id)
+            self._active_turn_started_epochs.pop(conversation_id, None)
             self._sync_selected_turn_state()
             self._status_text = f"Falha: {exc}"
             self.refresh()
@@ -3943,6 +4420,10 @@ class ChatBridge(QObject):
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
             return
+        self._draft_records.pop(conversation_id, None)
+        self._pinned_conversation_ids.discard(conversation_id)
+        self._persist_draft_records()
+        self._persist_pinned_conversation_ids()
         self.refresh()
         self.conversationArchived.emit(conversation_id)
         self.startNewChat()
@@ -3958,6 +4439,10 @@ class ChatBridge(QObject):
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
             return
+        self._draft_records.pop(conversation_id, None)
+        self._pinned_conversation_ids.discard(conversation_id)
+        self._persist_draft_records()
+        self._persist_pinned_conversation_ids()
         self.refresh()
         self.startNewChat()
 
@@ -4000,6 +4485,11 @@ class ChatBridge(QObject):
             delta = str(event.text or "")
             if not delta:
                 return
+            if str(event.payload.get("phase") or "") == "commentary":
+                self._record_trace_text_delta(event, item_type="commentary")
+                self._status_text = "Trabalhando…"
+                self._schedule_state_update()
+                return
             self._streaming_text += delta
             self._turn_text += delta
             self._stream_pending_text += delta
@@ -4019,9 +4509,14 @@ class ChatBridge(QObject):
             self.stateChanged.emit()
         elif event.kind == "reasoning_delta":
             self._reasoning_text += str(event.text or "")
+            self._record_trace_text_delta(event, item_type="reasoning")
             self._status_text = "Pensando…"
             self._schedule_state_update()
         elif event.kind in {"tool_event", "provider_reconnecting", "provider_reconnected"}:
+            if event.kind == "tool_event":
+                browser_address = self._browser_address_from_event(event)
+                if browser_address:
+                    self.browserNavigationRequested.emit(browser_address)
             self._status_text = (
                 "Executando uma ação…"
                 if event.kind == "tool_event"
@@ -4031,6 +4526,7 @@ class ChatBridge(QObject):
         elif event.kind == "response_empty":
             self._status_text = "O provedor concluiu sem conteúdo."
             self.stateChanged.emit()
+
         elif event.kind == "research_failed":
             self._status_text = f"Pesquisa falhou: {short_event_text(event.text)}"
             self.stateChanged.emit()
@@ -4041,6 +4537,27 @@ class ChatBridge(QObject):
             self._queue_terminal_state(event.kind)
         elif event.kind in {"error", "orchestration_cancelled"}:
             self._queue_terminal_state(event.kind)
+
+    @staticmethod
+    def _browser_address_from_event(event: RuntimeEvent) -> str:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        item = payload.get("item") or {}
+        if not isinstance(item, dict):
+            item = {}
+        item_type = str(
+            item.get("type") or payload.get("type") or payload.get("tool") or ""
+        ).casefold()
+        if not any(
+            marker in item_type
+            for marker in ("browser", "webfetch", "web_fetch")
+        ):
+            return ""
+        for mapping in (item, payload):
+            for key in ("url", "address", "uri"):
+                value = str(mapping.get(key) or "").strip()
+                if value.startswith(("http://", "https://", "localhost")):
+                    return value
+        return ""
 
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
         if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
@@ -4059,6 +4576,7 @@ class ChatBridge(QObject):
 
     def _finish_background_turn(self, conversation_id: str) -> None:
         self._active_turns.discard(str(conversation_id or ""))
+        self._active_turn_started_epochs.pop(str(conversation_id or ""), None)
         self._sync_selected_turn_state()
         self.stateChanged.emit()
         self.refresh()
@@ -4093,6 +4611,10 @@ class ChatBridge(QObject):
         self._assistant_stream_started = False
         self._activity_started_at = 0.0
         self._activity_elapsed_seconds = 0
+
+    def _reset_trace_state(self) -> None:
+        self._trace_items = []
+        self._trace_sequence = 0
 
     def _schedule_state_update(self) -> None:
         if not self._state_update_timer.isActive():
@@ -4155,6 +4677,9 @@ class ChatBridge(QObject):
         for item in self._activity_items:
             if item.get("state") == "running":
                 item["state"] = terminal_state
+        for item in self._trace_items:
+            if item.get("state") == "running":
+                item["state"] = terminal_state
         if self._stream_pending_text:
             self._status_text = "Finalizando resposta…"
             if not self._stream_timer.isActive():
@@ -4168,6 +4693,7 @@ class ChatBridge(QObject):
     def _finalize_terminal_state(self, kind: str) -> None:
         conversation_id = self._selected_conversation_id()
         self._active_turns.discard(conversation_id)
+        self._active_turn_started_epochs.pop(conversation_id, None)
         self._sync_selected_turn_state()
         self._status_text = (
             "Erro"
@@ -4208,6 +4734,7 @@ class ChatBridge(QObject):
     def _restore_activity_from_history(self, conversation_id: str) -> None:
         self._activity_steps = []
         self._activity_items = []
+        self._reset_trace_state()
         self._turn_segments = []
         self._turn_text = ""
         self._segment_cursor = 0
@@ -4239,11 +4766,21 @@ class ChatBridge(QObject):
                     payload = {}
                 if kind == "reasoning_delta":
                     self._reasoning_text += text
+                    self._record_trace_text_delta(
+                        RuntimeEvent(conversation_id, kind, text, payload),
+                        item_type="reasoning",
+                    )
                 elif kind == "assistant_delta":
-                    self._turn_text += text
-                    self._streaming_text += text
-                    self._displayed_streaming_text += text
-                    self._advance_default_activity()
+                    if str(payload.get("phase") or "") == "commentary":
+                        self._record_trace_text_delta(
+                            RuntimeEvent(conversation_id, kind, text, payload),
+                            item_type="commentary",
+                        )
+                    else:
+                        self._turn_text += text
+                        self._streaming_text += text
+                        self._displayed_streaming_text += text
+                        self._advance_default_activity()
                 else:
                     self._record_execution_event(
                         RuntimeEvent(conversation_id, kind, text, payload),
@@ -4270,6 +4807,331 @@ class ChatBridge(QObject):
             for item in self._activity_items:
                 if item.get("state") == "running":
                     item["state"] = "completed"
+            for item in self._trace_items:
+                if item.get("state") == "running":
+                    item["state"] = "completed"
+
+    def _next_trace_id(self, prefix: str) -> str:
+        self._trace_sequence += 1
+        return f"{prefix}-{self._trace_sequence}"
+
+    @staticmethod
+    def _trace_payload_item(payload: dict[str, Any]) -> dict[str, Any]:
+        item = payload.get("item") or payload.get("part") or {}
+        return item if isinstance(item, dict) else {}
+
+    def _record_trace_text_delta(
+        self, event: RuntimeEvent, *, item_type: str
+    ) -> None:
+        text = str(event.text or "")
+        if not text:
+            return
+        payload = dict(event.payload or {})
+        raw_item = self._trace_payload_item(payload)
+        method = str(payload.get("method") or "")
+        effective_type = "plan" if method == "item/plan/delta" else item_type
+        identifier = str(
+            payload.get("itemId")
+            or payload.get("item_id")
+            or raw_item.get("id")
+            or ""
+        )
+        summary_index = payload.get("summaryIndex")
+        identity = identifier
+        if effective_type == "reasoning" and summary_index is not None:
+            identity = f"{identifier}:{summary_index}"
+        candidate = next(
+            (
+                item
+                for item in reversed(self._trace_items)
+                if identity
+                and item.get("sourceId") == identity
+                and item.get("kind") == "commentary"
+            ),
+            None,
+        )
+        if candidate is None and not identity:
+            last = self._trace_items[-1] if self._trace_items else None
+            if (
+                last is not None
+                and last.get("kind") == "commentary"
+                and last.get("itemType") == effective_type
+                and last.get("state") == "running"
+            ):
+                candidate = last
+        if candidate is None:
+            candidate = {
+                "id": self._next_trace_id(effective_type),
+                "sourceId": identity,
+                "kind": "commentary",
+                "itemType": effective_type,
+                "text": "",
+                "detail": "",
+                "state": "running",
+            }
+            self._trace_items.append(candidate)
+        candidate["text"] = str(candidate.get("text") or "") + text
+        candidate["state"] = "running"
+        self._trace_items = self._trace_items[-80:]
+
+    @staticmethod
+    def _diff_line_counts(diff: str) -> tuple[int, int]:
+        additions = 0
+        deletions = 0
+        for line in str(diff or "").splitlines():
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if line.startswith("+"):
+                additions += 1
+            elif line.startswith("-"):
+                deletions += 1
+        return additions, deletions
+
+    def _trace_display_path(self, raw_path: str) -> str:
+        value = str(raw_path or "").strip()
+        if not value:
+            return ""
+        path = Path(value)
+        workspace = Path(str(self._selected.get("workspace") or ""))
+        if path.is_absolute() and str(workspace):
+            try:
+                return str(
+                    path.resolve(strict=False).relative_to(
+                        workspace.resolve(strict=False)
+                    )
+                ).replace("\\", "/")
+            except ValueError:
+                pass
+        return value.replace("\\", "/")
+
+    @staticmethod
+    def _trace_folder_summary(files: list[dict[str, Any]]) -> str:
+        counts: dict[str, int] = {}
+        for item in files:
+            path = str(item.get("path") or "")
+            parts = [part for part in path.split("/") if part]
+            folder = parts[0] if len(parts) > 1 else "raiz"
+            counts[folder] = counts.get(folder, 0) + 1
+        return " · ".join(f"{name} {count}" for name, count in counts.items())
+
+    def _record_trace_file_changes(
+        self,
+        item: dict[str, Any],
+        identifier: str,
+        state: str,
+    ) -> None:
+        changes = item.get("changes") or []
+        if not isinstance(changes, list):
+            changes = []
+        card = next(
+            (entry for entry in self._trace_items if entry.get("kind") == "file_changes"),
+            None,
+        )
+        if card is None:
+            card = {
+                "id": self._next_trace_id("files"),
+                "sourceId": identifier,
+                "kind": "file_changes",
+                "itemType": "fileChange",
+                "text": "Arquivos alterados",
+                "detail": "",
+                "state": state,
+                "files": [],
+                "fileCount": 0,
+                "additions": 0,
+                "deletions": 0,
+                "folderSummary": "",
+                "hasDiff": False,
+            }
+            self._trace_items.append(card)
+        known = {
+            str(entry.get("path") or ""): dict(entry)
+            for entry in card.get("files") or []
+            if isinstance(entry, dict)
+        }
+        for raw_change in changes:
+            if not isinstance(raw_change, dict):
+                continue
+            path = self._trace_display_path(str(raw_change.get("path") or ""))
+            if not path:
+                continue
+            diff = str(raw_change.get("diff") or "")
+            additions, deletions = self._diff_line_counts(diff)
+            known[path] = {
+                "path": path,
+                "name": Path(path).name or path,
+                "kind": str(raw_change.get("kind") or "update"),
+                "diff": diff[:20000],
+                "additions": additions,
+                "deletions": deletions,
+            }
+        files = list(known.values())
+        card["files"] = files
+        card["fileCount"] = len(files)
+        card["additions"] = sum(int(entry.get("additions") or 0) for entry in files)
+        card["deletions"] = sum(int(entry.get("deletions") or 0) for entry in files)
+        card["folderSummary"] = self._trace_folder_summary(files)
+        card["hasDiff"] = any(str(entry.get("diff") or "") for entry in files)
+        card["detail"] = "\n\n".join(
+            f"{entry['path']}\n{entry['diff']}" for entry in files if entry.get("diff")
+        )[:40000]
+        card["text"] = (
+            f"{len(files)} arquivo" + ("s alterados" if len(files) != 1 else " alterado")
+            if files
+            else "Arquivos alterados"
+        )
+        card["state"] = state
+
+    @staticmethod
+    def _trace_action_label(item_type: str, count: int) -> str:
+        plural = count != 1
+        if item_type == "commandExecution":
+            return f"Executou {count} comando" + ("s" if plural else "")
+        if item_type in {"webSearch", "web_search"}:
+            return "Pesquisou na web" if count == 1 else f"Fez {count} pesquisas na web"
+        if item_type == "mcpToolCall":
+            return f"Usou {count} ferramenta MCP" + ("s" if plural else "")
+        return f"Usou {count} ferramenta" + ("s" if plural else "")
+
+    def _record_trace_tool_item(
+        self,
+        item: dict[str, Any],
+        identifier: str,
+        lifecycle: str,
+        state: str,
+        detail: str,
+    ) -> None:
+        item_type = str(item.get("type") or "")
+        if item_type == "agentMessage":
+            phase = str(item.get("phase") or "")
+            authoritative = str(item.get("text") or "")
+            if phase == "commentary" and authoritative:
+                source = str(item.get("id") or identifier)
+                existing = next(
+                    (
+                        entry
+                        for entry in reversed(self._trace_items)
+                        if entry.get("kind") == "commentary"
+                        and entry.get("sourceId") == source
+                    ),
+                    None,
+                )
+                if existing is None:
+                    existing = {
+                        "id": self._next_trace_id("commentary"),
+                        "sourceId": source,
+                        "kind": "commentary",
+                        "itemType": "commentary",
+                        "text": authoritative,
+                        "detail": "",
+                        "state": state,
+                    }
+                    self._trace_items.append(existing)
+                elif lifecycle.endswith("completed"):
+                    existing["text"] = authoritative
+                    existing["state"] = state
+            return
+        if item_type == "reasoning":
+            if lifecycle.endswith("completed"):
+                for entry in reversed(self._trace_items):
+                    if entry.get("kind") != "commentary" or entry.get("itemType") not in {
+                        "reasoning",
+                        "plan",
+                    }:
+                        continue
+                    if identifier and not str(entry.get("sourceId") or "").startswith(
+                        identifier
+                    ):
+                        continue
+                    entry["state"] = state
+                    if identifier:
+                        break
+            return
+        if item_type == "fileChange":
+            self._record_trace_file_changes(item, identifier, state)
+            return
+        category = item_type or "tool"
+        target = next(
+            (
+                entry
+                for entry in reversed(self._trace_items)
+                if identifier
+                and identifier in list(entry.get("memberIds") or [])
+            ),
+            None,
+        )
+        if target is None:
+            last = self._trace_items[-1] if self._trace_items else None
+            if (
+                last is not None
+                and last.get("kind") == "action_group"
+                and last.get("itemType") == category
+                and (identifier or not lifecycle.endswith("completed"))
+            ):
+                target = last
+        if target is None:
+            target = {
+                "id": self._next_trace_id("actions"),
+                "sourceId": identifier,
+                "kind": "action_group",
+                "itemType": category,
+                "text": "",
+                "detail": "",
+                "state": state,
+                "memberIds": [],
+            }
+            self._trace_items.append(target)
+        members = list(target.get("memberIds") or [])
+        if identifier and identifier not in members:
+            members.append(identifier)
+        target["memberIds"] = members
+        count = len(members) or 1
+        target["text"] = self._trace_action_label(category, count)
+        if detail:
+            details = [part for part in str(target.get("detail") or "").split("\n\n") if part]
+            if detail not in details:
+                details.append(detail)
+            target["detail"] = "\n\n".join(details)[:12000]
+        target["state"] = state
+        self._trace_items = self._trace_items[-80:]
+
+    def _record_trace_status_event(self, event: RuntimeEvent, message: str) -> None:
+        if not message:
+            return
+        base_kind = str(event.kind or "")
+        for suffix in ("_started", "_completed", "_failed"):
+            if base_kind.endswith(suffix):
+                base_kind = base_kind[: -len(suffix)]
+                break
+        source = str(
+            event.payload.get("agent_id")
+            or event.payload.get("id")
+            or event.payload.get("run_id")
+            or base_kind
+        )
+        existing = next(
+            (
+                item
+                for item in reversed(self._trace_items)
+                if item.get("kind") == "status" and item.get("sourceId") == source
+            ),
+            None,
+        )
+        if existing is None:
+            existing = {
+                "id": self._next_trace_id("status"),
+                "sourceId": source,
+                "kind": "status",
+                "itemType": base_kind,
+                "text": message,
+                "detail": "",
+                "state": self._event_state(event.kind),
+            }
+            self._trace_items.append(existing)
+        else:
+            existing["text"] = message
+            existing["state"] = self._event_state(event.kind)
+        self._trace_items = self._trace_items[-80:]
 
     def _record_execution_event(
         self, event: RuntimeEvent, *, emit_state: bool = True
@@ -4403,6 +5265,7 @@ class ChatBridge(QObject):
                 }
             )
             self._activity_items = self._activity_items[-60:]
+            self._record_trace_status_event(event, message)
         if event.kind.endswith("_completed") and any(
             step.get("state") == "pending" for step in self._activity_steps
         ):
@@ -4472,6 +5335,13 @@ class ChatBridge(QObject):
             if rendered and rendered not in detail_values:
                 detail_values.append(rendered)
         detail = "\n\n".join(detail_values)[:4000]
+        self._record_trace_tool_item(
+            item,
+            identifier,
+            lifecycle,
+            state,
+            detail,
+        )
         existing = next(
             (
                 candidate
@@ -4481,7 +5351,6 @@ class ChatBridge(QObject):
             None,
         )
         if existing is None:
-            self._record_turn_tool_segment(item_type)
             self._activity_items.append(
                 {
                     "id": identifier,
@@ -4730,7 +5599,12 @@ class ChatBridge(QObject):
                 for row in rows
                 if str(row["role"] or "") != "system"
             ]
-        if self._activity_steps or self._activity_items or self._reasoning_text:
+        if (
+            self._activity_steps
+            or self._activity_items
+            or self._trace_items
+            or self._reasoning_text
+        ):
             assistant_index = next(
                 (
                     index

@@ -146,10 +146,25 @@ class QmlFrontendTest(unittest.TestCase):
 
             bridge.setTheme("dark_orange")
             bridge.toggleNavigation()
+            bridge.setTypography("Arial", 16, "Cascadia Code", 13, False)
+            bridge.setBrowserZoom("125")
+            bridge.setBrowserViewport("390x844")
+            bridge.setBrowserAppearance("dark")
+            bridge.setBrowserAgentAccess(False)
+            bridge.setBrowserAutoShowPreview(False)
 
             self.assertEqual(bridge.themeId, "dark_orange")
             self.assertEqual(preferences.value("appearance/theme"), "dark_orange")
             self.assertIsNotNone(preferences.value("appearance/nav_collapsed"))
+            self.assertEqual(bridge.interfaceFontFamily, "Arial")
+            self.assertEqual(bridge.interfaceFontSize, 16)
+            self.assertEqual(bridge.monospaceFontFamily, "Cascadia Code")
+            self.assertFalse(bridge.wordWrap)
+            self.assertEqual(bridge.browserZoom, "125")
+            self.assertEqual(bridge.browserViewport, "390x844")
+            self.assertEqual(bridge.browserAppearance, "dark")
+            self.assertFalse(bridge.browserAgentAccess)
+            self.assertFalse(bridge.browserAutoShowPreview)
 
     def test_ui_scale_preference_persists_and_ignores_invalid_values(self):
         with TemporaryDirectory() as temporary:
@@ -279,7 +294,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
-            self.assertIsNone(window.findChild(QObject, "chatAttachButton"))
+            self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
             self.assertIsNotNone(window.findChild(QObject, "chatComposerDropArea"))
             self.assertIsNotNone(window.findChild(QObject, "chatAttachmentList"))
             self.assertIsNotNone(window.findChild(QObject, "chatTaskBar"))
@@ -294,7 +309,12 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(add_project_popup.property("visible"))
             chat_page = window.findChild(QObject, "chatPage")
             self.assertIsNotNone(chat_page)
-            chat_page.openLocalFolderBrowser()
+            chat_bridge.setSeniorProfileEnabled(True)
+            chat_bridge.setVrResponseMode("support")
+            chat_page.activateExpertProfile("support")
+            self.assertFalse(chat_bridge.seniorProfileEnabled)
+            self.assertEqual(chat_bridge.vrResponseMode, "auto")
+            self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
             self.assertIsNotNone(window.findChild(QObject, "projectFolderPathField"))
@@ -316,6 +336,12 @@ class QmlFrontendTest(unittest.TestCase):
             project_selector_menu = window.findChild(QObject, "projectSelectorMenu")
             self.assertIsNotNone(project_selector_menu)
             self.assertTrue(project_selector_menu.property("visible"))
+            self.assertTrue(chat_page.clickProjectSelectorItem(project_index))
+            self.application.processEvents()
+            self.assertEqual(chat_bridge.currentProjectIndex, project_index)
+            self.assertFalse(project_selector_menu.property("visible"))
+            chat_page.openProjectSelectorMenu()
+            self.application.processEvents()
             chat_page.clickProjectSettingsButton(project_index)
             self.application.processEvents()
             project_settings_page = window.findChild(QObject, "projectSettingsPage")
@@ -1196,6 +1222,24 @@ class QmlFrontendTest(unittest.TestCase):
                 [item["value"] for item in bridge.codeProcessingWindowOptions],
                 ["always", "night", "off_hours"],
             )
+            bridge._apply_code_processing_coverage(
+                {
+                    "expected_jar_count": 1,
+                    "covered_jar_count": 0,
+                    "remaining_jar_count": 1,
+                    "capacity": {
+                        "used_bytes": 1024,
+                        "budget_bytes": 4096,
+                        "physical_used_bytes": 8192,
+                        "orphaned_bytes": 2048,
+                        "orphaned_item_count": 1,
+                        "orphan_scan_errors": [],
+                    },
+                }
+            )
+            self.assertTrue(bridge.codeProcessingCanCleanOrphans)
+            self.assertIn("Dados ativos: 0.0 MB de 0.0 MB", bridge.codeProcessingCapacitySummary)
+            self.assertEqual(bridge.codeProcessingCapacity["orphaned_bytes"], 2048)
             bridge.setCodeProcessingMaxHeapMb(4096)
             bridge.setCodeProcessingTimeoutSeconds(1200)
             bridge.setCodeProcessingMaxCpuCores(2)
@@ -1247,9 +1291,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
 
             bridge.setCodeAnalysisJarSource("workspace")
-            expected_workspace = (
-                settings.erp_releases_dir / "current" / "jars"
-            ).resolve()
+            expected_workspace = settings.erp_releases_dir.resolve()
             self.assertEqual(bridge.codeAnalysisJarSource, "workspace")
             self.assertEqual(
                 Path(bridge.codeAnalysisJarSourcePath), expected_workspace
@@ -1324,6 +1366,8 @@ class QmlFrontendTest(unittest.TestCase):
                     settings.erp_releases_dir
                     / "2026.08.30"
                     / "jars"
+                    / "ERP"
+                    / "unknown"
                     / "ERP.jar"
                 )
                 before = managed.read_bytes()
@@ -1334,12 +1378,185 @@ class QmlFrontendTest(unittest.TestCase):
                     if not bridge.releaseSnapshotRunning:
                         break
                 self.assertFalse(bridge.releaseSnapshotRunning)
-                self.assertIn("já está inventariada", bridge.releaseSnapshotStatus)
+                self.assertIn("detectada e adicionada", bridge.releaseSnapshotStatus)
                 self.assertEqual(managed.read_bytes(), before)
                 manifest = ErpReleaseCatalog(settings.root).load_manifest("2026.08.30")
                 self.assertEqual(manifest["analysis_scope"], "single_jar")
                 self.assertEqual(manifest["expected_jar_count"], 1)
                 bridge.close()
+
+    def test_single_jar_snapshot_auto_detects_application_release_without_llm(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            jar = root / "vr" / "exec" / "VRPdv.jar"
+            jar.parent.mkdir(parents=True)
+            with zipfile.ZipFile(jar, "w") as archive:
+                archive.writestr(
+                    "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n"
+                )
+                archive.writestr("br/vr/App.class", b"release")
+                archive.writestr(
+                    "vrpdv.properties",
+                    "\n".join(
+                        (
+                            "versao.major=4",
+                            "versao.minor=4",
+                            "versao.release=25",
+                            "versao.build=0",
+                            "versao.beta=0",
+                            "app.data=31/08/2026",
+                        )
+                    ),
+                )
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(settings, database)
+            bridge.setCodeAnalysisSnapshotScope("single_jar")
+            self.assertTrue(bridge.setCodeAnalysisSingleJarPath(str(jar)))
+
+            with patch.object(bridge._orchestrator, "send") as model_send:
+                self.assertTrue(bridge.snapshotCodeAnalysisRelease(""))
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(25)
+                    if not bridge.releaseSnapshotRunning:
+                        break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertTrue(bridge.codeAnalysisRelease.startswith("VRPdv-4.4.25.0-"))
+            self.assertIn("detectada e adicionada", bridge.releaseSnapshotStatus)
+            model_send.assert_not_called()
+            manifest = ErpReleaseCatalog(settings.root).load_manifest(
+                bridge.codeAnalysisRelease
+            )
+            self.assertTrue(manifest["auto_detected"])
+            self.assertEqual(manifest["updated_applications"], ["VRPdv"])
+            bridge.close()
+
+    def test_vr_ultra_release_import_explains_auto_detection_and_partial_packages(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Pacote completo ou incremental", qml)
+        self.assertIn("Automático: aplicação e versão do vr*.properties", qml)
+        self.assertIn("pacote incremental: os demais JARs virão da base completa", qml)
+        self.assertIn("Detectar e adicionar", qml)
+        self.assertNotIn("releaseIdField.text.trim().length > 0", qml)
+
+    def test_vr_ultra_release_removal_requires_confirmation(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "vrUltraRemoveReleaseButton"', qml)
+        self.assertIn('objectName: "vrUltraRemoveReleaseDialog"', qml)
+        self.assertIn("Os JARs de origem serão preservados", qml)
+        self.assertIn("chat.removeCodeAnalysisRelease(releaseId)", qml)
+
+    def test_vr_ultra_orphan_cleanup_requires_confirmation(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('objectName: "vrUltraCodeProcessingCapacity"', qml)
+        self.assertIn('objectName: "vrUltraCleanCodeProcessingOrphans"', qml)
+        self.assertIn('objectName: "vrUltraCleanOrphansDialog"', qml)
+        self.assertIn("chat.cleanCodeProcessingOrphans()", qml)
+        self.assertIn("Bancos compartilhados", qml)
+
+    def test_orphan_cleanup_runs_in_background_and_preserves_source_jar(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            orphan = (
+                settings.root
+                / "indice"
+                / "codigo"
+                / "decompilation"
+                / "plan-orphan"
+            )
+            orphan.mkdir(parents=True)
+            (orphan / "Old.java").write_text("class Old {}", encoding="utf-8")
+            source_jar = settings.root / "ERP" / "releases" / "r1" / "jars" / "ERP.jar"
+            bridge = ChatBridge(settings, database, preferences)
+            bridge._apply_code_processing_coverage(
+                {
+                    "expected_jar_count": 1,
+                    "covered_jar_count": 0,
+                    "remaining_jar_count": 1,
+                    "capacity": ErpReleaseCatalog(settings.root).storage_status(),
+                }
+            )
+
+            self.assertTrue(bridge.codeProcessingCanCleanOrphans)
+            self.assertTrue(bridge.cleanCodeProcessingOrphans())
+            self.assertTrue(bridge.releaseSnapshotRunning)
+            for _attempt in range(100):
+                self.application.processEvents()
+                QTest.qWait(25)
+                if not bridge.releaseSnapshotRunning:
+                    break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertFalse(orphan.exists())
+            self.assertTrue(source_jar.is_file())
+            self.assertIn("Limpeza concluída", bridge.releaseSnapshotStatus)
+            self.assertIn("JARs de origem foram preservados", bridge.releaseSnapshotStatus)
+            bridge.close()
+
+    def test_release_removal_runs_in_background_and_selects_remaining_release(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            self._import_release(settings, "r1")
+            self._import_release(settings, "r2")
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.setCodeAnalysisRelease("r1")
+
+            self.assertTrue(bridge.removeCodeAnalysisRelease("r1"))
+            self.assertTrue(bridge.releaseSnapshotRunning)
+            self.assertFalse(bridge.removeCodeAnalysisRelease("r2"))
+            for _attempt in range(100):
+                self.application.processEvents()
+                QTest.qWait(25)
+                if not bridge.releaseSnapshotRunning:
+                    break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertEqual(bridge.codeAnalysisRelease, "r2")
+            self.assertEqual(
+                [item["releaseId"] for item in bridge.codeAnalysisReleaseItems],
+                ["r2"],
+            )
+            self.assertIn("Release r1 removida do índice", bridge.releaseSnapshotStatus)
+            self.assertIn("JARs de origem foram preservados", bridge.releaseSnapshotStatus)
+            self.assertFalse(
+                (settings.root / "indice" / "codigo" / "releases" / "r1").exists()
+            )
+            self.assertTrue((settings.erp_releases_dir / "r1" / "jars").is_dir())
+            bridge.close()
 
     def test_local_code_processing_completes_without_model_or_network(self):
         with TemporaryDirectory() as temporary:
@@ -1360,7 +1577,7 @@ class QmlFrontendTest(unittest.TestCase):
             ]
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1509,7 +1726,7 @@ class QmlFrontendTest(unittest.TestCase):
             allow_batch_finish = threading.Event()
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1587,7 +1804,7 @@ class QmlFrontendTest(unittest.TestCase):
             bridge = ChatBridge(settings, database)
 
             class MissingToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -1644,7 +1861,7 @@ class QmlFrontendTest(unittest.TestCase):
             ]
 
             class FakeToolchain:
-                def __init__(self, _root):
+                def __init__(self, _root, **_kwargs):
                     pass
 
                 def doctor(self):
@@ -2158,6 +2375,249 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("3 resultados", item["detail"])
             self.assertIn("VRProject/manual.md", bridge.activityItems[1]["detail"])
 
+    def test_chat_bridge_builds_t3_style_trace_without_mixing_final_answer(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Trace", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    "Analisando a estrutura atual.",
+                    {"itemId": "reasoning-1", "summaryIndex": 0},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando iniciado",
+                    {
+                        "lifecycle": "item/started",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "rg -n reasoning vrsoft_extractor",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando concluído",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "rg -n reasoning vrsoft_extractor",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "O trace já preserva a ordem dos eventos.",
+                    {"itemId": "commentary-1", "phase": "commentary"},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Arquivo alterado",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "files-1",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "tests/test_trace.py",
+                                    "kind": "update",
+                                    "diff": "@@ -1 +1 @@\n-old\n+new\n",
+                                }
+                            ],
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Implementação concluída.",
+                    {"itemId": "final-1", "phase": "final_answer"},
+                ),
+            ):
+                bridge._on_runtime_event(event)
+
+            self.assertEqual(
+                [item["kind"] for item in bridge.traceItems],
+                ["commentary", "action_group", "commentary", "file_changes"],
+            )
+            self.assertEqual(bridge.traceItems[1]["text"], "Executou 1 comando")
+            self.assertEqual(bridge.traceItems[3]["fileCount"], 1)
+            self.assertEqual(bridge.traceItems[3]["additions"], 1)
+            self.assertEqual(bridge.traceItems[3]["deletions"], 1)
+            self.assertEqual(bridge._streaming_text, "Implementação concluída.")
+            self.assertNotIn("O trace já preserva", bridge._streaming_text)
+
+    def test_chat_bridge_restores_the_same_trace_order_from_runtime_events(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Histórico", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(conversation_id, "user", "Revise o trace")
+            database.add_message(conversation_id, "assistant", "Trace revisado")
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "reasoning_delta",
+                    "Conferindo os eventos.",
+                    {"itemId": "reasoning-1", "summaryIndex": 0},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Comando concluído",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "pytest -q",
+                        },
+                    },
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Os testes passaram.",
+                    {"itemId": "commentary-1", "phase": "commentary"},
+                ),
+                RuntimeEvent(
+                    conversation_id,
+                    "assistant_delta",
+                    "Trace revisado",
+                    {"itemId": "final-1", "phase": "final_answer"},
+                ),
+                RuntimeEvent(conversation_id, "turn_completed", "Pronto"),
+            ):
+                database.add_event(event)
+
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+
+            self.assertEqual(
+                [item["kind"] for item in bridge.traceItems],
+                ["commentary", "action_group", "commentary"],
+            )
+            self.assertTrue(all(item["state"] == "completed" for item in bridge.traceItems))
+            self.assertEqual(bridge._streaming_text, "Trace revisado")
+
+    def test_changed_files_trace_card_loads_with_real_diff_statistics(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Arquivos", "codex", "gpt-5.6", settings.root
+            )
+            database.add_message(conversation_id, "user", "Ajuste o arquivo")
+            database.add_message(conversation_id, "assistant", "Arquivo ajustado")
+            for event in (
+                RuntimeEvent(conversation_id, "turn_started", "Execução iniciada"),
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    "Arquivo alterado",
+                    {
+                        "lifecycle": "item/completed",
+                        "item": {
+                            "id": "files-1",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "src/app.py",
+                                    "kind": "update",
+                                    "diff": "@@ -1 +1,2 @@\n-old\n+new\n+extra\n",
+                                }
+                            ],
+                        },
+                    },
+                ),
+                RuntimeEvent(conversation_id, "turn_completed", "Pronto"),
+            ):
+                database.add_event(event)
+
+            frontend_bridge = self._bridge(root, initial_page="Chat VR")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            self.assertEqual(chat_bridge.traceItems[0]["kind"], "file_changes")
+            engine = create_engine(frontend_bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.show()
+            try:
+                def find_qml_item(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_qml_item(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                card = None
+                content_item = window.property("contentItem")
+                for _attempt in range(20):
+                    self.application.processEvents()
+                    card = find_qml_item(content_item, "changedFilesCard")
+                    if card is not None:
+                        break
+                    QTest.qWait(50)
+                self.assertIsNotNone(card)
+                self.assertEqual(card.property("fileCount"), 1)
+                self.assertEqual(card.property("additions"), 2)
+                self.assertEqual(card.property("deletions"), 1)
+                self.assertTrue(card.property("hasDiff"))
+                card.setProperty("diffExpanded", True)
+                self.application.processEvents()
+                QTest.qWait(50)
+                self.assertTrue(card.property("diffExpanded"))
+                diff_body = find_qml_item(content_item, "changedFilesDiffBody")
+                self.assertIsNotNone(diff_body)
+            finally:
+                window.close()
+
     def test_chat_bridge_processes_background_turn_events_without_blocking_composer(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2312,6 +2772,9 @@ class QmlFrontendTest(unittest.TestCase):
             settings = self._settings(root)
             settings.root.mkdir(parents=True)
             (settings.root / "Notas Fiscal.md").write_text("# Notas", encoding="utf-8")
+            ignored = settings.root / ".git" / "objects"
+            ignored.mkdir(parents=True)
+            (ignored / "fiscal-ignorado.txt").write_text("objeto", encoding="utf-8")
             database = MaryDatabase(
                 settings.database_path,
                 root=settings.root,
@@ -2340,6 +2803,28 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(results[0]["path"].endswith("Notas Fiscal.md"))
             self.assertTrue(updates)
             self.assertEqual(updates[-1], results)
+            self.assertNotIn(".git", "\n".join(item["path"] for item in results))
+
+    def test_chat_qml_exposes_refined_search_profiles_links_and_scrolling(self):
+        chat_qml = (MAIN_QML.parent / "pages" / "ChatPreview.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('objectName: "conversationSearch"', chat_qml)
+        self.assertIn('iconKind: "newChat"', chat_qml)
+        self.assertNotRegex(chat_qml, r'(?m)^\s+text: "Nova conversa"$')
+        self.assertIn('objectName: "chatSettingsButton"', chat_qml)
+        self.assertIn('Accessible.name: "Abrir Configurações"', chat_qml)
+        self.assertLess(
+            chat_qml.index('objectName: "conversationSearch"'),
+            chat_qml.index('objectName: "newChatButton"'),
+        )
+        self.assertIn('objectName: "expertProfileStrip"', chat_qml)
+        self.assertIn('chat.vrMode !== "off"', chat_qml)
+        self.assertIn("Qt.PointingHandCursor", chat_qml)
+        self.assertIn('objectName: "messageAutoScroller"', chat_qml)
+        self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
+        self.assertIn("function greetingText()", chat_qml)
 
     def test_studio_bridge_loads_pages_lazily_and_tracks_video_descendants(self):
         with TemporaryDirectory() as temporary:
@@ -2434,6 +2919,37 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertNotIn("endoo-super-secret", studio.logText)
             self.assertIn("[REDACTED]", studio.logText)
 
+    def test_live_sync_and_log_models_append_without_resetting_the_view(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            studio = StudioBridge(settings, database)
+            sync_resets = []
+            sync_insertions = []
+            studio.syncLogModel.modelReset.connect(lambda: sync_resets.append(True))
+            studio.syncLogModel.rowsInserted.connect(
+                lambda _parent, first, last: sync_insertions.append((first, last))
+            )
+
+            studio._apply_sync_progress("item 1 sincronizado")
+            studio._apply_sync_progress("item 2 sincronizado")
+
+            self.assertEqual(studio.syncLogModel.rowCount(), 2)
+            self.assertEqual(
+                studio.syncLogModel.data(
+                    studio.syncLogModel.index(1, 0), Qt.UserRole + 1
+                ),
+                "item 2 sincronizado",
+            )
+            self.assertEqual(sync_resets, [])
+            self.assertEqual(sync_insertions, [(0, 0), (1, 1)])
+            self.assertEqual(studio.logModel.rowCount(), 2)
+
     def test_review_actions_target_preview_unless_selection_is_explicit(self):
         review_qml = (
             MAIN_QML.parent / "pages" / "ReviewPage.qml"
@@ -2511,12 +3027,12 @@ class QmlFrontendTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("Arquivar conversa", chat_qml)
-        self.assertNotIn("Mover para lixeira", chat_qml)
+        self.assertIn("Excluir conversa", chat_qml)
         self.assertIn("Keys.onReturnPressed", chat_qml)
         self.assertIn("Keys.onEnterPressed", chat_qml)
         self.assertIn("onLinkActivated", chat_qml)
         self.assertIn("onLinkActivated", knowledge_qml)
-        self.assertIn("Digite EXCLUIR", settings_qml)
+        self.assertNotIn("Digite EXCLUIR", settings_qml)
         self.assertIn('objectName: "conversationSidebarToggle"', chat_qml)
         self.assertNotIn(
             "conversationSidebar.x + conversationSidebar.width", chat_qml
@@ -2714,8 +3230,14 @@ class QmlFrontendTest(unittest.TestCase):
                     break
 
             self.assertTrue(updates)
+            folder = next(item for item in values if item["label"] == "src")
+            self.assertTrue(folder["isDirectory"])
+            self.assertEqual(folder["depth"], 0)
             selected = next(item for item in values if item["label"] == "src/main.py")
             self.assertEqual(Path(selected["path"]), expected)
+            self.assertFalse(selected["isDirectory"])
+            self.assertEqual(selected["parent"], "src")
+            self.assertEqual(selected["depth"], 1)
 
     def test_chat_drop_stages_existing_local_files_without_picker(self):
         with TemporaryDirectory() as temporary:
@@ -2741,6 +3263,125 @@ class QmlFrontendTest(unittest.TestCase):
 
             self.assertEqual(added, 1)
             self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
+
+    def test_unsent_text_and_images_are_persisted_as_a_separate_draft(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "rascunho.png"
+            image.write_bytes(b"png")
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.addDroppedAttachments([QUrl.fromLocalFile(str(image))])
+
+            self.assertTrue(bridge.saveCurrentDraft("Texto ainda não enviado"))
+            self.assertEqual(bridge.conversationCount, 1)
+            draft = bridge.conversations.item(0)
+            self.assertTrue(draft["editing"])
+            self.assertEqual(draft["section"], "Rascunhos")
+            conversation_id = draft["conversationId"]
+
+            bridge.startNewChat()
+            self.assertEqual(bridge.attachments, [])
+            restored: list[str] = []
+            bridge.draftRestored.connect(restored.append)
+            bridge.selectConversationId(conversation_id)
+            self.assertEqual(restored[-1], "Texto ainda não enviado")
+            self.assertEqual(bridge.attachments[0]["path"], str(image))
+
+            reloaded = ChatBridge(settings, database, preferences)
+            self.assertTrue(reloaded.conversations.item(0)["editing"])
+
+    def test_pinned_conversations_sort_before_regular_active_chats(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            first = database.create_conversation(
+                "Primeira", "codex", "modelo", settings.root
+            )
+            second = database.create_conversation(
+                "Segunda", "codex", "modelo", settings.root
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge.selectConversationId(first)
+            bridge.togglePinnedCurrent()
+
+            self.assertEqual(bridge.conversations.item(0)["conversationId"], first)
+            self.assertTrue(bridge.conversations.item(0)["pinned"])
+            self.assertEqual(bridge.conversations.item(1)["conversationId"], second)
+
+    def test_context_uses_provider_model_metadata_and_hides_without_it(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Contexto", "codex", "gpt-provider", settings.root
+            )
+            database.update_conversation(
+                conversation_id,
+                context_used_tokens=25_800,
+                context_window_tokens=200_000,
+            )
+            bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            bridge.selectConversationId(conversation_id)
+            bridge._model_items = [{
+                "key": "codex:gpt-provider",
+                "provider": "codex",
+                "value": "gpt-provider",
+                "displayName": "GPT Provider",
+                "contextWindow": 258_000,
+            }]
+
+            self.assertTrue(bridge.hasContextWindow)
+            self.assertEqual(bridge.contextUsageFraction, 0.1)
+            self.assertIn("258.000", bridge.contextUsageLabel)
+            database.update_conversation(conversation_id, context_used_tokens=0)
+            self.assertFalse(bridge.hasContextWindow)
+            database.update_conversation(conversation_id, context_used_tokens=25_800)
+            self.assertTrue(bridge.hasContextWindow)
+            bridge._model_items[0].pop("contextWindow")
+            self.assertFalse(bridge.hasContextWindow)
+
+            browser_event = RuntimeEvent(
+                conversation_id,
+                "tool_event",
+                payload={
+                    "item": {
+                        "type": "browser_navigation",
+                        "url": "https://example.com/preview",
+                    }
+                },
+            )
+            self.assertEqual(
+                bridge._browser_address_from_event(browser_event),
+                "https://example.com/preview",
+            )
 
     def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
         with TemporaryDirectory() as temporary:
@@ -2773,14 +3414,16 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual((bridge._provider, bridge._model), ("claude", "b"))
             self.assertEqual(bridge.researchModelKeys, ["codex:a"])
 
-    def test_model_picker_keeps_provider_filters_without_hover_dialogs(self):
+    def test_model_picker_opens_favorites_and_builds_enabled_provider_filters(self):
         picker_qml = (
             MAIN_QML.parent / "components" / "VrModelPicker.qml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('property string providerFilter: "all"', picker_qml)
+        self.assertIn('property string providerFilter: "favorites"', picker_qml)
         self.assertIn('{key: "favorites"', picker_qml)
-        self.assertIn('{key: "codex"', picker_qml)
+        self.assertIn("model: control.providerTabs()", picker_qml)
+        self.assertIn("if (item.inactive === true) return false", picker_qml)
+        self.assertNotIn('{key: "all"', picker_qml)
         self.assertNotIn("ToolTip.visible", picker_qml)
         self.assertIn("CloseOnPressOutsideParent", picker_qml)
 
@@ -2788,6 +3431,41 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "ChatPreview.qml"
         ).read_text(encoding="utf-8")
         self.assertNotIn("createLinearGradient", chat_qml)
+
+    def test_draft_catalog_moves_away_from_a_disabled_provider(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue("providers/claude/enabled", False)
+            preferences.sync()
+            bridge = ChatBridge(settings, database, preferences)
+            bridge._draft = True
+            bridge._provider = "claude"
+            bridge._model = "claude-sonnet"
+            bridge._model_items = [{
+                "key": "claude:claude-sonnet",
+                "provider": "claude",
+                "value": "claude-sonnet",
+                "label": "Claude Sonnet",
+            }]
+
+            bridge._apply_model_catalog([{
+                "key": "codex:gpt-test",
+                "provider": "codex",
+                "value": "gpt-test",
+                "label": "GPT Test",
+            }])
+
+            self.assertEqual((bridge._provider, bridge._model), ("codex", "gpt-test"))
+            self.assertFalse(any(item.get("inactive") for item in bridge.modelItems))
 
     def test_videos_page_starts_with_libraries_collapsed(self):
         videos_qml = (
@@ -2895,7 +3573,9 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertNotIn("variant: root.tabIndex === index", settings_qml)
         self.assertIn("objectName: \"settingsTabBar\"", settings_qml)
         self.assertIn("variant: \"danger\"", settings_qml)
-        self.assertIn("enabled: deleteConfirmField.text === \"EXCLUIR\"", settings_qml)
+        self.assertNotIn("deleteConfirmField", settings_qml)
+        self.assertIn('"Aparência", "Browser"', settings_qml)
+        self.assertIn('objectName: "interfaceFontCombo"', settings_qml)
         self.assertIn("Escala da interface", settings_qml)
         self.assertIn("objectName: \"uiScaleCombo\"", settings_qml)
         self.assertIn("VrPageColumn {", settings_qml)
@@ -2911,6 +3591,12 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "SettingsHub.qml"
         ).read_text(encoding="utf-8")
         self.assertIn("visitedPages", hub_qml)
+        self.assertIn('objectName: "settingsConversationSearch"', hub_qml)
+        self.assertIn('objectName: "settingsReturnButton"', hub_qml)
+        self.assertIn('Accessible.name: "Retornar ao Chat VR"', hub_qml)
+        self.assertNotIn('visible: root.settingsActive', hub_qml)
+        self.assertNotIn('Accessible.name: "Abrir Configurações"', hub_qml)
+        self.assertNotIn('title: "Chat VR"', hub_qml)
         self.assertNotIn("Repeater {\n                model: root.hubPages", hub_qml)
         for page in (
             "DashboardPreview.qml",
@@ -2953,10 +3639,39 @@ class QmlFrontendTest(unittest.TestCase):
                 [warning.toString() for warning in engine._qml_warnings],
             )
             window = engine.rootObjects()[0]
+            window.show()
+            QTest.qWait(100)
             tab_bar = window.findChild(QObject, "settingsTabBar")
             self.assertIsNotNone(tab_bar)
-            self.assertEqual(tab_bar.property("count"), 5)
+            settings_search = window.findChild(QObject, "settingsConversationSearch")
+            settings_return = window.findChild(QObject, "settingsReturnButton")
+            settings_navigation = window.findChild(QObject, "settingsNavigation")
+            settings_results = window.findChild(QObject, "settingsSearchResults")
+            settings_hub = window.findChild(QObject, "settingsHub")
+            self.assertIsNotNone(settings_search)
+            self.assertIsNotNone(settings_return)
+            self.assertIsNotNone(settings_navigation)
+            self.assertIsNotNone(settings_results)
+            self.assertIsNotNone(settings_hub)
+            self.assertTrue(settings_return.property("visible"))
+            self.assertGreater(
+                settings_return.property("y"),
+                settings_navigation.property("height") * 0.65,
+            )
+            settings_search.setProperty("text", "JAR")
+            self.application.processEvents()
+            self.assertTrue(settings_results.property("visible"))
+            self.assertGreater(settings_results.property("count"), 0)
+            self.assertEqual(chat_bridge.search, "")
+            self.assertEqual(tab_bar.property("count"), 6)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
+            self.assertTrue(settings_hub.activateSettingSearchResult(0))
+            self.application.processEvents()
+            self.assertEqual(tab_bar.property("currentIndex"), 2)
+            settings_search.clear()
+            self.application.processEvents()
+            tab_bar.activate(0)
+            self.application.processEvents()
             ui_scale_combo = window.findChild(QObject, "uiScaleCombo")
             self.assertIsNotNone(ui_scale_combo)
             scale_preview = window.findChild(QObject, "uiScalePreviewText")
@@ -3010,6 +3725,18 @@ class QmlFrontendTest(unittest.TestCase):
             QTest.keyClick(quick_window, Qt.Key_Return)
             self.application.processEvents()
             self.assertEqual(tab_bar.property("currentIndex"), 1)
+
+            bridge.setCurrentPage(0)
+            self.application.processEvents()
+            self.assertTrue(settings_return.property("visible"))
+
+            settings_return.click()
+            self.application.processEvents()
+            self.assertEqual(bridge.currentPage, 1)
+            self.assertFalse(settings_return.property("visible"))
+            chat_settings = window.findChild(QObject, "chatSettingsButton")
+            self.assertIsNotNone(chat_settings)
+            self.assertTrue(chat_settings.property("visible"))
 
     def test_all_pages_load_in_engine_with_centered_page_column(self):
         with TemporaryDirectory() as temporary:

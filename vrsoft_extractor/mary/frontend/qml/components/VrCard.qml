@@ -7,12 +7,13 @@ Rectangle {
 
     default property alias content: contentColumn.data
     property int contentSpacing: Theme.spaceMd
+    property bool flat: false
 
     implicitHeight: Math.max(120, contentColumn.implicitHeight + Theme.space2Xl)
     clip: true
-    color: frontend.palette.surface
-    radius: Theme.radiusCard
-    border.width: 1
+    color: flat ? "transparent" : frontend.palette.surface
+    radius: flat ? 0 : Theme.radiusCard
+    border.width: flat ? 0 : 1
     border.color: frontend.palette.border
 
     ColumnLayout {

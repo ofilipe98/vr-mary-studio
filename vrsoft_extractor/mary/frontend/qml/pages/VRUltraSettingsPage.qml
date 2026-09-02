@@ -7,6 +7,7 @@ import "../theme"
 Item {
     id: root
     objectName: "vrUltraSettingsPage"
+    property string pendingReleaseRemoval: ""
 
     readonly property int selectedModelIndex: {
         if (!chat.researchModelKeys.length) return -1
@@ -83,10 +84,8 @@ Item {
             objectName: "vrUltraSeniorProfileCard"
             Layout.fillWidth: true
             Layout.preferredHeight: 146
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 anchors.fill: parent
@@ -148,10 +147,8 @@ Item {
             objectName: "vrUltraAgentPool"
             Layout.fillWidth: true
             Layout.preferredHeight: 152
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 anchors.fill: parent
@@ -230,10 +227,8 @@ Item {
             objectName: "vrUltraCodeAnalysisCard"
             Layout.fillWidth: true
             Layout.preferredHeight: codeAnalysisContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: codeAnalysisContent
@@ -301,6 +296,19 @@ Item {
                                 chat.setCodeAnalysisRelease(chat.codeAnalysisReleaseItems[index].releaseId)
                         }
                     }
+                    VrButton {
+                        objectName: "vrUltraRemoveReleaseButton"
+                        text: "Remover"
+                        variant: "danger"
+                        enabled: chat.codeAnalysisReleaseItems.length > 0
+                            && chat.codeAnalysisRelease.length > 0
+                            && !chat.releaseSnapshotRunning
+                            && !chat.codeProcessingRunning
+                        onClicked: {
+                            root.pendingReleaseRemoval = chat.codeAnalysisRelease
+                            removeReleaseDialog.open()
+                        }
+                    }
                 }
 
                 Text {
@@ -324,10 +332,8 @@ Item {
             objectName: "vrUltraJarDirectoryCard"
             Layout.fillWidth: true
             Layout.preferredHeight: jarDirectoryContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: jarDirectoryContent
@@ -379,7 +385,7 @@ Item {
                     enabled: !chat.releaseSnapshotRunning
                         && !chat.codeProcessingRunning
                     model: [
-                        { "label": "Release completa · 46 JARs", "value": "full_release" },
+                        { "label": "Pacote completo ou incremental", "value": "full_release" },
                         { "label": "Somente um JAR", "value": "single_jar" }
                     ]
                     textRole: "label"
@@ -399,19 +405,18 @@ Item {
                         if (chat.codeAnalysisSnapshotScope === "single_jar")
                             return item.path + " · " + item.status
                                 + " · escolha um JAR abaixo"
-                        var expected = item.jarCount === chat.codeAnalysisExpectedJarCount
-                            ? ""
-                            : " · esperado: " + chat.codeAnalysisExpectedJarCount
-                        return item.path + " · " + item.status + expected
+                        var composition = item.jarCount > 0
+                            && item.jarCount < chat.codeAnalysisExpectedJarCount
+                            ? " · pacote incremental: os demais JARs virão da base completa"
+                            : ""
+                        return item.path + " · " + item.status + composition
                     }
                     color: {
                         var index = jarSourcePicker.currentIndex
                         if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
                             return frontend.palette.mutedText
                         var item = chat.codeAnalysisJarSourceItems[index]
-                        return item.exists
-                            && (chat.codeAnalysisSnapshotScope === "single_jar"
-                                || item.jarCount === chat.codeAnalysisExpectedJarCount)
+                        return item.exists && item.jarCount > 0
                             ? frontend.palette.mutedText
                             : frontend.palette.warning
                     }
@@ -452,23 +457,21 @@ Item {
                         objectName: "vrUltraReleaseIdField"
                         Layout.fillWidth: true
                         placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
-                            ? "Identificador próprio (ex.: 4.4.101-VRPdv)"
-                            : "Identificador da release (ex.: 2026.08.30)"
+                            ? "Automático: aplicação e versão do vr*.properties"
+                            : "ID automático; informe somente se quiser personalizar"
                         enabled: !chat.releaseSnapshotRunning
                             && !chat.codeProcessingRunning
                         onAccepted: {
-                            if (text.trim().length)
-                                chat.snapshotCodeAnalysisRelease(text.trim())
+                            chat.snapshotCodeAnalysisRelease(text.trim())
                         }
                     }
 
                     VrButton {
                         objectName: "vrUltraAddReleaseButton"
-                        text: chat.releaseSnapshotRunning ? "Adicionando…" : "Adicionar release"
+                        text: chat.releaseSnapshotRunning ? "Detectando…" : "Detectar e adicionar"
                         variant: "primary"
                         enabled: !chat.releaseSnapshotRunning
                             && !chat.codeProcessingRunning
-                            && releaseIdField.text.trim().length > 0
                             && (chat.codeAnalysisSnapshotScope !== "single_jar"
                                 || chat.codeAnalysisSingleJarPath.length > 0)
                         onClicked: chat.snapshotCodeAnalysisRelease(releaseIdField.text.trim())
@@ -494,10 +497,8 @@ Item {
             objectName: "vrUltraCodeProcessingCard"
             Layout.fillWidth: true
             Layout.preferredHeight: codeProcessingContent.implicitHeight + Theme.spaceMd * 2
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
 
             ColumnLayout {
                 id: codeProcessingContent
@@ -712,6 +713,33 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceSm
+
+                    Text {
+                        objectName: "vrUltraCodeProcessingCapacity"
+                        Layout.fillWidth: true
+                        text: chat.codeProcessingCapacitySummary
+                        color: chat.codeProcessingCanCleanOrphans
+                            ? frontend.palette.warning
+                            : frontend.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.captionSize
+                        wrapMode: Text.WordWrap
+                    }
+
+                    VrButton {
+                        objectName: "vrUltraCleanCodeProcessingOrphans"
+                        visible: chat.codeProcessingCanCleanOrphans
+                        text: "Limpar órfãos"
+                        enabled: !chat.codeProcessingRunning
+                            && !chat.codeProcessingStatusLoading
+                            && !chat.releaseSnapshotRunning
+                        onClicked: cleanOrphansDialog.open()
+                    }
+                }
+
                 Text {
                     Layout.fillWidth: true
                     visible: chat.codeProcessingFrozenManifestHash.length > 0
@@ -800,6 +828,7 @@ Item {
                             && !chat.codeProcessingStatusLoading
                             && !chat.releaseSnapshotRunning
                             && !chat.codeProcessingCanRetry
+                            && chat.codeProcessingCapacity.state !== "insufficient"
                             && chat.codeProcessingProgress < 100
                         onClicked: chat.startCodeProcessing()
                     }
@@ -834,5 +863,92 @@ Item {
         chat.refreshModels()
         chat.refreshCodeAnalysisReleases()
         chat.refreshCodeProcessingStatus()
+    }
+
+    Dialog {
+        id: cleanOrphansDialog
+        objectName: "vrUltraCleanOrphansDialog"
+        anchors.centerIn: parent
+        width: Math.min(500, root.width - Theme.spaceLg * 2)
+        modal: true
+        title: "Limpar artefatos órfãos?"
+        standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+            Text {
+                Layout.fillWidth: true
+                text: "Somente dados gerados sem referência ativa serão removidos. "
+                    + "Bancos compartilhados, releases ativas e JARs de origem serão preservados."
+                color: frontend.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.bodySize
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                VrButton { text: "Cancelar"; onClicked: cleanOrphansDialog.close() }
+                Item { Layout.fillWidth: true }
+                VrButton {
+                    objectName: "vrUltraConfirmCleanOrphansButton"
+                    text: "Limpar órfãos"
+                    variant: "danger"
+                    onClicked: {
+                        cleanOrphansDialog.close()
+                        chat.cleanCodeProcessingOrphans()
+                    }
+                }
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.warning
+            radius: Theme.radiusPopup
+        }
+    }
+
+    Dialog {
+        id: removeReleaseDialog
+        objectName: "vrUltraRemoveReleaseDialog"
+        anchors.centerIn: parent
+        width: Math.min(500, root.width - Theme.spaceLg * 2)
+        modal: true
+        title: "Remover release do índice?"
+        standardButtons: Dialog.NoButton
+        onClosed: root.pendingReleaseRemoval = ""
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+            Text {
+                Layout.fillWidth: true
+                text: "A release " + root.pendingReleaseRemoval
+                    + " e seus dados de análise serão removidos. "
+                    + "Os JARs de origem serão preservados."
+                color: frontend.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.bodySize
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                VrButton { text: "Cancelar"; onClicked: removeReleaseDialog.close() }
+                Item { Layout.fillWidth: true }
+                VrButton {
+                    objectName: "vrUltraConfirmRemoveReleaseButton"
+                    text: "Remover release"
+                    variant: "danger"
+                    onClicked: {
+                        var releaseId = root.pendingReleaseRemoval
+                        removeReleaseDialog.close()
+                        chat.removeCodeAnalysisRelease(releaseId)
+                    }
+                }
+            }
+        }
+        background: Rectangle {
+            color: frontend.palette.surface
+            border.width: 1
+            border.color: frontend.palette.danger
+            radius: Theme.radiusPopup
+        }
     }
 }

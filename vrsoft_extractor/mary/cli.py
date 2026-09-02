@@ -145,7 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
         "snapshot-erp-release",
         help="Copia e verifica uma release local antes de inventariar os JARs",
     )
-    erp_snapshot.add_argument("release_id")
+    erp_snapshot.add_argument(
+        "release_id",
+        nargs="?",
+        default="",
+        help="Opcional; sem valor, detecta aplicação e versão nos vr*.properties",
+    )
     erp_snapshot.add_argument(
         "--source",
         default=r"C:\vr\exec",
@@ -155,6 +160,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     erp_snapshot.add_argument("--expected-jars", type=int, default=46)
+    erp_snapshot.add_argument(
+        "--auto-detect",
+        action="store_true",
+        help="Categoriza por aplicação/versão e compõe pacotes parciais",
+    )
+    erp_snapshot.add_argument(
+        "--base-release",
+        default="",
+        help="Release completa usada como base; padrão: a completa mais recente",
+    )
+    erp_detect = sub.add_parser(
+        "detect-erp-release",
+        help="Detecta localmente aplicações e versões nos vr*.properties dos JARs",
+    )
+    erp_detect.add_argument("--source", default=r"C:\vr\exec")
+    erp_detect.add_argument("--expected-jars", type=int, default=46)
     erp_status = sub.add_parser(
         "status-erp-release",
         help="Verifica o frescor de uma ou de todas as releases indexadas",
@@ -225,6 +246,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Define o limite local do índice entre 1x e 10x o tamanho da release",
     )
     storage_budget.add_argument("--multiplier", type=int, required=True)
+    sub.add_parser(
+        "inspect-erp-code-orphans",
+        help="Lista artefatos gerados que não possuem referência ativa",
+    )
+    orphan_cleanup = sub.add_parser(
+        "clean-erp-code-orphans",
+        help="Remove somente artefatos gerados comprovadamente órfãos",
+    )
+    orphan_cleanup.add_argument(
+        "--approve",
+        action="store_true",
+        help="Confirma explicitamente a limpeza dos dados regeneráveis",
+    )
     sub.add_parser(
         "doctor-code-analysis",
         help="Verifica Java 17 isolado, Vineflower e CFR sem alterar o sistema",
@@ -835,12 +869,28 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "snapshot-erp-release":
         catalog = ErpReleaseCatalog(settings.root, args.expected_jars)
         try:
-            result = catalog.snapshot_release(args.release_id, args.source)
+            if args.auto_detect or not args.release_id:
+                result = catalog.snapshot_detected_release(
+                    args.source,
+                    release_id=args.release_id,
+                    base_release_id=args.base_release,
+                )
+            else:
+                result = catalog.snapshot_release(args.release_id, args.source)
         except ErpReleaseError as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["state"] == "ready" else 2
+    elif args.command == "detect-erp-release":
+        catalog = ErpReleaseCatalog(settings.root, args.expected_jars)
+        try:
+            result = catalog.detect_package(args.source)
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     elif args.command == "status-erp-release":
         catalog = ErpReleaseCatalog(settings.root)
         try:
@@ -915,6 +965,19 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = ErpReleaseCatalog(settings.root).set_storage_budget_multiplier(
                 args.multiplier
+            )
+        except ErpReleaseError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "inspect-erp-code-orphans":
+        result = ErpReleaseCatalog(settings.root).inspect_orphaned_index_data()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if not result["errors"] else 2
+    elif args.command == "clean-erp-code-orphans":
+        try:
+            result = ErpReleaseCatalog(settings.root).purge_orphaned_index_data(
+                approved=args.approve
             )
         except ErpReleaseError as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2))

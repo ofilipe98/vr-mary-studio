@@ -6,6 +6,35 @@ import "../theme"
 
 Item {
     id: root
+    objectName: "settingsHub"
+
+    property string settingsSearch: ""
+    property bool syncingSearch: false
+    readonly property bool settingsActive: frontend.currentPage === 7
+    readonly property bool settingsSearching: settingsActive
+        && settingsSearch.trim().length > 0
+    readonly property var settingsSearchItems: [
+        { title: "Fonte de conhecimento VR", category: "Geral", tab: 0, icon: "folder" },
+        { title: "Credenciais Movidesk", category: "Geral", tab: 0, icon: "settings" },
+        { title: "Credenciais Wiki Endoo", category: "Geral", tab: 0, icon: "settings" },
+        { title: "Repetir sincronização", category: "Geral", tab: 0, icon: "reload" },
+        { title: "Diagnóstico", category: "Geral", tab: 0, icon: "context" },
+        { title: "Provedores e modelos", category: "Provedores", tab: 1, icon: "models" },
+        { title: "Agentes VR Ultra", category: "VR Ultra", tab: 2, icon: "agents" },
+        { title: "Análise de código e JARs", category: "VR Ultra", tab: 2, icon: "files" },
+        { title: "Diretório dos JARs", category: "VR Ultra", tab: 2, icon: "folder" },
+        { title: "Processamento local do índice", category: "VR Ultra", tab: 2, icon: "task" },
+        { title: "Tema", category: "Aparência", tab: 3, icon: "settings" },
+        { title: "Fonte e escala da interface", category: "Aparência", tab: 3, icon: "edit" },
+        { title: "Browser e acesso do agente", category: "Browser", tab: 4, icon: "browser" },
+        { title: "Projetos arquivados", category: "Projetos arquivados", tab: 5, icon: "archive" }
+    ]
+    readonly property var filteredSettings: settingsSearchItems.filter(function(item) {
+        var query = root.settingsSearch.trim().toLocaleLowerCase()
+        return !query.length
+            || item.title.toLocaleLowerCase().indexOf(query) >= 0
+            || item.category.toLocaleLowerCase().indexOf(query) >= 0
+    })
 
     readonly property var sections: [
         { title: "Dashboard", page: 0, icon: "nav-dashboard.svg" },
@@ -26,16 +55,42 @@ Item {
         visitedPages = pages
     }
 
+    function syncSearchField() {
+        root.syncingSearch = true
+        settingsConversationSearch.text = root.settingsActive
+            ? root.settingsSearch : chat.search
+        root.syncingSearch = false
+    }
+
+    function openSetting(tab) {
+        frontend.setCurrentPage(7)
+        Qt.callLater(function() {
+            if (settingsPageLoader.item)
+                settingsPageLoader.item.openSearchResult(tab)
+        })
+    }
+
+    function activateSettingSearchResult(index) {
+        if (index < 0 || index >= root.filteredSettings.length)
+            return false
+        root.openSetting(root.filteredSettings[index].tab)
+        return true
+    }
+
     Connections {
         target: frontend
         function onCurrentPageChanged() {
             root.markVisited()
+            root.syncSearchField()
             if (frontend.currentPage !== 1 && !frontend.reduceMotion)
                 pageEntrance.restart()
         }
     }
 
-    Component.onCompleted: root.markVisited()
+    Component.onCompleted: {
+        root.markVisited()
+        root.syncSearchField()
+    }
 
     Rectangle { anchors.fill: parent; color: frontend.palette.background }
 
@@ -70,16 +125,72 @@ Item {
                     onBrandActivated: frontend.setCurrentPage(1)
                 }
 
-                VrNavItem {
+                Item {
                     Layout.fillWidth: true
-                    title: "Chat VR"
-                    iconSource: frontend.navigationItems[1].icon
-                    selected: false
-                    compact: false
-                    onActivated: frontend.setCurrentPage(1)
+                    Layout.preferredHeight: 36
+
+                    VrTextField {
+                        id: settingsConversationSearch
+                        objectName: "settingsConversationSearch"
+                        anchors.fill: parent
+                        leftPadding: 31
+                        rightPadding: 30
+                        placeholderText: root.settingsActive
+                            ? "Pesquisar configurações" : "Pesquisar conversas"
+                        background: Rectangle {
+                            radius: 8
+                            color: settingsConversationSearch.hovered
+                                || settingsConversationSearch.activeFocus
+                                ? frontend.palette.chatControl : "transparent"
+                            border.width: 1
+                            border.color: settingsConversationSearch.activeFocus
+                                ? frontend.palette.focus : frontend.palette.chatBorder
+                        }
+                        onTextChanged: {
+                            if (root.syncingSearch)
+                                return
+                            if (root.settingsActive)
+                                root.settingsSearch = text
+                            else
+                                chat.setSearch(text)
+                        }
+                    }
+                    VrLineIcon {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 15
+                        height: 15
+                        kind: "search"
+                        foreground: frontend.palette.mutedText
+                    }
+                    VrIconButton {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: settingsConversationSearch.text.length > 0
+                        width: 26
+                        height: 26
+                        iconKind: "close"
+                        iconSize: 11
+                        foreground: frontend.palette.mutedText
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Limpar pesquisa"
+                        onClicked: settingsConversationSearch.clear()
+                    }
+                }
+
+                Connections {
+                    target: chat
+                    function onSearchChanged() {
+                        if (!root.settingsActive
+                                && !settingsConversationSearch.activeFocus)
+                            root.syncSearchField()
+                    }
                 }
 
                 Rectangle {
+                    visible: !root.settingsSearching
                     Layout.fillWidth: true
                     Layout.leftMargin: 7
                     Layout.rightMargin: 7
@@ -90,6 +201,7 @@ Item {
                 }
 
                 Repeater {
+                    visible: !root.settingsSearching
                     model: root.sections
                     delegate: VrNavItem {
                         required property var modelData
@@ -102,18 +214,112 @@ Item {
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                ListView {
+                    id: settingsSearchResults
+                    objectName: "settingsSearchResults"
+                    visible: root.settingsSearching
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 4
+                    model: root.filteredSettings
+                    delegate: Rectangle {
+                        id: settingResult
+                        required property int index
+                        required property var modelData
+                        width: settingsSearchResults.width
+                        height: 54
+                        radius: Theme.radiusSmall
+                        color: resultHover.hovered
+                            ? frontend.palette.chatControl : "transparent"
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 8
+                            spacing: 9
+                            VrLineIcon {
+                                Layout.preferredWidth: 16
+                                Layout.preferredHeight: 16
+                                kind: settingResult.modelData.icon
+                                foreground: frontend.palette.navMuted
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: settingResult.modelData.title
+                                    color: frontend.palette.navText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: settingResult.modelData.category
+                                    color: frontend.palette.navMuted
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(10)
+                                }
+                            }
+                        }
+                        HoverHandler { id: resultHover; cursorShape: Qt.PointingHandCursor }
+                        TapHandler {
+                            onTapped: root.activateSettingSearchResult(settingResult.index)
+                        }
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: settingsSearchResults.count === 0
+                        width: parent.width - 20
+                        text: "Nenhuma configuração encontrada."
+                        color: frontend.palette.navMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                    }
+                }
 
-                VrIconButton {
-                    Layout.alignment: Qt.AlignLeft
-                    implicitWidth: 38
+                Item {
+                    visible: !settingsSearchResults.visible
+                    Layout.fillHeight: true
+                }
+
+                Button {
+                    id: settingsReturnButton
+                    objectName: "settingsReturnButton"
+                    Layout.fillWidth: true
                     implicitHeight: 38
-                    iconKind: "settings"
-                    foreground: frontend.palette.navMuted
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Configurações"
-                    Accessible.name: "Abrir Configurações"
-                    onClicked: frontend.setCurrentPage(7)
+                    padding: 8
+                    hoverEnabled: true
+                    Accessible.name: "Retornar ao Chat VR"
+                    onClicked: frontend.setCurrentPage(1)
+                    contentItem: RowLayout {
+                        spacing: 8
+                        VrLineIcon {
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            kind: "back"
+                            foreground: settingsReturnButton.hovered
+                                ? frontend.palette.navText : frontend.palette.navMuted
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Retornar"
+                            color: settingsReturnButton.hovered
+                                ? frontend.palette.navText : frontend.palette.navMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.DemiBold
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: settingsReturnButton.down || settingsReturnButton.hovered
+                            ? frontend.palette.chatControl : "transparent"
+                    }
                 }
             }
         }
@@ -186,6 +392,7 @@ Item {
                 sourceComponent: logsComponent
             }
             Loader {
+                id: settingsPageLoader
                 anchors.fill: parent
                 active: root.visitedPages[7] === true
                 visible: frontend.currentPage === 7

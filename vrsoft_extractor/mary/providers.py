@@ -308,6 +308,7 @@ class CodexProvider(AgentProvider):
         self._native_to_local: dict[str, str] = {}
         self._active_turns: dict[str, str] = {}
         self._assistant_item_keys: dict[str, str] = {}
+        self._assistant_item_phases: dict[tuple[str, str], str] = {}
         self._write_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._start_lock = threading.RLock()
@@ -517,6 +518,7 @@ class CodexProvider(AgentProvider):
             for conversation_id, _callback in active:
                 self._active_turns.pop(conversation_id, None)
                 self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
         for conversation_id, callback in active:
             if callback is None:
                 continue
@@ -594,18 +596,36 @@ class CodexProvider(AgentProvider):
                 previous_item_key = self._assistant_item_keys.get(
                     conversation_id, ""
                 )
+                phase = self._assistant_item_phases.get(
+                    (conversation_id, item_id), ""
+                )
+                previous_item_id = previous_item_key.partition(":")[2]
+                previous_phase = self._assistant_item_phases.get(
+                    (conversation_id, previous_item_id), ""
+                )
                 self._assistant_item_keys[conversation_id] = item_key
             # Codex can emit commentary and the final answer as distinct
             # agent-message items. Keep a readable boundary between them.
-            if previous_item_key and previous_item_key != item_key and delta:
+            phases_are_distinct = bool(
+                phase and previous_phase and phase != previous_phase
+            )
+            if (
+                previous_item_key
+                and previous_item_key != item_key
+                and delta
+                and not phases_are_distinct
+            ):
                 leading_newlines = len(delta) - len(delta.lstrip("\r\n"))
                 delta = "\n" * max(0, 2 - leading_newlines) + delta
+            payload = {"method": method, **params}
+            if phase:
+                payload["phase"] = phase
             callback(
                 RuntimeEvent(
                     conversation_id,
                     "assistant_delta",
                     delta,
-                    {"method": method, **params},
+                    payload,
                 )
             )
         elif method == "item/plan/delta":
@@ -631,12 +651,14 @@ class CodexProvider(AgentProvider):
             with self._state_lock:
                 self._active_turns[conversation_id] = str(turn.get("id", ""))
                 self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
             callback(RuntimeEvent(conversation_id, "turn_started", payload=params))
         elif method == "turn/completed":
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
                 self._callbacks.pop(conversation_id, None)
                 self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
             callback(RuntimeEvent(conversation_id, "turn_completed", payload=params))
         elif method in {
             "item/commandExecution/requestApproval",
@@ -661,11 +683,39 @@ class CodexProvider(AgentProvider):
                     {"request_id": str(message.get("id")), "method": method, **params},
                 )
             )
+        elif method == "item/fileChange/patchUpdated":
+            item_id = str(params.get("itemId") or params.get("item_id") or "")
+            changes = list(params.get("changes") or [])
+            callback(
+                RuntimeEvent(
+                    conversation_id,
+                    "tool_event",
+                    f"Alterações de arquivo: {len(changes)}",
+                    {
+                        "lifecycle": method,
+                        **params,
+                        "item": {
+                            "id": item_id,
+                            "type": "fileChange",
+                            "status": "inProgress",
+                            "changes": changes,
+                        },
+                    },
+                )
+            )
         elif method == "error":
             error = params.get("error") or {}
             callback(RuntimeEvent(conversation_id, "error", str(error.get("message", error)), params))
         elif method in {"item/started", "item/completed"}:
             item = params.get("item") or {}
+            item_id = str(item.get("id") or "")
+            if str(item.get("type") or "") == "agentMessage" and item_id:
+                phase = str(item.get("phase") or "")
+                if phase:
+                    with self._state_lock:
+                        self._assistant_item_phases[
+                            (conversation_id, item_id)
+                        ] = phase
             callback(
                 RuntimeEvent(
                     conversation_id,
@@ -676,6 +726,13 @@ class CodexProvider(AgentProvider):
             )
         else:
             callback(RuntimeEvent(conversation_id, "runtime_event", method, params))
+
+    def _clear_assistant_item_phases(self, conversation_id: str) -> None:
+        stale = [
+            key for key in self._assistant_item_phases if key[0] == conversation_id
+        ]
+        for key in stale:
+            self._assistant_item_phases.pop(key, None)
 
     def list_models(self) -> list[dict[str, Any]]:
         self._ensure_started()
@@ -977,6 +1034,7 @@ class CodexProvider(AgentProvider):
             self._callbacks[conversation_id] = callback
             self._native_to_local[native_id] = conversation_id
             self._assistant_item_keys.pop(conversation_id, None)
+            self._clear_assistant_item_phases(conversation_id)
             # Keep a pending marker so a server crash between the RPC response
             # and turn/started still terminates this caller instead of timing out.
             self._active_turns[conversation_id] = ""
@@ -1060,6 +1118,7 @@ class CodexProvider(AgentProvider):
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
                 self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
             raise
 
     def interrupt(self, conversation_id: str) -> None:
@@ -1219,6 +1278,7 @@ class CodexProvider(AgentProvider):
                 self._callbacks.pop(conversation_id, None)
                 self._active_turns.pop(conversation_id, None)
                 self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
                 if native_id:
                     self._native_to_local.pop(native_id, None)
 

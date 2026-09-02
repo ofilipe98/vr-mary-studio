@@ -46,12 +46,6 @@ Button {
         id: compactRow
         spacing: 7
         Text {
-            text: "✦"
-            color: frontend.palette.mutedText
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(14)
-        }
-        Text {
             text: control.compactLabel || "Medium"
             color: frontend.palette.text
             font.family: Theme.fontFamily

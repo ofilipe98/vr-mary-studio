@@ -55,14 +55,16 @@ class _SuccessfulAdapter:
         )
 
 
-def _manager(tmp_path: Path) -> ErpCodeCoverage:
+def _manager(
+    tmp_path: Path, *, storage_budget_multiplier: int = 100_000
+) -> ErpCodeCoverage:
     source = tmp_path / "ERP" / "releases" / "r1" / "jars"
     _jar(source / "A.jar", {"br/vr/A.class": b"class-a"})
     _jar(source / "B.jar", {"br/vr/B.class": b"class-b"})
     catalog = ErpReleaseCatalog(
         tmp_path,
         expected_jar_count=2,
-        storage_budget_multiplier=100_000,
+        storage_budget_multiplier=storage_budget_multiplier,
     )
     catalog.import_release("r1")
     store = DecompilationBatchStore(tmp_path)
@@ -104,6 +106,34 @@ def test_coverage_advances_one_approved_jar_end_to_end(tmp_path: Path) -> None:
     assert result["coverage"]["covered_jars"] == ["A.jar"]
     assert result["coverage"]["remaining_jars"] == ["B.jar"]
     assert result["coverage"]["indexed_source_jars"] == ["A.jar"]
+
+
+def test_first_plan_uses_selected_quota_without_double_counting_existing_index(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path, storage_budget_multiplier=10)
+    orphan = tmp_path / "indice" / "codigo" / "decompilation" / "plan-orphan"
+    orphan.mkdir(parents=True)
+    (orphan / "old.java").write_bytes(b"legacy-output" * 100)
+
+    before = manager.status("r1")
+
+    assert before["capacity"]["used_bytes"] == 0
+    assert before["capacity"]["orphaned_bytes"] > 0
+    assert before["capacity"]["physical_used_bytes"] > 0
+    assert before["capacity"]["state"] == "tight"
+
+    result = manager.advance(
+        "r1",
+        approved=True,
+        relative_jars=("A.jar",),
+        batch_limit=10,
+        max_classes=10,
+        max_bytes=1024,
+    )
+
+    assert result["state"] == "completed"
+    assert result["coverage"]["covered_jars"] == ["A.jar"]
 
 
 def test_old_schema_plan_does_not_block_current_coverage(tmp_path: Path) -> None:

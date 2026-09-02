@@ -90,7 +90,7 @@ Rectangle {
                 implicitWidth: 24
                 implicitHeight: 24
                 checkable: true
-                checked: true
+                checked: frontend.wordWrap
                 iconKind: ""
                 symbol: "↵"
                 foreground: checked
@@ -128,8 +128,8 @@ Rectangle {
             activeFocusOnPress: false
             wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
             color: frontend.themeId === "dark_orange" ? "#E4E4E7" : "#27272A"
-            font.family: "Consolas"
-            font.pixelSize: Theme.fontSize(12)
+            font.family: Theme.monospaceFontFamily
+            font.pixelSize: Theme.monospaceFontSize(12)
         }
     }
 }

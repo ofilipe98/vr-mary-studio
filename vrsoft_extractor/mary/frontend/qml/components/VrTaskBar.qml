@@ -13,11 +13,8 @@ Rectangle {
     signal toggleRequested()
     signal closeRequested()
 
-    implicitHeight: content.implicitHeight + 12
-    radius: 13
-    color: frontend.palette.chatComposer
-    border.width: 1
-    border.color: frontend.palette.chatBorder
+    implicitHeight: content.implicitHeight + 8
+    color: "transparent"
     clip: true
 
     ColumnLayout {
@@ -25,8 +22,8 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: 10
-        anchors.rightMargin: 8
+        anchors.leftMargin: 4
+        anchors.rightMargin: 4
         spacing: 4
 
         Item {
@@ -38,12 +35,6 @@ Rectangle {
                 anchors.fill: parent
                 spacing: 7
 
-                VrLineIcon {
-                    Layout.preferredWidth: 15
-                    Layout.preferredHeight: 15
-                    kind: "task"
-                    foreground: frontend.palette.mutedText
-                }
                 Text {
                     text: "Tarefas"
                     color: frontend.palette.text
@@ -107,7 +98,7 @@ Rectangle {
         ColumnLayout {
             visible: root.expanded
             Layout.fillWidth: true
-            Layout.leftMargin: 17
+            Layout.leftMargin: 4
             Layout.rightMargin: 30
             Layout.bottomMargin: 2
             spacing: 5

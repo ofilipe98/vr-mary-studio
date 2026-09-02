@@ -12,7 +12,7 @@ Button {
 
     property var model: []
     property int currentIndex: 0
-    property string providerFilter: "all"
+    property string providerFilter: "favorites"
     property bool popupAbove: true
     property bool outlined: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
@@ -83,7 +83,7 @@ Button {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {
             searchField.clear()
-            control.providerFilter = "all"
+            control.providerFilter = "favorites"
             modelList.positionViewAtIndex(control.currentIndex, ListView.Center)
             searchField.forceActiveFocus()
         }
@@ -117,14 +117,9 @@ Button {
                     anchors.topMargin: 8
                     spacing: 4
                     Repeater {
-                        model: [
-                            {key: "favorites", kind: "star", label: "Favoritos"},
-                            {key: "all", kind: "models", label: "Todos"},
-                            {key: "codex", kind: "", label: "Codex"},
-                            {key: "claude", kind: "", label: "Claude"},
-                            {key: "opencode", kind: "", label: "OpenCode"}
-                        ]
+                        model: control.providerTabs()
                         delegate: Button {
+                            id: providerTabButton
                             required property var modelData
                             width: 48
                             height: 42
@@ -155,7 +150,7 @@ Button {
                             }
                             background: Rectangle {
                                 color: control.providerFilter === modelData.key
-                                    ? frontend.palette.selection : parent.hovered
+                                    ? frontend.palette.selection : providerTabButton.hovered
                                         ? frontend.palette.chatControl : "transparent"
                                 Rectangle {
                                     visible: control.providerFilter === modelData.key
@@ -331,8 +326,9 @@ Button {
 
     function matches(item) {
         if (!item) return false
+        if (item.inactive === true) return false
         if (control.providerFilter === "favorites" && !item.favorite) return false
-        if (control.providerFilter !== "all" && control.providerFilter !== "favorites"
+        if (control.providerFilter !== "favorites"
                 && item.provider !== control.providerFilter) return false
         var query = searchField.text.trim().toLowerCase()
         if (!query.length) return true
@@ -345,5 +341,22 @@ Button {
         for (var i = 0; i < control.model.length; ++i)
             if (control.matches(control.model[i])) return true
         return false
+    }
+
+    function providerTabs() {
+        var result = [{key: "favorites", kind: "star", label: "Favoritos"}]
+        var seen = ({})
+        for (var index = 0; index < control.model.length; ++index) {
+            var item = control.model[index] || ({})
+            var provider = String(item.provider || "")
+            if (!provider.length || item.inactive === true || seen[provider]) continue
+            seen[provider] = true
+            result.push({
+                key: provider,
+                kind: "",
+                label: item.providerLabel || provider
+            })
+        }
+        return result
     }
 }

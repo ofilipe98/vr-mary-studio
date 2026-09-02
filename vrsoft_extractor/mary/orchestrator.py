@@ -1956,7 +1956,10 @@ Retorne somente JSON:
             if cancelled:
                 return
         self.database.add_event(event)
-        if event.kind == "assistant_delta":
+        if (
+            event.kind == "assistant_delta"
+            and str(event.payload.get("phase") or "") != "commentary"
+        ):
             self._assistant_buffers.setdefault(event.conversation_id, []).append(event.text)
         elif event.kind == "turn_started":
             turn = event.payload.get("turn") or {}

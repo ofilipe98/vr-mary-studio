@@ -126,6 +126,17 @@ Canvas {
             rect(8, 8, 11, 11, 2.2)
             ctx.beginPath(); ctx.moveTo(5, 14); ctx.lineTo(5, 7)
             ctx.quadraticCurveTo(5, 5, 7, 5); ctx.lineTo(14, 5); ctx.stroke()
+        } else if (kind === "attachment") {
+            ctx.beginPath()
+            ctx.moveTo(8.2, 12.8)
+            ctx.lineTo(14.7, 6.3)
+            ctx.quadraticCurveTo(17.2, 3.8, 19.5, 6.1)
+            ctx.quadraticCurveTo(21.8, 8.4, 19.3, 10.9)
+            ctx.lineTo(10.2, 20)
+            ctx.quadraticCurveTo(6.7, 23.5, 3.5, 20.3)
+            ctx.quadraticCurveTo(0.3, 17.1, 3.8, 13.6)
+            ctx.lineTo(12.4, 5)
+            ctx.stroke()
         } else if (kind === "archive") {
             rect(4, 7, 16, 13, 2)
             rect(3, 4, 18, 5, 1.5)
@@ -182,6 +193,11 @@ Canvas {
             ctx.quadraticCurveTo(15.9, 21, 16, 20); ctx.lineTo(17, 8); ctx.stroke()
             line(5.5, 7, 18.5, 7); line(9.5, 4, 14.5, 4)
             line(10.5, 10, 10.8, 18); line(13.5, 10, 13.2, 18)
+        } else if (kind === "pin") {
+            ctx.beginPath(); ctx.moveTo(8, 4.5); ctx.lineTo(16, 4.5)
+            ctx.lineTo(15, 9); ctx.lineTo(18.5, 12.5); ctx.lineTo(5.5, 12.5)
+            ctx.lineTo(9, 9); ctx.closePath(); ctx.stroke()
+            line(12, 12.5, 12, 20)
         }
     }
 }

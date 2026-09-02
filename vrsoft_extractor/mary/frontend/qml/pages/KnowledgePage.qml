@@ -10,7 +10,7 @@ Item {
     property bool filtersVisible: false
     property bool documentExpanded: false
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
     ColumnLayout {
         anchors.fill: parent
@@ -26,10 +26,8 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 54
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: "transparent"
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -56,10 +54,8 @@ Item {
             visible: root.filtersVisible
             Layout.fillWidth: true
             Layout.preferredHeight: 58
-            radius: Theme.radiusCard
-            color: frontend.palette.surface
-            border.width: 1
-            border.color: frontend.palette.border
+            color: frontend.palette.chatSidebar
+            border.width: 0
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 8
@@ -100,10 +96,8 @@ Item {
                 visible: !root.documentExpanded
                 SplitView.minimumWidth: 360
                 SplitView.preferredWidth: 520
-                color: frontend.palette.surface
-                border.width: 1
-                border.color: frontend.palette.border
-                radius: Theme.radiusCard
+                color: "transparent"
+                border.width: 0
                 clip: true
 
                 ColumnLayout {
@@ -112,7 +106,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 42
-                        color: frontend.palette.surfaceRaised
+                        color: frontend.palette.chatSidebar
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 8
@@ -139,7 +133,7 @@ Item {
                             width: knowledgeList.width
                             height: 39
                             color: knowledgeList.currentIndex === index ? frontend.palette.selection
-                                : index % 2 ? frontend.palette.surfaceRaised : frontend.palette.surface
+                                : index % 2 ? frontend.palette.chatSidebar : "transparent"
                             border.width: 0
                             RowLayout {
                                 anchors.fill: parent
@@ -169,10 +163,8 @@ Item {
                 SplitView.minimumWidth: 330
                 SplitView.preferredWidth: 540
                 SplitView.fillWidth: true
-                color: frontend.palette.surface
-                border.width: 1
-                border.color: frontend.palette.border
-                radius: Theme.radiusCard
+                color: "transparent"
+                border.width: 0
                 clip: true
                 ColumnLayout {
                     anchors.fill: parent
@@ -221,6 +213,15 @@ Item {
                                 knowledgePreviewBody.textDocument,
                                 studio.knowledgePreview
                             )
+                            Connections {
+                                target: frontend
+                                function onThemeChanged() {
+                                    frontend.styleMessageDocument(
+                                        knowledgePreviewBody.textDocument,
+                                        studio.knowledgePreview
+                                    )
+                                }
+                            }
                         }
                     }
                 }
