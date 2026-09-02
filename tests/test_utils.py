@@ -42,6 +42,7 @@ class UtilsTest(unittest.TestCase):
         revision_version = re.fullmatch(
             r"(\d+)\.(\d+)(?:-(\d+))?", project_version
         )
+        patch_version = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", project_version)
         beta_version = re.fullmatch(
             r"(\d+)\.(\d+)\.(\d+)b(\d+)", project_version
         )
@@ -50,7 +51,7 @@ class UtilsTest(unittest.TestCase):
         self.assertIsNotNone(product_match)
         self.assertIsNotNone(file_match)
         self.assertIsNotNone(fixed_match)
-        self.assertTrue(revision_version or beta_version)
+        self.assertTrue(revision_version or patch_version or beta_version)
         self.assertEqual(project_version, __version__)
         self.assertEqual(match.group(1), __version__)
         self.assertEqual(product_match.group(1), __version__)
@@ -58,6 +59,9 @@ class UtilsTest(unittest.TestCase):
         if beta_version:
             major, minor, patch, beta = beta_version.groups()
             expected_fixed = (int(major), int(minor), int(patch), int(beta))
+        elif patch_version:
+            major, minor, patch = patch_version.groups()
+            expected_fixed = (int(major), int(minor), int(patch), 0)
         else:
             assert revision_version is not None
             major, minor, revision = revision_version.groups()

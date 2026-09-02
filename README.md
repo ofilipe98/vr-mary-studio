@@ -728,10 +728,10 @@ distribuí-lo. Credenciais e CLIs de provedores de chat não são incorporados.
 - Candidatas beta aprovadas explicitamente usam o formato PEP 440
   `major.minor.patchbN`, por exemplo `0.4.21b1`, e podem ser promovidas para
   `main` para homologação controlada.
-- O ciclo `0.4` usa uma versão-base estável sem sufixo e revisões incrementais
-  com hífen: `0.4`, `0.4-1`, `0.4-2` e assim sucessivamente.
+- A partir do ciclo `0.5`, a versão estável usa `major.minor` e `dev` avança em
+  revisões `major.minor.patch`: `0.5`, `0.5.1`, `0.5.2` e assim sucessivamente.
 - Logo após cada promoção, `dev` avança para a próxima revisão desse ciclo. Por
-  exemplo: após promover `0.4-1`, abra `0.4-2` em `dev`.
+  exemplo: após promover `0.5`, abra `0.5.1` em `dev`.
 - Toda melhoria, correção ou alteração nova entra primeiro em `dev`.
 - A build `dev` é entregue para homologação e permanece identificada pelo commit.
 - Depois da aprovação explícita, integre a versão validada de `dev` em `main`,
