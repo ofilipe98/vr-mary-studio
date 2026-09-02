@@ -173,14 +173,46 @@ def test_detected_snapshot_composes_partial_package_over_latest_complete_base(
     assert (managed / "VRCore" / "4.4.7.3" / "VRCore.jar").is_file()
 
 
-def test_detected_partial_package_requires_complete_base(tmp_path: Path) -> None:
-    source = tmp_path / "partial"
+def test_first_detected_directory_becomes_independent_base_for_installed_set(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "installed"
     _vr_jar(source / "VRMaster.jar", (4, 4, 102, 0))
 
-    with pytest.raises(ErpReleaseError, match="release-base completa"):
-        ErpReleaseCatalog(tmp_path / "workspace", expected_jar_count=2).snapshot_detected_release(
-            source
-        )
+    manifest = ErpReleaseCatalog(
+        workspace, expected_jar_count=46
+    ).snapshot_detected_release(source)
+
+    assert manifest["state"] == "ready"
+    assert manifest["analysis_scope"] == "full_release"
+    assert manifest["jar_count"] == 1
+    assert manifest["expected_jar_count"] == 1
+    assert manifest["base_release_id"] == ""
+
+
+def test_dynamic_installed_set_is_reused_as_incremental_base(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    installed = tmp_path / "installed"
+    _vr_jar(installed / "VRMaster.jar", (4, 4, 101, 0), app_date="30/08/2026")
+    _vr_jar(installed / "VRCore.jar", (4, 4, 7, 3), app_date="30/08/2026")
+    catalog = ErpReleaseCatalog(workspace, expected_jar_count=46)
+
+    base = catalog.snapshot_detected_release(installed)
+
+    assert base["analysis_scope"] == "full_release"
+    assert base["jar_count"] == 2
+    assert base["expected_jar_count"] == 2
+
+    update = tmp_path / "update"
+    _vr_jar(update / "VRMaster.jar", (4, 4, 102, 0))
+    composed = catalog.snapshot_detected_release(update)
+
+    assert composed["analysis_scope"] == "incremental_release"
+    assert composed["base_release_id"] == base["release_id"]
+    assert composed["jar_count"] == 2
+    assert composed["expected_jar_count"] == 2
+    assert composed["carried_forward_jar_count"] == 1
 
 
 def test_detected_single_jar_uses_application_release_and_hash(tmp_path: Path) -> None:

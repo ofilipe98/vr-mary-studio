@@ -24,6 +24,7 @@ from .code_field_validation import CodeFieldValidationError, CodeFieldValidator
 from .code_index import JavaCodeIndex
 from .code_index_transfer import CodeIndexTransfer, CodeIndexTransferError
 from .code_offline_preflight import OfflineCodePreflight
+from .code_processing_hardware import detect_code_processing_hardware
 from .config import load_vr_settings
 from .endoo_wiki import EndooWikiSync
 from .erp_releases import ErpReleaseCatalog, ErpReleaseError
@@ -50,6 +51,25 @@ from .jvm_toolchain import JvmToolchain
 from .wiki import WikiSync
 from .schema_sync import SchemaSync
 from .workspace import initialize_workspace
+
+
+CODE_PROCESSING_HARDWARE = detect_code_processing_hardware()
+
+
+def _parallel_processing_args(args: argparse.Namespace) -> tuple[int, int, str]:
+    workers = int(getattr(args, "parallel_workers", 0) or 0)
+    if workers <= 0:
+        workers = CODE_PROCESSING_HARDWARE.parallel_workers_for(
+            args.cpu_cores,
+            args.heap_mb,
+        )
+    limit = int(getattr(args, "limit", 0) or 0) or workers
+    requested_priority = str(getattr(args, "priority", "auto"))
+    if requested_priority == "auto":
+        priority = "normal" if workers > 1 else "low"
+    else:
+        priority = requested_priority
+    return workers, limit, priority
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -283,14 +303,32 @@ def build_parser() -> argparse.ArgumentParser:
     batch_plan.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
     batch_run = sub.add_parser(
         "run-erp-decompilation",
-        help="Executa serialmente os próximos lotes pendentes de um plano",
+        help="Executa em paralelo os próximos lotes pendentes de um plano",
     )
     batch_run.add_argument("plan_id")
-    batch_run.add_argument("--limit", type=int, default=1)
-    batch_run.add_argument("--heap-mb", type=int, default=2048)
+    batch_run.add_argument("--limit", type=int, default=0, help="0 = automático")
+    batch_run.add_argument(
+        "--heap-mb",
+        type=int,
+        default=CODE_PROCESSING_HARDWARE.recommended_heap_mb,
+    )
     batch_run.add_argument("--timeout", type=int, default=300)
-    batch_run.add_argument("--cpu-cores", type=int, choices=(1, 2, 4), default=1)
-    batch_run.add_argument("--priority", choices=("low", "normal"), default="low")
+    batch_run.add_argument(
+        "--cpu-cores",
+        type=int,
+        choices=CODE_PROCESSING_HARDWARE.cpu_options,
+        default=CODE_PROCESSING_HARDWARE.recommended_cpu_cores,
+    )
+    batch_run.add_argument(
+        "--parallel-workers",
+        type=int,
+        choices=range(0, 9),
+        default=0,
+        help="0 = automático conforme CPU e RAM",
+    )
+    batch_run.add_argument(
+        "--priority", choices=("auto", "low", "normal"), default="auto"
+    )
     batch_run.add_argument(
         "--processing-window",
         choices=("always", "night", "off_hours"),
@@ -355,16 +393,31 @@ def build_parser() -> argparse.ArgumentParser:
     coverage_advance.add_argument("release_id")
     coverage_advance.add_argument("--jar", action="append", default=[])
     coverage_advance.add_argument("--jars-per-plan", type=int, default=1)
-    coverage_advance.add_argument("--limit", type=int, default=1)
+    coverage_advance.add_argument("--limit", type=int, default=0, help="0 = automático")
     coverage_advance.add_argument("--max-classes", type=int, default=DEFAULT_MAX_CLASSES)
     coverage_advance.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
-    coverage_advance.add_argument("--heap-mb", type=int, default=2048)
-    coverage_advance.add_argument("--timeout", type=int, default=300)
-    coverage_advance.add_argument("--cpu-cores", type=int, choices=(1, 2, 4), default=1)
     coverage_advance.add_argument(
-        "--parallel-workers", type=int, choices=(1, 2), default=1
+        "--heap-mb",
+        type=int,
+        default=CODE_PROCESSING_HARDWARE.recommended_heap_mb,
     )
-    coverage_advance.add_argument("--priority", choices=("low", "normal"), default="low")
+    coverage_advance.add_argument("--timeout", type=int, default=300)
+    coverage_advance.add_argument(
+        "--cpu-cores",
+        type=int,
+        choices=CODE_PROCESSING_HARDWARE.cpu_options,
+        default=CODE_PROCESSING_HARDWARE.recommended_cpu_cores,
+    )
+    coverage_advance.add_argument(
+        "--parallel-workers",
+        type=int,
+        choices=range(0, 9),
+        default=0,
+        help="0 = automático conforme CPU e RAM",
+    )
+    coverage_advance.add_argument(
+        "--priority", choices=("auto", "low", "normal"), default="auto"
+    )
     coverage_advance.add_argument(
         "--processing-window",
         choices=("always", "night", "off_hours"),
@@ -1018,14 +1071,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "run-erp-decompilation":
         try:
+            parallel_workers, batch_limit, process_priority = (
+                _parallel_processing_args(args)
+            )
             result = DecompilationBatchExecutor(settings.root).run(
                 args.plan_id,
-                limit=args.limit,
+                limit=batch_limit,
                 max_heap_mb=args.heap_mb,
                 timeout_seconds=args.timeout,
                 max_cpu_cores=args.cpu_cores,
-                parallel_workers=args.parallel_workers,
-                process_priority=args.priority,
+                max_workers=parallel_workers,
+                process_priority=process_priority,
                 processing_window=args.processing_window,
             )
         except (DecompilationBatchError, ErpReleaseError) as exc:
@@ -1111,18 +1167,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "advance-erp-code-coverage":
         try:
+            parallel_workers, batch_limit, process_priority = (
+                _parallel_processing_args(args)
+            )
             result = ErpCodeCoverage(settings.root).advance(
                 args.release_id,
                 approved=args.approve_processing,
                 relative_jars=args.jar,
                 jars_per_plan=args.jars_per_plan,
-                batch_limit=args.limit,
+                batch_limit=batch_limit,
                 max_classes=args.max_classes,
                 max_bytes=args.max_bytes,
                 max_heap_mb=args.heap_mb,
                 timeout_seconds=args.timeout,
                 max_cpu_cores=args.cpu_cores,
-                process_priority=args.priority,
+                parallel_workers=parallel_workers,
+                process_priority=process_priority,
                 processing_window=args.processing_window,
             )
         except (CodeCoverageError, DecompilationBatchError, ErpReleaseError) as exc:

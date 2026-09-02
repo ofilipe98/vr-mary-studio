@@ -35,6 +35,7 @@ from .text_rendering import FENCE_RE, code_language_badge
 from ..classpath import ClasspathError, ClasspathPolicyStore
 from ..code_coverage import CodeCoverageError, ErpCodeCoverage
 from ..code_index import JavaCodeIndex
+from ..code_processing_hardware import detect_code_processing_hardware
 from ..code_processing_audit import CodeProcessingAudit
 from ..code_processing_policy import processing_window_status
 from ..config import MarySettings
@@ -84,20 +85,22 @@ ERP_JAR_SCOPE_FULL_RELEASE = "full_release"
 ERP_JAR_SCOPE_SINGLE = "single_jar"
 DEFAULT_ERP_JAR_SOURCE_PATH = Path(r"C:\vr\exec")
 EXPECTED_ERP_JAR_COUNT = 46
+CODE_PROCESSING_HARDWARE = detect_code_processing_hardware()
 CODE_PROCESSING_HEAP_OPTIONS = (1024, 2048, 4096)
 CODE_PROCESSING_TIMEOUT_OPTIONS = (300, 600, 1200)
-CODE_PROCESSING_CPU_CORE_OPTIONS = (1, 2, 4)
+CODE_PROCESSING_CPU_CORE_OPTIONS = CODE_PROCESSING_HARDWARE.cpu_options
 CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS = (5, 8, 10)
 CODE_PROCESSING_WINDOW_OPTIONS = (
     {"label": "Sempre", "value": "always"},
     {"label": "Madrugada · 00h-06h", "value": "night"},
     {"label": "Fora do expediente · 18h-06h", "value": "off_hours"},
 )
-DEFAULT_CODE_PROCESSING_HEAP_MB = 2048
+DEFAULT_CODE_PROCESSING_HEAP_MB = CODE_PROCESSING_HARDWARE.recommended_heap_mb
 DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS = 300
-DEFAULT_CODE_PROCESSING_CPU_CORES = 1
+DEFAULT_CODE_PROCESSING_CPU_CORES = CODE_PROCESSING_HARDWARE.recommended_cpu_cores
 DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER = 10
 DEFAULT_CODE_PROCESSING_WINDOW = "always"
+CODE_PROCESSING_HARDWARE_PROFILE_VERSION = 2
 
 
 def markdown_for_display(markdown: str) -> str:
@@ -765,6 +768,29 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def codeProcessingMaxCpuCores(self) -> int:  # noqa: N802
         return self._code_processing_max_cpu_cores
+
+    @Property(str, notify=stateChanged)
+    def codeProcessingHardwareSummary(self) -> str:  # noqa: N802
+        workers = self.codeProcessingParallelWorkers
+        return (
+            CODE_PROCESSING_HARDWARE.summary
+            + f" Configuração atual: {workers} processos paralelos."
+        )
+
+    @Property(int, notify=stateChanged)
+    def codeProcessingParallelWorkers(self) -> int:  # noqa: N802
+        return CODE_PROCESSING_HARDWARE.parallel_workers_for(
+            self._code_processing_max_cpu_cores,
+            self._code_processing_max_heap_mb,
+        )
+
+    @Property(int, notify=stateChanged)
+    def codeProcessingCpuCoresPerWorker(self) -> int:  # noqa: N802
+        return max(
+            1,
+            self._code_processing_max_cpu_cores
+            // self.codeProcessingParallelWorkers,
+        )
 
     @Property("QVariantList", notify=stateChanged)
     def codeProcessingDiskMultiplierOptions(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -2442,6 +2468,9 @@ class ChatBridge(QObject):
         cpu_preference = self._workspace_research_preference(
             "code_processing_max_cpu_cores"
         )
+        hardware_profile_preference = self._workspace_research_preference(
+            "code_processing_hardware_profile_version"
+        )
         disk_preference = self._workspace_research_preference(
             "code_processing_disk_multiplier"
         )
@@ -2471,6 +2500,15 @@ class ChatBridge(QObject):
                 )
             )
         except (TypeError, ValueError):
+            requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
+        try:
+            hardware_profile_version = int(
+                self._preferences.value(hardware_profile_preference, 0)
+            )
+        except (TypeError, ValueError):
+            hardware_profile_version = 0
+        if hardware_profile_version < CODE_PROCESSING_HARDWARE_PROFILE_VERSION:
+            requested_heap = DEFAULT_CODE_PROCESSING_HEAP_MB
             requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
         try:
             requested_disk = int(
@@ -2543,6 +2581,10 @@ class ChatBridge(QObject):
         self._preferences.setValue(
             cpu_preference,
             self._code_processing_max_cpu_cores,
+        )
+        self._preferences.setValue(
+            hardware_profile_preference,
+            CODE_PROCESSING_HARDWARE_PROFILE_VERSION,
         )
         self._preferences.setValue(
             disk_preference,
@@ -3147,7 +3189,10 @@ class ChatBridge(QObject):
         max_heap_mb = self._code_processing_max_heap_mb
         timeout_seconds = self._code_processing_timeout_seconds
         max_cpu_cores = self._code_processing_max_cpu_cores
-        parallel_workers = 2 if max_cpu_cores >= 4 else 1
+        parallel_workers = CODE_PROCESSING_HARDWARE.parallel_workers_for(
+            max_cpu_cores,
+            max_heap_mb,
+        )
         process_priority = "normal" if parallel_workers > 1 else "low"
         disk_multiplier = self._code_processing_disk_multiplier
         processing_window = self._code_processing_window

@@ -406,8 +406,7 @@ Item {
                             return item.path + " · " + item.status
                                 + " · escolha um JAR abaixo"
                         var composition = item.jarCount > 0
-                            && item.jarCount < chat.codeAnalysisExpectedJarCount
-                            ? " · pacote incremental: os demais JARs virão da base completa"
+                            ? " · o conjunto instalado será uma base independente ou atualizará uma base compatível"
                             : ""
                         return item.path + " · " + item.status + composition
                     }
@@ -517,6 +516,16 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: "Decompilação, AST/grafo e FTS rodam na máquina do analista. A pausa ocorre com segurança entre grupos de lotes."
+                    color: frontend.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.captionSize
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    objectName: "vrUltraCodeProcessingHardwareSummary"
+                    Layout.fillWidth: true
+                    text: chat.codeProcessingHardwareSummary
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.captionSize
@@ -677,9 +686,11 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: chat.codeProcessingMaxCpuCores >= 4
-                        ? "Modo Turbo: 2 processos Java, 2 núcleos por processo e prioridade normal. AST/FTS usa escrita SQLite serializada."
-                        : "Modo equilibrado: 1 processo Java com prioridade baixa. Selecione 4 núcleos para ativar o Turbo."
+                    text: chat.codeProcessingParallelWorkers > 1
+                        ? "Modo paralelo automático: " + chat.codeProcessingParallelWorkers
+                            + " processos Java, " + chat.codeProcessingCpuCoresPerWorker
+                            + " CPU(s) por processo e prioridade normal. AST/FTS usa escrita SQLite serializada."
+                        : "Modo equilibrado: 1 processo Java com prioridade baixa. Aumente o limite de CPU para ampliar o paralelismo."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.captionSize

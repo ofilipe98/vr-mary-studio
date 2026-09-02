@@ -194,8 +194,17 @@ class ErpReleaseCatalog:
         *,
         source_origin_dir: str | Path | None = None,
         analysis_scope: str | None = None,
+        expected_jar_count: int | None = None,
     ) -> dict[str, Any]:
         release_id = validate_release_id(release_id)
+        effective_expected_count = max(
+            1,
+            int(
+                self.expected_jar_count
+                if expected_jar_count is None
+                else expected_jar_count
+            ),
+        )
         source = Path(source_dir or self.paths.source_for(release_id)).resolve()
         if not source.is_dir():
             raise ErpReleaseError(f"Pasta da release não encontrada: {source}")
@@ -240,9 +249,9 @@ class ErpReleaseCatalog:
             self._write_artifact_metadata(artifact)
 
         invalid_count = sum(1 for item in artifacts if item.get("error"))
-        if len(artifacts) != self.expected_jar_count:
+        if len(artifacts) != effective_expected_count:
             warnings.append(
-                f"Esperados {self.expected_jar_count} JARs, encontrados {len(artifacts)}."
+                f"Esperados {effective_expected_count} JARs, encontrados {len(artifacts)}."
             )
         if invalid_count:
             warnings.append(f"{invalid_count} JAR(s) não puderam ser inspecionados.")
@@ -261,7 +270,7 @@ class ErpReleaseCatalog:
             if item.get("manifest_class_path")
         ]
         release_hash = aggregate_release_hash(artifacts)
-        ready = len(artifacts) == self.expected_jar_count and invalid_count == 0
+        ready = len(artifacts) == effective_expected_count and invalid_count == 0
         manifest = {
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "release_id": release_id,
@@ -278,11 +287,11 @@ class ErpReleaseCatalog:
                 analysis_scope
                 or (
                     "full_release"
-                    if self.expected_jar_count == DEFAULT_EXPECTED_JAR_COUNT
+                    if effective_expected_count == DEFAULT_EXPECTED_JAR_COUNT
                     else "custom"
                 )
             ),
-            "expected_jar_count": self.expected_jar_count,
+            "expected_jar_count": effective_expected_count,
             "jar_count": len(artifacts),
             "source_size_bytes": sum(int(item["size_bytes"]) for item in artifacts),
             "state": "ready" if ready else "incomplete",
@@ -489,8 +498,23 @@ class ErpReleaseCatalog:
 
         base_manifest: dict[str, Any] | None = None
         combined: dict[str, dict[str, Any]] = {}
-        if not single_jar and len(provided) < self.expected_jar_count:
-            base_manifest = self._complete_base_manifest(base_release_id)
+        if not single_jar:
+            base_manifest = self._complete_base_manifest(
+                base_release_id,
+                required=bool(base_release_id),
+            )
+            base_applications = {
+                str(item.get("application_key") or "")
+                for item in (base_manifest or {}).get("artifacts") or []
+                if isinstance(item, dict) and item.get("application_key")
+            }
+            # Installations do not all ship the same ERP applications. A package
+            # is incremental only when it is a strict subset of a compatible
+            # base; otherwise the directory itself is a complete, independent
+            # snapshot of the applications that are actually installed.
+            if not (base_manifest and set(provided) < base_applications):
+                base_manifest = None
+        if base_manifest is not None:
             base_source = self._resolve_source(str(base_manifest.get("source_dir") or ""))
             if not base_source.is_dir():
                 raise ErpReleaseError(
@@ -517,13 +541,12 @@ class ErpReleaseCatalog:
                 }
         combined.update(provided)
 
-        expected = 1 if single_jar else self.expected_jar_count
+        expected = 1 if single_jar else (
+            int(base_manifest.get("jar_count") or 0)
+            if base_manifest is not None
+            else len(provided)
+        )
         if len(combined) != expected:
-            if len(provided) < expected and base_manifest is None:
-                raise ErpReleaseError(
-                    "O pacote é parcial e não existe uma release-base completa. "
-                    "Importe primeiro o pacote mais atual com todos os JARs."
-                )
             raise ErpReleaseError(
                 f"A composição deveria resultar em {expected} aplicações/JARs; "
                 f"resultou em {len(combined)}. Verifique aplicações novas ou ausentes."
@@ -632,6 +655,7 @@ class ErpReleaseCatalog:
                 destination,
                 source_origin_dir=source,
                 analysis_scope=effective_scope,
+                expected_jar_count=expected,
             )
         except Exception:
             _require_child(release_root, self.paths.source_releases)
@@ -711,7 +735,12 @@ class ErpReleaseCatalog:
         _atomic_write_json(self.paths.manifest_for(selected_release_id), manifest)
         return manifest
 
-    def _complete_base_manifest(self, release_id: str = "") -> dict[str, Any]:
+    def _complete_base_manifest(
+        self,
+        release_id: str = "",
+        *,
+        required: bool = True,
+    ) -> dict[str, Any] | None:
         candidates: list[dict[str, Any]] = []
         if release_id:
             candidates = [self.load_manifest(validate_release_id(release_id))]
@@ -729,12 +758,21 @@ class ErpReleaseCatalog:
                 reverse=True,
             )
         for manifest in candidates:
+            scope = str(manifest.get("analysis_scope") or "full_release")
+            jar_count = int(manifest.get("jar_count") or 0)
+            manifest_expected = int(
+                manifest.get("expected_jar_count") or self.expected_jar_count
+            )
             if (
                 str(manifest.get("state") or "") == "ready"
-                and int(manifest.get("jar_count") or 0) == self.expected_jar_count
+                and scope == "full_release"
+                and jar_count > 0
+                and jar_count == manifest_expected
                 and int(manifest.get("invalid_jar_count") or 0) == 0
             ):
                 return manifest
+        if not required:
+            return None
         requested = f" {release_id}" if release_id else ""
         raise ErpReleaseError(
             "Nenhuma release-base completa"

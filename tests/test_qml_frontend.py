@@ -24,6 +24,7 @@ from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
 from vrsoft_extractor.mary.frontend.chat import (
+    CODE_PROCESSING_HARDWARE,
     DEFAULT_ERP_JAR_SOURCE_PATH,
     ChatBridge,
     markdown_for_display,
@@ -1198,7 +1199,10 @@ class QmlFrontendTest(unittest.TestCase):
 
             self.assertEqual(bridge.codeProcessingMaxHeapMb, 2048)
             self.assertEqual(bridge.codeProcessingTimeoutSeconds, 300)
-            self.assertEqual(bridge.codeProcessingMaxCpuCores, 1)
+            self.assertEqual(
+                bridge.codeProcessingMaxCpuCores,
+                CODE_PROCESSING_HARDWARE.recommended_cpu_cores,
+            )
             self.assertEqual(bridge.codeProcessingDiskMultiplier, 10)
             self.assertEqual(bridge.codeProcessingWindow, "always")
             self.assertEqual(
@@ -1211,11 +1215,21 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(
                 [item["value"] for item in bridge.codeProcessingCpuCoreOptions],
-                [1, 2, 4],
+                list(CODE_PROCESSING_HARDWARE.cpu_options),
             )
             self.assertEqual(
                 [item["label"] for item in bridge.codeProcessingCpuCoreOptions],
-                ["1 núcleo(s)", "2 núcleo(s)", "4 núcleo(s) · Turbo"],
+                [
+                    f"{value} núcleo(s) · Turbo"
+                    if value >= 4
+                    else f"{value} núcleo(s)"
+                    for value in CODE_PROCESSING_HARDWARE.cpu_options
+                ],
+            )
+            self.assertIn("Hardware detectado", bridge.codeProcessingHardwareSummary)
+            self.assertEqual(
+                bridge.codeProcessingParallelWorkers,
+                CODE_PROCESSING_HARDWARE.recommended_parallel_workers,
             )
             self.assertEqual(
                 [item["value"] for item in bridge.codeProcessingDiskMultiplierOptions],
@@ -1456,7 +1470,9 @@ class QmlFrontendTest(unittest.TestCase):
 
         self.assertIn("Pacote completo ou incremental", qml)
         self.assertIn("Automático: aplicação e versão do vr*.properties", qml)
-        self.assertIn("pacote incremental: os demais JARs virão da base completa", qml)
+        self.assertIn("o conjunto instalado será uma base independente", qml)
+        self.assertIn("vrUltraCodeProcessingHardwareSummary", qml)
+        self.assertIn("Modo paralelo automático", qml)
         self.assertIn("Detectar e adicionar", qml)
         self.assertNotIn("releaseIdField.text.trim().length > 0", qml)
 
