@@ -3740,7 +3740,7 @@ class ChatBridge(QObject):
             (
                 f"Detectando aplicação e versão de {Path(source).name} localmente..."
                 if single_jar
-                else "Detectando aplicações e compondo a release localmente..."
+                else "Detectando aplicações e preparando a release localmente..."
             )
         )
         self.stateChanged.emit()
@@ -3778,6 +3778,10 @@ class ChatBridge(QObject):
                     "jar_count": int(manifest.get("jar_count") or 0),
                     "package_jar_count": int(manifest.get("package_jar_count") or 0),
                     "base_release_id": str(manifest.get("base_release_id") or ""),
+                    "analysis_scope": str(manifest.get("analysis_scope") or ""),
+                    "expected_jar_count": int(
+                        manifest.get("expected_jar_count") or 0
+                    ),
                     "updated_applications": list(
                         manifest.get("updated_applications") or []
                     ),
@@ -3965,11 +3969,18 @@ class ChatBridge(QObject):
             jar_count = int(latest.get("jar_count") or 0)
             package_jar_count = int(latest.get("package_jar_count") or jar_count)
             base_release_id = str(latest.get("base_release_id") or "")
+            analysis_scope = str(latest.get("analysis_scope") or "")
+            expected_jar_count = int(latest.get("expected_jar_count") or 0)
             updated = [str(item) for item in latest.get("updated_applications") or []]
             jar_label = "JAR copiado e verificado" if jar_count == 1 else "JARs copiados e verificados"
             self._release_snapshot_status = (
                 f"Release {release_id} detectada e adicionada: {jar_count} {jar_label} "
                 f"localmente; pacote recebido com {package_jar_count}."
+                + (
+                    f" Release parcial: {jar_count} de {expected_jar_count} JARs."
+                    if analysis_scope == "partial_release"
+                    else ""
+                )
                 + (f" Base completa: {base_release_id}." if base_release_id else "")
                 + (f" Atualizados: {', '.join(updated)}." if updated else "")
             )
@@ -4057,6 +4068,8 @@ class ChatBridge(QObject):
                 if analysis_scope == ERP_JAR_SCOPE_SINGLE
                 else "release incremental"
                 if analysis_scope == "incremental_release"
+                else "release parcial"
+                if analysis_scope == "partial_release"
                 else "release completa"
             )
             classpath_status = str(classpath.get("classpath_status") or "unknown")

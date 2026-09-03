@@ -1331,6 +1331,45 @@ class QmlFrontendTest(unittest.TestCase):
             other = ChatBridge(other_settings, other_database, preferences)
             self.assertEqual(other.codeAnalysisJarSource, "vr_exec")
 
+    def test_partial_directory_snapshot_is_ready_without_complete_base(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            source = settings.erp_releases_dir
+            source.mkdir(parents=True)
+            for name in ("VRMaster.jar", "VRPdv.jar"):
+                with zipfile.ZipFile(source / name, "w") as archive:
+                    archive.writestr(
+                        "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n"
+                    )
+                    archive.writestr(f"br/vr/{Path(name).stem}.class", b"release")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.setCodeAnalysisJarSource("workspace")
+
+            self.assertTrue(bridge.snapshotCodeAnalysisRelease("partial-14"))
+            for _attempt in range(100):
+                self.application.processEvents()
+                QTest.qWait(25)
+                threading.Event().wait(0.001)
+                if not bridge.releaseSnapshotRunning:
+                    break
+
+            self.assertFalse(bridge.releaseSnapshotRunning)
+            self.assertIn("Release parcial: 2 de 46 JARs", bridge.releaseSnapshotStatus)
+            manifest = ErpReleaseCatalog(settings.root).load_manifest("partial-14")
+            self.assertEqual(manifest["state"], "ready")
+            self.assertEqual(manifest["analysis_scope"], "partial_release")
+            self.assertEqual(manifest["jar_count"], 2)
+            self.assertEqual(manifest["expected_jar_count"], 46)
+
     def test_single_jar_snapshot_runs_locally_in_background_and_refreshes_selector(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1468,9 +1507,9 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("Pacote completo ou incremental", qml)
         self.assertIn("Automático: aplicação e versão do vr*.properties", qml)
-        self.assertIn("o conjunto instalado será uma base independente", qml)
+        self.assertIn("Pacote completo ou parcial", qml)
+        self.assertIn("quantidades menores serão indexadas como release parcial", qml)
         self.assertIn("vrUltraCodeProcessingHardwareSummary", qml)
         self.assertIn("Modo paralelo automático", qml)
         self.assertIn("Detectar e adicionar", qml)

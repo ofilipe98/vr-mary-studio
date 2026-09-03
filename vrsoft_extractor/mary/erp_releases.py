@@ -270,7 +270,11 @@ class ErpReleaseCatalog:
             if item.get("manifest_class_path")
         ]
         release_hash = aggregate_release_hash(artifacts)
-        ready = len(artifacts) == effective_expected_count and invalid_count == 0
+        partial_scope = str(analysis_scope or "") == "partial_release"
+        count_is_accepted = len(artifacts) == effective_expected_count or (
+            partial_scope and len(artifacts) < effective_expected_count
+        )
+        ready = count_is_accepted and invalid_count == 0
         manifest = {
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "release_id": release_id,
@@ -498,22 +502,20 @@ class ErpReleaseCatalog:
 
         base_manifest: dict[str, Any] | None = None
         combined: dict[str, dict[str, Any]] = {}
-        if not single_jar:
-            base_manifest = self._complete_base_manifest(
-                base_release_id,
-                required=bool(base_release_id),
-            )
+        if not single_jar and base_release_id:
+            base_manifest = self._complete_base_manifest(base_release_id)
             base_applications = {
                 str(item.get("application_key") or "")
                 for item in (base_manifest or {}).get("artifacts") or []
                 if isinstance(item, dict) and item.get("application_key")
             }
-            # Installations do not all ship the same ERP applications. A package
-            # is incremental only when it is a strict subset of a compatible
-            # base; otherwise the directory itself is a complete, independent
-            # snapshot of the applications that are actually installed.
-            if not (base_manifest and set(provided) < base_applications):
-                base_manifest = None
+            unknown_applications = sorted(set(provided) - base_applications)
+            if unknown_applications:
+                raise ErpReleaseError(
+                    "O pacote incremental contém aplicações ausentes da base: "
+                    + ", ".join(unknown_applications)
+                    + "."
+                )
         if base_manifest is not None:
             base_source = self._resolve_source(str(base_manifest.get("source_dir") or ""))
             if not base_source.is_dir():
@@ -544,12 +546,17 @@ class ErpReleaseCatalog:
         expected = 1 if single_jar else (
             int(base_manifest.get("jar_count") or 0)
             if base_manifest is not None
-            else len(provided)
+            else self.expected_jar_count
         )
-        if len(combined) != expected:
+        if base_manifest is not None and len(combined) != expected:
             raise ErpReleaseError(
                 f"A composição deveria resultar em {expected} aplicações/JARs; "
                 f"resultou em {len(combined)}. Verifique aplicações novas ou ausentes."
+            )
+        if base_manifest is None and not single_jar and len(combined) > expected:
+            raise ErpReleaseError(
+                f"O pacote completo admite {expected} aplicações/JARs; "
+                f"foram encontradas {len(combined)}."
             )
 
         categorized: list[dict[str, Any]] = []
@@ -648,6 +655,8 @@ class ErpReleaseCatalog:
             else "incremental_release"
             if base_manifest is not None
             else "full_release"
+            if len(combined) == expected
+            else "partial_release"
         )
         try:
             manifest = self.import_release(
@@ -735,12 +744,7 @@ class ErpReleaseCatalog:
         _atomic_write_json(self.paths.manifest_for(selected_release_id), manifest)
         return manifest
 
-    def _complete_base_manifest(
-        self,
-        release_id: str = "",
-        *,
-        required: bool = True,
-    ) -> dict[str, Any] | None:
+    def _complete_base_manifest(self, release_id: str = "") -> dict[str, Any]:
         candidates: list[dict[str, Any]] = []
         if release_id:
             candidates = [self.load_manifest(validate_release_id(release_id))]
@@ -760,19 +764,14 @@ class ErpReleaseCatalog:
         for manifest in candidates:
             scope = str(manifest.get("analysis_scope") or "full_release")
             jar_count = int(manifest.get("jar_count") or 0)
-            manifest_expected = int(
-                manifest.get("expected_jar_count") or self.expected_jar_count
-            )
             if (
                 str(manifest.get("state") or "") == "ready"
                 and scope == "full_release"
                 and jar_count > 0
-                and jar_count == manifest_expected
+                and jar_count == self.expected_jar_count
                 and int(manifest.get("invalid_jar_count") or 0) == 0
             ):
                 return manifest
-        if not required:
-            return None
         requested = f" {release_id}" if release_id else ""
         raise ErpReleaseError(
             "Nenhuma release-base completa"

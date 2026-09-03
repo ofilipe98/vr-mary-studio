@@ -152,7 +152,10 @@ def test_detected_snapshot_composes_partial_package_over_latest_complete_base(
 
     update = tmp_path / "update"
     _vr_jar(update / "VRMaster.jar", (4, 4, 102, 0))
-    composed = catalog.snapshot_detected_release(update)
+    composed = catalog.snapshot_detected_release(
+        update,
+        base_release_id=base["release_id"],
+    )
 
     assert composed["analysis_scope"] == "incremental_release"
     assert composed["base_release_id"] == base["release_id"]
@@ -173,7 +176,7 @@ def test_detected_snapshot_composes_partial_package_over_latest_complete_base(
     assert (managed / "VRCore" / "4.4.7.3" / "VRCore.jar").is_file()
 
 
-def test_first_detected_directory_becomes_independent_base_for_installed_set(
+def test_first_detected_directory_is_indexable_as_partial_installed_set(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -185,13 +188,14 @@ def test_first_detected_directory_becomes_independent_base_for_installed_set(
     ).snapshot_detected_release(source)
 
     assert manifest["state"] == "ready"
-    assert manifest["analysis_scope"] == "full_release"
+    assert manifest["analysis_scope"] == "partial_release"
     assert manifest["jar_count"] == 1
-    assert manifest["expected_jar_count"] == 1
+    assert manifest["expected_jar_count"] == 46
     assert manifest["base_release_id"] == ""
+    assert any("Esperados 46 JARs" in item for item in manifest["warnings"])
 
 
-def test_dynamic_installed_set_is_reused_as_incremental_base(tmp_path: Path) -> None:
+def test_partial_installed_set_does_not_become_incremental_base(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     installed = tmp_path / "installed"
     _vr_jar(installed / "VRMaster.jar", (4, 4, 101, 0), app_date="30/08/2026")
@@ -200,19 +204,19 @@ def test_dynamic_installed_set_is_reused_as_incremental_base(tmp_path: Path) -> 
 
     base = catalog.snapshot_detected_release(installed)
 
-    assert base["analysis_scope"] == "full_release"
+    assert base["analysis_scope"] == "partial_release"
     assert base["jar_count"] == 2
-    assert base["expected_jar_count"] == 2
+    assert base["expected_jar_count"] == 46
 
     update = tmp_path / "update"
     _vr_jar(update / "VRMaster.jar", (4, 4, 102, 0))
     composed = catalog.snapshot_detected_release(update)
 
-    assert composed["analysis_scope"] == "incremental_release"
-    assert composed["base_release_id"] == base["release_id"]
-    assert composed["jar_count"] == 2
-    assert composed["expected_jar_count"] == 2
-    assert composed["carried_forward_jar_count"] == 1
+    assert composed["analysis_scope"] == "partial_release"
+    assert composed["base_release_id"] == ""
+    assert composed["jar_count"] == 1
+    assert composed["expected_jar_count"] == 46
+    assert composed["carried_forward_jar_count"] == 0
 
 
 def test_detected_single_jar_uses_application_release_and_hash(tmp_path: Path) -> None:

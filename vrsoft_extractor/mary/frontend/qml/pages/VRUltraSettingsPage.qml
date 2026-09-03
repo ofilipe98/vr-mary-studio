@@ -385,7 +385,7 @@ Item {
                     enabled: !chat.releaseSnapshotRunning
                         && !chat.codeProcessingRunning
                     model: [
-                        { "label": "Pacote completo ou incremental", "value": "full_release" },
+                        { "label": "Pacote completo ou parcial", "value": "full_release" },
                         { "label": "Somente um JAR", "value": "single_jar" }
                     ]
                     textRole: "label"
@@ -406,7 +406,8 @@ Item {
                             return item.path + " · " + item.status
                                 + " · escolha um JAR abaixo"
                         var composition = item.jarCount > 0
-                            ? " · o conjunto instalado será uma base independente ou atualizará uma base compatível"
+                            ? " · " + chat.codeAnalysisExpectedJarCount
+                                + " JARs formam a release completa; quantidades menores serão indexadas como release parcial"
                             : ""
                         return item.path + " · " + item.status + composition
                     }

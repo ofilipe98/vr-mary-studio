@@ -183,12 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
     erp_snapshot.add_argument(
         "--auto-detect",
         action="store_true",
-        help="Categoriza por aplicação/versão e compõe pacotes parciais",
+        help="Categoriza por aplicação/versão e aceita pacotes parciais",
     )
     erp_snapshot.add_argument(
         "--base-release",
         default="",
-        help="Release completa usada como base; padrão: a completa mais recente",
+        help="Release completa usada explicitamente para compor um incremento",
     )
     erp_detect = sub.add_parser(
         "detect-erp-release",
