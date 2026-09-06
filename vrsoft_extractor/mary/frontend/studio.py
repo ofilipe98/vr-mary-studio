@@ -39,7 +39,7 @@ from ..config import MarySettings, save_vr_env
 from ..db import MaryDatabase
 from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
-from ..antigravity import resolve_agy, google_account_environment
+from ..antigravity import resolve_agy, google_account_environment, AntigravityAuthManager
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -301,6 +301,15 @@ class StudioBridge(QObject):
         self._video_output_timer.setInterval(80)
         self._video_output_timer.timeout.connect(self._flush_video_output)
         self._syncProgressReceived.connect(self._apply_sync_progress)
+        self._antigravity_auth = AntigravityAuthManager(
+            command_resolver=resolve_agy,
+            env_factory=google_account_environment,
+            on_state_changed=self._on_antigravity_auth_state_changed,
+        )
+
+    def _on_antigravity_auth_state_changed(self) -> None:
+        if not getattr(self, "_closed", False):
+            QTimer.singleShot(0, self.refreshProviders)
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1710,11 +1719,21 @@ class StudioBridge(QObject):
             enabled = self._stored_bool(self._preferences.value(f"providers/{provider}/enabled", True), True)
             command = resolve_agy() if provider == "antigravity" else shutil.which(provider)
             available = command is not None
+            auth_info = self._antigravity_auth.get_ui_snapshot() if (provider == "antigravity" and hasattr(self, "_antigravity_auth")) else {}
+            account_status = auth_info.get("accountStatus", getattr(self, "_agy_account_status", "Conta Google ainda não verificada")) if provider == "antigravity" else "Autenticação gerenciada pelo CLI"
             self._providers.append({
                 "id": provider,
                 "name": str(self._preferences.value(f"providers/{provider}/displayName", labels[provider])),
                 "command": command or "",
-                "accountStatus": getattr(self, "_agy_account_status", "Conta Google ainda não verificada") if provider == "antigravity" else "Autenticação gerenciada pelo CLI",
+                "accountStatus": account_status,
+                "attemptState": auth_info.get("attemptState", "idle"),
+                "accountState": auth_info.get("accountState", "unknown"),
+                "authUrl": auth_info.get("authUrl", ""),
+                "expiresAt": auth_info.get("expiresAt", ""),
+                "errorDetail": auth_info.get("errorDetail", ""),
+                "isWaiting": auth_info.get("isWaiting", False),
+                "isVerifying": auth_info.get("isVerifying", False),
+                "isStarting": auth_info.get("isStarting", False),
                 "description": descriptions[provider],
                 "enabled": enabled,
                 "available": available,
@@ -1737,14 +1756,40 @@ class StudioBridge(QObject):
             if not command:
                 QDesktopServices.openUrl(QUrl("https://antigravity.google/docs/cli/install/"))
                 return
-            env = google_account_environment()
-            # A visible terminal is necessary for the user's interactive Google login.
-            subprocess.Popen([command], env=env, cwd=str(Path.home()),
-                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
-            self._agy_account_status = "Conclua o login no CLI e clique em Validar conta"
+            attempt = self._antigravity_auth.start_login()
+            if attempt.state == "waiting" and attempt.validated_auth:
+                QDesktopServices.openUrl(QUrl(attempt.validated_auth.authorization_url))
             self.refreshProviders()
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
+
+    @Slot()
+    def cancelAntigravityLogin(self) -> None:
+        try:
+            if hasattr(self, "_antigravity_auth"):
+                self._antigravity_auth.cancel_login()
+            self.refreshProviders()
+        except Exception as exc:
+            self.toastRequested.emit(str(exc), "error")
+
+    @Slot(str)
+    def submitAntigravityCallback(self, callback_url: str) -> None:
+        def do_submit():
+            if hasattr(self, "_antigravity_auth"):
+                self._antigravity_auth.submit_callback(callback_url)
+
+        task = _Task(do_submit)
+        self._tasks.add(task)
+        def finish_error(exc):
+            self._tasks.discard(task)
+            self.toastRequested.emit(f"Falha ao validar retorno OAuth: {exc}", "error")
+            self.refreshProviders()
+        def finish_success(_):
+            self._tasks.discard(task)
+            self.refreshProviders()
+        task.signals.failed.connect(finish_error)
+        task.signals.finished.connect(finish_success)
+        self._pool.start(task)
 
     @Slot()
     def validateAntigravityAccount(self) -> None:
@@ -1763,19 +1808,36 @@ class StudioBridge(QObject):
                                     cwd=str(Path.home()), env=google_account_environment(),
                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=40,
                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            payload = json.loads(result.stdout)
+            try:
+                payload = json.loads(result.stdout)
+            except Exception:
+                payload = {}
             if result.returncode or payload.get("status") != "SUCCESS":
-                raise RuntimeError("Não foi possível validar a conta. Abra o CLI e confira o login e a cota.")
+                err_text = ((result.stderr or "") + " " + (result.stdout or "")).strip()
+                if "invalid_grant" in err_text or "unauthenticated" in err_text.lower():
+                    raise RuntimeError("Credenciais Google inválidas ou expiradas. Efetue login novamente.")
+                raise RuntimeError("Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos.")
             return "Conta Google validada com uma resposta real"
         task = _Task(check)
         self._tasks.add(task)
-        def finish(message):
+        def finish_success(message):
             self._tasks.discard(task)
             self._agy_check_running = False
             self._agy_account_status = str(message)
+            if hasattr(self, "_antigravity_auth"):
+                self._antigravity_auth.mark_authenticated_from_validation(str(message))
             self.refreshProviders()
-        task.signals.finished.connect(finish)
-        task.signals.failed.connect(finish)
+        def finish_error(exc):
+            self._tasks.discard(task)
+            self._agy_check_running = False
+            msg = str(exc)
+            if "não foi possível inicializar a sessão" in msg and hasattr(self, "_antigravity_auth"):
+                self._antigravity_auth.mark_session_or_model_error(msg)
+            else:
+                self._agy_account_status = msg
+            self.refreshProviders()
+        task.signals.finished.connect(finish_success)
+        task.signals.failed.connect(finish_error)
         self._pool.start(task)
 
     @Slot(str, bool)
@@ -1950,6 +2012,8 @@ class StudioBridge(QObject):
         if self._closed:
             return
         self._closed = True
+        if hasattr(self, "_antigravity_auth"):
+            self._antigravity_auth.cancel_login()
         self._video_output_timer.stop()
         for process in (self._terminal_process, self._video_process):
             if not process or process.state() == QProcess.NotRunning:

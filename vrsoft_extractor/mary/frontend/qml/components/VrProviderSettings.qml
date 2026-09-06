@@ -21,10 +21,17 @@ Item {
     }
     readonly property bool google: selected.id === "antigravity"
     readonly property string account: String(selected.accountStatus || "")
-    readonly property bool validating: account.indexOf("Validando") === 0
-    readonly property bool authenticated: account.indexOf("Conta Google validada") === 0
-    readonly property bool loginPending: account.indexOf("Conclua o login") === 0
-    readonly property bool authError: google && account.length > 0 && !validating && !authenticated && !loginPending && account.indexOf("Conta Google ainda") !== 0
+    readonly property string attemptState: String(selected.attemptState || "idle")
+    readonly property string accountState: String(selected.accountState || "unknown")
+    readonly property string authUrl: String(selected.authUrl || "")
+    readonly property string expiresAt: String(selected.expiresAt || "")
+    readonly property bool isWaiting: Boolean(selected.isWaiting)
+    readonly property bool isVerifying: Boolean(selected.isVerifying)
+    readonly property bool isStarting: Boolean(selected.isStarting)
+    readonly property bool validating: isVerifying || account.indexOf("Validando") === 0
+    readonly property bool authenticated: accountState === "authenticated" || account.indexOf("Conta Google validada") === 0
+    readonly property bool loginPending: isWaiting || isStarting || account.indexOf("Conclua o login") === 0
+    readonly property bool authError: google && (attemptState === "failed" || (account.length > 0 && !validating && !authenticated && !loginPending && account.indexOf("Conta Google ainda") !== 0))
     readonly property bool runtimeBusy: selected.runtimeState === "updating" || selected.runtimeState === "installing"
 
     function providerLabel(p) {
@@ -37,9 +44,9 @@ Item {
         if (!p.available) return {text: "Não instalado", tone: "warning"}
         if (p.id !== "antigravity") return {text: "CLI instalado", tone: "success"}
         var a = String(p.accountStatus || "")
-        if (a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
-        if (a.indexOf("Conta Google validada") === 0) return {text: "Pronto", tone: "success"}
-        if (a.indexOf("Conclua o login") === 0) return {text: "Login em andamento", tone: "warning"}
+        if (p.isVerifying || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
+        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0) return {text: "Pronto", tone: "success"}
+        if (p.isWaiting || p.isStarting || a.indexOf("Conclua o login") === 0) return {text: "Login em andamento", tone: "warning"}
         if (!a || a.indexOf("Conta Google ainda") === 0) return {text: "Conta não verificada", tone: "warning"}
         return {text: "Falha na validação", tone: "danger"}
     }
@@ -251,13 +258,15 @@ Item {
                             visible: root.google; Layout.fillWidth: true; title: "Conta Google"
                             VrProviderStatus {
                                 objectName: "providerAccountStatus"; Layout.fillWidth: true
-                                text: root.validating ? "Validando conta…" : root.authenticated ? "Conta validada" : root.authError ? "Falha na validação" : root.loginPending ? "Conclua o login no CLI" : "Conta não verificada"
-                                tone: root.authenticated ? "success" : root.authError ? "danger" : root.validating ? "muted" : "warning"
-                                busy: root.validating
+                                text: root.validating ? "Validando conta…" : root.isWaiting ? "Aguardando autorização no navegador…" : root.authenticated ? "Conta validada" : root.authError ? "Falha na validação" : root.loginPending ? "Conclua o login no CLI" : "Conta não verificada"
+                                tone: root.authenticated ? "success" : root.authError ? "danger" : (root.validating || root.isWaiting) ? "warning" : "muted"
+                                busy: root.validating || root.isStarting
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: root.authError ? root.account : root.authenticated ? "A conta respondeu à validação. Modelos e limites são fornecidos pelo Antigravity."
+                                text: root.isWaiting && root.expiresAt ? ("Aguardando autorização no navegador. " + root.expiresAt + ". Se a página não abrir automaticamente, abra o link ou envie o retorno.")
+                                    : root.authError ? (root.selected.errorDetail || root.account)
+                                    : root.authenticated ? "A conta respondeu à validação. Modelos e limites são fornecidos pelo Antigravity."
                                     : root.loginPending ? "Conclua a autenticação no navegador e valide a conta para confirmar a conexão."
                                     : "Entre com sua conta Google pelo CLI ou valide uma sessão existente. O login é gerenciado pelo Antigravity."
                                 color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.Wrap
@@ -266,10 +275,26 @@ Item {
                                 Layout.fillWidth: true; spacing: 8
                                 VrProviderAction {
                                     objectName: "providerGoogleLogin"
-                                    text: root.openingLogin ? "Abrindo login…" : root.authenticated || root.loginPending ? "Abrir login" : "Entrar com Google"
+                                    text: root.openingLogin || root.isStarting ? "Abrindo login…" : root.isWaiting ? "Abrir no navegador" : root.authenticated || root.loginPending ? "Abrir login" : "Entrar com Google"
                                     variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
                                     enabled: !!root.selected.available && !root.validating && !root.openingLogin && !root.runtimeBusy
-                                    onClicked: { root.openingLogin = true; loginTimer.start() }
+                                    onClicked: {
+                                        root.openingLogin = true
+                                        loginTimer.start()
+                                    }
+                                }
+                                VrProviderAction {
+                                    visible: root.isWaiting
+                                    text: "Copiar link"
+                                    variant: "secondary"
+                                    enabled: Boolean(root.authUrl)
+                                    onClicked: studio.copyText(root.authUrl)
+                                }
+                                VrProviderAction {
+                                    visible: root.isWaiting
+                                    text: "Cancelar login"
+                                    variant: "ghost"
+                                    onClicked: studio.cancelAntigravityLogin()
                                 }
                                 VrProviderAction {
                                     objectName: "validateGoogleAccount"
@@ -277,6 +302,44 @@ Item {
                                     variant: root.authError || root.loginPending ? "primary" : "secondary"
                                     enabled: !!root.selected.available && !root.validating && !root.openingLogin && !root.runtimeBusy
                                     onClicked: studio.validateAntigravityAccount()
+                                }
+                            }
+                            ColumnLayout {
+                                visible: root.isWaiting
+                                Layout.fillWidth: true
+                                spacing: 6
+                                Text {
+                                    text: "Retorno manual (se o redirecionamento local não concluir):"
+                                    color: frontend.palette.subtleText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    wrapMode: Text.WordWrap
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    VrTextField {
+                                        id: manualCallbackField
+                                        Layout.fillWidth: true
+                                        implicitHeight: 36
+                                        placeholderText: "Cole a URL final (ex.: http://127.0.0.1:port/?code=...&state=...)"
+                                        background: Rectangle { radius: Theme.radiusSmall; color: frontend.palette.codeSurface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder }
+                                        onAccepted: {
+                                            if (text.trim().length > 0) {
+                                                studio.submitAntigravityCallback(text.trim())
+                                                text = ""
+                                            }
+                                        }
+                                    }
+                                    VrProviderAction {
+                                        text: "Concluir retorno"
+                                        variant: "secondary"
+                                        enabled: manualCallbackField.text.trim().length > 0
+                                        onClicked: {
+                                            studio.submitAntigravityCallback(manualCallbackField.text.trim())
+                                            manualCallbackField.text = ""
+                                        }
+                                    }
                                 }
                             }
                             Text { Layout.fillWidth: true; text: "A validação envia uma mensagem curta e utiliza a cota da conta."; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }

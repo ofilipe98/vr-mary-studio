@@ -14,6 +14,25 @@ import threading
 from collections import deque
 from pathlib import Path
 
+from .antigravity_auth import (
+    AUTH_MARKER_T3,
+    AUTH_PREFIX_ACP,
+    AUTH_PREFIX_BROWSER,
+    INIT_TIMEOUT_SECONDS,
+    MAX_AUTH_LINE_BYTES,
+    OAUTH_TIMEOUT_SECONDS,
+    AccountState,
+    AntigravityAuthManager,
+    AttemptState,
+    AuthStreamParser,
+    LoginAttempt,
+    OAuthCallbackError,
+    OAuthValidationError,
+    ValidatedAuthUrl,
+    forward_callback_to_listener,
+    validate_authorization_url,
+    validate_callback_url,
+)
 from .models import ConversationOptions, RuntimeEvent, approval_preset
 from .providers import AgentProvider, ProviderError, _token_breakdown
 
