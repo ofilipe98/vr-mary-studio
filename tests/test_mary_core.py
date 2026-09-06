@@ -3115,6 +3115,35 @@ class MaryCoreTest(unittest.TestCase):
             search_terms(query), ["funcao", "entrada", "operador"]
         )
 
+    def test_anaphoric_code_follow_up_keeps_the_original_business_subject(self):
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        conversation_id = database.create_conversation(
+            "Crossdocking", "codex", "", self.settings.work_dir / "crossdocking"
+        )
+        for role, content in (
+            (
+                "user",
+                "Monte um fluxo completo de crossdocking e explique como usar no VRMaster.",
+            ),
+            ("assistant", "Segue o fluxo recuperado da documentação."),
+            (
+                "user",
+                "Analise o código do VRMaster e valide essa informação que você me enviou.",
+            ),
+            ("assistant", "Não localizei o código."),
+        ):
+            database.add_message(conversation_id, role, content)
+
+        query = orchestrator._local_search_query(
+            "Tente validar o código fonte novamente.",
+            database.messages(conversation_id),
+        )
+
+        self.assertIn("crossdocking", query.casefold())
+        self.assertIn("valide essa informação", query.casefold())
+        self.assertTrue(query.endswith("Tente validar o código fonte novamente."))
+
     def test_missing_or_ambiguous_local_sources_forbid_high_confidence(self):
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
@@ -3123,6 +3152,8 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("nenhuma fonte validada", missing)
         self.assertIn("não invente referência", missing)
         self.assertIn("não invalida fatos e passos confirmados", missing)
+        self.assertIn('"clique neste botão"', missing)
+        self.assertIn("Código Java decompilado e indexado", missing)
 
         ambiguous_rows = [
             {

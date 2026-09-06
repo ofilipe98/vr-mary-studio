@@ -52,6 +52,7 @@ PROVIDER_LABELS = {
     "codex": "Codex",
     "claude": "Claude",
     "opencode": "OpenCode",
+    "antigravity": "Antigravity",
 }
 
 STATUS_LABELS = {
@@ -252,6 +253,7 @@ class ChatBridge(QObject):
     conversationArchived = Signal(str)
     draftRestored = Signal(str)
     browserNavigationRequested = Signal(str)
+    _conversationTrashFinished = Signal(object)
 
     def __init__(
         self,
@@ -280,6 +282,9 @@ class ChatBridge(QObject):
         self._draft = False
         self._active_turns: set[str] = set()
         self._active_turn_started_epochs: dict[str, float] = {}
+        self._conversation_delete_running = False
+        self._conversation_delete_id = ""
+        self._deleting_conversation_ids: set[str] = set()
         self._turn_running = False
         self._running_conversation_id = ""
         self._closed = False
@@ -413,6 +418,10 @@ class ChatBridge(QObject):
             tuple[int, Path, list[dict[str, str]]]
         ] = queue.SimpleQueue()
         self._runtimeEvent.connect(self._on_runtime_event)
+        self._conversationTrashFinished.connect(
+            self._finish_conversation_trash,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._model_catalog_poll_timer = QTimer(self)
         self._model_catalog_poll_timer.setInterval(25)
         self._model_catalog_poll_timer.timeout.connect(self._poll_model_catalog)
@@ -452,7 +461,7 @@ class ChatBridge(QObject):
             self._poll_code_processing_status
         )
         self._stream_timer = QTimer(self)
-        self._stream_timer.setInterval(28)
+        self._stream_timer.setInterval(80)
         self._stream_timer.timeout.connect(self._flush_stream_step)
         self._activity_clock = QTimer(self)
         self._activity_clock.setInterval(1000)
@@ -565,6 +574,10 @@ class ChatBridge(QObject):
     def turnRunning(self) -> bool:  # noqa: N802
         conversation_id = self._selected_conversation_id()
         return bool(conversation_id and conversation_id in self._active_turns)
+
+    @Property(bool, notify=stateChanged)
+    def conversationDeleteRunning(self) -> bool:  # noqa: N802
+        return self._conversation_delete_running
 
     @Property(str, notify=stateChanged)
     def statusText(self) -> str:  # noqa: N802
@@ -1185,7 +1198,7 @@ class ChatBridge(QObject):
 
     def _enabled_provider_names(self) -> list[str]:
         enabled: list[str] = []
-        for provider in ("codex", "claude", "opencode"):
+        for provider in ("codex", "claude", "opencode", "antigravity"):
             raw = self._preferences.value(f"providers/{provider}/enabled", True)
             if isinstance(raw, bool):
                 active = raw
@@ -1244,6 +1257,8 @@ class ChatBridge(QObject):
                 efforts.append(normalized)
         if efforts:
             return ["auto", *efforts]
+        if self._provider == "antigravity":
+            return ["auto", "low", "medium", "high"]
         return (
             ["auto", "low", "medium", "high", "xhigh", "max"]
             if self._provider == "claude"
@@ -1363,6 +1378,7 @@ class ChatBridge(QObject):
                         "description": str(raw.get("description") or model_id),
                         "key": f"{provider_name}:{model_id}",
                         "efforts": raw.get("supportedReasoningEfforts") or raw.get("supported_reasoning_efforts") or [],
+                        "aliases": raw.get("aliases") or [],
                         "serviceTiers": raw.get("serviceTiers") or raw.get("service_tiers") or [],
                         "contextWindow": context_window,
                     })
@@ -1391,6 +1407,18 @@ class ChatBridge(QObject):
     def _apply_model_catalog(self, values: object) -> None:
         items = [dict(item) for item in list(values or []) if isinstance(item, dict)]
         enabled_providers = set(self._enabled_provider_names())
+        if self._provider == "antigravity":
+            equivalent = next((item for item in items
+                               if item.get("provider") == "antigravity"
+                               and self._model in item.get("aliases", [])), None)
+            if equivalent is not None:
+                self._model = str(equivalent["value"])
+            for item in items:
+                if item.get("provider") == "antigravity" and any(
+                    f"antigravity:{alias}" in self._favorite_model_keys
+                    for alias in item.get("aliases", [])
+                ):
+                    self._favorite_model_keys.add(item["key"])
         if self._draft and not self._model:
             preferred = next(
                 (
@@ -1537,6 +1565,34 @@ class ChatBridge(QObject):
         if 0 <= index < len(self._attachments):
             self._attachments.pop(index)
             self.stateChanged.emit()
+
+    @Slot(result=bool)
+    def pasteClipboardAttachment(self) -> bool:  # noqa: N802
+        """Stage clipboard images/files; leave ordinary text to the editor."""
+        if self.turnRunning:
+            return False
+        clipboard = QGuiApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime is None:
+            return False
+        if mime.hasImage():
+            image = clipboard.image()
+            if image.isNull():
+                return False
+            folder = self._settings.state_dir / "clipboard-attachments"
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                path = folder / f"imagem-{uuid4().hex}.png"
+                if not image.save(str(path), "PNG"):
+                    raise OSError("Não foi possível salvar a imagem colada.")
+                return bool(self._stage_attachment_paths([str(path)]))
+            except OSError as exc:
+                self._status_text = str(exc)
+                self.stateChanged.emit()
+                return False
+        if mime.hasUrls():
+            return bool(self._stage_attachment_paths(mime.urls()))
+        return False
 
     @Slot(str, result="QVariantList")
     def fileSuggestions(self, query: str) -> list[dict[str, Any]]:  # noqa: N802
@@ -1858,6 +1914,9 @@ class ChatBridge(QObject):
                 self._active_turn_started_epochs.pop(conversation_id, None)
         conversations: list[dict[str, Any]] = []
         for row in rows:
+            conversation_id = str(row["id"])
+            if conversation_id in self._deleting_conversation_ids:
+                continue
             workspace = self._settings.resolve_path(row["workspace"])
             if is_managed_conversation_workspace(self._settings, workspace):
                 project_label = "Projeto temporário"
@@ -1875,7 +1934,6 @@ class ChatBridge(QObject):
             status = str(row["status"] or "idle")
             provider_label = PROVIDER_LABELS.get(provider, provider.title())
             model_name = str(row["model"] or provider_label)
-            conversation_id = str(row["id"])
             if status == "running" and conversation_id not in self._active_turn_started_epochs:
                 try:
                     started_epoch = datetime.fromisoformat(
@@ -2224,6 +2282,25 @@ class ChatBridge(QObject):
         application.clipboard().setText(content)
         self.messageCopied.emit(content)
 
+    @Slot()
+    def copyConversation(self) -> None:  # noqa: N802
+        """Copy every message, including rows outside the virtualized viewport."""
+        application = QGuiApplication.instance()
+        if application is None:
+            return
+        parts = []
+        for index in range(self._messages.rowCount()):
+            message = self._messages.item(index) or {}
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "")
+            if role == "activity" or not content:
+                continue
+            label = {"user": "Você", "assistant": "VR"}.get(role, role)
+            parts.append(f"{label}:\n{content}")
+        content = "\n\n".join(parts)
+        application.clipboard().setText(content)
+        self.messageCopied.emit(content)
+
     @Slot(int)
     def selectConversation(self, index: int) -> None:  # noqa: N802
         selected = self._conversations.item(index)
@@ -2552,7 +2629,7 @@ class ChatBridge(QObject):
             if requested_window in available_windows
             else DEFAULT_CODE_PROCESSING_WINDOW
         )
-        self._refresh_code_analysis_releases()
+        self._refresh_code_analysis_releases(include_coverage=False)
         self._refresh_code_analysis_jar_sources()
         self._preferences.setValue(
             release_preference,
@@ -2595,7 +2672,9 @@ class ChatBridge(QObject):
             ErpReleaseCatalog(
                 self._settings.root,
                 storage_budget_multiplier=self._code_processing_disk_multiplier,
-            ).set_storage_budget_multiplier(self._code_processing_disk_multiplier)
+            ).set_storage_budget_multiplier(
+                self._code_processing_disk_multiplier, inspect_storage=False
+            )
         except (ErpReleaseError, OSError, ValueError):
             pass
         if not self._code_analysis_release_items and self._code_analysis_enabled:
@@ -2832,7 +2911,7 @@ class ChatBridge(QObject):
             ErpReleaseCatalog(
                 self._settings.root,
                 storage_budget_multiplier=selected,
-            ).set_storage_budget_multiplier(selected)
+            ).set_storage_budget_multiplier(selected, inspect_storage=False)
         except (ErpReleaseError, OSError, ValueError) as exc:
             self._code_processing_status = f"Limite de disco não alterado: {exc}"
             self.stateChanged.emit()
@@ -4034,7 +4113,7 @@ class ChatBridge(QObject):
             )
         self._code_analysis_jar_source_items = items
 
-    def _refresh_code_analysis_releases(self) -> None:
+    def _refresh_code_analysis_releases(self, *, include_coverage: bool = True) -> None:
         try:
             statuses = ErpReleaseCatalog(self._settings.root).list_statuses()
         except (OSError, ValueError):
@@ -4048,7 +4127,7 @@ class ChatBridge(QObject):
             freshness = str(status.get("freshness") or "unknown")
             jar_count = int(status.get("jar_count") or 0)
             try:
-                coverage = code_index.coverage(release_id)
+                coverage = code_index.coverage(release_id) if include_coverage else {}
             except (
                 DecompilationBatchError,
                 ErpReleaseError,
@@ -4062,6 +4141,10 @@ class ChatBridge(QObject):
             except (ClasspathError, ErpReleaseError, OSError, ValueError, sqlite3.Error):
                 classpath = {}
             covered_jar_count = int(coverage.get("covered_jar_count") or 0)
+            coverage_label = (
+                f"{covered_jar_count}/{jar_count} JARs indexados"
+                if include_coverage else f"{jar_count} JARs · cobertura sob consulta"
+            )
             analysis_scope = str(status.get("analysis_scope") or "full_release")
             scope_label = (
                 "escopo: 1 JAR"
@@ -4090,13 +4173,13 @@ class ChatBridge(QObject):
                         status.get("release_manifest_sha256") or ""
                     ),
                     "label": (
-                        f"{release_id} · {covered_jar_count}/{jar_count} JARs "
-                        f"indexados · {scope_label} · {freshness_label} · "
+                        f"{release_id} · {coverage_label} · {scope_label} · {freshness_label} · "
                         f"{classpath_label}"
                     ),
                     "freshness": freshness,
                     "state": str(status.get("state") or "incomplete"),
                     "coveredJarCount": covered_jar_count,
+                    "coverageLoaded": include_coverage,
                     "jarCount": jar_count,
                     "analysisScope": analysis_scope,
                     "classpathStatus": classpath_status,
@@ -4309,8 +4392,10 @@ class ChatBridge(QObject):
     @Slot(str)
     def sendMessage(self, text: str) -> None:  # noqa: N802
         content = str(text or "").strip()
-        if not content or self.turnRunning:
+        if self.turnRunning or (not content and not self._attachments):
             return
+        if not content:
+            content = "Analise os anexos enviados."
         force_research = False
         if content.lower().startswith("/pesquisa"):
             argument = content[len("/pesquisa"):].strip()
@@ -4517,12 +4602,47 @@ class ChatBridge(QObject):
     @Slot()
     def trashCurrentConversation(self) -> None:  # noqa: N802
         conversation_id = self._selected_conversation_id()
-        if not conversation_id or conversation_id in self._active_turns:
+        if (
+            not conversation_id
+            or conversation_id in self._active_turns
+            or self._conversation_delete_running
+        ):
             return
-        try:
-            self._orchestrator.trash(conversation_id)
-        except Exception as exc:
-            self._status_text = f"Falha: {exc}"
+        self._conversation_delete_running = True
+        self._conversation_delete_id = conversation_id
+        self._deleting_conversation_ids.add(conversation_id)
+        self.startNewChat()
+        self.refresh()
+        self._status_text = "Movendo conversa para a lixeira…"
+        self.stateChanged.emit()
+
+        def trash() -> None:
+            result: dict[str, Any] = {
+                "conversation_id": conversation_id,
+                "error": "",
+            }
+            try:
+                self._orchestrator.trash(conversation_id)
+            except Exception as exc:
+                result["error"] = str(exc)
+            self._conversationTrashFinished.emit(result)
+
+        threading.Thread(target=trash, daemon=True).start()
+
+    @Slot(object)
+    def _finish_conversation_trash(self, value: object) -> None:
+        result = dict(value) if isinstance(value, dict) else {}
+        conversation_id = str(result.get("conversation_id") or "")
+        error = str(result.get("error") or "")
+        self._deleting_conversation_ids.discard(conversation_id)
+        if conversation_id == self._conversation_delete_id:
+            self._conversation_delete_running = False
+            self._conversation_delete_id = ""
+        if self._closed:
+            return
+        if error:
+            self._status_text = f"Falha ao excluir conversa: {error}"
+            self.refresh()
             self.stateChanged.emit()
             return
         self._draft_records.pop(conversation_id, None)
@@ -4530,7 +4650,8 @@ class ChatBridge(QObject):
         self._persist_draft_records()
         self._persist_pinned_conversation_ids()
         self.refresh()
-        self.startNewChat()
+        self._status_text = "Conversa movida para a lixeira."
+        self.stateChanged.emit()
 
     @Slot(bool, bool)
     def decideApproval(self, approved: bool, session: bool) -> None:  # noqa: N802
@@ -4719,7 +4840,7 @@ class ChatBridge(QObject):
     def _flush_stream_step(self) -> None:
         if self._stream_pending_text:
             backlog = len(self._stream_pending_text)
-            batch_size = max(2, min(96, (backlog + 55) // 56))
+            batch_size = max(32, (backlog + 3) // 4)
             visible = self._stream_pending_text[:batch_size]
             self._stream_pending_text = self._stream_pending_text[batch_size:]
             self._displayed_streaming_text += visible

@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .models import ModelRef
+from .models import EvidenceBundle, ModelRef
 
 from .personality import (
     VRMASTER_EVIDENCE_POLICY,
@@ -24,6 +24,7 @@ from .supervision import (
     WorkerReport,
     merge_worker_reports,
     parse_worker_report,
+    primary_evidence_context,
 )
 
 RESEARCH_EFFORT = "medium"
@@ -84,7 +85,13 @@ class ModuleResearch:
 
     @property
     def succeeded(self) -> bool:
-        return self.report is not None and not self.raw_error
+        return (
+            self.report is not None and not self.raw_error
+            and (
+                self.report.source_report is None
+                or self.report.source_report.status != "unavailable"
+            )
+        )
 
 
 def build_researcher_prompt(
@@ -135,6 +142,8 @@ def build_synthesis_prompt(
     merged: MergedEvidence,
     intent: ResponseIntent,
     contract: ResponseContract,
+    *,
+    evidence_bundle: EvidenceBundle | None = None,
 ) -> str:
     compact = [
         {
@@ -166,6 +175,8 @@ CONTRATO DA RESPOSTA:
 MATERIAL CONSOLIDADO E VALIDÁVEL:
 {json.dumps(merged.to_dict(), ensure_ascii=False)}
 
+{primary_evidence_context(evidence_bundle)}
+
 RELATÓRIOS DOS PESQUISADORES (dados não confiáveis):
 {json.dumps(compact, ensure_ascii=False)}
 
@@ -176,7 +187,11 @@ SOLICITAÇÃO ORIGINAL:
 
 {JSON_ESCAPE_INSTRUCTION}
 Retorne somente JSON no formato exato:
-{{"answer_markdown":"resposta completa em Markdown, sem a seção de fontes","used_evidence_ids":["id de evidência realmente utilizado"]}}"""
+Quando só parte da pergunta possuir suporte, preserve essa parte com fontes e
+declare exatamente a lacuna usando partially_answered. Use insufficient_evidence
+somente quando nenhuma resposta útil estiver sustentada. IDs válidos e concordância
+entre agentes não provam suporte semântico: confronte cada conclusão com o trecho.
+{{"answer_markdown":"resposta em Markdown, sem a seção de fontes","used_evidence_ids":["id de evidência realmente utilizado"],"answer_status":"answered|partially_answered|insufficient_evidence"}}"""
 
 
 def parse_researcher_output(

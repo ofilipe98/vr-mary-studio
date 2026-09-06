@@ -1,28 +1,45 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQml.Models
 import "../components"
 import "../theme"
 
 Item {
     id: root
     objectName: "chatPage"
-    property bool conversationSidebarVisible: true
+    component ProjectMenuEntry: MenuItem {
+        id: entry
+        implicitHeight: 34
+        contentItem: Text {
+            text: entry.text
+            color: Theme.palette.text
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.bodySize
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+        background: Rectangle {
+            radius: 6
+            color: entry.highlighted ? Theme.palette.chatControl : "transparent"
+        }
+    }
+    property bool conversationSidebarVisible: width >= 1000
     property bool surfaceVisible: false
     property int surfaceIndex: 0
     property int displayedSurfaceIndex: 0
     property var openSurfaceTabs: []
-    property bool activityExpanded: true
-    property bool taskBarExpanded: true
+    property bool activityExpanded: false
+    property bool taskBarExpanded: false
     property bool taskBarDismissed: false
     property bool previousTurnRunning: false
     property bool copyFeedbackVisible: false
     readonly property var surfaceTabs: [
-        { title: "Browser", kind: "browser", page: 1, description: "Abrir uma aplicação local ou URL." },
+        { title: "Navegador", kind: "browser", page: 1, description: "Abrir uma aplicação local ou URL." },
         { title: "Terminal", kind: "terminal", page: 2, description: "Executar comandos neste projeto." },
-        { title: "Files", kind: "files", page: 3, description: "Navegar pelos arquivos do projeto." },
+        { title: "Arquivos", kind: "files", page: 3, description: "Navegar pelos arquivos do projeto." },
         { title: "Contexto", kind: "context", page: 4, description: "Consultar arquivos e contexto local." },
-        { title: "Agents", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." }
+        { title: "Agentes", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." }
     ]
     property var approvalPayload: ({})
     property var composerSuggestions: []
@@ -36,18 +53,19 @@ Item {
     property bool composerDropActive: false
     property real clockNow: Date.now() / 1000
     property var expertProfiles: [
-        { key: "senior", label: "Sênior", icon: "agents" },
-        { key: "support", label: "Suporte", icon: "context" },
-        { key: "implementation", label: "Implantação", icon: "task" }
+        { key: "senior", label: "Sênior", icon: "expertSenior" },
+        { key: "support", label: "Suporte", icon: "expertSupport" },
+        { key: "implementation", label: "Implantação", icon: "expertImplementation" }
     ]
-    readonly property int expertStripHeight: chat.vrMode !== "off" ? 42 : 0
+    property real expertReveal: chat.vrMode !== "off" ? 1.0 : 0.0
+    readonly property real expertStripHeight: 42 * expertReveal
     property string addProjectView: "sources"
     property bool projectSettingsVisible: false
     property int projectSettingsIndex: -1
     property string projectSettingsName: ""
     property string projectSettingsPath: ""
     property string projectSettingsIconPath: ""
-    property real conversationSidebarWidth: conversationSidebarVisible ? 260 : 0
+    property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 210 : 244) : 0
     property real surfacePanelWidth: surfaceVisible ? 430 : 0
     readonly property var addProjectSources: [
         { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
@@ -66,6 +84,10 @@ Item {
         enabled: !frontend.reduceMotion
         NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
     }
+    Behavior on expertReveal {
+        enabled: !frontend.reduceMotion
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+    }
 
     onSurfaceIndexChanged: {
         if (frontend.reduceMotion || !root.surfaceVisible) {
@@ -78,7 +100,7 @@ Item {
         }
     }
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
+    Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
 
     Connections {
         target: chat
@@ -89,8 +111,8 @@ Item {
         function onStateChanged() {
             if (chat.turnRunning && !root.previousTurnRunning) {
                 root.taskBarDismissed = false
-                root.taskBarExpanded = true
-                root.activityExpanded = true
+                root.taskBarExpanded = false
+                root.activityExpanded = false
             }
             root.previousTurnRunning = chat.turnRunning
         }
@@ -120,36 +142,50 @@ Item {
 
     Component.onCompleted: {
         root.previousTurnRunning = chat.turnRunning
-        chat.refreshModels()
+        // Finish constructing delegates before refreshModels emits stateChanged.
+        Qt.callLater(chat.refreshModels)
     }
 
     Timer {
         interval: 1000
-        running: true
+        running: root.visible && chat.turnRunning
         repeat: true
         onTriggered: root.clockNow = Date.now() / 1000
     }
 
+    Rectangle {
+        anchors.fill: parent
+        z: 30
+        visible: root.width < 760 && root.conversationSidebarVisible
+        color: "#80000000"
+        MouseArea { anchors.fill: parent; onClicked: root.conversationSidebarVisible = false }
+    }
+
     SplitView {
+        id: mainSplit
         anchors.fill: parent
         orientation: Qt.Horizontal
 
         handle: Rectangle {
             implicitWidth: 5
             color: SplitHandle.hovered || SplitHandle.pressed
-                ? frontend.palette.focus : frontend.palette.chatDivider
+                ? Theme.palette.focus : Theme.palette.chatDivider
             opacity: SplitHandle.hovered || SplitHandle.pressed ? 0.75 : 0.35
         }
 
         Rectangle {
             id: conversationSidebar
+            parent: root.width < 760 ? root : mainSplit
+            z: root.width < 760 ? 40 : 0
+            width: root.conversationSidebarWidth
+            height: root.height
             objectName: "conversationSidebar"
             visible: root.conversationSidebarWidth > 0.5
             opacity: root.conversationSidebarVisible ? 1 : 0
             SplitView.minimumWidth: 0
             SplitView.preferredWidth: root.conversationSidebarWidth
             SplitView.maximumWidth: root.conversationSidebarWidth > 0.5 ? 430 : 0
-            color: frontend.palette.chatSidebar
+            color: Theme.palette.chatSidebar
             transform: Translate {
                 x: root.conversationSidebarVisible ? 0 : -Theme.motionDistance
                 Behavior on x {
@@ -161,7 +197,7 @@ Item {
                 enabled: !frontend.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
-            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: frontend.palette.chatDivider }
+            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatDivider }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -170,7 +206,7 @@ Item {
 
                 VrBrandHeader {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 62
+                    Layout.preferredHeight: 44
                     showToggle: false
                     onBrandActivated: frontend.setCurrentPage(1)
                 }
@@ -194,11 +230,11 @@ Item {
                                 radius: Theme.radiusSmall
                                 color: conversationSearch.hovered
                                     || conversationSearch.activeFocus
-                                    ? frontend.palette.chatControl
-                                    : frontend.palette.surfaceRaised
+                                    ? Theme.palette.chatControl
+                                    : Theme.palette.surfaceRaised
                                 border.width: 1
                                 border.color: conversationSearch.activeFocus
-                                    ? frontend.palette.focus : frontend.palette.border
+                                    ? Theme.palette.focus : Theme.palette.border
                             }
                             onTextChanged: searchDelay.restart()
                         }
@@ -209,14 +245,14 @@ Item {
                             width: 15
                             height: 15
                             kind: "search"
-                            foreground: frontend.palette.mutedText
+                            foreground: Theme.palette.mutedText
                         }
                         Text {
                             anchors.right: parent.right
                             anchors.rightMargin: 9
                             anchors.verticalCenter: parent.verticalCenter
                             text: "/"
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(10)
                         }
@@ -226,7 +262,7 @@ Item {
                         implicitWidth: 32
                         implicitHeight: 32
                         iconKind: "newChat"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Nova conversa"
                         Accessible.name: "Nova conversa"
@@ -243,7 +279,7 @@ Item {
                         background: Rectangle {
                             radius: 8
                             color: parent.down || parent.hovered
-                                ? frontend.palette.chatControl : "transparent"
+                                ? Theme.palette.chatControl : "transparent"
                         }
                     }
                 }
@@ -271,7 +307,7 @@ Item {
                         implicitWidth: 34
                         implicitHeight: 34
                         iconKind: "plus"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Adicionar projeto"
                         onClicked: {
@@ -289,14 +325,14 @@ Item {
                     spacing: 7
                     Text {
                         text: "Chats"
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
                     }
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 1
-                        color: frontend.palette.chatDivider
+                        color: Theme.palette.chatDivider
                         opacity: 0.6
                     }
                 }
@@ -322,8 +358,8 @@ Item {
                         RowLayout {
                             anchors.fill: parent
                             spacing: 7
-                            Text { text: section; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); font.weight: Font.DemiBold }
-                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider; opacity: 0.6 }
+                            Text { text: section; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); font.weight: Font.DemiBold }
+                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider; opacity: 0.6 }
                         }
                     }
                     delegate: Rectangle {
@@ -344,8 +380,8 @@ Item {
                         width: conversationList.width
                         height: 78
                         radius: 8
-                        color: chat.selectedIndex === index ? frontend.palette.selection
-                            : itemHover.hovered ? frontend.palette.chatControl : "transparent"
+                        color: chat.selectedIndex === index ? Theme.palette.selection
+                            : itemHover.hovered ? Theme.palette.chatControl : "transparent"
                         ColumnLayout {
                             anchors.left: parent.left
                             anchors.right: parent.right
@@ -365,12 +401,12 @@ Item {
                                     Layout.preferredHeight: 14
                                     kind: conversationItem.editing ? "edit" : "folder"
                                     foreground: conversationItem.editing
-                                        ? "#F3C74E" : frontend.palette.mutedText
+                                        ? "#F3C74E" : Theme.palette.mutedText
                                 }
                                 Text {
                                     Layout.fillWidth: true
                                     text: conversationItem.projectLabel
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
@@ -380,7 +416,7 @@ Item {
                                     Layout.preferredWidth: 13
                                     Layout.preferredHeight: 13
                                     kind: "pin"
-                                    foreground: frontend.palette.brandOrange
+                                    foreground: Theme.palette.brandOrange
                                 }
                                 Item {
                                     visible: conversationItem.running
@@ -406,7 +442,7 @@ Item {
                                     text: conversationItem.running
                                         ? "Trabalhando " + root.elapsedFromEpoch(conversationItem.startedAtEpoch)
                                         : root.relativeAge(conversationItem.updatedAt)
-                                    color: conversationItem.running ? "#18A8E8" : frontend.palette.mutedText
+                                    color: conversationItem.running ? "#18A8E8" : Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                     font.weight: conversationItem.running ? Font.DemiBold : Font.Normal
@@ -415,7 +451,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: conversationItem.title
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(12)
                                 font.weight: Font.DemiBold
@@ -427,7 +463,7 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: conversationItem.modelName
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
@@ -438,8 +474,8 @@ Item {
                                     Layout.preferredHeight: 6
                                     radius: 3
                                     color: conversationItem.running ? "#18A8E8"
-                                        : conversationItem.status === "error" ? frontend.palette.danger
-                                        : frontend.palette.success
+                                        : conversationItem.status === "error" ? Theme.palette.danger
+                                        : Theme.palette.success
                                 }
                                 VrProviderIcon {
                                     Layout.preferredWidth: 13
@@ -468,7 +504,7 @@ Item {
                         visible: !chat.hasConversations
                         width: parent.width - 20
                         text: conversationSearch.text ? "Nenhuma conversa encontrada." : "Nenhum chat iniciado."
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
                         horizontalAlignment: Text.AlignHCenter
@@ -494,7 +530,7 @@ Item {
                     implicitWidth: 38
                     implicitHeight: 38
                     iconKind: "settings"
-                    foreground: frontend.palette.mutedText
+                    foreground: Theme.palette.mutedText
                     ToolTip.visible: hovered
                     ToolTip.text: "Configurações"
                     Accessible.name: "Abrir Configurações"
@@ -505,373 +541,259 @@ Item {
 
         Item {
             id: chatMain
-            SplitView.minimumWidth: 560
+            SplitView.minimumWidth: 320
             SplitView.fillWidth: true
 
-            Rectangle {
+            VrChatHeader {
                 id: chatHeader
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                height: Theme.chatHeaderHeight
-                color: frontend.palette.chatBackground
-                Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: frontend.palette.chatDivider }
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 8
-                    VrIconButton {
-                        id: conversationSidebarToggle
-                        objectName: "conversationSidebarToggle"
-                        implicitWidth: 34
-                        implicitHeight: 34
-                        iconKind: "panelLeft"
-                        foreground: frontend.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.conversationSidebarVisible
-                            ? "Recolher barra lateral" : "Mostrar conversas"
-                        Accessible.name: ToolTip.text
-                        onClicked: root.conversationSidebarVisible = !root.conversationSidebarVisible
-                        background: Rectangle {
-                            radius: 8
-                            color: parent.down || parent.hovered
-                                ? frontend.palette.chatControl : "transparent"
-                            border.width: parent.activeFocus ? 1 : 0
-                            border.color: frontend.palette.focus
-                        }
-                    }
-                    Text { text: "Projetos"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                    Text { text: "/"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                    Text { Layout.fillWidth: true; text: chat.selectedTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                    VrButton {
-                        visible: chat.agentItems.length > 0
-                        implicitHeight: 30
-                        text: "Subagentes · " + chat.agentItems.length
-                        variant: "ghost"
-                        onClicked: {
-                            root.openSurface(5)
-                            if (root.selectedAgentIndex < 0)
-                                root.selectedAgentIndex = 0
-                        }
-                    }
-                    VrIconButton {
-                        id: surfaceExpandButton
-                        objectName: "surfaceToggleButton"
-                        visible: !root.surfaceVisible
-                        implicitWidth: 32
-                        implicitHeight: 32
-                        iconSize: 17
-                        iconKind: "panelRight"
-                        foreground: frontend.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Expandir painel direito"
-                        Accessible.name: ToolTip.text
-                        onClicked: root.surfaceVisible = true
-                    }
+                sidebarVisible: root.conversationSidebarVisible
+                panelVisible: root.surfaceVisible
+                hasMessages: messageList.count > 0
+                title: chat.selectedTitle
+                projectLabel: chat.currentProjectIndex > 0 && chat.currentProjectIndex < chat.projectItems.length
+                    ? chat.projectItems[chat.currentProjectIndex].label : "Projeto"
+                agentCount: chat.agentItems.length
+                onToggleSidebar: root.conversationSidebarVisible = !root.conversationSidebarVisible
+                onCopyConversation: chat.copyConversation()
+                onShowAgents: {
+                    root.openSurface(5)
+                    if (root.selectedAgentIndex < 0) root.selectedAgentIndex = 0
                 }
+                onShowPanel: root.surfaceVisible = true
             }
 
-            ListView {
+            Flickable {
                 id: messageList
                 objectName: "messageList"
+                readonly property int count: messageRepeater.count
+                contentWidth: width
+                contentHeight: messageColumn.height
+                flickableDirection: Flickable.VerticalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                function positionViewAtEnd() {
+                    contentY = Math.max(0, contentHeight - height)
+                }
                 property bool followTail: true
+                property bool holdingReader: false
+                property real readerY: 0
+                function beginManualScroll() {
+                    wheelAnimation.stop()
+                    followTail = false
+                    holdingReader = false
+                    readerTimer.stop()
+                    tailTimer.stop()
+                }
+                function preserveReader() {
+                    if (followTail || moving || dragging || wheelAnimation.running || messageScrollBar.pressed) return
+                    if (!holdingReader) readerY = contentY
+                    holdingReader = true
+                    readerTimer.restart()
+                    Qt.callLater(restoreReader)
+                }
+                function restoreReader() {
+                    if (holdingReader && !followTail && !moving && !wheelAnimation.running && !messageScrollBar.pressed)
+                        contentY = readerY
+                }
+                Timer {
+                    id: readerTimer
+                    interval: 120
+                    onTriggered: { messageList.restoreReader(); messageList.holdingReader = false }
+                }
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
                 anchors.bottom: taskBar.visible ? taskBar.top : composerCard.top
-                anchors.leftMargin: 20
-                anchors.rightMargin: 20
-                anchors.topMargin: 14
+                anchors.leftMargin: chatMain.width < 600 ? 14 : 24
+                anchors.rightMargin: chatMain.width < 600 ? 14 : 24
+                anchors.topMargin: 20
                 anchors.bottomMargin: 10
                 visible: count > 0
                 clip: true
-                reuseItems: true
-                cacheBuffer: 520
-                spacing: 8
-                model: chat.messages
-                delegate: Item {
-                    id: messageItem
-                    required property int index
-                    required property string role
-                    required property string content
-                    required property string displayContent
-                    required property var segments
+                // Keep actual message geometry stable across the entire history.
+                // ListView estimates unseen heights from visible delegates, which
+                // changes the scroll range drastically for long chat responses.
+                Column {
+                    id: messageColumn
                     width: messageList.width
-                    height: messageItem.role === "activity"
-                        ? timelineActivity.implicitHeight + 2
-                        : (segmentColumn.visible ? segmentColumn.height : messageBody.paintedHeight)
-                          + (messageItem.role === "user" ? 30 : 12)
-
-                    VrChatActivity {
-                        id: timelineActivity
-                        objectName: "chatActivity"
-                        visible: messageItem.role === "activity"
-                        width: Math.min(parent.width - 28, 760)
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        items: chat.traceItems
-                        reasoningText: chat.reasoningText
-                        statusText: chat.statusText
-                        elapsedLabel: chat.activityElapsedLabel
-                        running: chat.turnRunning
-                        expanded: root.activityExpanded
-                        onToggleRequested: root.activityExpanded = !root.activityExpanded
-                    }
-
-                    Item {
-                        visible: messageItem.role !== "activity"
-                        width: messageItem.role === "user"
-                            ? Math.min(parent.width - 32, 620)
-                            : Math.min(parent.width - 32, 780)
-                        height: parent.height
-                        anchors.right: messageItem.role === "user" ? parent.right : undefined
-                        anchors.rightMargin: messageItem.role === "user"
-                            ? Math.max(14, (parent.width - 760) / 2) : 0
-                        anchors.horizontalCenter: messageItem.role === "user" ? undefined : parent.horizontalCenter
-                        Rectangle {
-                            anchors.fill: parent
-                            visible: messageItem.role === "user"
-                            radius: 12
-                            color: frontend.palette.chatComposer
-                            border.width: 1
-                            border.color: frontend.palette.chatBorder
-                        }
-                        VrIconButton {
-                            objectName: "messageCopyButton"
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.rightMargin: messageItem.role === "user" ? 5 : 0
-                            anchors.topMargin: messageItem.role === "user" ? 4 : 0
-                            implicitWidth: 27
-                            implicitHeight: 27
-                            iconKind: "copy"
-                            iconSize: 14
-                            opacity: messageHover.hovered || hovered || root.copyFeedbackVisible ? 1 : 0.52
-                            ToolTip.visible: hovered
-                            ToolTip.text: root.copyFeedbackVisible ? "Copiado" : "Copiar"
-                            onClicked: chat.copyMessage(messageItem.index)
-                            background: Rectangle {
-                                radius: height / 2
-                                color: parent.down || parent.hovered
-                                    ? frontend.palette.chatControl : "transparent"
+                    spacing: Theme.messageGap
+                    Repeater {
+                        id: messageRepeater
+                        model: chat.messages
+                        delegate: Item {
+                            id: messageItem
+                            required property int index
+                            required property string role
+                            required property string content
+                            required property string displayContent
+                            required property var segments
+                            width: messageList.width
+                            height: presentation.item ? presentation.item.implicitHeight : 0
+                            Loader {
+                                id: presentation
+                                width: Math.min(parent.width, Theme.contentWidth)
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                sourceComponent: messageItem.role === "activity" ? activityComponent
+                                    : messageItem.role === "user" ? userComponent : assistantComponent
                             }
-                        }
-                        Column {
-                            id: segmentColumn
-                            visible: messageItem.role === "assistant"
-                                && messageItem.segments.length > 0
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            spacing: 12
-
-                            Repeater {
-                                model: messageItem.segments
-
-                                Loader {
-                                    id: segmentLoader
-                                    required property var modelData
-                                    width: segmentColumn.width
-                                    sourceComponent: modelData.kind === "code"
-                                        ? codeCardComponent
-                                        : modelData.kind === "tools"
-                                            ? toolSummaryComponent
-                                            : textSegmentComponent
+                            Component {
+                                id: activityComponent
+                                VrChatActivity {
+                                    items: chat.traceItems
+                                    reasoningText: chat.reasoningText
+                                    statusText: chat.statusText
+                                    elapsedLabel: chat.activityElapsedLabel
+                                    running: chat.turnRunning
+                                    expanded: root.activityExpanded
+                                    onToggleRequested: root.activityExpanded = !root.activityExpanded
+                                }
+                            }
+                            Component {
+                                id: userComponent
+                                VrUserMessage {
+                                    content: messageItem.displayContent
+                                    onCopyRequested: chat.copyMessage(messageItem.index)
+                                }
+                            }
+                            Component {
+                                id: assistantComponent
+                                VrAssistantMessage {
+                                    onLayoutChanging: messageList.preserveReader()
+                                    markdown: messageItem.displayContent
+                                    streaming: chat.turnRunning && messageItem.index === messageList.count - 1
+                                    onCopyRequested: chat.copyMessage(messageItem.index)
                                 }
                             }
                         }
-
-                        Component {
-                            id: textSegmentComponent
-
-                            TextEdit {
-                                id: segmentBody
-                                objectName: "messageSegment"
-                                width: parent.width
-                                text: modelData.content
-                                textFormat: TextEdit.MarkdownText
-                                readOnly: true
-                                activeFocusOnPress: false
-                                wrapMode: TextEdit.Wrap
-                                color: frontend.palette.text
-                                horizontalAlignment: Text.AlignLeft
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.Normal
-                                onLinkActivated: link => {
-                                    if (studio) studio.openExternalUrl(link)
-                                }
-                                onTextChanged: frontend.styleMessageDocument(
-                                    textDocument,
-                                    modelData.content
-                                )
-                                Connections {
-                                    target: frontend
-                                    function onThemeChanged() {
-                                        frontend.styleMessageDocument(
-                                            segmentBody.textDocument,
-                                            modelData.content
-                                        )
-                                    }
-                                    function onTypographyChanged() {
-                                        frontend.styleMessageDocument(
-                                            segmentBody.textDocument,
-                                            modelData.content
-                                        )
-                                    }
-                                }
-                                HoverHandler {
-                                    cursorShape: segmentBody.linkAt(
-                                        point.position.x, point.position.y)
-                                        ? Qt.PointingHandCursor : Qt.IBeamCursor
-                                }
-                            }
-                        }
-
-                        Component {
-                            id: codeCardComponent
-
-                            VrCodeBlock {
-                                width: parent.width
-                                code: modelData.content
-                                language: modelData.language
-                                badge: modelData.badge
-                            }
-                        }
-
-                        Component {
-                            id: toolSummaryComponent
-
-                            Item {
-                                implicitHeight: toolSummaryRow.implicitHeight
-                                Row {
-                                    id: toolSummaryRow
-                                    spacing: 7
-                                    VrLineIcon {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: 13
-                                        height: 13
-                                        kind: "terminal"
-                                        foreground: frontend.palette.mutedText
-                                    }
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: Math.min(
-                                            implicitWidth,
-                                            toolSummaryRow.width - 20
-                                        )
-                                        text: Number(modelData.commands || 0) > 0
-                                            ? "bash" : (modelData.label || "")
-                                        color: frontend.palette.mutedText
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                            }
-                        }
-
-                        TextEdit {
-                            id: messageBody
-                            objectName: "messageBody"
-                            visible: !segmentColumn.visible
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.leftMargin: messageItem.role === "user" ? 14 : 0
-                            anchors.rightMargin: 38
-                            anchors.topMargin: messageItem.role === "user" ? 13 : 2
-                            text: messageItem.displayContent
-                            textFormat: messageItem.role === "user"
-                                ? TextEdit.PlainText : TextEdit.MarkdownText
-                            readOnly: true
-                            activeFocusOnPress: false
-                            wrapMode: TextEdit.Wrap
-                            color: frontend.palette.text
-                            horizontalAlignment: Text.AlignLeft
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: Font.Normal
-                            onLinkActivated: link => {
-                                if (studio) studio.openExternalUrl(link)
-                            }
-                            onTextChanged: {
-                                if (visible && messageItem.role !== "user")
-                                    frontend.styleMessageDocument(
-                                        messageBody.textDocument,
-                                        messageItem.displayContent
-                                    )
-                            }
-                            HoverHandler {
-                                cursorShape: messageBody.linkAt(
-                                    point.position.x, point.position.y)
-                                    ? Qt.PointingHandCursor : Qt.IBeamCursor
-                            }
-                        }
-                        Connections {
-                            target: frontend
-                            function onThemeChanged() {
-                                if (messageItem.role !== "user")
-                                    frontend.styleMessageDocument(
-                                        messageBody.textDocument,
-                                        messageItem.displayContent
-                                    )
-                            }
-                            function onTypographyChanged() {
-                                if (messageItem.role !== "user")
-                                    frontend.styleMessageDocument(
-                                        messageBody.textDocument,
-                                        messageItem.displayContent
-                                    )
-                            }
-                        }
-                        HoverHandler { id: messageHover }
                     }
                 }
-                onCountChanged: {
-                    followTail = true
-                    positionViewAtEnd()
-                }
+                // Follow only while pinned; dragging/scrolling back detaches the reader.
+                onMovementStarted: beginManualScroll()
                 onMovementEnded: followTail = atYEnd
-                onContentHeightChanged: {
-                    if (followTail)
-                        Qt.callLater(function() { messageList.positionViewAtEnd() })
+                onContentYChanged: {
+                    if (holdingReader && !followTail && contentY !== readerY)
+                        Qt.callLater(restoreReader)
                 }
-                ScrollBar.vertical: VrScrollBar { }
+                onContentHeightChanged: {
+                    if (followTail && !moving) tailTimer.restart()
+                    else if (holdingReader) Qt.callLater(restoreReader)
+                }
+                onCountChanged: { if (followTail) tailTimer.restart() }
+                Timer { id: tailTimer; interval: 0; onTriggered: { if (messageList.followTail) messageList.positionViewAtEnd() } }
+                NumberAnimation {
+                    id: wheelAnimation
+                    target: messageList
+                    property: "contentY"
+                    duration: 120
+                    easing.type: Easing.OutCubic
+                    onFinished: messageList.followTail = messageList.atYEnd
+                }
+                WheelHandler {
+                    target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: event => {
+                        var precise = event.pixelDelta.y !== 0
+                        var lines = Math.max(1, Math.min(3, Qt.styleHints.wheelScrollLines))
+                        var delta = precise ? event.pixelDelta.y
+                            : event.angleDelta.y / 120 * lines * Theme.bodySize * 1.6
+                        if (delta === 0) { event.accepted = false; return }
+                        var start = !precise && wheelAnimation.running ? wheelAnimation.to : messageList.contentY
+                        messageList.beginManualScroll()
+                        messageList.cancelFlick()
+                        var top = messageList.originY
+                        var bottom = top + Math.max(0, messageList.contentHeight - messageList.height)
+                        var destination = Math.max(top, Math.min(bottom, start - delta))
+                        if (precise) {
+                            messageList.contentY = destination
+                            messageList.followTail = messageList.atYEnd
+                        } else {
+                            wheelAnimation.from = messageList.contentY
+                            wheelAnimation.to = destination
+                            wheelAnimation.start()
+                        }
+                        event.accepted = true
+                    }
+                }
+                ScrollBar.vertical: VrScrollBar {
+                    id: messageScrollBar
+                    objectName: "messageScrollBar"
+                    onPressedChanged: {
+                        if (pressed) messageList.beginManualScroll()
+                        else messageList.followTail = messageList.atYEnd
+                    }
+                }
             }
 
-            VrMiddleAutoScroller {
-                objectName: "messageAutoScroller"
-                anchors.fill: messageList
-                target: messageList
-                enabled: messageList.visible
-                z: 24
-            }
 
             Column {
                 id: landing
+                objectName: "chatLanding"
                 visible: messageList.count === 0
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: Math.max(chatHeader.height + 110, composerCard.y - 112)
+                y: composerCard.y - height - 24
                 width: Math.min(parent.width - 48, 720)
                 spacing: 8
                 Text {
                     width: parent.width
                     text: root.greetingText()
-                    color: frontend.palette.text
+                    color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(26)
+                    font.pixelSize: Theme.fontSize(22)
                     font.weight: Font.Normal
                     horizontalAlignment: Text.AlignHCenter
                 }
                 Text {
                     width: parent.width
                     text: root.greetingPrompt()
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(13)
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
+                }
+                VrButton {
+                    id: landingProjectButton
+                    objectName: "landingProjectButton"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, parent.width)
+                    variant: "ghost"
+                    text: (chat.currentProjectIndex > 0
+                        ? chat.projectItems[chat.currentProjectIndex].label : "Escolher projeto") + "  ▾"
+                    onClicked: landingProjectMenu.open()
+                    Menu {
+                        id: landingProjectMenu
+                        objectName: "landingProjectMenu"
+                        y: parent.height
+                        width: 260
+                        padding: 5
+                        background: Rectangle {
+                            radius: 10
+                            color: Theme.palette.chatSidebar
+                            border.color: Theme.palette.chatBorder
+                        }
+                        Instantiator {
+                            model: root.filteredProjects("")
+                            delegate: ProjectMenuEntry {
+                                required property var modelData
+                                text: modelData.label
+                                onTriggered: chat.setProject(Number(modelData.sourceIndex))
+                            }
+                            onObjectAdded: (index, object) => landingProjectMenu.insertItem(index, object)
+                            onObjectRemoved: (index, object) => landingProjectMenu.removeItem(object)
+                        }
+                        MenuSeparator { }
+                        ProjectMenuEntry {
+                            objectName: "landingChooseFolder"
+                            text: "Escolher pasta do projeto…"
+                            onTriggered: {
+                                root.addProjectView = "folder"
+                                chat.beginProjectFolderBrowse()
+                                addProjectPopup.open()
+                            }
+                        }
+                    }
                 }
             }
 
@@ -883,7 +805,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
                 anchors.bottomMargin: 8
-                width: Math.min(770, parent.width - 40)
+                width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
                 z: 20
                 steps: chat.activitySteps
                 running: chat.turnRunning
@@ -894,6 +816,12 @@ Item {
 
             Rectangle {
                 id: scrollToEndPill
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Ir para o fim da conversa"
+                function jump() { messageList.followTail = true; messageList.positionViewAtEnd() }
+                Keys.onReturnPressed: jump()
+                Keys.onSpacePressed: jump()
                 objectName: "scrollToEndPill"
                 visible: messageList.visible
                     && messageList.count > 0
@@ -905,10 +833,10 @@ Item {
                 radius: height / 2
                 width: pillRow.implicitWidth + 26
                 height: 30
-                color: frontend.palette.chatComposer
+                color: Theme.palette.chatComposer
                 border.width: 1
                 border.color: pillHover.hovered
-                    ? frontend.palette.focus : frontend.palette.chatBorder
+                    ? Theme.palette.focus : Theme.palette.chatBorder
 
                 Row {
                     id: pillRow
@@ -917,7 +845,7 @@ Item {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Ir para o fim"
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(11)
                     }
@@ -926,7 +854,7 @@ Item {
                         width: 12
                         height: 12
                         kind: "chevronDown"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                     }
                 }
 
@@ -941,20 +869,21 @@ Item {
 
             Rectangle {
                 id: composerCard
+                objectName: "chatComposerCard"
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: messageList.count === 0
-                    ? Math.min(parent.height - height - root.expertStripHeight - 48,
-                        Math.max(300, parent.height * 0.52))
-                    : parent.height - height - root.expertStripHeight - 38
-                width: Math.min(770, parent.width - 40)
-                height: chat.attachments.length ? 150 : 116
-                radius: 24
-                color: frontend.palette.chatComposer
+                y: messageList.count > 0 ? parent.height - height - root.expertStripHeight - 24
+                    : Math.max(chatHeader.height + landing.height + 32,
+                        (parent.height + chatHeader.height + landing.height + 24 - height - root.expertStripHeight) / 2)
+                width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
+                height: composerInput.height
+                    + (chat.attachments.length ? 88 : 54)
+                radius: Theme.composerRadius
+                color: Theme.palette.chatComposer
                 border.width: 1
                 border.color: root.composerDropActive
-                    ? frontend.palette.brandOrange
+                    ? Theme.palette.brandOrange
                     : composerInput.activeFocus
-                        ? frontend.palette.focus : frontend.palette.chatBorder
+                        ? Theme.palette.focus : Theme.palette.chatBorder
 
                 DropArea {
                     id: composerDropArea
@@ -984,12 +913,18 @@ Item {
                     anchors.leftMargin: 14
                     anchors.rightMargin: 14
                     anchors.topMargin: 8
-                    height: 50
-                    placeholderText: "Pergunte algo, @mencione arquivos/pastas ou use / para comandos"
+                    height: Math.min(chatMain.height * 0.28, Math.max(54,
+                        contentHeight + topPadding + bottomPadding))
+                    clip: true
+                    placeholderText: chatMain.width < 600 ? "Pergunte algo…" : "Pergunte algo…  @ arquivos · / comandos"
                     readOnly: chat.turnRunning
                     background: Item { }
                     onTextChanged: composerAssistDelay.restart()
                     Keys.priority: Keys.BeforeItem
+                    Keys.onPressed: event => {
+                        if (event.matches(StandardKey.Paste) && chat.pasteClipboardAttachment())
+                            event.accepted = true
+                    }
                     Keys.onReturnPressed: event => root.handleComposerEnter(event)
                     Keys.onEnterPressed: event => root.handleComposerEnter(event)
                 }
@@ -1015,9 +950,9 @@ Item {
                         width: Math.min(220, attachmentLabel.implicitWidth + 34)
                         height: 26
                         radius: 8
-                        color: frontend.palette.chatControl
+                        color: Theme.palette.chatControl
                         border.width: 1
-                        border.color: frontend.palette.chatBorder
+                        border.color: Theme.palette.chatBorder
                         Row {
                             anchors.fill: parent
                             anchors.leftMargin: 8
@@ -1029,7 +964,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.name
                                 elide: Text.ElideMiddle
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(10)
                             }
@@ -1039,20 +974,31 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 iconKind: "close"
                                 iconSize: 11
-                                foreground: frontend.palette.mutedText
+                                foreground: Theme.palette.mutedText
                                 onClicked: chat.removeAttachment(index)
                             }
                         }
                     }
                 }
 
-                RowLayout {
+                Flickable {
+                    id: composerControls
                     anchors.left: parent.left
-                    anchors.right: parent.right
+                    anchors.right: sendButton.left
                     anchors.bottom: parent.bottom
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 12
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 8
                     anchors.bottomMargin: 8
+                    height: 34
+                    contentWidth: controlsRow.width
+                    contentHeight: height
+                    clip: true
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    RowLayout {
+                    id: controlsRow
+                    width: Math.max(implicitWidth, composerControls.width)
+                    height: 34
                     spacing: 5
                     VrIconButton {
                         id: attachButton
@@ -1061,7 +1007,7 @@ Item {
                         implicitHeight: 32
                         iconKind: "attachment"
                         iconSize: 17
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         enabled: !chat.turnRunning
                         ToolTip.visible: hovered
                         ToolTip.text: "Anexar arquivos"
@@ -1077,7 +1023,7 @@ Item {
                         onActivated: index => chat.setModel(index)
                         onFavoriteToggled: index => chat.toggleModelFavorite(index)
                     }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: frontend.palette.chatBorder }
+                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder }
                     VrReasoningPicker {
                         id: effortSelector
                         objectName: "chatReasoningPicker"
@@ -1088,7 +1034,7 @@ Item {
                         onEffortActivated: index => chat.setEffort(index)
                         onTierActivated: index => chat.setServiceTier(index)
                     }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: frontend.palette.chatBorder }
+                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder }
                     VrPermissionPicker {
                         id: approvalSelector
                         objectName: "chatPermissionPicker"
@@ -1104,18 +1050,18 @@ Item {
                         implicitHeight: 32
                         leftPadding: 7; rightPadding: 7
                         text: chat.vrMode === "ultra" ? "VR Ultra" : "VR"
-                        variant: chat.vrMode === "ultra" ? "primary" : chat.vrMode === "vr" ? "secondary" : "ghost"
+                        variant: chat.vrMode !== "off" ? "primary" : "ghost"
                         background: Rectangle {
                             radius: 10
                             color: chat.vrMode !== "off"
                                 ? (parent.down
-                                    ? Qt.darker(frontend.palette.accessibleOrange, 1.12)
-                                    : frontend.palette.accessibleOrange)
-                                : parent.hovered ? frontend.palette.chatControl : "transparent"
+                                    ? Qt.darker(Theme.palette.accessibleOrange, 1.12)
+                                    : Theme.palette.accessibleOrange)
+                                : parent.hovered ? Theme.palette.chatControl : "transparent"
                             border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
                             border.color: chat.vrMode === "ultra"
-                                ? frontend.palette.brandOrange
-                                : parent.activeFocus ? frontend.palette.focus : frontend.palette.brandOrange
+                                ? Theme.palette.brandOrange
+                                : parent.activeFocus ? Theme.palette.focus : Theme.palette.brandOrange
                         }
                         onClicked: chat.cycleVrMode()
                     }
@@ -1129,8 +1075,19 @@ Item {
                         totalLabel: chat.totalProcessedLabel
                         note: chat.contextUsageNote
                     }
+                    }
+                }
                     VrIconButton {
-                        implicitWidth: 36; implicitHeight: 36; round: true
+                        id: sendButton
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        anchors.rightMargin: 12
+                        anchors.bottomMargin: 8
+                        implicitWidth: 32; implicitHeight: 32; round: true
+                        enabled: chat.turnRunning || composerInput.text.trim().length > 0 || chat.attachments.length > 0
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.text: chat.turnRunning ? "Interromper geração" : "Enviar · Enter (Shift+Enter para nova linha)"
+                        Accessible.name: chat.turnRunning ? "Interromper geração" : "Enviar mensagem"
                         iconSource: Qt.resolvedUrl(chat.turnRunning
                             ? "../../../assets/chat-stop.svg"
                             : "../../../assets/chat-send.svg")
@@ -1139,25 +1096,27 @@ Item {
                             radius: height / 2
                             color: chat.turnRunning
                                 ? (parent.down
-                                    ? Qt.darker(frontend.palette.danger, 1.18)
-                                    : frontend.palette.danger)
+                                    ? Qt.darker(Theme.palette.danger, 1.18)
+                                    : Theme.palette.danger)
                                 : (parent.down
-                                    ? frontend.palette.brandOrange
-                                    : frontend.palette.accessibleOrange)
+                                    ? Theme.palette.brandOrange
+                                    : Theme.palette.accessibleOrange)
                         }
                         onClicked: chat.turnRunning ? chat.stopTurn() : root.submitMessage()
                     }
-                }
             }
 
             Item {
                 id: expertProfileStrip
                 objectName: "expertProfileStrip"
-                visible: chat.vrMode !== "off"
+                visible: root.expertReveal > 0.001
                 anchors.horizontalCenter: composerCard.horizontalCenter
-                y: composerCard.y + composerCard.height + 8
+                y: composerCard.y + composerCard.height
+                    + 8 - (1.0 - root.expertReveal) * 8
                 width: composerCard.width
                 height: 34
+                opacity: root.expertReveal
+                scale: 0.94 + root.expertReveal * 0.06
 
                 Row {
                     id: profileRow
@@ -1175,30 +1134,26 @@ Item {
                             width: chipContent.implicitWidth + 20
                             height: 32
                             radius: 8
-                            color: selected ? frontend.palette.chatControl
-                                : chipHover.hovered ? frontend.palette.hover
-                                : frontend.palette.chatComposer
+                            color: selected ? Theme.palette.chatControl
+                                : chipHover.hovered ? Theme.palette.hover
+                                : Theme.palette.chatComposer
                             border.width: 1
-                            border.color: selected ? frontend.palette.brandOrange
-                                : frontend.palette.chatBorder
+                            border.color: selected ? Theme.palette.brandOrange
+                                : Theme.palette.chatBorder
 
                             Row {
                                 id: chipContent
                                 anchors.centerIn: parent
                                 spacing: 6
-                                VrLineIcon {
+                                VrProfileIcon {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: 15
-                                    height: 15
                                     kind: expertChip.modelData.icon
-                                    foreground: expertChip.selected
-                                        ? frontend.palette.brandOrange
-                                        : frontend.palette.mutedText
+                                    selected: expertChip.selected
                                 }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: expertChip.modelData.label
-                                    color: frontend.palette.text
+                                    color: Theme.palette.text
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(11)
                                     font.weight: Font.DemiBold
@@ -1231,7 +1186,7 @@ Item {
                 border.color: Qt.rgba(1.0, 0.45, 0.0, 0.18)
                 opacity: 0.78
                 SequentialAnimation on opacity {
-                    running: ultraGlowOuter.visible && !frontend.reduceMotion
+                    running: ultraGlowOuter.visible && root.visible && chat.turnRunning && !frontend.reduceMotion
                     loops: Animation.Infinite
                     NumberAnimation { from: 0.55; to: 0.86; duration: 1400; easing.type: Easing.InOutSine }
                     NumberAnimation { from: 0.86; to: 0.55; duration: 1400; easing.type: Easing.InOutSine }
@@ -1274,7 +1229,7 @@ Item {
                     ctx.lineWidth = 2.2
                     ctx.globalAlpha = 0.92
                     traceRoundRect(ctx, 2, 27)
-                    ctx.strokeStyle = frontend.palette.brandOrange
+                    ctx.strokeStyle = Theme.palette.brandOrange
                     ctx.setLineDash([])
                     ctx.stroke()
 
@@ -1283,7 +1238,7 @@ Item {
                     var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
                     traceRoundRect(ctx, 2, 27)
                     ctx.globalAlpha = 1.0
-                    ctx.strokeStyle = frontend.palette.brandOrange
+                    ctx.strokeStyle = Theme.palette.brandOrange
                     ctx.setLineDash([perimeter * 0.16, perimeter * 0.06,
                         perimeter * 0.08, perimeter * 0.70])
                     ctx.lineDashOffset = -sweep * perimeter
@@ -1291,7 +1246,7 @@ Item {
                     ctx.setLineDash([])
                 }
                 SequentialAnimation on sweep {
-                    running: ultraArc.visible && !frontend.reduceMotion
+                    running: ultraArc.visible && root.visible && chat.turnRunning && !frontend.reduceMotion
                     loops: Animation.Infinite
                     NumberAnimation { from: 0; to: 1; duration: 4200; easing.type: Easing.Linear }
                 }
@@ -1325,15 +1280,20 @@ Item {
 
         Rectangle {
             id: surfacePanel
+            parent: root.width < 1000 ? root : mainSplit
+            z: root.width < 1000 ? 45 : 0
+            x: root.width < 1000 ? root.width - width : 0
+            width: Math.min(root.width, root.surfacePanelWidth)
+            height: root.height
             objectName: "surfacePanel"
             visible: root.surfacePanelWidth > 0.5
             opacity: root.surfaceVisible ? 1 : 0
             SplitView.minimumWidth: 0
             SplitView.preferredWidth: root.surfacePanelWidth
             SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
-            color: frontend.palette.chatSidebar
+            color: Theme.palette.chatSidebar
             border.width: 1
-            border.color: frontend.palette.chatDivider
+            border.color: Theme.palette.chatDivider
             transform: Translate {
                 x: root.surfaceVisible ? 0 : Theme.motionDistance
                 Behavior on x {
@@ -1402,11 +1362,11 @@ Item {
                                             Layout.preferredHeight: 17
                                             kind: surfaceTab.modelData.kind
                                             foreground: surfaceTab.selected
-                                                ? frontend.palette.text : frontend.palette.mutedText
+                                                ? Theme.palette.text : Theme.palette.mutedText
                                         }
                                         Text {
                                             text: surfaceTab.modelData.title
-                                            color: frontend.palette.text
+                                            color: Theme.palette.text
                                             font.family: Theme.fontFamily
                                             font.pixelSize: Theme.fontSize(11)
                                             font.weight: Font.DemiBold
@@ -1415,7 +1375,7 @@ Item {
                                             Layout.preferredWidth: 13
                                             Layout.preferredHeight: 13
                                             kind: "close"
-                                            foreground: frontend.palette.mutedText
+                                            foreground: Theme.palette.mutedText
                                             visible: surfaceTab.hovered || surfaceTab.selected
                                             TapHandler {
                                                 onTapped: function(eventPoint) {
@@ -1428,15 +1388,15 @@ Item {
                                     background: Rectangle {
                                         radius: 8
                                         color: surfaceTab.selected
-                                            ? frontend.palette.chatControl
-                                            : surfaceTab.hovered ? frontend.palette.hover : "transparent"
+                                            ? Theme.palette.chatControl
+                                            : surfaceTab.hovered ? Theme.palette.hover : "transparent"
                                         Rectangle {
                                             visible: surfaceTab.selected
                                             anchors.left: parent.left
                                             anchors.right: parent.right
                                             anchors.bottom: parent.bottom
                                             height: 2
-                                            color: frontend.palette.brandOrange
+                                            color: Theme.palette.brandOrange
                                         }
 
                                         Behavior on color {
@@ -1453,7 +1413,7 @@ Item {
                                 implicitWidth: 34
                                 implicitHeight: 34
                                 iconKind: "plus"
-                                foreground: frontend.palette.mutedText
+                                foreground: Theme.palette.mutedText
                                 ToolTip.visible: hovered
                                 ToolTip.text: "Abrir superfície"
                                 onClicked: surfacePickerPopup.visible
@@ -1473,7 +1433,7 @@ Item {
                         implicitHeight: 32
                         iconSize: 17
                         iconKind: "panelRight"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Recolher painel direito"
                         Accessible.name: ToolTip.text
@@ -1481,7 +1441,7 @@ Item {
                         background: Rectangle {
                             radius: 8
                             color: parent.down || parent.hovered
-                                ? frontend.palette.chatControl : "transparent"
+                                ? Theme.palette.chatControl : "transparent"
                         }
                     }
 
@@ -1508,7 +1468,7 @@ Item {
                                 height: 36
                                 radius: 6
                                 color: surfaceChoiceHover.hovered
-                                    ? frontend.palette.chatControl : "transparent"
+                                    ? Theme.palette.chatControl : "transparent"
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 8
@@ -1518,18 +1478,18 @@ Item {
                                         Layout.preferredWidth: 16
                                         Layout.preferredHeight: 16
                                         kind: modelData.kind
-                                        foreground: frontend.palette.mutedText
+                                        foreground: Theme.palette.mutedText
                                     }
                                     Text {
                                         Layout.fillWidth: true
                                         text: modelData.title
-                                        color: frontend.palette.text
+                                        color: Theme.palette.text
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(12)
                                     }
                                     Text {
                                         text: modelData.title.charAt(0)
-                                        color: frontend.palette.mutedText
+                                        color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(10)
                                     }
@@ -1545,13 +1505,13 @@ Item {
                         }
                         background: Rectangle {
                             radius: 9
-                            color: frontend.palette.chatComposer
+                            color: Theme.palette.chatComposer
                             border.width: 1
-                            border.color: frontend.palette.chatBorder
+                            border.color: Theme.palette.chatBorder
                         }
                     }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: frontend.palette.chatDivider }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.chatDivider }
                 StackLayout {
                     id: surfaceStack
                     objectName: "surfaceContentStack"
@@ -1606,7 +1566,7 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Abrir uma superfície"
-                                    color: frontend.palette.text
+                                    color: Theme.palette.text
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(15)
                                     font.weight: Font.DemiBold
@@ -1615,7 +1575,7 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Escolha o que exibir no painel direito."
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(11)
                                     horizontalAlignment: Text.AlignHCenter
@@ -1655,9 +1615,9 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.margins: 8
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "back"; foreground: frontend.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; ToolTip.visible: hovered; ToolTip.text: "Voltar"; onClicked: root.browserBack() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "forward"; foreground: frontend.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; ToolTip.visible: hovered; ToolTip.text: "Avançar"; onClicked: root.browserForward() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "reload"; foreground: frontend.palette.mutedText; enabled: browserLoader.item !== null; ToolTip.visible: hovered; ToolTip.text: "Recarregar"; onClicked: root.reloadBrowser() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "back"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; ToolTip.visible: hovered; ToolTip.text: "Voltar"; onClicked: root.browserBack() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "forward"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; ToolTip.visible: hovered; ToolTip.text: "Avançar"; onClicked: root.browserForward() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "reload"; foreground: Theme.palette.mutedText; enabled: browserLoader.item !== null; ToolTip.visible: hovered; ToolTip.text: "Recarregar"; onClicked: root.reloadBrowser() }
                             VrTextField { id: browserAddress; Layout.fillWidth: true; placeholderText: "Pesquisar ou inserir URL"; onAccepted: root.navigateBrowser(text) }
                         }
                         Loader {
@@ -1691,7 +1651,7 @@ Item {
                             objectName: "terminalSurfaceBackground"
                             Layout.fillWidth: true
                             Layout.preferredHeight: 44
-                            color: frontend.palette.chatSidebar
+                            color: Theme.palette.chatSidebar
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 10
@@ -1700,7 +1660,7 @@ Item {
                                 Text {
                                     text: (Qt.platform.os === "windows" ? "PS " : "")
                                         + frontend.projectPath + ">"
-                                    color: frontend.palette.text
+                                    color: Theme.palette.text
                                     font.family: "Cascadia Mono"
                                     font.pixelSize: Theme.fontSize(12)
                                 }
@@ -1709,9 +1669,9 @@ Item {
                                     objectName: "terminalCommandInput"
                                     Layout.fillWidth: true
                                     readOnly: studio.terminalRunning
-                                    color: frontend.palette.text
-                                    selectionColor: frontend.palette.focus
-                                    selectedTextColor: frontend.palette.text
+                                    color: Theme.palette.text
+                                    selectionColor: Theme.palette.focus
+                                    selectedTextColor: Theme.palette.text
                                     font.family: "Cascadia Mono"
                                     font.pixelSize: Theme.fontSize(12)
                                     leftPadding: 0
@@ -1743,10 +1703,10 @@ Item {
                                 selectByMouse: true
                                 wrapMode: TextArea.WrapAnywhere
                                 text: studio.terminalOutput
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 background: Rectangle {
                                     objectName: "terminalOutputBackground"
-                                    color: frontend.palette.chatSidebar
+                                    color: Theme.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
                                 font.pixelSize: Theme.fontSize(12)
@@ -1766,7 +1726,7 @@ Item {
                         ListView {
                             id: fileList
                             Layout.fillWidth: true
-                            Layout.preferredHeight: Math.max(180, parent.height * 0.5)
+                            Layout.preferredHeight: Math.max(100, surfaceStack.height * 0.38)
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             clip: true
@@ -1783,8 +1743,8 @@ Item {
                                 visible: height > 0
                                 radius: 6
                                 color: root.surfaceFilePath === modelData.path
-                                    ? frontend.palette.selection
-                                    : fileTreeHover.hovered ? frontend.palette.chatControl : "transparent"
+                                    ? Theme.palette.selection
+                                    : fileTreeHover.hovered ? Theme.palette.chatControl : "transparent"
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 6 + Math.min(8, Number(modelData.depth || 0)) * 14
@@ -1796,7 +1756,7 @@ Item {
                                         Layout.preferredHeight: 11
                                         kind: root.expandedFileFolders[modelData.label]
                                             ? "chevronDown" : "chevronRight"
-                                        foreground: frontend.palette.mutedText
+                                        foreground: Theme.palette.mutedText
                                     }
                                     Item {
                                         visible: modelData.isDirectory !== true
@@ -1808,12 +1768,12 @@ Item {
                                         Layout.preferredHeight: 15
                                         kind: modelData.isDirectory === true ? "folder" : "files"
                                         foreground: modelData.isDirectory === true
-                                            ? frontend.palette.brandOrange : frontend.palette.mutedText
+                                            ? Theme.palette.brandOrange : Theme.palette.mutedText
                                     }
                                     Text {
                                         Layout.fillWidth: true
                                         text: modelData.name || modelData.label
-                                        color: frontend.palette.text
+                                        color: Theme.palette.text
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(11)
                                         elide: Text.ElideMiddle
@@ -1844,7 +1804,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
-                            Text { Layout.fillWidth: true; text: root.surfaceFilePath; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideMiddle }
+                            Text { Layout.fillWidth: true; text: root.surfaceFilePath || "Selecione um arquivo para visualizar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideMiddle }
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: studio.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
@@ -1858,11 +1818,12 @@ Item {
                                 readOnly: true
                                 selectByMouse: true
                                 wrapMode: TextArea.NoWrap
+                                placeholderText: "A prévia do arquivo aparecerá aqui."
                                 text: root.surfaceFilePreview
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 background: Rectangle {
                                     objectName: "filePreviewBackground"
-                                    color: frontend.palette.chatSidebar
+                                    color: Theme.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
                                 font.pixelSize: Theme.fontSize(11)
@@ -1896,13 +1857,13 @@ Item {
                                 width: ListView.view.width
                                 height: 72
                                 radius: 8
-                                color: contextHover.hovered ? frontend.palette.chatControl : "transparent"
+                                color: contextHover.hovered ? Theme.palette.chatControl : "transparent"
                                 Column {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     spacing: 3
-                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: modelData.excerpt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
                                 TapHandler { onTapped: root.insertReference(modelData.reference) }
@@ -1922,16 +1883,18 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             Layout.margins: 10
-                            text: chat.activitySteps.length
-                                ? chat.activitySteps[chat.activitySteps.length - 1].text
-                                : ""
-                            color: frontend.palette.mutedText
+                            text: chat.agentItems.length > 0
+                                ? "Agentes · " + chat.agentItems.length
+                                : "Nenhum agente nesta conversa. As tarefas delegadas aparecerão aqui."
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(11)
                             wrapMode: Text.WordWrap
                         }
                         ListView {
                             id: agentList
+                            objectName: "agentList"
+                            ScrollBar.vertical: VrScrollBar { }
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.min(contentHeight, 260)
                             Layout.leftMargin: 8
@@ -1945,10 +1908,10 @@ Item {
                                 width: agentList.width
                                 height: 58
                                 radius: 8
-                                color: root.selectedAgentIndex === index ? frontend.palette.selection
-                                    : agentHover.hovered ? frontend.palette.chatControl : "transparent"
+                                color: root.selectedAgentIndex === index ? Theme.palette.selection
+                                    : agentHover.hovered ? Theme.palette.chatControl : "transparent"
                                 border.width: root.selectedAgentIndex === index ? 1 : 0
-                                border.color: frontend.palette.chatBorder
+                                border.color: Theme.palette.chatBorder
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.margins: 8
@@ -1956,24 +1919,24 @@ Item {
                                         text: modelData.status === "concluído" ? "✓"
                                             : modelData.status === "falhou" ? "!"
                                             : modelData.status === "executando" ? "●" : "○"
-                                        color: modelData.status === "concluído" ? frontend.palette.success
-                                            : modelData.status === "falhou" ? frontend.palette.danger
-                                            : modelData.status === "executando" ? frontend.palette.brandOrange
-                                            : frontend.palette.mutedText
+                                        color: modelData.status === "concluído" ? Theme.palette.success
+                                            : modelData.status === "falhou" ? Theme.palette.danger
+                                            : modelData.status === "executando" ? Theme.palette.brandOrange
+                                            : Theme.palette.mutedText
                                         font.pixelSize: Theme.fontSize(14)
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
-                                        Text { Layout.fillWidth: true; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                                     }
                                 }
                                 HoverHandler { id: agentHover }
                                 TapHandler { onTapped: root.selectedAgentIndex = index }
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: frontend.palette.chatDivider }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.chatDivider }
                         ScrollView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -1985,7 +1948,7 @@ Item {
                                 selectByMouse: true
                                 wrapMode: TextArea.Wrap
                                 text: root.agentDetailText()
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 background: Item { }
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(12)
@@ -2030,7 +1993,7 @@ Item {
         height: Math.min(250, assistList.contentHeight + 12)
         padding: 6
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: frontend.palette.chatComposer; border.width: 1; border.color: frontend.palette.chatBorder; radius: 12 }
+        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.chatBorder; radius: 12 }
         contentItem: ListView {
             id: assistList
             clip: true
@@ -2041,13 +2004,13 @@ Item {
                 width: assistList.width
                 height: 44
                 radius: 7
-                color: assistHover.hovered ? frontend.palette.chatControl : "transparent"
+                color: assistHover.hovered ? Theme.palette.chatControl : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 9
                     anchors.rightMargin: 9
-                    Text { Layout.preferredWidth: 140; text: modelData.label; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                    Text { Layout.preferredWidth: 140; text: modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                 }
                 HoverHandler { id: assistHover }
                 TapHandler { onTapped: root.chooseComposerSuggestion(modelData) }
@@ -2085,7 +2048,7 @@ Item {
                     implicitWidth: 34
                     implicitHeight: 34
                     iconKind: "back"
-                    foreground: frontend.palette.mutedText
+                    foreground: Theme.palette.mutedText
                     ToolTip.visible: hovered
                     ToolTip.text: "Voltar"
                     onClicked: newChatProjectPopup.close()
@@ -2130,7 +2093,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 1
-                color: frontend.palette.chatDivider
+                color: Theme.palette.chatDivider
             }
             Text {
                 Layout.fillWidth: true
@@ -2139,7 +2102,7 @@ Item {
                 Layout.topMargin: 9
                 Layout.bottomMargin: 6
                 text: "Projetos"
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(10)
                 font.weight: Font.DemiBold
@@ -2167,7 +2130,7 @@ Item {
                     radius: 7
                     color: newChatProjectList.currentIndex === index
                         || newProjectHover.hovered
-                        ? frontend.palette.chatControl : "transparent"
+                        ? Theme.palette.chatControl : "transparent"
 
                     RowLayout {
                         anchors.fill: parent
@@ -2178,7 +2141,7 @@ Item {
                             Layout.preferredWidth: 17
                             Layout.preferredHeight: 17
                             kind: "folder"
-                            foreground: frontend.palette.mutedText
+                            foreground: Theme.palette.mutedText
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2186,7 +2149,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: newProjectItem.modelData.label
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
@@ -2198,7 +2161,7 @@ Item {
                                 text: newProjectItem.modelData.path.length
                                     ? "Local · " + newProjectItem.modelData.path
                                     : "Espaço gerenciado VR"
-                                color: frontend.palette.mutedText
+                                color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(10)
                                 horizontalAlignment: Text.AlignLeft
@@ -2207,7 +2170,7 @@ Item {
                         }
                         Text {
                             text: newProjectItem.modelData.shortcut
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(10)
                         }
@@ -2225,7 +2188,7 @@ Item {
                     anchors.centerIn: parent
                     visible: newChatProjectList.count === 0
                     text: "Nenhum projeto encontrado"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                 }
@@ -2234,27 +2197,27 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40
-                color: frontend.palette.chatComposer
+                color: Theme.palette.chatComposer
                 border.width: 1
-                border.color: frontend.palette.chatDivider
+                border.color: Theme.palette.chatDivider
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
                     spacing: 10
-                    Text { text: "↑ ↓  Navegar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
-                    Text { text: "Enter  Selecionar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
-                    Text { text: "Backspace  Voltar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "↑ ↓  Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Enter  Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Backspace  Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                     Item { Layout.fillWidth: true }
-                    Text { text: "Esc  Fechar"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Esc  Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
                 }
             }
         }
         background: Rectangle {
             radius: 12
-            color: frontend.palette.chatSidebar
+            color: Theme.palette.chatSidebar
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
         }
     }
 
@@ -2289,7 +2252,7 @@ Item {
                     implicitWidth: 34
                     implicitHeight: 34
                     iconKind: "back"
-                    foreground: frontend.palette.mutedText
+                    foreground: Theme.palette.mutedText
                     onClicked: addProjectPopup.close()
                 }
                 VrTextField {
@@ -2302,7 +2265,7 @@ Item {
                     Keys.onEscapePressed: addProjectPopup.close()
                 }
             }
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider }
             Text {
                 Layout.fillWidth: true
                 Layout.leftMargin: 18
@@ -2310,7 +2273,7 @@ Item {
                 Layout.topMargin: 14
                 Layout.bottomMargin: 6
                 text: "Sources"
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(11)
                 font.weight: Font.DemiBold
@@ -2333,7 +2296,7 @@ Item {
                     height: 48
                     radius: 7
                     color: sourceHover.hovered && modelData.enabled
-                        ? frontend.palette.chatControl : "transparent"
+                        ? Theme.palette.chatControl : "transparent"
                     opacity: modelData.enabled ? 1.0 : 0.72
                     RowLayout {
                         anchors.fill: parent
@@ -2345,7 +2308,7 @@ Item {
                             Layout.preferredHeight: 18
                             kind: modelData.icon
                             foreground: modelData.enabled
-                                ? frontend.palette.text : frontend.palette.mutedText
+                                ? Theme.palette.text : Theme.palette.mutedText
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2353,7 +2316,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.title
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
                                 font.weight: modelData.key === "local" ? Font.DemiBold : Font.Normal
@@ -2362,7 +2325,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.description
-                                color: frontend.palette.mutedText
+                                color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(10)
                                 elide: Text.ElideRight
@@ -2373,14 +2336,14 @@ Item {
                             Layout.preferredWidth: badgeText.implicitWidth + 14
                             Layout.preferredHeight: 24
                             radius: 5
-                            color: frontend.palette.chatComposer
+                            color: Theme.palette.chatComposer
                             border.width: 1
-                            border.color: frontend.palette.chatBorder
+                            border.color: Theme.palette.chatBorder
                             Text {
                                 id: badgeText
                                 anchors.centerIn: parent
                                 text: modelData.badge
-                                color: frontend.palette.warning
+                                color: Theme.palette.warning
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(9)
                                 font.weight: Font.DemiBold
@@ -2404,7 +2367,7 @@ Item {
                     anchors.centerIn: parent
                     visible: addProjectList.count === 0
                     text: "Nenhuma fonte encontrada"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                 }
@@ -2412,13 +2375,13 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
-                color: frontend.palette.chatComposer
+                color: Theme.palette.chatComposer
                 border.width: 1
-                border.color: frontend.palette.chatDivider
+                border.color: Theme.palette.chatDivider
                 Text {
                     anchors.centerIn: parent
                     text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
@@ -2436,9 +2399,9 @@ Item {
             }
         }
         background: Rectangle {
-            color: frontend.palette.chatBackground
+            color: Theme.palette.chatBackground
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 18
         }
     }
@@ -2464,11 +2427,11 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
                     radius: 7
-                    color: menuHover.hovered ? frontend.palette.chatControl : "transparent"
+                    color: menuHover.hovered ? Theme.palette.chatControl : "transparent"
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9; spacing: 8
-                        VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: modelData.kind; foreground: modelData.action === "delete" ? frontend.palette.danger : frontend.palette.mutedText }
-                        Text { Layout.fillWidth: true; text: modelData.label; color: modelData.action === "delete" ? frontend.palette.danger : frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                        VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: modelData.kind; foreground: modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
+                        Text { Layout.fillWidth: true; text: modelData.label; color: modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                     }
                     HoverHandler { id: menuHover }
                     TapHandler {
@@ -2485,9 +2448,9 @@ Item {
         }
         background: Rectangle {
             radius: 10
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
         }
     }
 
@@ -2504,16 +2467,16 @@ Item {
             spacing: 8
             RowLayout {
                 Layout.fillWidth: true
-                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                 VrButton { text: chat.extensionsLoading ? "Carregando…" : "Atualizar"; enabled: !chat.extensionsLoading; onClicked: chat.refreshExtensions() }
             }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 8
-                color: frontend.palette.chatSidebar
+                color: Theme.palette.chatSidebar
                 border.width: 1
-                border.color: frontend.palette.chatBorder
+                border.color: Theme.palette.chatBorder
                 ListView {
                     anchors.fill: parent
                     anchors.margins: 6
@@ -2541,7 +2504,7 @@ Item {
                 }
             }
         }
-        background: Rectangle { color: frontend.palette.surface; border.width: 1; border.color: frontend.palette.border; radius: Theme.radiusPopup }
+        background: Rectangle { color: Theme.palette.surface; border.width: 1; border.color: Theme.palette.border; radius: Theme.radiusPopup }
     }
     Dialog {
         id: approvalDialog
@@ -2553,7 +2516,7 @@ Item {
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: 12
-            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Negar"; onClicked: { chat.decideApproval(false, false); approvalDialog.close() } }
@@ -2562,7 +2525,7 @@ Item {
                 VrButton { text: "Aprovar nesta sessão"; variant: "primary"; onClicked: { chat.decideApproval(true, true); approvalDialog.close() } }
             }
         }
-        background: Rectangle { color: frontend.palette.surface; border.width: 1; border.color: frontend.palette.warning; radius: Theme.radiusPopup }
+        background: Rectangle { color: Theme.palette.surface; border.width: 1; border.color: Theme.palette.warning; radius: Theme.radiusPopup }
     }
 
     function surfaceForPage(page) {
@@ -2581,6 +2544,8 @@ Item {
     function activateConversation(conversationId) {
         chat.saveCurrentDraft(composerInput.text)
         chat.selectConversationId(conversationId)
+        messageList.followTail = true
+        tailTimer.restart()
     }
 
     function openConversationMenu(conversationId, positionX, positionY) {
@@ -2626,15 +2591,24 @@ Item {
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: Theme.spaceMd
-            Text { Layout.fillWidth: true; text: "A conversa será removida da lista e enviada para a lixeira."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: "A conversa será removida da lista e enviada para a lixeira."; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Cancelar"; onClicked: conversationDeleteDialog.close() }
                 Item { Layout.fillWidth: true }
-                VrButton { text: "Excluir"; variant: "danger"; onClicked: { conversationDeleteDialog.close(); chat.trashCurrentConversation(); composerInput.clear() } }
+                VrButton {
+                    text: chat.conversationDeleteRunning ? "Excluindo…" : "Excluir"
+                    variant: "danger"
+                    enabled: !chat.conversationDeleteRunning
+                    onClicked: {
+                        conversationDeleteDialog.close()
+                        chat.trashCurrentConversation()
+                        composerInput.clear()
+                    }
+                }
             }
         }
-        background: Rectangle { color: frontend.palette.chatComposer; border.width: 1; border.color: frontend.palette.danger; radius: Theme.radiusPopup }
+        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.danger; radius: Theme.radiusPopup }
     }
 
     function toggleFileFolder(path) {
@@ -2816,8 +2790,9 @@ Item {
     }
 
     function submitMessage() {
-        if (!composerInput.text.trim().length || chat.turnRunning) return
+        if ((!composerInput.text.trim().length && !chat.attachments.length) || chat.turnRunning) return
         var value = composerInput.text
+        messageList.followTail = true
         composerInput.clear()
         composerAssistPopup.close()
         chat.sendMessage(value)

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from collections import deque
 from pathlib import Path
@@ -179,6 +180,10 @@ class ProviderError(RuntimeError):
     pass
 
 
+class ProviderRateLimited(ProviderError):
+    """The configured provider explicitly rejected requests due to its quota."""
+
+
 UUID4_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -307,6 +312,8 @@ class CodexProvider(AgentProvider):
         self._callbacks: dict[str, EventCallback] = {}
         self._native_to_local: dict[str, str] = {}
         self._active_turns: dict[str, str] = {}
+        self._completed_turn_ids: dict[str, set[str]] = {}
+        self._item_turn_ids: dict[tuple[str, str], str] = {}
         self._assistant_item_keys: dict[str, str] = {}
         self._assistant_item_phases: dict[tuple[str, str], str] = {}
         self._write_lock = threading.Lock()
@@ -516,7 +523,11 @@ class CodexProvider(AgentProvider):
                 for conversation_id in tuple(self._active_turns)
             ]
             for conversation_id, _callback in active:
-                self._active_turns.pop(conversation_id, None)
+                turn_id = self._active_turns.pop(conversation_id, "")
+                if turn_id:
+                    for native_id, local_id in self._native_to_local.items():
+                        if local_id == conversation_id:
+                            self._completed_turn_ids.setdefault(native_id, set()).add(turn_id)
                 self._assistant_item_keys.pop(conversation_id, None)
                 self._clear_assistant_item_phases(conversation_id)
         for conversation_id, callback in active:
@@ -568,6 +579,41 @@ class CodexProvider(AgentProvider):
         with self._state_lock:
             conversation_id = self._native_to_local.get(native_id, "")
             callback = self._callbacks.get(conversation_id)
+            turn = params.get("turn") or {}
+            turn_id = str(
+                params.get("turnId")
+                or (turn.get("id") if isinstance(turn, dict) else "") or ""
+            )
+            active_turn = self._active_turns.get(conversation_id, "")
+            item = params.get("item") or {}
+            item_id = str(params.get("itemId") or params.get("item_id")
+                          or (item.get("id") if isinstance(item, dict) else "") or "")
+            if not turn_id and item_id:
+                turn_id = self._item_turn_ids.get((native_id, item_id), "")
+            turn_scoped = method.startswith(("item/", "turn/")) or method == "error"
+            if (callback and turn_scoped and not turn_id
+                    and (active_turn or self._completed_turn_ids.get(native_id))):
+                # A current callback is not proof that an anonymous event came
+                # from the current turn. Only a previously bound item can help.
+                return
+            if turn_id and (
+                turn_id in self._completed_turn_ids.get(native_id, set())
+                or (active_turn and turn_id != active_turn)
+            ):
+                return
+            if callback and turn_id:
+                self._active_turns[conversation_id] = turn_id
+                if item_id:
+                    self._item_turn_ids[(native_id, item_id)] = turn_id
+            if callback and method == "turn/completed":
+                if turn_id or active_turn:
+                    self._completed_turn_ids.setdefault(native_id, set()).add(
+                        turn_id or active_turn
+                    )
+                self._active_turns.pop(conversation_id, None)
+                self._callbacks.pop(conversation_id, None)
+                self._assistant_item_keys.pop(conversation_id, None)
+                self._clear_assistant_item_phases(conversation_id)
         if not callback:
             return
         if method == "thread/tokenUsage/updated":
@@ -649,16 +695,10 @@ class CodexProvider(AgentProvider):
         elif method == "turn/started":
             turn = params.get("turn") or {}
             with self._state_lock:
-                self._active_turns[conversation_id] = str(turn.get("id", ""))
                 self._assistant_item_keys.pop(conversation_id, None)
                 self._clear_assistant_item_phases(conversation_id)
             callback(RuntimeEvent(conversation_id, "turn_started", payload=params))
         elif method == "turn/completed":
-            with self._state_lock:
-                self._active_turns.pop(conversation_id, None)
-                self._callbacks.pop(conversation_id, None)
-                self._assistant_item_keys.pop(conversation_id, None)
-                self._clear_assistant_item_phases(conversation_id)
             callback(RuntimeEvent(conversation_id, "turn_completed", payload=params))
         elif method in {
             "item/commandExecution/requestApproval",
@@ -1097,7 +1137,7 @@ class CodexProvider(AgentProvider):
             params["serviceTier"] = options.service_tier
         try:
             try:
-                self._rpc("turn/start", params, conversation_id=conversation_id)
+                result = self._rpc("turn/start", params, conversation_id=conversation_id)
             except ProviderError as exc:
                 if not self._is_archived_session_error(exc):
                     raise
@@ -1113,7 +1153,16 @@ class CodexProvider(AgentProvider):
                 with self._state_lock:
                     self._callbacks[conversation_id] = callback
                     self._native_to_local[native_id] = conversation_id
-                self._rpc("turn/start", params, conversation_id=conversation_id)
+                result = self._rpc("turn/start", params, conversation_id=conversation_id)
+            turn_id = str((result.get("turn") or {}).get("id") or "")
+            with self._state_lock:
+                # A fast turn can complete while the RPC response is in flight.
+                if (
+                    turn_id and self._callbacks.get(conversation_id) is callback
+                    and self._active_turns.get(conversation_id) == ""
+                    and turn_id not in self._completed_turn_ids.get(native_id, set())
+                ):
+                    self._active_turns[conversation_id] = turn_id
         except Exception:
             with self._state_lock:
                 self._active_turns.pop(conversation_id, None)
@@ -1281,6 +1330,10 @@ class CodexProvider(AgentProvider):
                 self._clear_assistant_item_phases(conversation_id)
                 if native_id:
                     self._native_to_local.pop(native_id, None)
+                    self._completed_turn_ids.pop(native_id, None)
+                    for key in tuple(self._item_turn_ids):
+                        if key[0] == native_id:
+                            self._item_turn_ids.pop(key, None)
 
 
 class ClaudeProvider(AgentProvider):
@@ -1506,6 +1559,11 @@ class ClaudeProvider(AgentProvider):
                 event = payload.get("event") or {}
                 if event.get("type") == "content_block_delta":
                     delta = event.get("delta") or {}
+                    if delta.get("type") == "thinking_delta":
+                        thinking = str(delta.get("thinking") or "")
+                        if thinking:
+                            callback(RuntimeEvent(conversation_id, "reasoning_delta", thinking, payload))
+                        continue
                     text = str(delta.get("text") or "")
                     if text:
                         final_text += text
@@ -1640,6 +1698,7 @@ class OpenCodeProvider(AgentProvider):
         self._starting: dict[str, object] = {}
         self._sessions: dict[str, str] = {}
         self._model_variants: dict[str, set[str]] = {}
+        self._rate_limited_until = 0.0
         self._state_lock = threading.RLock()
 
     def available(self) -> bool:
@@ -1723,12 +1782,17 @@ class OpenCodeProvider(AgentProvider):
             raise ProviderError("OpenCode não foi encontrado no PATH.")
         options = options or ConversationOptions(model=model, effort=effort)
         with self._state_lock:
+            if time.monotonic() < self._rate_limited_until:
+                raise ProviderRateLimited("Limite de requisições do OpenCode atingido. Aguarde antes de tentar novamente.")
             resume_id = self._sessions.get(native_id, native_id)
         command = [
             self.command,
             "run",
             "--format",
             "json",
+            "--print-logs",
+            "--log-level",
+            "ERROR",
             "--dir",
             str(workspace),
             "--agent",
@@ -1818,6 +1882,24 @@ class OpenCodeProvider(AgentProvider):
     ) -> None:
         callback(RuntimeEvent(conversation_id, "turn_started"))
         stderr_lines: deque[str] = deque(maxlen=30)
+        reported_error = False
+
+        def report_rate_limit() -> None:
+            nonlocal reported_error
+            with self._state_lock:
+                if self._active.get(conversation_id) is not process:
+                    return
+                self._rate_limited_until = time.monotonic() + 60
+                already_reported = reported_error
+                reported_error = True
+            if not already_reported:
+                callback(RuntimeEvent(
+                    conversation_id, "error",
+                    "Limite de requisições do OpenCode atingido. Aguarde antes de tentar novamente.",
+                    {"code": "rate_limit"},
+                ))
+            if process.poll() is None:
+                process.terminate()
 
         def read_stderr() -> None:
             if not process.stderr:
@@ -1826,11 +1908,13 @@ class OpenCodeProvider(AgentProvider):
                 cleaned = line.strip()
                 if cleaned:
                     stderr_lines.append(cleaned)
+                    if "rate limit exceeded" in cleaned.casefold():
+                        report_rate_limit()
+                        return
 
         stderr_reader = threading.Thread(target=read_stderr, daemon=True)
         stderr_reader.start()
         session_announced = False
-        reported_error = False
         emitted_text = False
         stdout = process.stdout
         if stdout is None:
@@ -1868,6 +1952,10 @@ class OpenCodeProvider(AgentProvider):
                             conversation_id, "assistant_delta", text, payload
                         )
                     )
+            elif kind == "reasoning":
+                text = str(part.get("text") or "")
+                if text:
+                    callback(RuntimeEvent(conversation_id, "reasoning_delta", text, payload))
             elif kind == "tool_use":
                 tool = str(part.get("tool") or part.get("name") or "ferramenta")
                 callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
@@ -1883,15 +1971,12 @@ class OpenCodeProvider(AgentProvider):
                         )
                     )
             elif kind == "error":
-                reported_error = True
-                callback(
-                    RuntimeEvent(
-                        conversation_id,
-                        "error",
-                        _opencode_error_message(payload),
-                        payload,
-                    )
-                )
+                message = _opencode_error_message(payload)
+                if "rate limit exceeded" in message.casefold():
+                    report_rate_limit()
+                elif not reported_error:
+                    reported_error = True
+                    callback(RuntimeEvent(conversation_id, "error", message, payload))
         exit_code = process.wait()
         stderr_reader.join(timeout=1)
         if (exit_code or not emitted_text) and not reported_error:
@@ -1977,10 +2062,13 @@ class OpenCodeProvider(AgentProvider):
 
 
 def provider_registry(knowledge_root: Path | None = None) -> dict[str, AgentProvider]:
+    from .antigravity import AntigravityProvider
+
     return {
         "codex": CodexProvider(knowledge_root),
         "claude": ClaudeProvider(knowledge_root),
         "opencode": OpenCodeProvider(knowledge_root),
+        "antigravity": AntigravityProvider(knowledge_root),
     }
 
 

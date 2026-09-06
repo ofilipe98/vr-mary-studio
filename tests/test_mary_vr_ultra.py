@@ -13,7 +13,8 @@ from vrsoft_extractor.mary.models import (
     ModelRef,
     RuntimeEvent,
 )
-from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.orchestrator import ChatOrchestrator, _code_scope_queries
+from vrsoft_extractor.mary.supervision import analyze_response_intent
 
 
 QUESTION = "como emitir NF no Fiscal E fechar o caixa no PDV"
@@ -62,7 +63,8 @@ def _seed_modules(database: MaryDatabase) -> None:
 SYNTHESIS = json.dumps(
     {
         "answer_markdown": "# Resposta Ultra\n\nProcedimento combinado.",
-        "used_evidence_ids": [],
+        # Positive fixture: cite the actual seeded Fiscal evidence.
+        "used_evidence_ids": ["wiki:nf-fiscal:1"],
     },
     ensure_ascii=False,
 )
@@ -71,7 +73,7 @@ REPORT = json.dumps(
     {
         "source_status": "found",
         "findings": [
-            {"claim": "Passo confirmado", "evidence_ids": [], "kind": "fact", "confidence": 0.9}
+            {"claim": "Passo confirmado", "evidence_ids": ["wiki:nf-fiscal:1"], "kind": "fact", "confidence": 0.9}
         ],
         "steps": [],
         "sources": [],
@@ -109,6 +111,10 @@ class _UltraFakeProvider:
         with self.lock:
             self.calls.append(conversation_id)
         output = SYNTHESIS
+        if ":vr_fanout_" not in conversation_id and not any(
+            marker in message for marker in ("sintetizador final", "Reescreva integralmente")
+        ):
+            output = json.loads(SYNTHESIS)["answer_markdown"] + "\n\n[Nota fiscal](https://wiki.example/nf)"
         if ":vr_fanout_" in conversation_id:
             output = REPORT
             threading.Event().wait(0.05)
@@ -214,6 +220,44 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert "agent_started" in persisted_kinds
     assert "agent_completed" in persisted_kinds
     assert "agent_usage" in persisted_kinds
+
+
+def test_complete_single_module_flow_and_explicit_code_request_trigger_fanout(
+    tmp_path: Path,
+) -> None:
+    _settings_value, _database, orchestrator, _provider, _cid, _events = (
+        _orchestrator(tmp_path, "ultra")
+    )
+    bundle = orchestrator.knowledge_router.route("como emitir NF no Fiscal")
+    intent = analyze_response_intent(
+        "Monte um fluxo completo para emitir NF no Fiscal.",
+        bundle.profile,
+    )
+
+    assert intent.requested_detail == "high"
+    assert orchestrator._fanout_modules(
+        bundle,
+        intent,
+        has_images=False,
+    ) == ("Fiscal",)
+    assert orchestrator._fanout_modules(
+        bundle,
+        analyze_response_intent("Analise o código do VRMaster.", bundle.profile),
+        has_images=False,
+        force_deep=True,
+    ) == ("Fiscal",)
+
+
+def test_code_scope_prefers_original_business_term_over_follow_up_wording() -> None:
+    scope = (
+        "Quero que monte um fluxo completo de crossdocking no VRMaster.\n"
+        "Analise o código e valide essa informação que você me enviou novamente."
+    )
+
+    queries = _code_scope_queries(scope)
+
+    assert queries[0].casefold() == "crossdocking"
+    assert "informação" not in {item.casefold() for item in queries}
 
 
 def test_explicit_response_mode_is_applied_before_contract_and_fanout(tmp_path: Path) -> None:
@@ -443,7 +487,13 @@ def test_research_pool_models_cycle(tmp_path: Path, monkeypatch) -> None:
         for e in events
         if e.kind == "agent_started"
     ]
-    assert models[:2] == ["sol", "opus"]
+    # Researchers start concurrently; compare each assignment with the plan,
+    # without depending on thread scheduling order.
+    stages = next(e for e in events if e.kind == "plan_created").payload["runtime_stages"]
+    expected = {stage["id"]: stage["model"]["model"] for stage in stages if not stage["final"]}
+    actual = {e.payload["agent_id"]: e.payload["model"]["model"] for e in events if e.kind == "agent_started"}
+    assert actual == expected
+    assert sorted(models[:2]) == ["opus", "sol"]
 
 
 # ---------------------------------------------------- paridade VR <-> VR Ultra

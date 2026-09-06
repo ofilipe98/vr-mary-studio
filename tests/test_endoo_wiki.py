@@ -7,6 +7,10 @@ from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.endoo_wiki import EndooWikiSync
 from vrsoft_extractor.mary.models import KnowledgeDocument
+from vrsoft_extractor.endoo_client import (
+    EndooAssetUnavailable,
+    EndooFeatureUnavailable,
+)
 
 
 class FakeEndooClient:
@@ -51,6 +55,45 @@ class FakeEndooClient:
 
     def get_bytes(self, _url: str) -> bytes:
         return b""
+
+
+class UnavailableAssetClient(FakeEndooClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.asset_requests = 0
+
+    def get_json(self, path: str, *, params=None, attempts: int = 3):
+        payload = super().get_json(path, params=params, attempts=attempts)
+        if path.endswith("/read"):
+            payload["article"]["content"] = (
+                '<p>Conteúdo preservado.</p>'
+                '<img src="https://iendo.b-cdn.net/one.png">'
+                '<img src="https://iendo.b-cdn.net/two.png">'
+            )
+        return payload
+
+    def get_bytes(self, _url: str) -> bytes:
+        self.asset_requests += 1
+        raise EndooAssetUnavailable("iendo.b-cdn.net")
+
+
+class SummaryContentClient(FakeEndooClient):
+    def get_json(self, path: str, *, params=None, attempts: int = 3):
+        if path == "/wiki/articles":
+            return {
+                "data": [
+                    {
+                        "id": 86,
+                        "slug": "Manual/Analise Perda/Quebra/Troca",
+                        "title": "Análise Perda/Quebra/Troca",
+                        "content": "<p>Conteúdo disponível na listagem.</p>",
+                        "updated_at": "2026-09-06T10:00:00Z",
+                    }
+                ],
+                "current_page": 1,
+                "last_page": 1,
+            }
+        raise EndooFeatureUnavailable("detalhe indisponível")
 
 
 def _settings(tmp_path: Path) -> MarySettings:
@@ -123,6 +166,42 @@ def test_partial_endoo_sync_never_inactivates_missing_documents(
     assert stats.errors == 1
     assert stats.inactive == 0
     assert stale is not None and stale["status"] == "active"
+
+
+def test_endoo_sync_skips_timed_out_asset_host_after_first_failure(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    client = UnavailableAssetClient()
+    sync = EndooWikiSync(settings, database)
+    sync._client = lambda **_kwargs: client  # type: ignore[method-assign]
+
+    stats = sync.sync()
+
+    assert stats.created == 1
+    assert stats.errors == 0
+    assert client.asset_requests == 1
+    document = database.get_document("wiki", "endoo-42")
+    assert document is not None
+    assert "Conteúdo preservado" in document["markdown"]
+
+
+def test_endoo_sync_uses_summary_content_when_detail_endpoint_is_missing(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    sync = EndooWikiSync(settings, database)
+    sync._client = lambda **_kwargs: SummaryContentClient()  # type: ignore[method-assign]
+
+    stats = sync.sync()
+
+    assert stats.created == 1
+    assert stats.errors == 0
+    document = database.get_document("wiki", "endoo-86")
+    assert document is not None
+    assert "Conteúdo disponível na listagem" in document["markdown"]
 
 
 def test_existing_database_migrates_source_origins_with_backup(

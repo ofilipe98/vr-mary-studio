@@ -118,7 +118,9 @@ def _write_managed_conversation_file(
         path.write_text(content, encoding="utf-8")
 
 
-def initialize_workspace(settings: MarySettings) -> MaryDatabase:
+def initialize_workspace(
+    settings: MarySettings, *, refresh_conversations: bool = True
+) -> MaryDatabase:
     settings.ensure_dirs()
     ensure_portable_project(settings.root)
     claude_path = settings.root / "CLAUDE.md"
@@ -138,6 +140,10 @@ def initialize_workspace(settings: MarySettings) -> MaryDatabase:
             encoding="utf-8",
         )
     database = MaryDatabase(settings.database_path, root=settings.root)
+    # The GUI prepares each workspace when sending a turn. Avoid scanning
+    # archived/trash folders before the first frame. CLI migration keeps its default.
+    if not refresh_conversations:
+        return database
     for state in ("active", "archived", "trash"):
         for conversation in database.list_conversations(state=state):
             try:

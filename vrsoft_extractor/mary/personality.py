@@ -13,6 +13,9 @@ VRMASTER_EVIDENCE_POLICY = """Contrato de evidência VRMaster:
 - Se a evidência for insuficiente, diga isso claramente e solicite somente a informação discriminatória que realmente altera o diagnóstico ou a solução.
 - Em imagens, afirme apenas o que estiver legível e visível. Se a resolução, o recorte ou o contexto não permitirem confirmar um dado, peça uma evidência melhor.
 - Preserve os nomes oficiais de módulos, rotinas, telas, campos e parâmetros usados nas fontes.
+- Não repita como instrução uma referência dêitica da fonte, como "clique neste botão", "conforme a imagem" ou "abaixo", sem identificar o controle, o atalho ou a ação correspondente. Se a referência visual não estiver disponível, marque somente essa lacuna pontual e continue com as etapas confirmadas.
+- Não transcreva a documentação linha por linha. Para fluxos, sintetize a sequência causal de ponta a ponta: finalidade, pré-condições, entradas, ação do usuário, efeito no sistema, validações, variações e resultado.
+- Código Java decompilado e indexado de uma release selecionada é evidência de código utilizável. Quando candidatos de código forem fornecidos, não diga que o código-fonte está indisponível; descreva-o corretamente como código decompilado/indexado e limite a conclusão aos trechos apresentados.
 """
 
 

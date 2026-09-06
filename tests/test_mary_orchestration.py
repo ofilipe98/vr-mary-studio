@@ -19,6 +19,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.knowledge import extract_knowledge_entities
 from vrsoft_extractor.mary.knowledge_router import (
     KnowledgeRouter,
+    _query_variants,
     should_suggest_vr_flow,
 )
 from vrsoft_extractor.mary.schema_catalog import parse_schema_markdown
@@ -469,6 +470,77 @@ def test_query_profile_supports_functional_process_schema_and_hybrid_intents(
     assert all(abs(sum(item.intents.values()) - 1.0) < 0.001 for item in (
         functional, process, sped_process, technical, hybrid
     ))
+
+
+def test_product_name_does_not_run_before_the_business_topic(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    profile = KnowledgeRouter(database, settings.root).classify(
+        "Quero um fluxo completo de crossdocking no VRMaster"
+    )
+
+    variants = _query_variants(profile)
+
+    assert profile.terms == ("fluxo", "crossdocking")
+    assert variants[0].casefold() != "vrmaster"
+    assert variants[:2] == ("cross docking", "crossdocking")
+
+
+def test_joined_business_term_matches_the_spaced_manual_spelling(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="cross-docking-manual",
+            title="Manual Administrativo Compra Pedido",
+            url="https://wiki.example/cross-docking",
+            markdown=(
+                "# Cross Docking\n\nA mercadoria recebida é transferida diretamente "
+                "para o ponto de entrega. O pedido de compra define as lojas destino."
+            ),
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="cross-docking-manual",
+            local_path="conhecimento/ADM_FIN_ESTOQUE/Wiki/cross-docking.md",
+        )
+    )
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="wms-cross-docking",
+            title="Manual VR WMS Cross-Docking",
+            url="https://wiki.example/wms-cross-docking",
+            markdown="O Cross-Docking no WMS controla a lacração do estoque.",
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="wms-cross-docking",
+            local_path="conhecimento/ADM_FIN_ESTOQUE/Wiki/wms-cross-docking.md",
+        )
+    )
+    for index in range(5):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_id=f"fluxo-generico-{index}",
+                title=f"Fluxo genérico {index}",
+                url=f"https://wiki.example/fluxo-{index}",
+                markdown="Este documento descreve outro fluxo do sistema.",
+                module="PDV",
+                review_status="approved",
+                content_hash=f"fluxo-generico-{index}",
+                local_path=f"conhecimento/PDV/Wiki/fluxo-{index}.md",
+            )
+        )
+
+    bundle = KnowledgeRouter(database, settings.root).route(
+        "Quero um fluxo completo de crossdocking no VRMaster"
+    )
+
+    assert bundle.candidates[0].source_id == "cross-docking-manual"
+    assert bundle.selected_modules == ("ADM_FIN_ESTOQUE",)
 
 
 def test_process_route_expands_wiki_index_and_does_not_inject_schema(
@@ -1511,6 +1583,7 @@ def test_opencode_streams_json_and_announces_native_session(
                 '\n'.join(
                     (
                         '{"type":"step_start","sessionID":"ses-real","part":{}}',
+                        '{"type":"reasoning","sessionID":"ses-real","part":{"text":"Checking evidence"}}',
                         '{"type":"text","sessionID":"ses-real","part":{"text":"OK"}}',
                         '{"type":"step_finish","sessionID":"ses-real","part":{}}',
                     )
@@ -1579,11 +1652,13 @@ def test_opencode_streams_json_and_announces_native_session(
     assert [event.kind for event in events] == [
         "turn_started",
         "native_session_started",
+        "reasoning_delta",
         "assistant_delta",
         "turn_completed",
     ]
     assert events[1].payload["native_id"] == "ses-real"
-    assert events[2].text == "OK"
+    assert events[2].text == "Checking evidence"
+    assert events[3].text == "OK"
 
 
 def test_opencode_native_session_event_is_persisted(tmp_path: Path) -> None:

@@ -6,7 +6,12 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from ..endoo_client import EndooInvalidResponse, EndooReadClient
+from ..endoo_client import (
+    EndooAssetUnavailable,
+    EndooFeatureUnavailable,
+    EndooInvalidResponse,
+    EndooReadClient,
+)
 from .classifier import classify
 from .config import MarySettings
 from .content import (
@@ -38,6 +43,7 @@ class EndooWikiSync:
         self.database = database
         self.progress = progress or (lambda _message: None)
         self.ocr = OcrManager(settings.tesseract_dir)
+        self._unavailable_asset_hosts: set[str] = set()
 
     def login(self) -> Path:
         client = self._client(headless=False)
@@ -211,11 +217,19 @@ class EndooWikiSync:
         slug = str(summary.get("slug") or "").strip()
         if not slug:
             raise EndooInvalidResponse("Artigo da Wiki Endoo sem slug.")
-        payload = client.get_json(
-            "/wiki/articles/"
-            + urllib.parse.quote(slug, safe="")
-            + "/read"
-        )
+        try:
+            payload = client.get_json(
+                "/wiki/articles/"
+                + urllib.parse.quote(slug, safe="")
+                + "/read"
+            )
+        except EndooFeatureUnavailable:
+            # A listagem atual da API já traz o artigo completo. Alguns registros
+            # antigos usam o título/caminho como slug (incluindo barras), mas o
+            # endpoint /read não aceita esse identificador e responde 404.
+            if not str(summary.get("content") or "").strip():
+                raise
+            payload = {"article": summary}
         root = payload
         if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
             root = payload["data"]
@@ -270,6 +284,9 @@ class EndooWikiSync:
         replacements: dict[str, str] = {}
         ocr_parts: list[str] = []
         for image_url in image_urls:
+            image_host = (urllib.parse.urlsplit(image_url).hostname or "").casefold()
+            if image_host in self._unavailable_asset_hosts:
+                continue
             try:
                 local = download_asset(
                     image_url,
@@ -283,6 +300,13 @@ class EndooWikiSync:
                 ocr = self.ocr.extract(local)
                 if ocr.text:
                     ocr_parts.append(f"### {local.name}\n\n{ocr.text}")
+            except EndooAssetUnavailable as exc:
+                self._unavailable_asset_hosts.add(exc.host)
+                LOGGER.warning(
+                    "Host de imagens da Wiki Endoo indisponivel; "
+                    "as demais imagens deste host serao ignoradas nesta sincronizacao: %s",
+                    exc.host,
+                )
             except Exception:
                 LOGGER.warning(
                     "Nao foi possivel baixar imagem da Wiki Endoo: %s", image_url

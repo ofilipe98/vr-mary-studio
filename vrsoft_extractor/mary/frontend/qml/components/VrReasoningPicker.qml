@@ -47,7 +47,7 @@ Button {
         spacing: 7
         Text {
             text: control.compactLabel || "Medium"
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
         }
@@ -55,16 +55,16 @@ Button {
             Layout.preferredWidth: 13
             Layout.preferredHeight: 13
             kind: "chevronDown"
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
         radius: 8
         color: control.down || control.hovered || optionsPopup.opened || control.outlined
-            ? frontend.palette.chatControl : "transparent"
+            ? Theme.palette.chatControl : "transparent"
         border.width: control.outlined || control.activeFocus ? 1 : 0
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -84,9 +84,9 @@ Button {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 11
         }
 
@@ -98,7 +98,7 @@ Button {
                 Layout.leftMargin: 7
                 Layout.preferredHeight: 24
                 text: "Raciocínio"
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
@@ -113,8 +113,8 @@ Button {
                     Layout.preferredHeight: 30
                     radius: 7
                     color: control.currentEffortIndex === index
-                        ? frontend.palette.chatControl : effortHover.hovered
-                            ? frontend.palette.surfaceRaised : "transparent"
+                        ? Theme.palette.chatControl : effortHover.hovered
+                            ? Theme.palette.surfaceRaised : "transparent"
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 8
@@ -122,7 +122,7 @@ Button {
                         Text {
                             Layout.fillWidth: true
                             text: modelData.label
-                            color: frontend.palette.text
+                            color: Theme.palette.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(13)
                             font.weight: control.currentEffortIndex === index ? Font.DemiBold : Font.Normal
@@ -132,12 +132,12 @@ Button {
                             Layout.preferredWidth: defaultLabel.implicitWidth + 8
                             Layout.preferredHeight: 18
                             radius: 5
-                            color: frontend.palette.surfaceRaised
+                            color: Theme.palette.surfaceRaised
                             Text {
                                 id: defaultLabel
                                 anchors.centerIn: parent
                                 text: "Padrão"
-                                color: frontend.palette.mutedText
+                                color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(9)
                             }
@@ -159,7 +159,7 @@ Button {
                 Layout.leftMargin: 7
                 Layout.rightMargin: 7
                 Layout.preferredHeight: 1
-                color: frontend.palette.chatBorder
+                color: Theme.palette.chatBorder
             }
 
             Text {
@@ -168,7 +168,7 @@ Button {
                 Layout.leftMargin: 7
                 Layout.preferredHeight: 24
                 text: "Service Tier"
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(11)
                 verticalAlignment: Text.AlignVCenter
@@ -183,8 +183,8 @@ Button {
                     Layout.preferredHeight: modelData.description ? 46 : 32
                     radius: 7
                     color: control.currentTierIndex === index
-                        ? frontend.palette.chatControl : tierHover.hovered
-                            ? frontend.palette.surfaceRaised : "transparent"
+                        ? Theme.palette.chatControl : tierHover.hovered
+                            ? Theme.palette.surfaceRaised : "transparent"
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 8
@@ -195,7 +195,7 @@ Button {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.label
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
                                 font.weight: control.currentTierIndex === index ? Font.DemiBold : Font.Normal
@@ -205,12 +205,12 @@ Button {
                                 Layout.preferredWidth: tierDefault.implicitWidth + 8
                                 Layout.preferredHeight: 18
                                 radius: 5
-                                color: frontend.palette.surfaceRaised
+                                color: Theme.palette.surfaceRaised
                                 Text {
                                     id: tierDefault
                                     anchors.centerIn: parent
                                     text: "Padrão"
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                 }
@@ -220,7 +220,7 @@ Button {
                             Layout.fillWidth: true
                             visible: modelData.description
                             text: modelData.description || ""
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(10)
                             elide: Text.ElideRight

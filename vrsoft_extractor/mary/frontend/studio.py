@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ from ..config import MarySettings, save_vr_env
 from ..db import MaryDatabase
 from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
+from ..antigravity import resolve_agy, google_account_environment
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -1700,21 +1702,81 @@ class StudioBridge(QObject):
             "codex": "Codex App Server local · modelos, tools e Build integrado",
             "claude": "Claude Code local · conversas e modelos Claude",
             "opencode": "OpenCode local · modelos e sessões via CLI",
+            "antigravity": "Antigravity CLI · conta Google",
         }
-        labels = {"codex": "Codex", "claude": "Claude", "opencode": "OpenCode"}
+        labels = {"codex": "Codex", "claude": "Claude", "opencode": "OpenCode", "antigravity": "Antigravity"}
         self._providers = []
-        for provider in ("codex", "claude", "opencode"):
+        for provider in labels:
             enabled = self._stored_bool(self._preferences.value(f"providers/{provider}/enabled", True), True)
-            available = shutil.which(provider) is not None
+            command = resolve_agy() if provider == "antigravity" else shutil.which(provider)
+            available = command is not None
             self._providers.append({
                 "id": provider,
-                "name": labels[provider],
+                "name": str(self._preferences.value(f"providers/{provider}/displayName", labels[provider])),
+                "command": command or "",
+                "accountStatus": getattr(self, "_agy_account_status", "Conta Google ainda não verificada") if provider == "antigravity" else "Autenticação gerenciada pelo CLI",
                 "description": descriptions[provider],
                 "enabled": enabled,
                 "available": available,
                 "status": "● Desativado para novas conversas" if not enabled else "● Disponível localmente" if available else "● Não encontrado no PATH",
             })
         self.providersChanged.emit()
+
+    @Slot(str, str)
+    def setProviderDisplayName(self, provider: str, name: str) -> None:
+        if provider not in {item["id"] for item in self._providers} or not name.strip():
+            return
+        self._preferences.setValue(f"providers/{provider}/displayName", name.strip()[:80])
+        self._preferences.sync()
+        self.refreshProviders()
+
+    @Slot()
+    def openAntigravityLogin(self) -> None:
+        try:
+            command = resolve_agy()
+            if not command:
+                QDesktopServices.openUrl(QUrl("https://antigravity.google/docs/cli/install/"))
+                return
+            env = google_account_environment()
+            # A visible terminal is necessary for the user's interactive Google login.
+            subprocess.Popen([command], env=env, cwd=str(Path.home()),
+                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0)
+            self._agy_account_status = "Conclua o login no CLI e clique em Validar conta"
+            self.refreshProviders()
+        except Exception as exc:
+            self.toastRequested.emit(str(exc), "error")
+
+    @Slot()
+    def validateAntigravityAccount(self) -> None:
+        if getattr(self, "_agy_check_running", False):
+            return
+        command = resolve_agy()
+        if not command:
+            self.toastRequested.emit("Instale o Antigravity CLI primeiro.", "warning")
+            return
+        self._agy_check_running = True
+        self._agy_account_status = "Validando conta Google…"
+        self.refreshProviders()
+        def check():
+            result = subprocess.run([command, "-p", "Responda apenas OK. Não use ferramentas.",
+                                     "--mode", "plan", "--output-format", "json", "--print-timeout", "30s"],
+                                    cwd=str(Path.home()), env=google_account_environment(),
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=40,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            payload = json.loads(result.stdout)
+            if result.returncode or payload.get("status") != "SUCCESS":
+                raise RuntimeError("Não foi possível validar a conta. Abra o CLI e confira o login e a cota.")
+            return "Conta Google validada com uma resposta real"
+        task = _Task(check)
+        self._tasks.add(task)
+        def finish(message):
+            self._tasks.discard(task)
+            self._agy_check_running = False
+            self._agy_account_status = str(message)
+            self.refreshProviders()
+        task.signals.finished.connect(finish)
+        task.signals.failed.connect(finish)
+        self._pool.start(task)
 
     @Slot(str, bool)
     def setProviderEnabled(self, provider: str, enabled: bool) -> None:  # noqa: N802

@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         initial_page=args.screenshot_page,
         navigation_override=False if args.screenshot else None,
     )
-    database = initialize_workspace(settings)
+    database = initialize_workspace(settings, refresh_conversations=False)
     chat_bridge = ChatBridge(settings, database, preferences)
     if args.screenshot_vr_mode:
         # Visual-test override only; do not persist or mutate a conversation.

@@ -9,13 +9,16 @@ Button {
     property string iconKind: ""
     property string symbol: ""
     property bool round: false
-    property color foreground: frontend.palette.text
+    property color foreground: Theme.palette.text
     property real iconSize: Theme.iconSize
 
     implicitWidth: Theme.controlHeight
     implicitHeight: Theme.controlHeight
     padding: 0
     focusPolicy: Qt.StrongFocus
+    Accessible.name: ToolTip.text || text || iconKind || symbol
+    opacity: enabled ? 1 : 0.38
+    ToolTip.delay: 500
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down && control.enabled ? 0.91 : 1
 
@@ -54,9 +57,9 @@ Button {
 
     background: Rectangle {
         radius: control.round ? height / 2 : Theme.radiusControl
-        color: control.down || control.hovered ? frontend.palette.hover : "transparent"
+        color: control.down || control.hovered ? Theme.palette.hover : "transparent"
         border.width: control.activeFocus ? 2 : 0
-        border.color: frontend.palette.focus
+        border.color: Theme.palette.focus
 
         Behavior on color {
             enabled: !frontend.reduceMotion

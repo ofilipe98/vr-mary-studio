@@ -45,7 +45,7 @@ Button {
         Text {
             Layout.fillWidth: true
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
             elide: Text.ElideRight
@@ -55,16 +55,16 @@ Button {
             Layout.preferredWidth: 13
             Layout.preferredHeight: 13
             kind: "chevronDown"
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
         radius: 8
         color: control.down || control.hovered || pickerPopup.opened || control.outlined
-            ? frontend.palette.chatControl : "transparent"
+            ? Theme.palette.chatControl : "transparent"
         border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -77,7 +77,7 @@ Button {
         parent: control
         x: 0
         y: control.popupAbove ? -height - 8 : control.height + 8
-        width: 420
+        width: Math.min(420, Theme.viewportWidth - 24)
         height: 400
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
@@ -89,9 +89,9 @@ Button {
         }
 
         background: Rectangle {
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 12
         }
 
@@ -101,14 +101,14 @@ Button {
             Rectangle {
                 Layout.fillHeight: true
                 Layout.preferredWidth: 48
-                color: frontend.palette.chatSidebar
+                color: Theme.palette.chatSidebar
                 radius: 14
                 Rectangle {
                     anchors.right: parent.right
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     width: 1
-                    color: frontend.palette.chatBorder
+                    color: Theme.palette.chatBorder
                 }
                 Column {
                     anchors.left: parent.left
@@ -132,7 +132,7 @@ Button {
                             }
                             contentItem: Item {
                                 VrProviderIcon {
-                                    visible: modelData.key === "codex" || modelData.key === "claude" || modelData.key === "opencode"
+                                    visible: modelData.key === "codex" || modelData.key === "claude" || modelData.key === "opencode" || modelData.key === "antigravity"
                                     anchors.centerIn: parent
                                     width: 19
                                     height: 19
@@ -145,13 +145,13 @@ Button {
                                     height: 18
                                     kind: modelData.kind
                                     foreground: modelData.key === "favorites" && control.providerFilter === "favorites"
-                                        ? frontend.palette.brandOrange : frontend.palette.text
+                                        ? Theme.palette.brandOrange : Theme.palette.text
                                 }
                             }
                             background: Rectangle {
                                 color: control.providerFilter === modelData.key
-                                    ? frontend.palette.selection : providerTabButton.hovered
-                                        ? frontend.palette.chatControl : "transparent"
+                                    ? Theme.palette.selection : providerTabButton.hovered
+                                        ? Theme.palette.chatControl : "transparent"
                                 Rectangle {
                                     visible: control.providerFilter === modelData.key
                                     anchors.left: parent.left
@@ -159,7 +159,7 @@ Button {
                                     width: 3
                                     height: 26
                                     radius: 2
-                                    color: frontend.palette.brandOrange
+                                    color: Theme.palette.brandOrange
                                 }
                             }
                         }
@@ -185,16 +185,16 @@ Button {
                             Layout.preferredWidth: 18
                             Layout.preferredHeight: 18
                             kind: "search"
-                            foreground: frontend.palette.mutedText
+                            foreground: Theme.palette.mutedText
                         }
                         TextField {
                             id: searchField
                             objectName: "modelPickerSearch"
                             Layout.fillWidth: true
                             placeholderText: "Pesquisar modelos..."
-                            color: frontend.palette.text
-                            placeholderTextColor: frontend.palette.mutedText
-                            selectionColor: frontend.palette.selection
+                            color: Theme.palette.text
+                            placeholderTextColor: Theme.palette.mutedText
+                            selectionColor: Theme.palette.selection
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(13)
                             background: Item { }
@@ -208,7 +208,7 @@ Button {
                         anchors.leftMargin: 12
                         anchors.rightMargin: 10
                         height: 1
-                        color: searchField.activeFocus ? frontend.palette.brandOrange : frontend.palette.chatBorder
+                        color: searchField.activeFocus ? Theme.palette.brandOrange : Theme.palette.chatBorder
                     }
                 }
 
@@ -234,7 +234,7 @@ Button {
                         radius: 10
                         color: control.currentIndex === index
                             ? Qt.rgba(1.0, 0.45, 0.0, 0.14)
-                            : modelHover.hovered ? frontend.palette.chatControl : "transparent"
+                            : modelHover.hovered ? Theme.palette.chatControl : "transparent"
                         Rectangle {
                             visible: control.currentIndex === modelRow.index
                             anchors.left: parent.left
@@ -242,7 +242,7 @@ Button {
                             width: 3
                             height: 34
                             radius: 2
-                            color: frontend.palette.brandOrange
+                            color: Theme.palette.brandOrange
                         }
 
                         RowLayout {
@@ -261,7 +261,7 @@ Button {
                                 Text {
                                     Layout.fillWidth: true
                                     text: modelData.displayName || modelData.label
-                                    color: frontend.palette.text
+                                    color: Theme.palette.text
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(13)
                                     font.weight: Font.DemiBold
@@ -270,7 +270,7 @@ Button {
                                 Text {
                                     Layout.fillWidth: true
                                     text: modelData.providerLabel || modelData.provider || ""
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(11)
                                     elide: Text.ElideRight
@@ -281,11 +281,11 @@ Button {
                                 Layout.preferredWidth: 42
                                 Layout.preferredHeight: 22
                                 radius: 6
-                                color: frontend.palette.chatControl
+                                color: Theme.palette.chatControl
                                 Text {
                                     anchors.centerIn: parent
                                     text: "Ctrl+" + (modelRow.index + 1)
-                                    color: frontend.palette.mutedText
+                                    color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                 }
@@ -295,7 +295,7 @@ Button {
                                 implicitHeight: 30
                                 symbol: modelData.favorite ? "★" : "☆"
                                 foreground: modelData.favorite
-                                    ? frontend.palette.brandOrange : frontend.palette.mutedText
+                                    ? Theme.palette.brandOrange : Theme.palette.mutedText
                                 Accessible.name: modelData.favorite
                                     ? "Remover dos favoritos" : "Adicionar aos favoritos"
                                 onClicked: control.favoriteToggled(modelRow.index)
@@ -315,7 +315,7 @@ Button {
                         visible: !control.hasVisibleItems()
                         text: control.providerFilter === "favorites"
                             ? "Nenhum modelo favorito" : "Nenhum modelo encontrado"
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(12)
                     }

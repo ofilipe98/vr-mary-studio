@@ -10,8 +10,8 @@ ApplicationWindow {
     // QHD and 4K monitors: grow with the screen, capped for comfortable use.
     width: Math.max(minimumWidth, Math.min(Screen.desktopAvailableWidth * 0.88, 1760))
     height: Math.max(minimumHeight, Math.min(Screen.desktopAvailableHeight * 0.86, 1120))
-    minimumWidth: 1120
-    minimumHeight: 700
+    minimumWidth: 390
+    minimumHeight: 520
     visible: true
     title: frontend.appName
     color: frontend.palette.background
@@ -21,8 +21,8 @@ ApplicationWindow {
 
     // Pages stay alive after the first visit: recreating ChatPreview on every
     // switch was the dominant tab-change cost (measured at 40-110 ms).
-    property bool chatVisited: frontend.currentPage === 1
-    property bool hubVisited: frontend.currentPage !== 1
+    property bool chatVisited: false
+    property bool hubVisited: false
 
     Connections {
         target: studio
@@ -50,7 +50,8 @@ ApplicationWindow {
     Loader {
         id: chatLoader
         anchors.fill: parent
-        active: window.chatVisited
+        active: window.chatVisited || frontend.currentPage === 1
+        onLoaded: window.chatVisited = true
         visible: active && frontend.currentPage === 1
         opacity: frontend.currentPage === 1 ? 1 : 0.72
         sourceComponent: chatComponent
@@ -71,7 +72,8 @@ ApplicationWindow {
     Loader {
         id: hubLoader
         anchors.fill: parent
-        active: window.hubVisited
+        active: window.hubVisited || frontend.currentPage !== 1
+        onLoaded: window.hubVisited = true
         visible: active && frontend.currentPage !== 1
         opacity: frontend.currentPage !== 1 ? 1 : 0.72
         sourceComponent: settingsHubComponent

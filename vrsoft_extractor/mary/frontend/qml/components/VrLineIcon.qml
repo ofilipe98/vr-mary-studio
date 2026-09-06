@@ -1,10 +1,11 @@
 import QtQuick
+import "../theme"
 
 Canvas {
     id: root
 
     property string kind: ""
-    property color foreground: frontend.palette.mutedText
+    property color foreground: Theme.palette.mutedText
     property real strokeWidth: 1.7
 
     implicitWidth: 20
@@ -47,7 +48,12 @@ Canvas {
             ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.stroke()
         }
 
-        if (kind === "browser") {
+        if (kind === "check") {
+            ctx.beginPath(); ctx.moveTo(5, 12); ctx.lineTo(10, 17); ctx.lineTo(19, 7); ctx.stroke()
+        } else if (kind === "external") {
+            line(10, 14, 20, 4); line(14, 4, 20, 4); line(20, 4, 20, 10)
+            ctx.beginPath(); ctx.moveTo(10, 5); ctx.lineTo(5, 5); ctx.lineTo(5, 19); ctx.lineTo(19, 19); ctx.lineTo(19, 14); ctx.stroke()
+        } else if (kind === "browser") {
             ctx.beginPath(); ctx.arc(12, 12, 8.2, 0, Math.PI * 2); ctx.stroke()
             line(3.8, 12, 20.2, 12)
             ctx.beginPath(); ctx.moveTo(12, 3.8)
@@ -72,6 +78,25 @@ Canvas {
         } else if (kind === "agents") {
             rect(4, 8, 16, 11, 2.2); rect(8.5, 4.5, 7, 4, 1.5)
             line(8, 13, 8.1, 13); line(16, 13, 16.1, 13); line(9.5, 16, 14.5, 16)
+        } else if (kind === "expertSenior") {
+            ctx.beginPath(); ctx.arc(10, 8, 3.1, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(10, 20, 6.1, Math.PI, 0); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(18.2, 4.6); ctx.lineTo(19.2, 6.7)
+            ctx.lineTo(21.5, 7); ctx.lineTo(19.8, 8.6); ctx.lineTo(20.2, 11)
+            ctx.lineTo(18.2, 9.9); ctx.lineTo(16.1, 11); ctx.lineTo(16.5, 8.6)
+            ctx.lineTo(14.8, 7); ctx.lineTo(17.1, 6.7); ctx.closePath(); ctx.stroke()
+        } else if (kind === "expertSupport") {
+            ctx.beginPath(); ctx.arc(12, 12, 7.2, Math.PI, 0); ctx.stroke()
+            rect(3.8, 11.4, 3.2, 6.4, 1.2)
+            rect(17, 11.4, 3.2, 6.4, 1.2)
+            ctx.beginPath(); ctx.moveTo(18.6, 17.8); ctx.quadraticCurveTo(17, 21, 13.7, 20.2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(12.7, 20.1, 1.1, 0, Math.PI * 2); ctx.fill()
+        } else if (kind === "expertImplementation") {
+            rect(3.5, 4.5, 7.2, 6.2, 1.4)
+            rect(13.3, 13.3, 7.2, 6.2, 1.4)
+            line(10.7, 7.6, 15.4, 7.6); line(15.4, 7.6, 15.4, 13.3)
+            ctx.beginPath(); ctx.moveTo(16, 3.8); ctx.lineTo(17.2, 5.2)
+            ctx.lineTo(20.3, 2.8); ctx.stroke()
         } else if (kind === "panelRight") {
             rect(3.5, 4.5, 17, 15, 2.5); line(15, 5, 15, 19)
         } else if (kind === "panelLeft") {

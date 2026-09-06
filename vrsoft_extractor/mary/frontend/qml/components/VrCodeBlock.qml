@@ -20,6 +20,11 @@ Rectangle {
     }
 
     objectName: "codeBlockCard"
+    onLanguageChanged: frontend.highlightCodeDocument(codeBody.textDocument, root.language)
+    Connections {
+        target: frontend
+        function onThemeChanged() { frontend.highlightCodeDocument(codeBody.textDocument, root.language) }
+    }
 
     Component.onCompleted: {
         if (frontend) {
@@ -35,11 +40,10 @@ Rectangle {
 
     radius: 8
     clip: true
-    color: frontend.themeId === "dark_orange" ? "#1E1E22" : "#F6F6F8"
+    color: Theme.palette.codeSurface
     border.width: 1
-    border.color: frontend.themeId === "dark_orange" ? "#34343A" : "#D8D8E0"
-    implicitHeight: headerRow.height + codeBody.paintedHeight
-        + codeBody.topPadding + codeBody.bottomPadding
+    border.color: Theme.palette.chatBorder
+    implicitHeight: layout.implicitHeight
 
     Column {
         id: layout
@@ -49,7 +53,7 @@ Rectangle {
             id: headerRow
             width: parent.width
             height: 30
-            color: frontend.themeId === "dark_orange" ? "#232327" : "#ECECF1"
+            color: Theme.palette.codeHeader
             radius: 8
 
             Rectangle {
@@ -68,12 +72,12 @@ Rectangle {
                 width: badgeLabel.implicitWidth + 14
                 height: 18
                 radius: 4
-                color: frontend.themeId === "dark_orange" ? "#34343A" : "#D8D8E0"
+                color: "transparent"
 
                 Text {
                     id: badgeLabel
                     anchors.centerIn: parent
-                    text: root.badge
+                    text: root.language
                     color: frontend.themeId === "dark_orange" ? "#C9C9D3" : "#3F3F46"
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
@@ -118,18 +122,33 @@ Rectangle {
             }
         }
 
-        TextEdit {
-            id: codeBody
+        Flickable {
+            id: codeViewport
+            objectName: "codeViewport"
             width: parent.width
-            padding: 12
-            text: root.code
-            textFormat: TextEdit.PlainText
-            readOnly: true
-            activeFocusOnPress: false
-            wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
-            color: frontend.themeId === "dark_orange" ? "#E4E4E7" : "#27272A"
-            font.family: Theme.monospaceFontFamily
-            font.pixelSize: Theme.monospaceFontSize(12)
+            height: codeBody.paintedHeight + 24 + (contentWidth > width ? 8 : 0)
+            contentWidth: wrapButton.checked ? width : Math.max(width, codeBody.paintedWidth + 24)
+            contentHeight: height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
+            ScrollBar.horizontal: VrScrollBar { }
+            TextEdit {
+                id: codeBody
+                objectName: "codeBlockBody"
+                width: codeViewport.width
+                padding: 12
+                text: root.code
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                selectByMouse: true
+                persistentSelection: true
+                activeFocusOnPress: true
+                wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
+                color: Theme.palette.text
+                font.family: Theme.monospaceFontFamily
+                font.pixelSize: Theme.monospaceFontSize(12)
+            }
         }
     }
 }

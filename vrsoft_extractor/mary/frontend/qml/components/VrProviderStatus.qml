@@ -1,0 +1,37 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "../theme"
+
+RowLayout {
+    id: root
+    property string text: ""
+    property string tone: "muted"
+    property bool busy: false
+    property bool announceChanges: false
+    onTextChanged: if (announceChanges && visible && text.length) Accessible.announce(text)
+    readonly property color statusColor: tone === "success" ? frontend.palette.success
+        : tone === "warning" ? frontend.palette.warning
+        : tone === "danger" ? frontend.palette.danger : frontend.palette.subtleText
+    spacing: 8
+    Accessible.role: Accessible.StaticText
+    Accessible.name: text
+    Rectangle {
+        Layout.preferredWidth: 6; Layout.preferredHeight: 6
+        radius: 3; color: root.statusColor
+        opacity: root.busy ? 0.5 : 0.85
+        SequentialAnimation on opacity {
+            running: root.busy && root.visible && !frontend.reduceMotion
+            loops: Animation.Infinite
+            NumberAnimation { to: 1; duration: 650 }
+            NumberAnimation { to: 0.4; duration: 650 }
+        }
+    }
+    Text {
+        Layout.fillWidth: true
+        text: root.text
+        color: root.tone === "danger" ? root.statusColor : frontend.palette.mutedText
+        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
+        elide: Text.ElideRight
+    }
+}

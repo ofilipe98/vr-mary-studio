@@ -39,6 +39,14 @@ class EndooInvalidResponse(EndooError):
     pass
 
 
+class EndooAssetUnavailable(EndooError):
+    """Raised when an optional asset origin does not answer in time."""
+
+    def __init__(self, host: str) -> None:
+        self.host = str(host or "").casefold()
+        super().__init__(f"Host de recurso Endoo sem resposta: {self.host}")
+
+
 class EndooReadClient:
     """Authenticated, read-only Endoo client backed by the saved browser session."""
 
@@ -80,7 +88,15 @@ class EndooReadClient:
         self.page.set_default_timeout(20_000)
 
         def capture(request) -> None:
-            if not str(request.url).startswith(self.api_url):
+            request_url = urllib.parse.urlsplit(str(request.url))
+            api_url = urllib.parse.urlsplit(self.api_url)
+            if (
+                self._origin(request_url) != self._origin(api_url)
+                or not (
+                    request_url.path == api_url.path
+                    or request_url.path.startswith(api_url.path + "/")
+                )
+            ):
                 return
             request_headers = request.headers
             self.headers.update(
@@ -154,7 +170,10 @@ class EndooReadClient:
             raise EndooError("Cliente Endoo nao inicializado.")
         last_status = 0
         for attempt in range(1, max(1, int(attempts)) + 1):
-            response = self.page.request.get(url, headers=self.headers, timeout=60_000)
+            # An API redirect must not forward session headers to another origin.
+            response = self.page.request.get(
+                url, headers=self.headers, timeout=60_000, max_redirects=0
+            )
             last_status = int(response.status)
             if 200 <= last_status < 300:
                 try:
@@ -187,8 +206,65 @@ class EndooReadClient:
     def get_bytes(self, url: str) -> bytes:
         if self.page is None:
             raise EndooError("Cliente Endoo nao inicializado.")
+        api_origin = self._origin(urllib.parse.urlsplit(self.api_url))
+        for _hop in range(6):
+            parsed = self._validate_asset_url(url)
+            authenticated = self._origin(parsed) == api_origin
+            headers = dict(self.headers) if authenticated else {}
+            # A browser request shares its cookie jar, even across ports and
+            # cookie-compatible subdomains. Each public hop gets an empty jar.
+            public_context = None
+            if authenticated:
+                request = self.page.request
+            else:
+                public_context = self._playwright.request.new_context()
+                request = public_context
+            response = None
+            try:
+                try:
+                    response = request.get(
+                        url,
+                        headers=headers,
+                        timeout=60_000 if authenticated else 10_000,
+                        max_redirects=0,
+                    )
+                except Exception as exc:
+                    if not authenticated and exc.__class__.__name__ == "TimeoutError":
+                        raise EndooAssetUnavailable(parsed.hostname or "") from exc
+                    raise
+                if response.status in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise EndooError("Redirecionamento de recurso Endoo sem destino.")
+                    url = urllib.parse.urljoin(url, location)
+                    continue
+                if response.status < 200 or response.status >= 300:
+                    raise EndooError(f"Recurso Endoo retornou HTTP {response.status}.")
+                return response.body()
+            finally:
+                if response is not None:
+                    response.dispose()
+                if public_context is not None:
+                    public_context.dispose()
+        raise EndooError("Recurso Endoo excedeu o limite de redirecionamentos.")
+
+    @staticmethod
+    def _origin(parsed: urllib.parse.SplitResult) -> tuple[str, str, int | None]:
+        return (
+            parsed.scheme.casefold(),
+            (parsed.hostname or "").casefold(),
+            parsed.port if parsed.port is not None else (
+                443 if parsed.scheme.casefold() == "https" else 80
+            ),
+        )
+
+    @staticmethod
+    def _validate_asset_url(url: str) -> urllib.parse.SplitResult:
         parsed = urllib.parse.urlsplit(str(url or ""))
-        if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        if (
+            parsed.scheme.casefold() != "https" or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+        ):
             raise EndooPermissionDenied("Recurso Endoo com URL insegura.")
         host = parsed.hostname.casefold()
         allowed_suffixes = (
@@ -202,7 +278,4 @@ class EndooReadClient:
             raise EndooPermissionDenied(
                 f"Host de recurso nao permitido para a Wiki Endoo: {host}"
             )
-        response = self.page.request.get(url, headers=self.headers, timeout=60_000)
-        if response.status < 200 or response.status >= 300:
-            raise EndooError(f"Recurso Endoo retornou HTTP {response.status}.")
-        return response.body()
+        return parsed

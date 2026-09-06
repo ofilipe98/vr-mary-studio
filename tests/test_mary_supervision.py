@@ -82,6 +82,7 @@ def test_complete_flow_request_creates_a_step_by_step_contract() -> None:
     contract = build_response_contract(intent)
 
     assert intent.requires_step_by_step is True
+    assert intent.requested_detail == "high"
     assert contract.minimum_steps >= 3
     assert "passo a passo" in contract.must_include
 

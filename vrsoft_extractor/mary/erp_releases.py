@@ -1038,7 +1038,9 @@ class ErpReleaseCatalog:
             "storage": self.storage_status(),
         }
 
-    def set_storage_budget_multiplier(self, multiplier: int) -> dict[str, Any]:
+    def set_storage_budget_multiplier(
+        self, multiplier: int, *, inspect_storage: bool = True
+    ) -> dict[str, Any]:
         """Update the generated-index budget without touching source JARs."""
 
         selected = int(multiplier)
@@ -1062,7 +1064,10 @@ class ErpReleaseCatalog:
                 "updated_at": _utc_now(),
             },
         )
-        return self.storage_status()
+        return self.storage_status() if inspect_storage else {
+            "storage_budget_multiplier": selected,
+            "storage_budget_bytes": baseline * selected,
+        }
 
     def inspect_class_metrics(
         self,

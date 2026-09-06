@@ -4,6 +4,7 @@ import "../theme"
 
 Switch {
     id: control
+    property bool subdued: false
 
     implicitWidth: 32
     implicitHeight: 20
@@ -20,11 +21,13 @@ Switch {
         y: (control.height - height) / 2
         radius: height / 2
         color: control.checked
-            ? frontend.palette.accessibleOrange : frontend.palette.chatControl
+            ? (control.subdued ? Qt.tint(frontend.palette.chatControl, Qt.alpha(frontend.palette.accessibleOrange, 0.40)) : frontend.palette.accessibleOrange) : frontend.palette.chatControl
         border.width: control.activeFocus ? 2 : 1
         border.color: control.activeFocus
             ? frontend.palette.focus : control.checked
-                ? frontend.palette.accessibleOrange : frontend.palette.chatBorder
+                ? (control.subdued ? frontend.palette.focus : frontend.palette.accessibleOrange) : frontend.palette.chatBorder
+        opacity: control.enabled ? 1 : 0.4
+        Rectangle { anchors.fill: parent; radius: parent.radius; color: frontend.palette.text; opacity: control.hovered && control.enabled ? 0.06 : 0 }
 
         Rectangle {
             width: 14

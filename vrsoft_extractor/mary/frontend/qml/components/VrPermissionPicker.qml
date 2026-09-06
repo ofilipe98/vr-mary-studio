@@ -43,11 +43,11 @@ Button {
             Layout.preferredWidth: 16
             Layout.preferredHeight: 16
             kind: control.permissionIconKind(control.currentItem.value)
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
         }
         Text {
             text: control.currentItem.label || "Auto"
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
         }
@@ -55,16 +55,16 @@ Button {
             Layout.preferredWidth: 13
             Layout.preferredHeight: 13
             kind: "chevronDown"
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
         radius: 8
         color: control.down || control.hovered || optionsPopup.opened
-            ? frontend.palette.chatControl : "transparent"
+            ? Theme.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
-        border.color: frontend.palette.focus
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -77,15 +77,15 @@ Button {
         parent: control
         x: 0
         y: -height - 7
-        width: 372
+        width: Math.min(372, Theme.viewportWidth - 24)
         height: 250
         padding: 5
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 11
         }
 
@@ -100,10 +100,10 @@ Button {
                     Layout.fillHeight: true
                     radius: 7
                     color: control.currentIndex === index
-                        ? frontend.palette.chatControl : permissionHover.hovered
-                            ? frontend.palette.surfaceRaised : "transparent"
+                        ? Theme.palette.chatControl : permissionHover.hovered
+                            ? Theme.palette.surfaceRaised : "transparent"
                     border.width: control.currentIndex === index ? 1 : 0
-                    border.color: frontend.palette.chatBorder
+                    border.color: Theme.palette.chatBorder
 
                     RowLayout {
                         anchors.fill: parent
@@ -117,7 +117,7 @@ Button {
                             Layout.topMargin: 5
                             kind: control.permissionIconKind(modelData.value)
                             foreground: control.currentIndex === index
-                                ? frontend.palette.text : frontend.palette.mutedText
+                                ? Theme.palette.text : Theme.palette.mutedText
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -125,7 +125,7 @@ Button {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.label
-                                color: frontend.palette.text
+                                color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
@@ -133,7 +133,7 @@ Button {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.description || ""
-                                color: frontend.palette.mutedText
+                                color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(10)
                                 wrapMode: Text.WordWrap

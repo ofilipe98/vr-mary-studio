@@ -57,8 +57,11 @@ QUERY_PRESENTATION_TERMS = frozenset(
         "detalhados",
         "elabore",
         "elaborar",
+        "explicando",
         "explique",
         "explicar",
+        "funciona",
+        "funcionar",
         "minuciosa",
         "minuciosas",
         "minucioso",
@@ -67,8 +70,28 @@ QUERY_PRESENTATION_TERMS = frozenset(
         "montar",
         "mostre",
         "mostrar",
+        "quero",
+        "queremos",
+        "utiliza",
+        "utilizar",
+        "vrmaster",
     }
 )
+QUERY_STRUCTURE_TERMS = frozenset(
+    {
+        "etapa",
+        "etapas",
+        "fluxo",
+        "passo",
+        "passos",
+        "procedimento",
+        "processo",
+    }
+)
+COMPOUND_QUERY_TERMS = {
+    "crossdocking": "cross docking",
+}
+KNOWN_PRODUCT_TERMS = ("vrmaster", "vrpdv", "vrfiscal", "vrcaixa", "vrwms")
 ROLE_SOURCES: dict[str, tuple[str, ...]] = {
     "source_wiki": ("wiki",),
     "source_kb": ("kb",),
@@ -1077,6 +1100,22 @@ class KnowledgeRouter:
         lane_results: dict[str, list[dict[str, Any]]],
     ) -> list[EvidenceCandidate]:
         all_candidates: list[EvidenceCandidate] = []
+        ranking_terms = tuple(
+            term for term in profile.terms if term not in QUERY_STRUCTURE_TERMS
+        ) or profile.terms
+        release_history_requested = bool(
+            set(profile.terms)
+            & {
+                "ajuste",
+                "correcao",
+                "correcoes",
+                "historico",
+                "release",
+                "releases",
+                "versao",
+                "versoes",
+            }
+        )
         query_entities = {
             value.casefold()
             for values in profile.entities.values()
@@ -1125,19 +1164,23 @@ class KnowledgeRouter:
                     f"{evidence_text}"
                 )
                 matched_terms = [
-                    term for term in profile.terms if term in normalized_candidate
+                    term
+                    for term in ranking_terms
+                    if _normalized_term_match(term, normalized_candidate)
                 ]
                 coverage = (
-                    len(matched_terms) / len(profile.terms)
-                    if profile.terms
+                    len(matched_terms) / len(ranking_terms)
+                    if ranking_terms
                     else 0.0
                 )
                 title_matches = [
-                    term for term in profile.terms if term in normalized_title
+                    term
+                    for term in ranking_terms
+                    if _normalized_term_match(term, normalized_title)
                 ]
                 title_coverage = (
-                    len(title_matches) / len(profile.terms)
-                    if profile.terms
+                    len(title_matches) / len(ranking_terms)
+                    if ranking_terms
                     else 0.0
                 )
                 lexical = min(1.0, coverage * 0.72 + title_coverage * 0.28)
@@ -1198,6 +1241,40 @@ class KnowledgeRouter:
                     if str(row.get("review_status") or "") in {"approved", "kept"}
                     else 0.0
                 )
+                product_fit = (
+                    1.0
+                    if profile.product
+                    and _normalized_term_match(profile.product, normalized_candidate)
+                    else 0.0
+                )
+                product_conflict = (
+                    1.0
+                    if profile.product
+                    and not product_fit
+                    and any(
+                        _normalized_term_match(product, normalized_title)
+                        for product in KNOWN_PRODUCT_TERMS
+                        if product != normalize_search_text(profile.product).replace(
+                            " ", ""
+                        )
+                    )
+                    else 0.0
+                )
+                manual_fit = (
+                    1.0
+                    if "manual" in normalized_title
+                    and profile.answer_type in {"functional", "process", "hybrid"}
+                    else 0.0
+                )
+                release_note_penalty = (
+                    1.0
+                    if not release_history_requested
+                    and re.search(
+                        r"\b(?:notas? da versao|novidades? da versao|releases?|versoes?)\b",
+                        normalized_title,
+                    )
+                    else 0.0
+                )
                 final_score = min(
                     1.0,
                     lexical * 0.38
@@ -1207,8 +1284,13 @@ class KnowledgeRouter:
                     + content_fit * 0.06
                     + entity_fit * 0.05
                     + module_fit * 0.02
-                    + validated * 0.03,
+                    + validated * 0.03
+                    + manual_fit * 0.06
+                    + product_fit * 0.08
+                    - release_note_penalty * 0.12
+                    - product_conflict * 0.16,
                 )
+                final_score = max(0.0, final_score)
                 confidence = min(
                     0.99,
                     0.35 + final_score * 0.45 + coverage * 0.18,
@@ -1250,6 +1332,12 @@ class KnowledgeRouter:
                             "entities": round(entity_fit, 4),
                             "module": round(module_fit, 4),
                             "validated": round(validated, 4),
+                            "manual": round(manual_fit, 4),
+                            "product": round(product_fit, 4),
+                            "product_conflict": round(product_conflict, 4),
+                            "release_note_penalty": round(
+                                release_note_penalty, 4
+                            ),
                         },
                     )
                 )
@@ -1270,6 +1358,7 @@ class KnowledgeRouter:
                 continue
             relevance_floor = max(0.18, lane[0].score * 0.48)
             selected_sections: set[tuple[int, str]] = set()
+            source_selected: list[EvidenceCandidate] = []
             for candidate in lane:
                 if candidate.score < relevance_floor:
                     continue
@@ -1279,7 +1368,23 @@ class KnowledgeRouter:
                 )
                 if section_key in selected_sections:
                     continue
+                if any(
+                    candidate.source_origin == previous.source_origin
+                    and (
+                        token_similarity(candidate.excerpt, previous.excerpt) >= 0.82
+                        or (
+                            token_similarity(candidate.excerpt, previous.excerpt) >= 0.66
+                            and token_similarity(
+                                f"{candidate.title} {candidate.heading}",
+                                f"{previous.title} {previous.heading}",
+                            ) >= 0.72
+                        )
+                    )
+                    for previous in source_selected
+                ):
+                    continue
                 balanced.append(candidate)
+                source_selected.append(candidate)
                 selected_sections.add(section_key)
                 if len(selected_sections) >= self.per_source_limit:
                     break
@@ -1515,7 +1620,11 @@ def _focused_entity_query(profile: QueryProfile) -> str:
         "routines",
     ):
         values.extend(profile.entities.get(kind, ()))
-    if profile.product:
+    # A product name by itself is not a focused entity.  Putting ``VRMaster``
+    # ahead of the actual topic makes the first broad product hits satisfy the
+    # lane limit before a business term such as ``crossdocking`` is searched.
+    # Keep the product as useful context only when a real entity was detected.
+    if values and profile.product:
         values.append(profile.product)
     unique = list(dict.fromkeys(value.strip() for value in values if value.strip()))
     if not unique:
@@ -1539,6 +1648,18 @@ def _query_variants(
     if focused:
         values.append(focused)
     topic_query = " ".join(profile.terms)
+    business_query = " ".join(
+        term for term in profile.terms if term not in QUERY_STRUCTURE_TERMS
+    )
+    expanded_business_query = " ".join(
+        COMPOUND_QUERY_TERMS.get(term, term)
+        for term in profile.terms
+        if term not in QUERY_STRUCTURE_TERMS
+    )
+    if expanded_business_query and expanded_business_query != business_query:
+        values.append(expanded_business_query)
+    if business_query and business_query != topic_query:
+        values.append(business_query)
     if topic_query:
         values.append(topic_query)
     values.append(profile.query)
@@ -1559,6 +1680,23 @@ def _clean_evidence_text(value: str) -> str:
     text = re.sub(r"\[([^]]+)]\([^)]*\)", r"\1", text)
     text = re.sub(r"\b[a-f0-9]{32,}\b", " ", text, flags=re.I)
     return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def _normalized_term_match(term: str, normalized_text: str) -> bool:
+    """Match both joined and spaced spellings such as CrossDocking/Cross Docking."""
+
+    normalized_term = normalize_search_text(term)
+    if not normalized_term:
+        return False
+    if normalized_term in normalized_text:
+        return True
+    if " " in normalized_term or len(normalized_term) < 8:
+        return False
+    words = normalized_text.split()
+    return any(
+        normalized_term == words[index] + words[index + 1]
+        for index in range(len(words) - 1)
+    )
 
 
 def _content_type_fit(content_type: str, intents: dict[str, float]) -> float:

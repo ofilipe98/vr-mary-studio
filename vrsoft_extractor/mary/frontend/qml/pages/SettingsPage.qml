@@ -9,6 +9,15 @@ Item {
     objectName: "settingsPage"
     property int tabIndex: 0
     property string pendingDeleteId: ""
+    property bool vrUltraPreloaded: false
+
+    Timer {
+        id: vrUltraPreloadTimer
+        interval: 250
+        running: frontend.currentPage === 7 && !root.vrUltraPreloaded
+        repeat: false
+        onTriggered: root.vrUltraPreloaded = true
+    }
 
     function openSearchResult(index) {
         root.tabIndex = Math.max(0, Math.min(5, Number(index)))
@@ -25,16 +34,32 @@ Item {
 
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
+    VrIconButton {
+        z: 2
+        visible: root.tabIndex === 1 && root.width < 980
+        anchors.right: parent.right; anchors.top: parent.top
+        anchors.margins: Theme.pageMargin
+        iconKind: "back"
+        Accessible.name: "Retornar ao Chat VR"
+        ToolTip.text: Accessible.name; ToolTip.visible: hovered || activeFocus
+        onClicked: frontend.setCurrentPage(1)
+    }
+
     VrPageColumn {
         spacing: Theme.pageSpacing
+        maximumWidth: root.tabIndex === 1 ? 1200 : 1120
 
         VrPageHeader {
+            compact: root.tabIndex === 1
+            Layout.minimumWidth: 0
             Layout.fillWidth: true
             title: "Configurações"
             subtitle: "Provedores, agentes VR Ultra, aparência e preferências locais."
         }
 
         VrTabBar {
+            understated: root.tabIndex === 1
+            Layout.minimumWidth: 0
             objectName: "settingsTabBar"
             Layout.fillWidth: true
             model: ["Geral", "Provedores", "VR Ultra", "Aparência", "Browser", "Projetos arquivados"]
@@ -43,6 +68,7 @@ Item {
         }
 
         StackLayout {
+            Layout.minimumWidth: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.tabIndex
@@ -133,89 +159,17 @@ Item {
             }
 
             // -------------------------------------------------------- Provedores
-            Item {
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spaceXs
-                    spacing: Theme.spaceMd
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 3
-                            Text { text: "Provedores"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.headingSize; font.weight: Font.DemiBold }
-                            Text { text: "Ative os provedores disponíveis para novas conversas. O estado é verificado localmente."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
-                        }
-                        VrButton { text: "Atualizar"; onClicked: studio.refreshProviders() }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: providerList.implicitHeight
-                        color: "transparent"
-
-                        ColumnLayout {
-                            id: providerList
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            spacing: 0
-
-                            Repeater {
-                                model: studio.providerItems
-                                delegate: Item {
-                                    required property int index
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 76
-
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 10
-                                        spacing: 12
-                                        VrProviderIcon {
-                                            Layout.preferredWidth: 24
-                                            Layout.preferredHeight: 24
-                                            provider: modelData.id
-                                        }
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 2
-                                            Text { text: modelData.name; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.subtitleSize; font.weight: Font.DemiBold }
-                                            Text { text: modelData.description; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; elide: Text.ElideRight; Layout.fillWidth: true }
-                                            Text { text: String(modelData.status || "").replace(/^●\s*/, ""); color: modelData.available && modelData.enabled ? frontend.palette.success : frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                                        }
-                                        VrSwitch {
-                                            checked: modelData.enabled
-                                            Accessible.name: "Ativar " + modelData.name
-                                            onToggled: studio.setProviderEnabled(modelData.id, checked)
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        visible: index < studio.providerItems.length - 1
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        anchors.leftMargin: 46
-                                        height: 1
-                                        color: frontend.palette.chatDivider
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Text { text: "Verificado agora · configurações aplicadas a novas conversas"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                    Item { Layout.fillHeight: true }
-                }
+            VrProviderSettings {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
             }
 
             // --------------------------------------------------------- VR Ultra
             Loader {
                 id: vrUltraSettingsLoader
                 objectName: "vrUltraSettingsLoader"
-                active: root.tabIndex === 2
+                active: root.tabIndex === 2 || root.vrUltraPreloaded
+                visible: root.tabIndex === 2
                 asynchronous: true
                 sourceComponent: vrUltraSettingsComponent
             }

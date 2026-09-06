@@ -26,6 +26,8 @@ Item {
     }
 
     function providerIcon(providerName) {
+        if (providerName === "antigravity")
+            return Qt.resolvedUrl("../../../assets/provider-antigravity.png")
         if (providerName === "claude")
             return Qt.resolvedUrl("../../../assets/provider-claude.webp")
         if (providerName === "opencode")

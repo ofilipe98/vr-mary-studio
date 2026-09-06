@@ -1,4 +1,5 @@
 import QtQuick
+import "../theme"
 import QtQuick.Controls
 
 ScrollBar {
@@ -7,8 +8,8 @@ ScrollBar {
     policy: ScrollBar.AsNeeded
     visible: policy === ScrollBar.AlwaysOn || size < 0.999
     minimumSize: 0.08
-    implicitWidth: 9
-    implicitHeight: 9
+    implicitWidth: 10
+    implicitHeight: 10
     padding: 2
 
     background: Rectangle {
@@ -19,11 +20,12 @@ ScrollBar {
         implicitWidth: 5
         implicitHeight: 5
         radius: width / 2
-        color: frontend.palette.mutedText
+        color: Theme.palette.mutedText
         opacity: root.pressed ? 0.78 : root.hovered ? 0.58 : 0.34
 
         Behavior on opacity {
-            NumberAnimation { duration: 120 }
+            enabled: !frontend.reduceMotion
+            NumberAnimation { duration: Theme.fastDuration }
         }
     }
 }

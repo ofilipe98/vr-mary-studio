@@ -1,4 +1,5 @@
 import QtQuick
+import "../theme"
 
 Item {
     id: root
@@ -20,6 +21,7 @@ Item {
 
     HoverHandler {
         id: pointerTracker
+        enabled: root.active && root.visible
         onPointChanged: root.pointerY = point.position.y
     }
 
@@ -69,9 +71,9 @@ Item {
         height: 44
         radius: 15
         z: 1000
-        color: frontend.palette.chatComposer
+        color: Theme.palette.chatComposer
         border.width: 1
-        border.color: frontend.palette.focus
+        border.color: Theme.palette.focus
 
         Column {
             anchors.centerIn: parent
@@ -80,7 +82,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "⌃"
                 color: root.pointerY < root.origin.y - 18
-                    ? frontend.palette.text : frontend.palette.mutedText
+                    ? Theme.palette.text : Theme.palette.mutedText
                 font.pixelSize: 13
             }
             Rectangle {
@@ -88,13 +90,13 @@ Item {
                 width: 5
                 height: 5
                 radius: 3
-                color: frontend.palette.brandOrange
+                color: Theme.palette.brandOrange
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "⌄"
                 color: root.pointerY > root.origin.y + 18
-                    ? frontend.palette.text : frontend.palette.mutedText
+                    ? Theme.palette.text : Theme.palette.mutedText
                 font.pixelSize: 13
             }
         }

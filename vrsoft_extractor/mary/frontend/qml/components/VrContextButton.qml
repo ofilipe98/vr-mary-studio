@@ -66,7 +66,7 @@ Button {
             context.arc(width / 2, height / 2, 6.3, 0, Math.PI * 2)
             context.stroke()
             if (control.fraction > 0) {
-                context.strokeStyle = frontend.palette.brandOrange
+                context.strokeStyle = Theme.palette.brandOrange
                 context.beginPath()
                 context.arc(
                     width / 2,
@@ -92,9 +92,9 @@ Button {
     background: Rectangle {
         radius: 8
         color: control.down || control.hovered || detailsPopup.opened
-            ? frontend.palette.chatControl : "transparent"
+            ? Theme.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
-        border.color: frontend.palette.focus
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -131,9 +131,9 @@ Button {
         }
 
         background: Rectangle {
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 11
         }
 
@@ -145,14 +145,14 @@ Button {
                 Text {
                     Layout.fillWidth: true
                     text: "Context Window"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: control.usageLabel
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
@@ -170,13 +170,13 @@ Button {
                 Text {
                     Layout.fillWidth: true
                     text: "Total processado"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
                 Text {
                     text: control.totalLabel
-                    color: frontend.palette.text
+                    color: Theme.palette.text
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
@@ -185,7 +185,7 @@ Button {
             Text {
                 Layout.fillWidth: true
                 text: control.note
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(10)
                 wrapMode: Text.WordWrap

@@ -10,7 +10,11 @@ Item {
 
     property string settingsSearch: ""
     property bool syncingSearch: false
+    property bool idlePagesPreloaded: false
     readonly property bool settingsActive: frontend.currentPage === 7
+    readonly property SettingsPage loadedSettings: settingsPageLoader.item as SettingsPage
+    readonly property bool compactProviders: settingsActive && loadedSettings
+        && loadedSettings.tabIndex === 1 && root.width < 980
     readonly property bool settingsSearching: settingsActive
         && settingsSearch.trim().length > 0
     readonly property var settingsSearchItems: [
@@ -35,6 +39,18 @@ Item {
             || item.title.toLocaleLowerCase().indexOf(query) >= 0
             || item.category.toLocaleLowerCase().indexOf(query) >= 0
     })
+
+    Timer {
+        interval: 250
+        running: frontend.currentPage !== 1 && !root.idlePagesPreloaded
+        repeat: false
+        onTriggered: {
+            root.idlePagesPreloaded = true
+            var pages = root.visitedPages.slice()
+            pages[6] = true
+            root.visitedPages = pages
+        }
+    }
 
     readonly property var sections: [
         { title: "Dashboard", page: 0, icon: "nav-dashboard.svg" },
@@ -65,8 +81,8 @@ Item {
     function openSetting(tab) {
         frontend.setCurrentPage(7)
         Qt.callLater(function() {
-            if (settingsPageLoader.item)
-                settingsPageLoader.item.openSearchResult(tab)
+            if (root.loadedSettings)
+                root.loadedSettings.openSearchResult(tab)
         })
     }
 
@@ -107,6 +123,7 @@ Item {
 
         Rectangle {
             objectName: "settingsNavigation"
+            visible: !root.compactProviders
             SplitView.minimumWidth: 220
             SplitView.preferredWidth: 260
             SplitView.maximumWidth: 430
@@ -326,7 +343,7 @@ Item {
 
         Item {
             id: pageViewport
-            SplitView.minimumWidth: 720
+            SplitView.minimumWidth: root.compactProviders ? 0 : 720
             SplitView.fillWidth: true
 
             transform: Translate { id: pageShift; y: 0 }

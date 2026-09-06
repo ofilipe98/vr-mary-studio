@@ -3,6 +3,8 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    // Convert the Python QVariantMap once per theme change, not per hover.
+    readonly property var palette: frontend.palette
     readonly property string fontFamily: frontend.interfaceFontFamily
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property real baseTextScale: 1.00
@@ -48,7 +50,13 @@ QtObject {
     readonly property int navigationWidth: 228
     readonly property int navigationCollapsedWidth: 64
     readonly property int chatSidebarWidth: 220
-    readonly property int chatHeaderHeight: 42
+    readonly property int chatHeaderHeight: 50
+    readonly property int contentWidth: 800
+    readonly property int messageRadius: 16
+    readonly property int composerRadius: 16
+    readonly property int messageGap: 8
+    readonly property int iconSmall: 14
+    readonly property int iconMedium: 16
     readonly property int pageMargin: 22
     readonly property int pageSpacing: 12
     readonly property int iconSize: 18

@@ -145,6 +145,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
             bridge = FrontendBridge(settings, preferences)
 
+            bridge.setTheme("light")
             bridge.setTheme("dark_orange")
             bridge.toggleNavigation()
             bridge.setTypography("Arial", 16, "Cascadia Code", 13, False)
@@ -271,7 +272,7 @@ class QmlFrontendTest(unittest.TestCase):
             )
             window = engine.rootObjects()[0]
             self.assertEqual(window.property("title"), "VR Norte Studio")
-            self.assertGreaterEqual(window.property("minimumWidth"), 1120)
+            self.assertEqual(window.property("minimumWidth"), 390)
             model_picker = window.findChild(QObject, "chatModelPicker")
             reasoning_picker = window.findChild(QObject, "chatReasoningPicker")
             permission_picker = window.findChild(QObject, "chatPermissionPicker")
@@ -647,28 +648,17 @@ class QmlFrontendTest(unittest.TestCase):
                         )
                         code_cards = find_qml_items(content_item, "codeBlockCard", [])
                         code_card = code_cards[0] if code_cards else None
-                    if (
-                        message_body is not None
-                        and segment_bodies
-                        and code_card is not None
-                    ):
+                    if message_body is not None:
+                        QTest.qWait(120)
                         break
                     QTest.qWait(100)
                 self.assertEqual(chat_bridge.messages.rowCount(), 1)
                 self.assertIsNotNone(message_body)
-                self.assertEqual(len(segment_bodies), 1)
+                self.assertEqual(segment_bodies, [])
                 self.assertIsNotNone(code_card)
-                self.assertEqual(
-                    code_card.property("code"), "def exemplo():\n    return 1"
-                )
-                self.assertEqual(code_card.property("language"), "python")
-                self.assertEqual(code_card.property("badge"), "Py")
-                segments = chat_bridge.messages.item(0)["segments"]
-                self.assertEqual(
-                    [segment["kind"] for segment in segments],
-                    ["text", "code"],
-                )
-                quick_document = segment_bodies[0].property("textDocument")
+                self.assertTrue(message_body.property("selectByMouse"))
+                self.assertGreaterEqual(message_body.property("font").pixelSize(), 14)
+                quick_document = message_body.property("textDocument")
                 self.assertIsNotNone(quick_document)
                 document = quick_document.textDocument()
 
@@ -684,7 +674,7 @@ class QmlFrontendTest(unittest.TestCase):
                 table_format = tables[0].format()
                 self.assertEqual(table_format.border(), 1)
                 self.assertEqual(
-                    table_format.borderBrush().color().name(), "#3f3f46"
+                    table_format.borderBrush().color().name(), "#2c2c30"
                 )
                 self.assertEqual(
                     table_format.borderStyle(),
@@ -731,39 +721,12 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
                 self.assertIn("#26262b", code_backgrounds)
                 self.assertEqual(len(code_blocks), 0)
-
-                def find_text_edit(item):
-                    if "TextEdit" in item.metaObject().className():
-                        return item
-                    for child in item.childItems():
-                        found = find_text_edit(child)
-                        if found is not None:
-                            return found
-                    return None
-
-                card_body = find_text_edit(code_card)
-                self.assertIsNotNone(card_body)
-                self.assertTrue(code_card.property("wrapEnabled"))
-                wrap_buttons = find_qml_items(content_item, "codeBlockWrap", [])
-                self.assertEqual(len(wrap_buttons), 1)
-                wrap_buttons[0].setProperty("checked", False)
-                self.application.processEvents()
-                self.assertFalse(code_card.property("wrapEnabled"))
-                QTest.qWait(120)
-                self.application.processEvents()
-
-                card_quick_document = card_body.property("textDocument")
-                self.assertIsNotNone(card_quick_document)
-                card_document = card_quick_document.textDocument()
-                keyword_colors = []
-                card_block = card_document.firstBlock()
-                while card_block.isValid():
-                    for card_range in card_block.layout().formats():
-                        keyword_colors.append(
-                            card_range.format.foreground().color().name()
-                        )
-                    card_block = card_block.next()
-                self.assertIn("#ff7ab2", keyword_colors)
+                self.assertIn("def exemplo():", code_card.property("code"))
+                message_body.selectAll()
+                self.assertIn("Parágrafo final", message_body.property("selectedText"))
+                self.assertIn("return 1", code_card.property("code"))
+                chat_bridge.copyConversation()
+                self.assertIn(markdown, self.application.clipboard().text())
             finally:
                 window.close()
                 engine.deleteLater()
@@ -1124,6 +1087,8 @@ class QmlFrontendTest(unittest.TestCase):
 
             self.assertFalse(bridge.codeAnalysisEnabled)
             self.assertEqual(bridge.codeAnalysisRelease, "current")
+            self.assertFalse(bridge.codeAnalysisReleaseItems[0]["coverageLoaded"])
+            bridge.refreshCodeAnalysisReleases()
             self.assertIn("0/1 JARs indexados", bridge.codeAnalysisReleaseItems[0]["label"])
             self.assertIn(
                 "classpath desconhecido", bridge.codeAnalysisReleaseItems[0]["label"]
@@ -1547,6 +1512,7 @@ class QmlFrontendTest(unittest.TestCase):
 
         self.assertIn('objectName: "vrUltraSettingsLoader"', settings_qml)
         self.assertIn("active: root.tabIndex === 2", settings_qml)
+        self.assertIn("root.vrUltraPreloaded", settings_qml)
         self.assertIn("asynchronous: true", settings_qml)
         self.assertIn("ProgressBar {", ultra_qml)
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', ultra_qml)
@@ -2935,6 +2901,9 @@ class QmlFrontendTest(unittest.TestCase):
         chat_qml = (MAIN_QML.parent / "pages" / "ChatPreview.qml").read_text(
             encoding="utf-8"
         )
+        profile_qml = (
+            MAIN_QML.parent / "components" / "VrProfileIcon.qml"
+        ).read_text(encoding="utf-8")
 
         self.assertIn('objectName: "conversationSearch"', chat_qml)
         self.assertIn('iconKind: "newChat"', chat_qml)
@@ -2946,11 +2915,110 @@ class QmlFrontendTest(unittest.TestCase):
             chat_qml.index('objectName: "newChatButton"'),
         )
         self.assertIn('objectName: "expertProfileStrip"', chat_qml)
-        self.assertIn('chat.vrMode !== "off"', chat_qml)
-        self.assertIn("Qt.PointingHandCursor", chat_qml)
-        self.assertIn('objectName: "messageAutoScroller"', chat_qml)
+        self.assertIn("Behavior on expertReveal", chat_qml)
+        self.assertIn("VrProfileIcon", chat_qml)
+        self.assertIn("expertSenior", chat_qml)
+        self.assertIn("Theme.palette.chatControl", profile_qml)
+        self.assertIn("contentHeight + topPadding + bottomPadding", chat_qml)
+        self.assertIn("Math.min(chatMain.height * 0.28, Math.max(54", chat_qml)
+        self.assertIn(
+            'variant: chat.vrMode !== "off" ? "primary" : "ghost"',
+            chat_qml,
+        )
+        markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
+        self.assertIn("Theme.bodySize", markdown_qml)
+        self.assertIn("Qt.PointingHandCursor", markdown_qml)
+        self.assertIn('objectName: "messageScrollBar"', chat_qml)
+        self.assertIn("if (followTail) tailTimer.restart()", chat_qml)
         self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
         self.assertIn("function greetingText()", chat_qml)
+
+    def test_trashing_a_conversation_does_not_block_the_ui_thread(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            conversation_id = database.create_conversation(
+                "Excluir sem travar", "codex", "gpt-5.6", settings.root
+            )
+            bridge = ChatBridge(settings, database)
+            bridge.selectConversation(0)
+            started = threading.Event()
+            release = threading.Event()
+            original_trash = bridge._orchestrator.trash
+
+            def slow_trash(target_id: str) -> None:
+                started.set()
+                if not release.wait(2):
+                    raise TimeoutError("teste não liberou a exclusão")
+                original_trash(target_id)
+
+            with patch.object(
+                bridge._orchestrator,
+                "trash",
+                side_effect=slow_trash,
+            ):
+                bridge.trashCurrentConversation()
+                self.assertTrue(started.wait(0.5))
+                self.assertTrue(bridge.conversationDeleteRunning)
+                self.assertTrue(bridge.isDraft)
+                self.assertNotIn(
+                    conversation_id,
+                    [item["conversationId"] for item in bridge._all_conversations],
+                )
+                release.set()
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    # Release the GIL so the filesystem/SQLite worker can progress.
+                    threading.Event().wait(0.01)
+                    if not bridge.conversationDeleteRunning:
+                        break
+
+            self.assertFalse(bridge.conversationDeleteRunning)
+            self.assertEqual(
+                database.get_conversation(conversation_id)["archived"],
+                1,
+            )
+            self.assertIn("lixeira", bridge.statusText)
+
+    def test_chat_composer_grows_with_wrapped_text_and_caps_its_height(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            frontend = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat = ChatBridge(settings, database)
+            engine = create_engine(frontend, chat)
+            self.application.processEvents()
+            try:
+                window = engine.rootObjects()[0]
+                window.setProperty("width", 1120)
+                window.setProperty("height", 700)
+                window.show()
+                QTest.qWait(200)
+                composer = window.findChild(QObject, "chatComposerInput")
+                self.assertIsNotNone(composer)
+                compact_height = composer.property("height")
+
+                composer.setProperty("text", " ".join(["crossdocking"] * 90))
+                QTest.qWait(100)
+                self.application.processEvents()
+
+                self.assertGreater(composer.property("height"), compact_height)
+                self.assertLessEqual(composer.property("height"), 200)
+            finally:
+                if engine.rootObjects():
+                    engine.rootObjects()[0].close()
+                engine.deleteLater()
+                self.application.processEvents()
 
     def test_studio_bridge_loads_pages_lazily_and_tracks_video_descendants(self):
         with TemporaryDirectory() as temporary:
@@ -3156,10 +3224,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Excluir conversa", chat_qml)
         self.assertIn("Keys.onReturnPressed", chat_qml)
         self.assertIn("Keys.onEnterPressed", chat_qml)
-        self.assertIn("onLinkActivated", chat_qml)
+        markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
+        self.assertIn("onLinkActivated", markdown_qml)
         self.assertIn("onLinkActivated", knowledge_qml)
         self.assertNotIn("Digite EXCLUIR", settings_qml)
-        self.assertIn('objectName: "conversationSidebarToggle"', chat_qml)
+        header_qml = (MAIN_QML.parent / "components" / "VrChatHeader.qml").read_text(encoding="utf-8")
+        self.assertIn('objectName: "conversationSidebarToggle"', header_qml)
         self.assertNotIn(
             "conversationSidebar.x + conversationSidebar.width", chat_qml
         )
@@ -3694,6 +3764,8 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Accessible.role: Accessible.PageTab", tab_bar_qml)
         self.assertIn("Keys.onLeftPressed", tab_bar_qml)
         self.assertIn("Keys.onRightPressed", tab_bar_qml)
+        self.assertIn("Flickable.HorizontalFlick", tab_bar_qml)
+        self.assertNotIn("Flow {", tab_bar_qml)
         self.assertIn("frontend.palette.accentSoft", tab_bar_qml)
         self.assertNotIn('"primary" : "ghost"', settings_qml)
         self.assertNotIn("variant: root.tabIndex === index", settings_qml)
@@ -3717,6 +3789,7 @@ class QmlFrontendTest(unittest.TestCase):
             MAIN_QML.parent / "pages" / "SettingsHub.qml"
         ).read_text(encoding="utf-8")
         self.assertIn("visitedPages", hub_qml)
+        self.assertIn("pages[6] = true", hub_qml)
         self.assertIn('objectName: "settingsConversationSearch"', hub_qml)
         self.assertIn('objectName: "settingsReturnButton"', hub_qml)
         self.assertIn('Accessible.name: "Retornar ao Chat VR"', hub_qml)
@@ -3906,6 +3979,66 @@ class QmlFrontendTest(unittest.TestCase):
                 [],
             )
 
+
+
+    def test_chat_page_survives_first_navigation_and_hover(self):
+        import cProfile
+        from PySide6.QtCore import QPoint
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page='Chat VR')
+            database = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+            chat_bridge = ChatBridge(settings, database, QSettings(str(root / 'preferences.ini'), QSettings.IniFormat))
+            with patch.object(chat_bridge, 'refreshModels'):
+                engine = create_engine(bridge, chat_bridge)
+                self.application.processEvents()
+                window = engine.rootObjects()[0]
+                page = window.findChild(QObject, 'chatPage')
+                self.assertIsNotNone(page)
+                for destination in (7, 1, 0, 1, 7, 1):
+                    bridge.setCurrentPage(destination)
+                    self.application.processEvents()
+                    self.assertIs(window.findChild(QObject, 'chatPage'), page)
+                QTest.qWait(250)
+                profiler = cProfile.Profile()
+                profiler.enable()
+                for x in range(300, 1000, 10):
+                    QTest.mouseMove(window, QPoint(x, window.height() - 85))
+                    self.application.processEvents()
+                profiler.disable()
+                palette_calls = sum(entry.callcount for entry in profiler.getstats()
+                                    if getattr(entry.code, 'co_name', '') == 'palette'
+                                    and 'frontend' in getattr(entry.code, 'co_filename', ''))
+                self.assertEqual(palette_calls, 0)
+                errors = [warning.toString() for warning in engine._qml_warnings
+                          if 'incubation' in warning.toString() or 'Cannot create delegate' in warning.toString()]
+                self.assertEqual(errors, [])
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
+
+
+    def test_antigravity_catalog_keeps_selected_variant_in_one_model_row(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+            bridge = ChatBridge(settings, database, QSettings(str(root / "preferences.ini"), QSettings.IniFormat))
+            bridge._provider = "antigravity"
+            bridge._model = "gemini-3.1-pro-low"
+            bridge._effort = "low"
+            item = {"provider": "antigravity", "value": "gemini-3.1-pro-high",
+                    "key": "antigravity:gemini-3.1-pro-high", "displayName": "Gemini 3.1 Pro",
+                    "aliases": ["gemini-3.1-pro-high", "gemini-3.1-pro-low"],
+                    "efforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]}
+            with patch.object(bridge, "_enabled_provider_names", return_value=["antigravity"]):
+                bridge._apply_model_catalog([item])
+            self.assertEqual(len(bridge.modelItems), 1)
+            self.assertEqual(bridge.modelItems[bridge.modelIndex]["displayName"], "Gemini 3.1 Pro")
+            self.assertEqual([x["value"] for x in bridge.effortItems], ["auto", "low", "high"])
+            self.assertEqual(bridge.effortItems[bridge.effortIndex]["value"], "low")
 
 
 if __name__ == "__main__":

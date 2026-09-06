@@ -14,7 +14,7 @@ from ..brand import (
     SETTINGS_APP_NAME,
     brand_palette,
 )
-from .text_rendering import CodeSyntaxHighlighter, apply_message_document_style
+from .text_rendering import CodeSyntaxHighlighter, apply_message_document_style, presentation_blocks
 from ..config import MarySettings
 
 
@@ -94,7 +94,7 @@ class FrontendBridge(QObject):
             ORGANIZATION_NAME, SETTINGS_APP_NAME
         )
         saved_theme = str(
-            self._preferences.value("appearance/theme", "light") or "light"
+            self._preferences.value("appearance/theme", "dark_orange") or "dark_orange"
         )
         selected_theme = theme_override or saved_theme
         self._theme_id = (
@@ -300,6 +300,10 @@ class FrontendBridge(QObject):
     def toggleTheme(self) -> None:  # noqa: N802
         self.setTheme("light" if self._theme_id == "dark_orange" else "dark_orange")
 
+    @Slot(str, result="QVariantList")
+    def messageBlocks(self, markdown: str):
+        return presentation_blocks(markdown)
+
     @Slot(QObject, str)
     def styleMessageDocument(self, quick_document, markdown: str) -> None:
         """Restyle a QML TextEdit markdown document with the T3-like rhythm."""
@@ -317,6 +321,7 @@ class FrontendBridge(QObject):
                 document,
                 str(markdown or ""),
                 dark=self._theme_id == "dark_orange",
+                monospace_family=self.monospaceFontFamily,
             )
         finally:
             self._styling_document = False
@@ -332,8 +337,12 @@ class FrontendBridge(QObject):
         document = text_document_factory()
         if document is None:
             return
-        highlighter = CodeSyntaxHighlighter(document, str(language or ""))
-        highlighter.setParent(document)
+        highlighter = document.findChild(CodeSyntaxHighlighter)
+        if highlighter is None:
+            highlighter = CodeSyntaxHighlighter(document, str(language or ""))
+            highlighter.setParent(document)
+        highlighter.language = str(language or "").strip().casefold()
+        highlighter.set_theme(self._theme_id == "dark_orange")
 
     @Slot(int)
     def setCurrentPage(self, index: int) -> None:  # noqa: N802

@@ -724,3 +724,13 @@ def test_detected_snapshot_rolls_back_managed_copy_when_inventory_fails(
 
     releases = workspace / "ERP" / "releases"
     assert not any(path.is_dir() for path in releases.iterdir())
+
+
+def test_storage_budget_can_persist_without_scanning_index(tmp_path: Path, monkeypatch) -> None:
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+    def unexpected_scan():
+        raise AssertionError("Preference update must not scan the index")
+    monkeypatch.setattr(catalog, "storage_status", unexpected_scan)
+    result = catalog.set_storage_budget_multiplier(5, inspect_storage=False)
+    assert result["storage_budget_multiplier"] == 5
+    assert json.loads((catalog.paths.code_index / "catalog.json").read_text())["storage_budget_multiplier"] == 5

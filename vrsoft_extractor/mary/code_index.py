@@ -741,6 +741,34 @@ class JavaCodeIndex:
             )
         return results[: max(1, int(limit))]
 
+    def expanded_excerpt(self, result: dict[str, Any], *, max_chars: int = 24000) -> dict[str, Any]:
+        """Expand an exact indexed identity without trusting a model's path."""
+        if not result.get("source_sha256"):
+            return result
+        with self.store.connect() as connection:
+            row = connection.execute(
+                "SELECT body FROM code_sources WHERE source_key=? AND release_id=? AND source_sha256=?",
+                (result.get("source_key"), result.get("release_id"), result.get("source_sha256")),
+            ).fetchone()
+        if row is None:
+            return result
+        body = str(row["body"])
+        lines = body.splitlines()
+        if len(body) <= max_chars:
+            start = 1
+            selected = lines
+        else:
+            start = max(1, int(result.get("line_start", 1)) - 30)
+            selected = []
+            size = 0
+            for line in lines[start - 1:]:
+                if size + len(line) + 1 > max_chars:
+                    break
+                selected.append(line)
+                size += len(line) + 1
+        return {**result, "excerpt": "\n".join(selected), "line_start": start,
+                "line_end": start + len(selected) - 1}
+
     def status(self, release_id: str = "") -> dict[str, Any]:
         self.initialize()
         filter_sql = " WHERE release_id = ?" if release_id else ""

@@ -7,28 +7,39 @@ Item {
 
     property var model: []
     property int currentIndex: 0
+    property bool understated: false
     readonly property int count: model.length
     signal activated(int index)
 
-    implicitHeight: Theme.compactControlHeight
+    implicitHeight: Math.max(Theme.compactControlHeight, tabRow.implicitHeight)
     implicitWidth: tabRow.implicitWidth
 
-    Row {
-        id: tabRow
-        spacing: Theme.spaceXs
+    Flickable {
+        id: tabFlick
+        anchors.fill: parent
+        contentWidth: tabRow.implicitWidth
+        contentHeight: height
+        clip: contentWidth > width
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.HorizontalFlick
+        interactive: contentWidth > width
 
-        Repeater {
-            id: tabRepeater
-            model: root.model
+        Row {
+            id: tabRow
+            spacing: Theme.spaceXs
 
-            delegate: Item {
+            Repeater {
+                id: tabRepeater
+                model: root.model
+
+                delegate: Item {
                 id: tab
 
                 required property int index
                 required property string modelData
 
                 width: tabLabel.implicitWidth + 28
-                height: root.height
+                height: Theme.compactControlHeight
                 activeFocusOnTab: true
                 transformOrigin: Item.Center
                 scale: !frontend.reduceMotion && tabTap.pressed ? 0.97 : 1
@@ -45,9 +56,9 @@ Item {
                     anchors.fill: parent
                     radius: Theme.radiusControl
                     color: root.currentIndex === tab.index
-                        ? frontend.palette.accentSoft
+                        ? (root.understated ? "transparent" : frontend.palette.accentSoft)
                         : tabHover.hovered || tab.activeFocus
-                            ? frontend.palette.hover : "transparent"
+                            ? (root.understated ? frontend.palette.chatControl : frontend.palette.hover) : "transparent"
                     border.width: tab.activeFocus ? 2 : 0
                     border.color: frontend.palette.focus
 
@@ -57,6 +68,13 @@ Item {
                     }
                 }
 
+                Rectangle {
+                    visible: root.understated && root.currentIndex === tab.index
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: tabLabel.width; height: 2; radius: 1
+                    color: frontend.palette.text
+                }
                 Text {
                     id: tabLabel
                     anchors.centerIn: parent
@@ -64,7 +82,7 @@ Item {
                     color: root.currentIndex === tab.index
                         ? frontend.palette.text : frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.bodySize
+                    font.pixelSize: root.understated ? Theme.fontSize(13) : Theme.bodySize
                     font.weight: root.currentIndex === tab.index
                         ? Font.DemiBold : Font.Medium
                 }
@@ -84,6 +102,7 @@ Item {
                 Keys.onLeftPressed: root.activate(Math.max(0, tab.index - 1))
                 Keys.onRightPressed: root.activate(
                     Math.min(root.count - 1, tab.index + 1))
+                }
             }
         }
     }
@@ -92,8 +111,15 @@ Item {
         if (index < 0 || index >= root.count)
             return
         const target = tabRepeater.itemAt(index)
-        if (target)
+        if (target) {
             target.forceActiveFocus()
+            const left = target.x
+            const right = target.x + target.width
+            if (left < tabFlick.contentX)
+                tabFlick.contentX = left
+            else if (right > tabFlick.contentX + tabFlick.width)
+                tabFlick.contentX = Math.max(0, right - tabFlick.width)
+        }
         if (index === root.currentIndex)
             return
         root.currentIndex = index

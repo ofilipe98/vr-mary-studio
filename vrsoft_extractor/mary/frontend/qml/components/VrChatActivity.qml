@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
 
@@ -11,23 +12,43 @@ Rectangle {
     property string statusText: "Pronto"
     property string elapsedLabel: "0s"
     property bool running: false
-    property bool expanded: true
-    property int recentCount: 12
+    property bool expanded: false
+    property int recentCount: 5
     property bool logExpanded: false
     readonly property int hiddenCount: Math.max(0, items.length - recentCount)
     signal toggleRequested()
 
     implicitHeight: content.implicitHeight
     color: "transparent"
+    clip: true
+    Behavior on implicitHeight {
+        enabled: !frontend.reduceMotion && !root.running
+        NumberAnimation { duration: Theme.fastDuration }
+    }
+    Rectangle {
+        x: 7; y: 34
+        width: 1
+        height: Math.max(0, root.implicitHeight - 34)
+        visible: root.expanded
+        color: Theme.palette.chatDivider
+    }
 
     ColumnLayout {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: 10
+        spacing: 4
 
         Rectangle {
             id: activityHeader
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: root.headerText()
+            Accessible.description: root.expanded ? "Recolher atividades" : "Expandir atividades"
+            Keys.onReturnPressed: root.toggleRequested()
+            Keys.onSpacePressed: root.toggleRequested()
+            border.width: activeFocus ? 1 : 0
+            border.color: Theme.palette.focus
             Layout.fillWidth: true
             Layout.preferredHeight: 30
             radius: 7
@@ -37,50 +58,49 @@ Rectangle {
                 anchors.fill: parent
                 spacing: 8
 
+                VrLineIcon {
+                    Layout.preferredWidth: 14; Layout.preferredHeight: 14
+                    kind: root.expanded ? "chevronDown" : "chevronRight"
+                    foreground: Theme.palette.mutedText
+                }
+                Text {
+                    text: root.running ? "·" : root.statusText === "Erro" ? "!" : root.statusText === "Interrompido" ? "−" : "✓"
+                    color: root.statusText === "Erro" ? Theme.palette.danger : Theme.palette.mutedText
+                    font.pixelSize: Theme.captionSize
+                }
                 Text {
                     Layout.fillWidth: true
                     text: root.headerText()
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.captionSize
                     font.weight: root.running ? Font.DemiBold : Font.Normal
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
 
-                VrLineIcon {
-                    Layout.preferredWidth: 12
-                    Layout.preferredHeight: 12
-                    kind: root.expanded ? "chevronDown" : "chevronUp"
-                    foreground: frontend.palette.mutedText
-                }
+
             }
 
             HoverHandler { id: activityHover }
             TapHandler { onTapped: root.toggleRequested() }
         }
 
-        Rectangle {
-            visible: root.expanded
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: frontend.palette.chatDivider
-            opacity: 0.55
-        }
-
         ColumnLayout {
             visible: root.expanded
             Layout.fillWidth: true
-            spacing: 14
+            Layout.leftMargin: 7
+            spacing: 3
 
             TextEdit {
-                visible: root.items.length === 0
+                visible: !root.items.some(function(item) { return item.itemType === "reasoning" })
                     && root.reasoningText.trim().length > 0
                 Layout.fillWidth: true
                 text: root.reasoningText
                 textFormat: TextEdit.MarkdownText
                 readOnly: true
-                activeFocusOnPress: false
+                activeFocusOnPress: true
+                selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 color: frontend.palette.text
                 font.family: Theme.fontFamily
@@ -90,6 +110,11 @@ Rectangle {
             Rectangle {
                 visible: root.hiddenCount > 0
                 Layout.fillWidth: true
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Mostrar atividades anteriores"
+                Keys.onReturnPressed: root.logExpanded = !root.logExpanded
+                Keys.onSpacePressed: root.logExpanded = !root.logExpanded
                 Layout.preferredHeight: 25
                 radius: 7
                 color: logToggleHover.hovered ? frontend.palette.hover : "transparent"
@@ -129,7 +154,7 @@ Rectangle {
                         : String(modelData.kind || "") === "file_changes"
                             ? changedFilesComponent : actionComponent
                     onLoaded: {
-                        if (item) item.modelData = modelData
+                        if (item) item.modelData = Qt.binding(function() { return modelData })
                     }
                 }
             }
@@ -193,7 +218,15 @@ Rectangle {
                 spacing: 6
 
                 Rectangle {
+                    activeFocusOnTab: String(actionRoot.modelData.detail || "").length > 0
+                    Accessible.role: Accessible.Button
+                    Accessible.name: String(actionRoot.modelData.text || "Atividade")
+                    Keys.onReturnPressed: actionRoot.detailExpanded = !actionRoot.detailExpanded
+                    Keys.onSpacePressed: actionRoot.detailExpanded = !actionRoot.detailExpanded
+                    border.width: activeFocus ? 1 : 0
+                    border.color: Theme.palette.focus
                     Layout.fillWidth: true
+                    Layout.leftMargin: 10
                     Layout.preferredHeight: 27
                     radius: 7
                     color: actionHover.hovered ? frontend.palette.hover : "transparent"
@@ -217,7 +250,7 @@ Rectangle {
                             text: String(actionRoot.modelData.text || "Atividade")
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(11)
+                            font.pixelSize: Theme.captionSize
                             font.weight: actionRoot.modelData.state === "running"
                                 ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
@@ -250,18 +283,23 @@ Rectangle {
                     border.color: frontend.palette.chatBorder
                     clip: true
 
-                    TextEdit {
-                        id: actionDetail
+                    ScrollView {
                         anchors.fill: parent
                         anchors.margins: 9
-                        text: String(actionRoot.modelData.detail || "")
-                        textFormat: TextEdit.PlainText
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.WrapAnywhere
-                        color: frontend.palette.mutedText
-                        font.family: "Cascadia Mono"
-                        font.pixelSize: Theme.fontSize(9)
+                        clip: true
+                        contentWidth: availableWidth
+                        TextArea {
+                            id: actionDetail
+                            text: String(actionRoot.modelData.detail || "")
+                            textFormat: TextEdit.PlainText
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            color: frontend.palette.mutedText
+                            font.family: "Cascadia Mono"
+                            font.pixelSize: Theme.captionSize
+                            background: Item { }
+                        }
                     }
                 }
             }
@@ -283,7 +321,7 @@ Rectangle {
     }
 
     function headerText() {
-        if (root.running) return "Trabalhando há " + root.elapsedLabel
+        if (root.running) return (root.statusText && root.statusText !== "Pronto" ? root.statusText : "Trabalhando") + " · " + root.elapsedLabel
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
@@ -291,6 +329,8 @@ Rectangle {
     }
 
     function itemIcon(item) {
+        if (item.state === "error" || item.state === "failed") return "close"
+        if (item.state === "completed" || item.state === "success") return "check"
         var itemType = String(item.itemType || "")
         if (itemType === "commandExecution") return "terminal"
         if (itemType === "webSearch" || itemType === "web_search") return "search"
