@@ -1,0 +1,11 @@
+{
+  "vrsoft_extractor/mary/db.py": "6b7e5497c816294dfb27c9f3a6748455898f438a921c7e4cb9ff4cc5eb9b2320",
+  "vrsoft_extractor/mary/orchestrator.py": "f0006e80d6ae73f40c63fe1caec5c7f8ef69698c84acbda33fb06997d34a5b24",
+  "vrsoft_extractor/mary/providers.py": "67ccc96812726620ca93a6f6e16520d20686b7f16e6e849ccac2e1c25133c199",
+  "vrsoft_extractor/mary/frontend/chat.py": "8f823dd85d119fc670ca63c8d7f766c9bab09ef75d2e39c619ad5531de828f0c",
+  "vrsoft_extractor/mary/frontend/qml/pages/ChatPreview.qml": "021844a67a39f5e7489756728c91d9ac827954034daf55c58bd7a79d0fbcece2",
+  "tests/test_intermediate_messages.py": "e57c78d81703af30bb60cded390d789b6358f3711edc7d92a6f041e3e9fc0908",
+  "tests/test_intermediate_review.py": "d3ff99195559d6820d13f20019ed9db92b4f13317597327221db8ccdd30511ee",
+  "tests/test_mary_vr_ultra.py": "5f1eca53dbf3434f121238af47f69a61c6afcf6898223c72973960a0d05f0518",
+  "pyproject.toml": "d26763539bc6e06c84b1972ebac40297e6f1f71de8a82e993b4e3a506d02de1f"
+}

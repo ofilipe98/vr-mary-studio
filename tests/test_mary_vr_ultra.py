@@ -507,7 +507,10 @@ def test_contract_and_routing_parity_between_vr_and_ultra(tmp_path: Path) -> Non
         )
         _run_send(orchestrator, cid, events)
         payloads_by_mode[mode] = {
-            e.kind: e.payload
+            # Routing/contract must match; execution identity and event order
+            # intentionally differ for separate requests and must remain present.
+            e.kind: {key: value for key, value in e.payload.items()
+                     if key not in {"execution_id", "runtime_event_id"}}
             for e in events
             if e.kind in {"response_contract_created", "knowledge_routed"}
         }

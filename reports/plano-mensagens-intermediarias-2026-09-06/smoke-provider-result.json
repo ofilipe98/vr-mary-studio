@@ -1,0 +1,36 @@
+{
+  "provider": "codex",
+  "turns": [
+    {
+      "kinds": {
+        "settings_updated": 1,
+        "runtime_event": 3,
+        "turn_started": 1,
+        "tool_event": 2,
+        "assistant_started": 1,
+        "assistant_delta": 2,
+        "assistant_completed": 1,
+        "token_usage": 1,
+        "turn_completed": 1
+      },
+      "completed_messages": 1,
+      "errors": 0
+    },
+    {
+      "kinds": {
+        "runtime_event": 2,
+        "turn_started": 1,
+        "tool_event": 2,
+        "assistant_started": 1,
+        "assistant_delta": 2,
+        "assistant_completed": 1,
+        "token_usage": 1,
+        "turn_completed": 1
+      },
+      "completed_messages": 1,
+      "errors": 0
+    }
+  ],
+  "status": "passed",
+  "distinct_execution_ids": true
+}

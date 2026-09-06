@@ -51,3 +51,6 @@ include = ["vrsoft_extractor*"]
     "frontend/qml/pages/*.qml",
     "frontend/qml/theme/*",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

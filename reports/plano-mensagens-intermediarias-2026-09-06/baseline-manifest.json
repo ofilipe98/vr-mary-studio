@@ -1,0 +1,647 @@
+{
+  "date": "2026-09-06",
+  "scope": "Partial source snapshot; excludes personal databases, credentials and environment files",
+  "head": "d4daa2085be19e3236923f9ae8ad8f31893cce05",
+  "files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "a4c71ed82a74b9042fdda0e60cea67f9cf8889323e06f84357c69bb0f2df1b30",
+      "bytes": 1441
+    },
+    {
+      "path": "tests/test_antigravity.py",
+      "sha256": "9332fbb5aa6855a3251d8011872b108140bd201d36d3b0cf7140a3dd85c808d1",
+      "bytes": 6055
+    },
+    {
+      "path": "tests/test_audit_process_fixes.py",
+      "sha256": "10250f9be170431c58fe6fe440a707279354822bf5a8c26649c228b2893523b8",
+      "bytes": 13142
+    },
+    {
+      "path": "tests/test_audit_regressions.py",
+      "sha256": "4e3a4b4d1791adec622bd69b45033982ad2c4dd48979a57052463cda7a36bc68",
+      "bytes": 16164
+    },
+    {
+      "path": "tests/test_chat_presentation.py",
+      "sha256": "728ab1faeb5fb1bc79686f256f9a7cd31f8dd4cfabc8ca1a9cb137e2b3629453",
+      "bytes": 6488
+    },
+    {
+      "path": "tests/test_mary_adaptive_effort.py",
+      "sha256": "0c66a50c05fa5dea71139c11712bdf51b752d5be38d7690d89d37c918d80c619",
+      "bytes": 9185
+    },
+    {
+      "path": "tests/test_mary_core.py",
+      "sha256": "b436e48193c6c3349c640e91b3cfe447eee2bd3a821bc151f429100156b6aa4e",
+      "bytes": 128658
+    },
+    {
+      "path": "tests/test_mary_orchestration.py",
+      "sha256": "b0982bb303018a59d7267c0f64ded54e68dde824bf91d5ac5a0fadfc8478b1f6",
+      "bytes": 72397
+    },
+    {
+      "path": "tests/test_mary_research_fanout.py",
+      "sha256": "df4657f5df8755cc6cd6eb051e7ecb70dba9c7d5f0246b6e1f5d5b9db9474672",
+      "bytes": 22933
+    },
+    {
+      "path": "tests/test_mary_response_quality.py",
+      "sha256": "3c0da7fdd9acca7eb7cbb0f8230bcdda49e1dbbd0de111b4a9a49663bcec9b15",
+      "bytes": 10285
+    },
+    {
+      "path": "tests/test_mary_supervision.py",
+      "sha256": "652f8788f906ce302ce11a5c6e9523cc99942cd98220278c4650b3f0fa270011",
+      "bytes": 19196
+    },
+    {
+      "path": "tests/test_mary_vr_search.py",
+      "sha256": "51230ef77aab44a20c71b495257792ed1dfb0400d580b7c7d238bb1d53d2d021",
+      "bytes": 7359
+    },
+    {
+      "path": "tests/test_mary_vr_ultra.py",
+      "sha256": "323616ae917f1f33ba5afd8c8bd66652f1c63f72eea0d37260b69266eb5ba55f",
+      "bytes": 18863
+    },
+    {
+      "path": "tests/test_qml_frontend.py",
+      "sha256": "232d002f83ce003f7457571296c7326696a1fe617642eae37a4e22e61e3f5f32",
+      "bytes": 179778
+    },
+    {
+      "path": "tests/test_review_recovery.py",
+      "sha256": "e943274d8ad75a20a528ce76e23223bb2a4853249d945f0012b5a913a0f85174",
+      "bytes": 5573
+    },
+    {
+      "path": "tests/test_scroll_interaction.py",
+      "sha256": "8d1a732d3aea229428b50901229d851446b39a4240e4b186df8e66b4b1a26138",
+      "bytes": 5891
+    },
+    {
+      "path": "vrsoft_extractor/mary/__init__.py",
+      "sha256": "9698b88f24bc8b8027e4a846327491b420e3d313f9f65ee517e3195586aabb22",
+      "bytes": 214
+    },
+    {
+      "path": "vrsoft_extractor/mary/antigravity.py",
+      "sha256": "6a431fd7b8633f157b03cf0b1dc091926a625b839a321e79ee4ff23ba27d3835",
+      "bytes": 12999
+    },
+    {
+      "path": "vrsoft_extractor/mary/brand.py",
+      "sha256": "5537c13df381b77ed149d38c2be14190f43ea2d30f3462dc667e4c3437854b6f",
+      "bytes": 4022
+    },
+    {
+      "path": "vrsoft_extractor/mary/chat_tools.py",
+      "sha256": "7d7ea7a990a7f0d2ec71478151086c517c79deeb936b2af9f02d34490e51123a",
+      "bytes": 11286
+    },
+    {
+      "path": "vrsoft_extractor/mary/classification_audit.py",
+      "sha256": "1f367ed3c881710cab96ded208eebcc2fd48775e51f4bad46e09979474596b22",
+      "bytes": 3006
+    },
+    {
+      "path": "vrsoft_extractor/mary/classifier.py",
+      "sha256": "5a961af16470888538872ee810cb027029992266b1880f5032e4416c12c592e4",
+      "bytes": 22350
+    },
+    {
+      "path": "vrsoft_extractor/mary/classpath.py",
+      "sha256": "7b89ddd2e3070956f0834bbd6a530b41c4fb895d9cdab4f347e93971974e2305",
+      "bytes": 33293
+    },
+    {
+      "path": "vrsoft_extractor/mary/cli.py",
+      "sha256": "0ccf2cae3ac7d866f516262fc574183998eba1933f6b0862efde02f78bb0194f",
+      "bytes": 52394
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_analysis_benchmark.py",
+      "sha256": "35061f48c6960e7f43850b0dcd5a57718c143ba6462ba85939abf63961942976",
+      "bytes": 52985
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_coverage.py",
+      "sha256": "ff1c3d72e31febd0611a7e5cc37299122165bf2dfe34d7c4753f97ef8e4dfeea",
+      "bytes": 14922
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_field_validation.py",
+      "sha256": "93b2884f5eacf0527160dec6ea07f9f3270c18f47985a7b232e303693e01a904",
+      "bytes": 5291
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_index.py",
+      "sha256": "1f0d65b2145bb2ecd884fdbac65737e01ca3e27441bd9e2ab84386a52bfd8585",
+      "bytes": 55495
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_index_transfer.py",
+      "sha256": "e4b66792ec973c5284a2b56cab7b9558925e6419ceebf29ce2f06cf06feaf723",
+      "bytes": 26362
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_offline_preflight.py",
+      "sha256": "5b54a89fc9b6df28b80c2ac2f6640a8ae776106200dd020011dbd3e8036a09cf",
+      "bytes": 5204
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_processing_audit.py",
+      "sha256": "ad3702ebd93dab637fb8c7ccec5509acb2e3d894ae79412c13729105ab1da181",
+      "bytes": 6847
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_processing_hardware.py",
+      "sha256": "5db9c44997e057bbe886529505979f1df383ae790b7fae2a27452114ceff9184",
+      "bytes": 5189
+    },
+    {
+      "path": "vrsoft_extractor/mary/code_processing_policy.py",
+      "sha256": "04f8f272a161df8372e32bf1032856195462af397a1ab75f437c6945e5b5f1f3",
+      "bytes": 1382
+    },
+    {
+      "path": "vrsoft_extractor/mary/config.py",
+      "sha256": "53ee3712d0e966ceb6d9fd45c0e93c6db51f11e79a20b3ff60bd4dcc7dcd4b86",
+      "bytes": 10048
+    },
+    {
+      "path": "vrsoft_extractor/mary/content.py",
+      "sha256": "0a71710d41dbfab03b620fdda3762b8027ef88acaa33c2b133871933eafd681a",
+      "bytes": 11441
+    },
+    {
+      "path": "vrsoft_extractor/mary/db.py",
+      "sha256": "8662a68a2f1ba911b25c520a0ec31a357cc0fa7378f245c7322febbce4a90ec0",
+      "bytes": 104671
+    },
+    {
+      "path": "vrsoft_extractor/mary/endoo_wiki.py",
+      "sha256": "6d28682f9768c54ed8aa67331f5bc478d1085837e7c0bcd29fab09fe5d4deede",
+      "bytes": 15224
+    },
+    {
+      "path": "vrsoft_extractor/mary/erp_releases.py",
+      "sha256": "115a10061eb38289002644fcf24f1835c6139285a17c06ded3000c7fc4f7cd32",
+      "bytes": 77247
+    },
+    {
+      "path": "vrsoft_extractor/mary/evidence_reads.py",
+      "sha256": "c7b432dd0beaa4128a1093be4eb05647a6bc838ba19d110586fb7103c7f4cba6",
+      "bytes": 4134
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/__init__.py",
+      "sha256": "b575fc07763d5e85f51dd3f6afaf38bbbad31c00cc904b2d17708eb6889f5a6a",
+      "bytes": 149
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/app.py",
+      "sha256": "82f2bdea1e19c38a2eeec1a8b67a20cdd03f65b9d282b8de300341b50f27ecdd",
+      "bytes": 10900
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/bridge.py",
+      "sha256": "e1a0383bfede95753d0643037ae4b67e5844d95a5329a04dc86670de217f4b50",
+      "bytes": 17669
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/chat.py",
+      "sha256": "8a06480a9061e77ba3823127a56aeeaf8ba6cc5e0236ffdd7322a7440e27b900",
+      "bytes": 244922
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrAssistantMessage.qml",
+      "sha256": "e3f15aa443bc21ff72fff0d1af2cd2a9b624a4f0fd937fa5e8523bd0cf243eb7",
+      "bytes": 3091
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrBrandHeader.qml",
+      "sha256": "ff72772ef4609dcab2ef51207f3c1e1d7d6377014d05726f0dc8e778e4ffa796",
+      "bytes": 1950
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrButton.qml",
+      "sha256": "ba12aa0e3e983e82007e1af4e3de9d94ba42ebeb56fbae838fb109af0dff2e63",
+      "bytes": 2309
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrCard.qml",
+      "sha256": "cd87fc886dc51df7b25c601fd213de8ed52c466e15e7cdc1889acb494f55f57e",
+      "bytes": 668
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrChangedFilesCard.qml",
+      "sha256": "a09aec58a334f774cd379505c6bc98db5008c842b647c8599baa40740bc4be5a",
+      "bytes": 8280
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrChatActivity.qml",
+      "sha256": "3d8c669f13a7cd9453117078053aa80b5990da37fdcd513f6648638ea3bf4a9c",
+      "bytes": 13953
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrChatHeader.qml",
+      "sha256": "fd9d0679807798ed4615440580529b6b7c4f47fc8c1740716ac402131578c8a6",
+      "bytes": 3342
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrCheckBox.qml",
+      "sha256": "e0638c1605a7a1ca4edfc7f814521819a22d62b190a9123723045b9c1405e951",
+      "bytes": 1110
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrCodeBlock.qml",
+      "sha256": "4fef57c11bf3738ca815c077f48c58e687fe12c9b641c1bb81722a643435dffa",
+      "bytes": 5147
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrComboBox.qml",
+      "sha256": "13ca7c0be43932ad14d7e4bbe463f63bc74c788c9083bc1615b4365f51336d8f",
+      "bytes": 4723
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrContextButton.qml",
+      "sha256": "3492d1a73a79426d4be23b0a19c581c0c85a95fef37d34f8c992378edaedd21e",
+      "bytes": 6019
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrEmptyState.qml",
+      "sha256": "db638d19194c1a809ae0f78a3d32a35d8f4b8750c50889101aabe8780da066a5",
+      "bytes": 1393
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrIconButton.qml",
+      "sha256": "f8c76ab8df7c75e5b40d25f907463d4fc9c9e85f781645dda2404bd228b14e31",
+      "bytes": 2256
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrInlinePicker.qml",
+      "sha256": "0814f2d3b7b794994e8e5409e903580b35b9bb70716a9f41905d97c5352d2542",
+      "bytes": 4762
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrLineIcon.qml",
+      "sha256": "56b2f5c52ca1abc312b11fed13d9651aec8fbc2de22fa04fb7964e671ffd11b7",
+      "bytes": 11946
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrMarkdownContent.qml",
+      "sha256": "30109acccc8f6be516e299101952ce9cab2911a815e0e8b7af5bb95b75b03949",
+      "bytes": 1294
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrMiddleAutoScroller.qml",
+      "sha256": "6f4e82949f7804e642a77f9d6e6a12d17a1760d9fd9265dc9c7e32ecaa3b0fb0",
+      "bytes": 3090
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrModelPicker.qml",
+      "sha256": "48d218e1e02e269159ad671bcabeb88208e8e7356f2cd94fb81fc53a08b47c7b",
+      "bytes": 15871
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrNavItem.qml",
+      "sha256": "f329a4eb80e5ba2b606ebdb8d7ce7f9024bed0c22965e1baf91af912fbd9de91",
+      "bytes": 3231
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrPageColumn.qml",
+      "sha256": "a170b16f28483cb67d5f21a4cf54534a8cf6d37144b5d5ddefc325d01bd3b597",
+      "bytes": 491
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrPageHeader.qml",
+      "sha256": "cf8e5fcebf734d1e240545625d7b5d38b1baff934309f6ae1764da8271157422",
+      "bytes": 706
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrPermissionPicker.qml",
+      "sha256": "a5c857b280447228beb250ddd50ca727df4dc17f1eeff2a8a9214d6af8605143",
+      "bytes": 5724
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProfileIcon.qml",
+      "sha256": "47209d9cc86b6888d97ec88fc74d78b557101b674e013e6038e7c795900d633b",
+      "bytes": 783
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProjectFolderBrowser.qml",
+      "sha256": "4340cd30b739514354388a9396fa14df6a80293f61f42ad55da367e7a494c3c4",
+      "bytes": 7501
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProjectSelector.qml",
+      "sha256": "329901971163764f927010f9f7f9d9ce2f4ea0cf51bdb34872368cea0bff2f81",
+      "bytes": 7331
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProjectSettings.qml",
+      "sha256": "578ef877f4a8b580d91ff31972e30e97eed40d8cfceef8196f263231cc1c68b3",
+      "bytes": 18972
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProviderAction.qml",
+      "sha256": "d643e9fde1f1e6b865dc415e55a3ffea2ae9f672c14677372c0f4b46d006c830",
+      "bytes": 682
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProviderIcon.qml",
+      "sha256": "0021753101ca597055cff8f76b4ad27b8539cb095e4573abdd637d624b8475db",
+      "bytes": 1115
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProviderSection.qml",
+      "sha256": "78b3dd055750c730c87c9f5c25c767e8f7d9b5962be8e00cb0b77e6eaeb09e9e",
+      "bytes": 558
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProviderSettings.qml",
+      "sha256": "04d10fd2630238f82d3386550a8690391e79a3ed2517ca12c34c29ab080d26d2",
+      "bytes": 23022
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrProviderStatus.qml",
+      "sha256": "194682ef1079d3ebd0b7d58a9892a152dfb8296acfaf687d902191f35f7ab9db",
+      "bytes": 1343
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrReasoningPicker.qml",
+      "sha256": "06ad8f185b467a8ecccd6673c533edb7344008081e2de2d65571d6c006378bfe",
+      "bytes": 9820
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrScrollBar.qml",
+      "sha256": "d06f6c9aa96822b943a57d7e6b0cabecc2b4ff590ae1a448b4b9feab66c84e95",
+      "bytes": 712
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrSources.qml",
+      "sha256": "de93ce28fbab2df973f32df423064db72bcb6f929cf578032e861c20b181af6e",
+      "bytes": 2520
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrStatusBadge.qml",
+      "sha256": "96de01d039f8818911bb9ed47b112262ab1f43e0c5e66b8f979cd15e1533e426",
+      "bytes": 888
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrSurfaceCard.qml",
+      "sha256": "a199568e41ce50dd9a226b4d2bfb7beef524c07807f894ee0948fde14e051f84",
+      "bytes": 2503
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrSwitch.qml",
+      "sha256": "7ea3740309f998ee11b70a297d912b59af4d5418f4a2a5f61b3665ebf422205c",
+      "bytes": 1628
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrTabBar.qml",
+      "sha256": "dfbfd3e334ebbd3d6b753987dedc4319cd9ab07d8f6b06e9c5faea472ef03d9e",
+      "bytes": 4705
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrTaskBar.qml",
+      "sha256": "dc235a3f006aaaf453be93f52d468a5b3762e1e536e535ff95866a512b0c602b",
+      "bytes": 6435
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrTextArea.qml",
+      "sha256": "eb114fc9b456715e1b003ca4fd1bcef00550afccd9ee3692011390be7ed920f7",
+      "bytes": 812
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrTextField.qml",
+      "sha256": "ce2ae8804b64fc41b009cdf6bbc84143673e458b8cef87835476cd9470adc01f",
+      "bytes": 892
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrUserMessage.qml",
+      "sha256": "7ec197d068f33ed7507b711499e2953608cf960e0d0744515d3641572e7703f9",
+      "bytes": 1878
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/components/VrWebSurface.qml",
+      "sha256": "fc37663404e538d6790ccb6281aab676ddb0c3bb519e0cf2db9d3e5192f667ee",
+      "bytes": 1861
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/Main.qml",
+      "sha256": "1a4aeae619f4d8fd35db765e5060afcbd78cc8384a34421052171b17d6ae9777",
+      "bytes": 4665
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/ChatPreview.qml",
+      "sha256": "f09de944d8a9675de2afbe7e0875e49e9337e6340129d1ed251978953aa9549e",
+      "bytes": 145226
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/DashboardPreview.qml",
+      "sha256": "7002205c4dc4dcfef21206f1769e7cb83bbeb980787d622f3b8f713a12683412",
+      "bytes": 6223
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/KnowledgePage.qml",
+      "sha256": "167c08ff4ae784db51353f9373d734af8974d1b54cff5aab6c74564da48fe9ae",
+      "bytes": 12837
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/LogsPage.qml",
+      "sha256": "0d7454cf089ca6c1368c50834e993d4d0096e55fdfc15650c9d8fee906c68ad3",
+      "bytes": 2519
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/PagePlaceholder.qml",
+      "sha256": "2389867be953fdcf88c9a8e3d8049eb38150007aa5eb744bb4e7263616d51bb9",
+      "bytes": 1110
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/ReviewPage.qml",
+      "sha256": "f2d8e4dedc729b5b9f76e04d6d47bcd0e71253099b351aef5576036a529eec17",
+      "bytes": 21917
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/SettingsHub.qml",
+      "sha256": "d57b05b4d2c12e9a9c7c71fb1a9d4b66bcb3f018980247f8a51ac45bd8766363",
+      "bytes": 18437
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/SettingsPage.qml",
+      "sha256": "0e5e1b71b323f8f9ff8a236b9b4c94cf0694f6bd948696d718e95e9f689f00c7",
+      "bytes": 30350
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/SyncPage.qml",
+      "sha256": "6b37cabd0294ce60f1b353f4f599be5248ffbc904ee5be029433a8d4c36bdfe4",
+      "bytes": 6174
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/VideosPage.qml",
+      "sha256": "84c394072da734971dd6537dbd8b269ed96a1b447faa605008ea8dafec1388fe",
+      "bytes": 18933
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/pages/VRUltraSettingsPage.qml",
+      "sha256": "22d255740dc00f9c0606fca837c05973806f9dfc2b914a3d31344baaa5120ebf",
+      "bytes": 46455
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/qml/theme/Theme.qml",
+      "sha256": "50b6f735697d3b305cd46244ef1085efd2779e44753a2b1e75e2ccbb7029d0e1",
+      "bytes": 3175
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/studio.py",
+      "sha256": "a125697f589735e2873f81f94141fb928dcd30cd3a033bc848deeb3ef45b06c6",
+      "bytes": 83364
+    },
+    {
+      "path": "vrsoft_extractor/mary/frontend/text_rendering.py",
+      "sha256": "4d2e60f94e332c07caa573a29c518f844b015c50236b26520b25a4ecc7b9a597",
+      "bytes": 18256
+    },
+    {
+      "path": "vrsoft_extractor/mary/indexer.py",
+      "sha256": "617292359dc1e074efecb25267ba842c3f479254c976849dbd60cd85ca18a607",
+      "bytes": 1946
+    },
+    {
+      "path": "vrsoft_extractor/mary/java_ast.py",
+      "sha256": "12bd2872b0979858d4dc3336f591d47eace3f2e88bcfd31f7fec52bc6e2ff617",
+      "bytes": 10984
+    },
+    {
+      "path": "vrsoft_extractor/mary/jvm_batches.py",
+      "sha256": "cd4ade1a65acd1f6c8d0ef5309bb93b2c97f137945d212d4ee299fc0903a7888",
+      "bytes": 61604
+    },
+    {
+      "path": "vrsoft_extractor/mary/jvm_toolchain.py",
+      "sha256": "46e32d7b7e1c7e8562ebfffa747a0d8cf4f6172b071da7c354dc43d7e10e55a7",
+      "bytes": 24620
+    },
+    {
+      "path": "vrsoft_extractor/mary/knowledge.py",
+      "sha256": "c54b1d64bb65ce2fdad2d5a571742fbb8badef3e7150db33beb0d0807386893f",
+      "bytes": 7719
+    },
+    {
+      "path": "vrsoft_extractor/mary/knowledge_router.py",
+      "sha256": "f232adf949e22e8283ef18d8422d0bb09b63cf3aa575f500b0bdab58055bde1a",
+      "bytes": 71040
+    },
+    {
+      "path": "vrsoft_extractor/mary/lifecycle.py",
+      "sha256": "7e7c0abd0da7e655d4dcadde72cb1496827be604cb3ec3d5194357a9e282856c",
+      "bytes": 6589
+    },
+    {
+      "path": "vrsoft_extractor/mary/migration.py",
+      "sha256": "db979f9c5e496689d2ae9ffa9fe9bc9d95d56840c5ee304a7d0075e8ce5c2579",
+      "bytes": 6686
+    },
+    {
+      "path": "vrsoft_extractor/mary/models.py",
+      "sha256": "3ece6cac3620ff711ad465e923881b9dcbfb9e59d42664a5dee389a754ac3784",
+      "bytes": 15241
+    },
+    {
+      "path": "vrsoft_extractor/mary/movidesk.py",
+      "sha256": "2a944b44ebc4db6db637b7f04788e43e9e9d02cb471c5911f694a420391aa5bb",
+      "bytes": 36295
+    },
+    {
+      "path": "vrsoft_extractor/mary/movidesk_ticket_archives.py",
+      "sha256": "dfb44205419806b6eb62562fdea48f03dc51fc64899392d969f151de5921e0f2",
+      "bytes": 29550
+    },
+    {
+      "path": "vrsoft_extractor/mary/ocr.py",
+      "sha256": "355f79256eef7d384122b038c7dd8bef504aac103665c2f3296f94d72da14869",
+      "bytes": 9902
+    },
+    {
+      "path": "vrsoft_extractor/mary/orchestrator.py",
+      "sha256": "ba6f2eb464e99ab1b6a1a1b16ae9f976b9786804f98bf3f2b26d486b328fdc07",
+      "bytes": 151237
+    },
+    {
+      "path": "vrsoft_extractor/mary/paths.py",
+      "sha256": "0257499ccababfb1e237c4bed836cedf71272cd9b139936233b2096350711077",
+      "bytes": 2168
+    },
+    {
+      "path": "vrsoft_extractor/mary/personality.py",
+      "sha256": "f18620ba6c82ccf4db2c03f8c3f09b5270e43fb1999e126657131516994e9c49",
+      "bytes": 8352
+    },
+    {
+      "path": "vrsoft_extractor/mary/portable_export.py",
+      "sha256": "c2c8fef7d75b47a8b2945b0572134e491003d9ebb4a666b9516637e16c2ff306",
+      "bytes": 12491
+    },
+    {
+      "path": "vrsoft_extractor/mary/portable_project.py",
+      "sha256": "6075a45b1f6b0f999dce63a5f196983b9b792c9fdca2f2106fab539d2965d75e",
+      "bytes": 12641
+    },
+    {
+      "path": "vrsoft_extractor/mary/providers.py",
+      "sha256": "b4c9f3be4f3dd22f1140c56ed93d78ab95ce8cd7908f6d7a497275938169be52",
+      "bytes": 87388
+    },
+    {
+      "path": "vrsoft_extractor/mary/research_fanout.py",
+      "sha256": "789b8eb9f697d6fd347e468ad3ec96756f2e35e7df86025cc00cda49b266ecbb",
+      "bytes": 8164
+    },
+    {
+      "path": "vrsoft_extractor/mary/schema_catalog.py",
+      "sha256": "f4b5908f5e31dadf0ed33e6968a83dc3350b7d449f2225cbbf3b477637f72432",
+      "bytes": 4411
+    },
+    {
+      "path": "vrsoft_extractor/mary/schema_sync.py",
+      "sha256": "d50bc819a27c4865c9d6318cfdb335a1f6eb9f879d5a96ad095948d74cb8a05e",
+      "bytes": 3057
+    },
+    {
+      "path": "vrsoft_extractor/mary/search.py",
+      "sha256": "2f412d188ba1e270c9cef3724b1b41484a305f972d67f9eacfb328b1a1be63fa",
+      "bytes": 5750
+    },
+    {
+      "path": "vrsoft_extractor/mary/spellcheck.py",
+      "sha256": "8f96074d18dd8be0aedc6e5d81111b8f355589d8f0a044214498026a5c470534",
+      "bytes": 5467
+    },
+    {
+      "path": "vrsoft_extractor/mary/supervision.py",
+      "sha256": "30adf5b1b2a4ad371e56f57235af5a09c438134b45cf88721e03e77667e46c90",
+      "bytes": 72508
+    },
+    {
+      "path": "vrsoft_extractor/mary/ui.py",
+      "sha256": "750a2e443f888b58e08d9b62a089f7560b084b1ee7e5aa1f2eb9bb9c4bb4a6af",
+      "bytes": 574
+    },
+    {
+      "path": "vrsoft_extractor/mary/wiki.py",
+      "sha256": "7498fc2ad0b374a32ee5ab63326f48c0e186f4a2c45dc57bea727ce93d194c16",
+      "bytes": 9769
+    },
+    {
+      "path": "vrsoft_extractor/mary/workspace.py",
+      "sha256": "0b7bcc103361f7445ac36c2dd836caa7752f369f2eb9a48f068cda0c6e166bbe",
+      "bytes": 8491
+    }
+  ]
+}

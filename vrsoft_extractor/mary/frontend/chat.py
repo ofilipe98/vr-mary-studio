@@ -143,7 +143,8 @@ class _MappingListModel(QAbstractListModel):
         role_name = self._roles.get(role)
         if role_name is None:
             return None
-        return self._items[index.row()].get(role_name.decode("utf-8"))
+        name = role_name.decode("utf-8")
+        return self._items[index.row()].get(name, [] if name == "activityData" else False if name == "isStreaming" else "" if name == "messageKey" else None)
 
     def roleNames(self) -> dict[int, bytes]:  # noqa: N802
         return self._roles
@@ -171,6 +172,16 @@ class _MappingListModel(QAbstractListModel):
         self._items[index].update(values)
         model_index = self.index(index, 0)
         self.dataChanged.emit(model_index, model_index, list(self._roles))
+
+    def update_by_key(self, key_field: str, key_value: Any, **values: Any) -> bool:
+        """Update the item where item[key_field] == key_value."""
+        for index in range(len(self._items) - 1, -1, -1):
+            if self._items[index].get(key_field) == key_value:
+                self._items[index].update(values)
+                model_index = self.index(index, 0)
+                self.dataChanged.emit(model_index, model_index, list(self._roles))
+                return True
+        return False
 
 
 class ConversationListModel(_MappingListModel):
@@ -202,6 +213,9 @@ class MessageListModel(_MappingListModel):
         "segments",
         "createdAt",
         "responseMode",
+        "messageKey",
+        "isStreaming",
+        "activityData",
     )
 
 
@@ -290,6 +304,12 @@ class ChatBridge(QObject):
         self._closed = False
         self._status_text = "Pronto"
         self._streaming_text = ""
+        self._current_message_key: str = ""
+        self._ui_execution_ids: dict[str, int] = {}
+        self._ui_terminal_executions: set[tuple[str, int]] = set()
+        self._message_streaming_texts: dict[str, str] = {}
+        self._message_displayed_texts: dict[str, str] = {}
+        self._message_pending_texts: dict[str, str] = {}
         self._displayed_streaming_text = ""
         self._stream_pending_text = ""
         self._stream_terminal_kind = ""
@@ -2367,13 +2387,19 @@ class ChatBridge(QObject):
         self._reload_selected_messages()
         if changing_conversation and self.turnRunning and self._streaming_text:
             self._ensure_streaming_message()
-            self._messages.update_last(
+            update_kwargs = dict(
                 content=self._streaming_text,
                 displayContent=markdown_for_display(self._displayed_streaming_text),
                 segments=self._turn_display_segments(
                     reveal_limit=len(self._displayed_streaming_text)
                 ),
             )
+            if self._current_message_key:
+                self._messages.update_by_key(
+                    "messageKey", self._current_message_key, **update_kwargs
+                )
+            else:
+                self._messages.update_last(**update_kwargs)
         self.stateChanged.emit()
 
     @Slot(str)
@@ -4680,6 +4706,14 @@ class ChatBridge(QObject):
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
         if not isinstance(event, RuntimeEvent):
             return
+        execution_id = int(event.payload.get("execution_id") or 0)
+        if execution_id:
+            previous = self._ui_execution_ids.get(event.conversation_id, 0)
+            if execution_id < previous or (event.conversation_id, execution_id) in self._ui_terminal_executions:
+                return
+            self._ui_execution_ids[event.conversation_id] = execution_id
+            if event.kind in {"turn_completed", "orchestration_completed", "orchestration_cancelled", "error"}:
+                self._ui_terminal_executions.add((event.conversation_id, execution_id))
         if event.kind == "turn_started":
             self._active_turns.add(event.conversation_id)
         selected_id = self._selected_conversation_id()
@@ -4687,12 +4721,77 @@ class ChatBridge(QObject):
             self._on_background_runtime_event(event)
             return
         self._sync_selected_turn_state()
+        if execution_id and event.kind in {"assistant_started", "tool_event"} and any(
+            row.get("role") == "activity" and not row.get("messageKey") for row in self._messages._items
+        ):
+            self._messages.replace([row for row in self._messages._items if row.get("role") != "activity" or row.get("messageKey")])
         self._record_execution_event(event)
+        if event.kind == "tool_event" and execution_id:
+            activity = self._execution_activity(event)
+            if activity is not None:
+                if not self._messages.update_by_key("messageKey", activity["messageKey"], **{k: v for k, v in activity.items() if k != "messageKey"}):
+                    self._messages.append(activity)
+        if event.kind == "assistant_started":
+            key = str(event.payload.get("message_key") or "")
+            if key:
+                if any(row.get("messageKey") == key for row in self._messages._items):
+                    return
+                self._current_message_key = key
+                self._streaming_text = ""
+                self._displayed_streaming_text = ""
+                self._stream_pending_text = ""
+                self._turn_text = ""
+                self._turn_segments = []
+                self._segment_cursor = 0
+                self._message_streaming_texts[key] = ""
+                self._message_displayed_texts[key] = ""
+                self._message_pending_texts[key] = ""
+                self._messages.append({
+                    "messageId": -1,
+                    "role": "assistant",
+                    "content": "",
+                    "displayContent": "",
+                    "segments": [],
+                    "createdAt": "",
+                    "responseMode": "vr" if self._vr_mode != "off" else "native",
+                    "messageKey": key,
+                    "isStreaming": True,
+                })
+                self._schedule_state_update()
+            return
+        if event.kind == "assistant_completed":
+            key = str(event.payload.get("message_key") or "")
+            if key:
+                final_text = str(event.payload.get("final_text") or "")
+                display_text = final_text or self._message_streaming_texts.get(key, "")
+                self._messages.update_by_key(
+                    "messageKey", key,
+                    content=display_text,
+                    displayContent=markdown_for_display(display_text),
+                    segments=segments_for_display(display_text),
+                    isStreaming=False,
+                    messageId=int(event.payload.get("message_id") or -1),
+                )
+                self._message_streaming_texts.pop(key, None)
+                self._message_displayed_texts.pop(key, None)
+                self._message_pending_texts.pop(key, None)
+                if self._current_message_key == key:
+                    self._current_message_key = ""
+                    if not any(self._message_pending_texts.values()):
+                        self._stream_timer.stop()
+                    self._stream_pending_text = ""
+                    self._streaming_text = ""
+                    self._displayed_streaming_text = ""
+                self._schedule_state_update()
+            return
         if event.kind == "assistant_delta":
+            incoming_key = str(event.payload.get("message_key") or "")
+            if incoming_key and any(row.get("messageKey") == incoming_key and not row.get("isStreaming") for row in self._messages._items):
+                return
             delta = str(event.text or "")
             if not delta:
                 return
-            if str(event.payload.get("phase") or "") == "commentary":
+            if str(event.payload.get("phase") or "") == "commentary" and not event.payload.get("message_key"):
                 self._record_trace_text_delta(event, item_type="commentary")
                 self._status_text = "Trabalhando…"
                 self._schedule_state_update()
@@ -4700,9 +4799,14 @@ class ChatBridge(QObject):
             self._streaming_text += delta
             self._turn_text += delta
             self._stream_pending_text += delta
+            key = str(event.payload.get("message_key") or self._current_message_key)
+            if key:
+                self._message_streaming_texts[key] = self._message_streaming_texts.get(key, "") + delta
+                self._message_pending_texts[key] = self._message_pending_texts.get(key, "") + delta
             if not self._assistant_stream_started:
                 self._assistant_stream_started = True
-                self._advance_default_activity()
+                if not event.payload.get("message_key"):
+                    self._advance_default_activity()
                 self._schedule_state_update()
             self._ensure_streaming_message()
             if not self._stream_timer.isActive():
@@ -4789,6 +4893,8 @@ class ChatBridge(QObject):
         self.refresh()
 
     def _ensure_streaming_message(self) -> None:
+        if self._current_message_key and any(row.get("messageKey") == self._current_message_key for row in self._messages._items):
+            return
         if self._messages._items and self._messages._items[-1].get("role") == "assistant":
             return
         self._messages.append(
@@ -4800,6 +4906,8 @@ class ChatBridge(QObject):
                 "segments": [],
                 "createdAt": "",
                 "responseMode": "vr" if self._vr_mode != "off" else "native",
+                "messageKey": self._current_message_key,
+                "isStreaming": True,
             }
         )
 
@@ -4808,6 +4916,10 @@ class ChatBridge(QObject):
             self._stream_timer.stop()
         if hasattr(self, "_activity_clock"):
             self._activity_clock.stop()
+        self._current_message_key = ""
+        self._message_streaming_texts.clear()
+        self._message_displayed_texts.clear()
+        self._message_pending_texts.clear()
         self._streaming_text = ""
         self._displayed_streaming_text = ""
         self._stream_pending_text = ""
@@ -4838,6 +4950,19 @@ class ChatBridge(QObject):
 
     @Slot()
     def _flush_stream_step(self) -> None:
+        pending_messages = [(key, text) for key, text in self._message_pending_texts.items() if text]
+        if pending_messages:
+            for key, text in pending_messages:
+                batch_size = max(32, (len(text) + 3) // 4)
+                self._message_pending_texts[key] = text[batch_size:]
+                visible = self._message_displayed_texts.get(key, "") + text[:batch_size]
+                self._message_displayed_texts[key] = visible
+                self._messages.update_by_key(
+                    "messageKey", key, content=self._message_streaming_texts.get(key, ""),
+                    displayContent=markdown_for_display(visible), segments=segments_for_display(visible),
+                )
+            self._stream_pending_text = ""
+            return
         if self._stream_pending_text:
             backlog = len(self._stream_pending_text)
             batch_size = max(32, (backlog + 3) // 4)
@@ -4845,13 +4970,19 @@ class ChatBridge(QObject):
             self._stream_pending_text = self._stream_pending_text[batch_size:]
             self._displayed_streaming_text += visible
             self._ensure_streaming_message()
-            self._messages.update_last(
+            update_kwargs = dict(
                 content=self._streaming_text,
                 displayContent=markdown_for_display(self._displayed_streaming_text),
                 segments=self._turn_display_segments(
                     reveal_limit=len(self._displayed_streaming_text)
                 ),
             )
+            if self._current_message_key:
+                self._messages.update_by_key(
+                    "messageKey", self._current_message_key, **update_kwargs
+                )
+            else:
+                self._messages.update_last(**update_kwargs)
             return
         self._stream_timer.stop()
         if self._stream_terminal_kind:
@@ -4875,7 +5006,11 @@ class ChatBridge(QObject):
         self._activity_clock.stop()
         for step in self._activity_steps:
             if step.get("state") not in {"error", "cancelled"}:
-                step["state"] = "completed"
+                if kind in {"error", "orchestration_cancelled"}:
+                    if step.get("state") == "running":
+                        step["state"] = "error" if kind == "error" else "cancelled"
+                else:
+                    step["state"] = "completed"
         terminal_state = (
             "error"
             if kind == "error"
@@ -5786,11 +5921,115 @@ class ChatBridge(QObject):
             return "cancelled"
         return "running"
 
+    @staticmethod
+    def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:
+        item = event.payload.get("item") or event.payload.get("part") or event.payload
+        item_type = str(item.get("type") or item.get("step_type") or "tool")
+        if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
+            return None
+        identity = str(item.get("id") or event.payload.get("itemId") or event.payload.get("runtime_event_id") or "tool")
+        key = f"activity:{event.payload.get('execution_id')}:{identity}"
+        lifecycle = str(event.payload.get("lifecycle") or "")
+        complete = lifecycle.endswith("completed") or item.get("status") in {"completed", "error", "failed"} or event.payload.get("success") is not None
+        state = "error" if event.payload.get("success") is False or item.get("status") in {"error", "failed"} else "completed" if complete else "running"
+        return {"messageId": -2, "role": "activity", "content": "", "displayContent": "",
+                "segments": [], "createdAt": event.created_at, "responseMode": "activity",
+                "messageKey": key, "isStreaming": state == "running",
+                "activityData": [{"id": identity, "kind": "tool", "itemType": item_type,
+                                  "text": short_event_text(event.text or item.get("name") or item_type),
+                                  "detail": "", "state": state}]}
+
+    def _reload_execution_timeline(self, cid: str, rows: list[Any]) -> bool:
+        """Replay semantic public events, retaining DB text and message identity.
+
+        Runtime event PK supplies the shared order for messages and work. Old
+        rows with no execution metadata retain the existing history path.
+        """
+        with self._database.connect() as connection:
+            events = connection.execute("SELECT * FROM runtime_events WHERE conversation_id=? ORDER BY id", (cid,)).fetchall()
+        groups: dict[int, dict[str, dict[str, Any]]] = {}
+        persisted: dict[str, Any] = {}
+        for row in rows:
+            if row["execution_id"] and row["role"] == "assistant":
+                persisted[f"{row['execution_id']}:{row['execution_ordinal']}"] = row
+        terminal_ids: set[int] = set()
+        for record in events:
+            payload = json.loads(record["payload_json"] or "{}")
+            eid = int(payload.get("execution_id") or 0)
+            if not eid:
+                continue
+            group = groups.setdefault(eid, {})
+            self._ui_execution_ids[cid] = max(eid, self._ui_execution_ids.get(cid, 0))
+            kind = record["kind"]
+            key = str(payload.get("message_key") or "")
+            if kind in {"turn_completed", "orchestration_cancelled", "error", "turn_recovered"}:
+                terminal_ids.add(eid)
+            if kind == "tool_event":
+                payload["runtime_event_id"] = record["id"]
+                activity = self._execution_activity(RuntimeEvent(cid, kind, record["text"], payload, record["created_at"]))
+                if activity:
+                    group[activity["messageKey"]] = activity
+            elif kind in {"assistant_started", "assistant_delta", "assistant_completed"} and key:
+                item = group.setdefault(key, {"messageId": -1, "role": "assistant", "content": "", "displayContent": "", "segments": [], "createdAt": record["created_at"], "responseMode": "native", "messageKey": key, "isStreaming": True})
+                if kind == "assistant_delta":
+                    item["content"] += record["text"]
+                elif kind == "assistant_completed":
+                    item["content"] = str(payload.get("final_text") or item["content"])
+                    item["isStreaming"] = False
+                if key in persisted:
+                    row = persisted[key]
+                    item.update(content=row["content"], messageId=int(row["id"]), responseMode=row["response_mode"], isStreaming=False)
+        if not groups and not persisted:
+            return False
+        for key, row in persisted.items():
+            group = groups.setdefault(int(row["execution_id"]), {})
+            group.setdefault(key, {"messageId": int(row["id"]), "role": "assistant", "content": row["content"], "displayContent": "", "segments": [], "createdAt": row["created_at"], "responseMode": row["response_mode"], "messageKey": key, "isStreaming": False})
+        result = []
+        conversation = self._database.get_conversation(cid)
+        running = conversation is not None and conversation["status"] == "running"
+        if not running:
+            self._ui_terminal_executions.update((cid, eid) for eid in terminal_ids)
+        for group_id, group in groups.items():
+            for item in group.values():
+                if group_id in terminal_ids or not running:
+                    item["isStreaming"] = False
+                    for activity in item.get("activityData", []):
+                        if activity["state"] == "running":
+                            activity["state"] = "interrupted" if conversation and conversation["status"] != "idle" else "completed"
+                item["displayContent"] = markdown_for_display(item["content"])
+                if item["role"] == "assistant":
+                    item["segments"] = segments_for_display(item["content"])
+        for row in rows:
+            if row["role"] == "system" or row["execution_id"]:
+                continue
+            result.append({"messageId": int(row["id"]), "role": row["role"], "content": row["content"], "displayContent": markdown_for_display(row["content"]), "segments": segments_for_display(row["content"]) if row["role"] == "assistant" else [], "createdAt": row["created_at"], "responseMode": row["response_mode"], "messageKey": f"db:{row['id']}", "isStreaming": False})
+            if row["role"] == "user":
+                result.extend(groups.pop(int(row["id"]), {}).values())
+        for group in groups.values():
+            result.extend(group.values())
+        self._streaming_text = self._displayed_streaming_text = self._stream_pending_text = ""
+        self._current_message_key = ""
+        self._message_streaming_texts.clear()
+        self._message_displayed_texts.clear()
+        self._message_pending_texts.clear()
+        for item in result:
+            if item["role"] == "assistant" and item["isStreaming"]:
+                key = item["messageKey"]
+                self._current_message_key = key
+                self._message_streaming_texts[key] = item["content"]
+                self._message_displayed_texts[key] = item["content"]
+                self._streaming_text = self._displayed_streaming_text = item["content"]
+        self._messages.replace(result)
+        return True
+
     def _reload_selected_messages(self) -> None:
         conversation_id = str(self._selected.get("conversationId") or "")
         if not conversation_id:
             return
         rows = self._database.messages(conversation_id)
+        if self._reload_execution_timeline(conversation_id, rows):
+            self.selectionChanged.emit()
+            return
         items = [
                 {
                     "messageId": int(row["id"]),
@@ -5802,6 +6041,8 @@ class ChatBridge(QObject):
                     else [],
                     "createdAt": str(row["created_at"] or ""),
                     "responseMode": str(row["response_mode"] or ""),
+                    "messageKey": (f"{row['execution_id']}:{row['execution_ordinal']}" if row['execution_id'] else f"db:{row['id']}"),
+                    "isStreaming": False,
                 }
                 for row in rows
                 if str(row["role"] or "") != "system"
@@ -5838,6 +6079,8 @@ class ChatBridge(QObject):
             "segments": [],
             "createdAt": "",
             "responseMode": "activity",
+            "messageKey": "",
+            "isStreaming": False,
         }
 
     def _apply_filter(self, selected_id: str = "") -> None:

@@ -629,6 +629,9 @@ Item {
                             required property string content
                             required property string displayContent
                             required property var segments
+                            required property string messageKey
+                            required property bool isStreaming
+                            required property var activityData
                             width: messageList.width
                             height: presentation.item ? presentation.item.implicitHeight : 0
                             Loader {
@@ -641,11 +644,11 @@ Item {
                             Component {
                                 id: activityComponent
                                 VrChatActivity {
-                                    items: chat.traceItems
-                                    reasoningText: chat.reasoningText
-                                    statusText: chat.statusText
+                                    items: messageItem.messageKey ? messageItem.activityData : chat.traceItems
+                                    reasoningText: messageItem.messageKey ? "" : chat.reasoningText
+                                    statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : chat.statusText
                                     elapsedLabel: chat.activityElapsedLabel
-                                    running: chat.turnRunning
+                                    running: messageItem.messageKey ? messageItem.isStreaming : chat.turnRunning
                                     expanded: root.activityExpanded
                                     onToggleRequested: root.activityExpanded = !root.activityExpanded
                                 }
@@ -662,7 +665,7 @@ Item {
                                 VrAssistantMessage {
                                     onLayoutChanging: messageList.preserveReader()
                                     markdown: messageItem.displayContent
-                                    streaming: chat.turnRunning && messageItem.index === messageList.count - 1
+                                    streaming: messageItem.isStreaming || (chat.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
                                     onCopyRequested: chat.copyMessage(messageItem.index)
                                 }
                             }

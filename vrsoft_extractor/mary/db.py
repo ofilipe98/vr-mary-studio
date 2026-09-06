@@ -432,6 +432,18 @@ class MaryDatabase:
             ):
                 self._ensure_column(connection, "messages", column, definition)
             for column, definition in (
+                ("execution_ordinal", "INTEGER NOT NULL DEFAULT 0"),
+                ("message_status", "TEXT NOT NULL DEFAULT ''"),
+                ("execution_id", "INTEGER NOT NULL DEFAULT 0"),
+                ("message_phase", "TEXT NOT NULL DEFAULT ''"),
+                ("start_event_id", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                self._ensure_column(connection, "messages", column, definition)
+            connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_execution_message
+                                  ON messages(conversation_id,execution_id,execution_ordinal)
+                                  WHERE role='assistant' AND execution_id>0 AND execution_ordinal>0""")
+            self._ensure_column(connection, "conversations", "active_execution_id", "INTEGER NOT NULL DEFAULT 0")
+            for column, definition in (
                 ("decision_note", "TEXT NOT NULL DEFAULT ''"),
                 ("queued_at", "TEXT NOT NULL DEFAULT ''"),
                 ("updated_at", "TEXT NOT NULL DEFAULT ''"),
@@ -1948,19 +1960,26 @@ class MaryDatabase:
         turn_id: str = "",
         edited_from_message_id: int | None = None,
         response_mode: str = "",
+        provider_message_id: str = "",
+        execution_ordinal: int = 0,
+        message_status: str = "",
     ) -> int:
         with self.connect() as connection:
             cursor = connection.execute(
                 """INSERT INTO messages
-                   (conversation_id,role,content,turn_id,edited_from_message_id,response_mode,created_at)
-                   VALUES(?,?,?,?,?,?,?)""",
+                   (conversation_id,role,content,provider_message_id,turn_id,
+                    edited_from_message_id,response_mode,execution_ordinal,message_status,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
                     role,
                     content,
+                    provider_message_id,
                     turn_id,
                     edited_from_message_id,
                     response_mode,
+                    execution_ordinal,
+                    message_status,
                     utc_now(),
                 ),
             )
@@ -1969,6 +1988,69 @@ class MaryDatabase:
                 (utc_now(), conversation_id),
             )
             return _last_insert_id(cursor)
+
+    def upsert_assistant_message(
+        self,
+        conversation_id: str,
+        content: str,
+        *,
+        turn_id: str = "",
+        response_mode: str = "",
+        provider_message_id: str = "",
+        execution_ordinal: int = 0,
+        message_status: str = "completed",
+        execution_id: int = 0,
+        message_phase: str = "",
+        start_event_id: int = 0,
+    ) -> int:
+        """Insert or update an assistant message identified by ordinal."""
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if execution_ordinal > 0:
+                existing = connection.execute(
+                    """SELECT id FROM messages
+                       WHERE conversation_id=? AND role='assistant'
+                         AND execution_ordinal=? AND execution_id=?""",
+                    (conversation_id, execution_ordinal, execution_id),
+                ).fetchone()
+                if existing:
+                    connection.execute(
+                        """UPDATE messages SET content=?,message_status=?,
+                           turn_id=CASE WHEN ?<>'' THEN ? ELSE turn_id END,
+                           message_phase=?,response_mode=?
+                           WHERE id=?""",
+                        (content, message_status, turn_id, turn_id, message_phase,
+                         response_mode, existing["id"]),
+                    )
+                    return int(existing["id"])
+            cursor = connection.execute(
+                """INSERT INTO messages
+                   (conversation_id,role,content,provider_message_id,turn_id,
+                    edited_from_message_id,response_mode,execution_ordinal,message_status,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    conversation_id,
+                    "assistant",
+                    content,
+                    provider_message_id,
+                    turn_id,
+                    None,
+                    response_mode,
+                    execution_ordinal,
+                    message_status,
+                    utc_now(),
+                ),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at=? WHERE id=?",
+                (utc_now(), conversation_id),
+            )
+            message_id = _last_insert_id(cursor)
+            connection.execute(
+                "UPDATE messages SET execution_id=?,message_phase=?,start_event_id=? WHERE id=?",
+                (execution_id, message_phase, start_event_id, message_id),
+            )
+            return message_id
 
     def add_source_citations(
         self,
@@ -2024,7 +2106,18 @@ class MaryDatabase:
                    VALUES(?,'user',?,'',NULL,?)""",
                 (conversation_id, content, now),
             )
-            return _last_insert_id(cursor)
+            message_id = _last_insert_id(cursor)
+            connection.execute("UPDATE conversations SET active_execution_id=? WHERE id=?", (message_id, conversation_id))
+            return message_id
+
+    def finish_user_turn(self, conversation_id: str, execution_id: int, status: str) -> bool:
+        """A late finalizer must not release a newly admitted execution."""
+        with self.connect() as connection:
+            changed = connection.execute(
+                "UPDATE conversations SET status=?,updated_at=? WHERE id=? AND active_execution_id IN (0,?)",
+                (status, utc_now(), conversation_id, execution_id),
+            )
+            return changed.rowcount == 1
 
     def abort_user_turn(self, conversation_id: str, message_id: int) -> None:
         """Undo a turn that failed before an asynchronous provider run started."""

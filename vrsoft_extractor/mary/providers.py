@@ -660,6 +660,7 @@ class CodexProvider(AgentProvider):
                 and previous_item_key != item_key
                 and delta
                 and not phases_are_distinct
+                and (conversation_id, item_id) not in self._assistant_item_phases
             ):
                 leading_newlines = len(delta) - len(delta.lstrip("\r\n"))
                 delta = "\n" * max(0, 2 - leading_newlines) + delta
@@ -749,21 +750,55 @@ class CodexProvider(AgentProvider):
         elif method in {"item/started", "item/completed"}:
             item = params.get("item") or {}
             item_id = str(item.get("id") or "")
-            if str(item.get("type") or "") == "agentMessage" and item_id:
+            item_type = str(item.get("type") or "")
+            if item_type == "agentMessage" and item_id:
                 phase = str(item.get("phase") or "")
-                if phase:
-                    with self._state_lock:
-                        self._assistant_item_phases[
-                            (conversation_id, item_id)
-                        ] = phase
-            callback(
-                RuntimeEvent(
-                    conversation_id,
-                    "tool_event",
-                    _item_summary(item),
-                    {"lifecycle": method, **params},
+                with self._state_lock:
+                    self._assistant_item_phases[(conversation_id, item_id)] = phase
+                if method == "item/started":
+                    callback(
+                        RuntimeEvent(
+                            conversation_id,
+                            "assistant_started",
+                            _item_summary(item),
+                            {
+                                "lifecycle": method,
+                                "itemId": item_id,
+                                "phase": phase,
+                                **params,
+                            },
+                        )
+                    )
+                else:
+                    # item/completed — carry the final text snapshot if
+                    # the item includes an authoritative content field.
+                    final_text = str(item.get("text") or "")
+                    for block in item.get("content") or []:
+                        if not item.get("text") and isinstance(block, dict) and block.get("type") == "text":
+                            final_text += str(block.get("text") or "")
+                    callback(
+                        RuntimeEvent(
+                            conversation_id,
+                            "assistant_completed",
+                            _item_summary(item),
+                            {
+                                "lifecycle": method,
+                                "itemId": item_id,
+                                "phase": phase,
+                                "final_text": final_text,
+                                **params,
+                            },
+                        )
+                    )
+            else:
+                callback(
+                    RuntimeEvent(
+                        conversation_id,
+                        "tool_event",
+                        _item_summary(item),
+                        {"lifecycle": method, **params},
+                    )
                 )
-            )
         else:
             callback(RuntimeEvent(conversation_id, "runtime_event", method, params))
 
@@ -1530,6 +1565,8 @@ class ClaudeProvider(AgentProvider):
     ) -> None:
         callback(RuntimeEvent(conversation_id, "turn_started"))
         final_text = ""
+        message_id = ""
+        message_text = ""
         stderr_lines: deque[str] = deque(maxlen=100)
 
         def read_stderr() -> None:
@@ -1557,7 +1594,14 @@ class ClaudeProvider(AgentProvider):
             kind = payload.get("type", "")
             if kind == "stream_event":
                 event = payload.get("event") or {}
-                if event.get("type") == "content_block_delta":
+                if event.get("type") == "message_start":
+                    message_id = str((event.get("message") or {}).get("id") or "")
+                    message_text = ""
+                    if message_id:
+                        callback(RuntimeEvent(conversation_id, "assistant_started", payload={"itemId": message_id}))
+                elif event.get("type") == "message_stop" and message_id:
+                    callback(RuntimeEvent(conversation_id, "assistant_completed", payload={"itemId": message_id, "final_text": message_text}))
+                elif event.get("type") == "content_block_delta":
                     delta = event.get("delta") or {}
                     if delta.get("type") == "thinking_delta":
                         thinking = str(delta.get("thinking") or "")
@@ -1567,9 +1611,16 @@ class ClaudeProvider(AgentProvider):
                     text = str(delta.get("text") or "")
                     if text:
                         final_text += text
-                        callback(RuntimeEvent(conversation_id, "assistant_delta", text, payload))
+                        message_text += text
+                        callback(RuntimeEvent(conversation_id, "assistant_delta", text, {**payload, **({"itemId": message_id} if message_id else {})}))
             elif kind == "assistant":
                 message = payload.get("message") or {}
+                snapshot_id = str(message.get("id") or "")
+                snapshot_text = "".join(str(block.get("text") or "") for block in message.get("content", []) if block.get("type") == "text")
+                if snapshot_id and snapshot_text:
+                    callback(RuntimeEvent(conversation_id, "assistant_completed", payload={"itemId": snapshot_id, "final_text": snapshot_text}))
+                    if not final_text:
+                        final_text = snapshot_text
                 for block in message.get("content", []):
                     if block.get("type") == "tool_use":
                         callback(
@@ -1916,6 +1967,8 @@ class OpenCodeProvider(AgentProvider):
         stderr_reader.start()
         session_announced = False
         emitted_text = False
+        message_id = ""
+        message_parts: dict[str, str] = {}
         stdout = process.stdout
         if stdout is None:
             with self._state_lock:
@@ -1947,11 +2000,22 @@ class OpenCodeProvider(AgentProvider):
                 text = str(part.get("text") or "")
                 if text:
                     emitted_text = True
-                    callback(
-                        RuntimeEvent(
-                            conversation_id, "assistant_delta", text, payload
-                        )
-                    )
+                    native_message = str(part.get("messageID") or "")
+                    part_id = str(part.get("id") or "")
+                    if native_message and part_id:
+                        if native_message != message_id:
+                            if message_id:
+                                callback(RuntimeEvent(conversation_id, "assistant_completed", payload={"itemId": message_id, "final_text": "".join(message_parts.values())}))
+                            message_id = native_message
+                            message_parts = {}
+                            callback(RuntimeEvent(conversation_id, "assistant_started", payload={"itemId": message_id}))
+                        previous = message_parts.get(part_id, "")
+                        message_parts[part_id] = text
+                        delta = text[len(previous):] if text.startswith(previous) else ""
+                        if delta:
+                            callback(RuntimeEvent(conversation_id, "assistant_delta", delta, {**payload, "itemId": message_id}))
+                    else:
+                        callback(RuntimeEvent(conversation_id, "assistant_delta", text, payload))
             elif kind == "reasoning":
                 text = str(part.get("text") or "")
                 if text:
@@ -1993,6 +2057,8 @@ class OpenCodeProvider(AgentProvider):
                     ),
                 )
             )
+        if message_id and not reported_error and not exit_code:
+            callback(RuntimeEvent(conversation_id, "assistant_completed", payload={"itemId": message_id, "final_text": "".join(message_parts.values())}))
         with self._state_lock:
             if self._active.get(conversation_id) is process:
                 self._active.pop(conversation_id, None)

@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -98,6 +98,87 @@ from .workspace import (
 )
 
 
+@dataclass
+class _ExecutionState:
+    """Per-turn state tracking multiple assistant messages within one execution."""
+
+    execution_id: int  # = user_message_id from begin_user_turn
+    message_seq: int = 0  # monotonic counter per execution
+    current_message_key: str = ""
+    provider_keys: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    seen_events: set[str] = field(default_factory=set)
+    native_turn_id: str = ""
+    # Accumulated deltas per message_key
+    message_texts: dict[str, list[str]] = field(default_factory=dict)
+    # Messages already completed: (message_key, text, ordinal, provider_msg_id)
+    completed_messages: list[tuple[str, str, int, str]] = field(
+        default_factory=list
+    )
+
+    def next_message_key(self) -> str:
+        self.message_seq += 1
+        return f"{self.execution_id}:{self.message_seq}"
+
+    def start_message(
+        self, provider_message_id: str = ""
+    ) -> str:
+        if provider_message_id and provider_message_id in self.provider_keys:
+            return self.provider_keys[provider_message_id]
+        key = self.next_message_key()
+        self.current_message_key = key
+        self.message_texts[key] = []
+        self.metadata[key] = {"provider_message_id": provider_message_id,
+                              "ordinal": self.message_seq, "status": "streaming"}
+        if provider_message_id:
+            self.provider_keys[provider_message_id] = key
+        return key
+
+    def append_delta(self, text: str) -> None:
+        if not self.current_message_key:
+            # Auto-start if no explicit assistant_started
+            self.start_message()
+        self.message_texts.setdefault(self.current_message_key, []).append(
+            text
+        )
+
+    def complete_message(self, final_text: str = "") -> tuple[str, str, int]:
+        """Complete current message. Returns (key, text, ordinal)."""
+        key = self.current_message_key
+        if not key:
+            return ("", "", 0)
+        accumulated = "".join(self.message_texts.pop(key, []))
+        authoritative = final_text.strip() if final_text else accumulated
+        ordinal = self.metadata[key]["ordinal"]
+        self.metadata[key].update(status="completed", text=authoritative)
+        self.current_message_key = ""
+        return (key, authoritative, ordinal)
+
+    def current_text(self) -> str:
+        if not self.current_message_key:
+            return ""
+        return "".join(
+            self.message_texts.get(self.current_message_key, [])
+        )
+
+    def all_accumulated_text(self) -> str:
+        """Get all text across all messages (for compatibility)."""
+        parts = []
+        for completed_key, text, _ordinal, _pmid in self.completed_messages:
+            parts.append(text)
+        if self.current_message_key:
+            parts.append(
+                "".join(
+                    self.message_texts.get(self.current_message_key, [])
+                )
+            )
+        return "".join(parts)
+
+    @property
+    def has_completed_messages(self) -> bool:
+        return bool(self.completed_messages)
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -174,6 +255,8 @@ class ChatOrchestrator:
             disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
         )
         self._assistant_buffers: dict[str, list[str]] = {}
+        self._execution_states: dict[str, _ExecutionState] = {}
+        self._execution_context = threading.local()
         self._external_callbacks: dict[str, EventCallback] = {}
         self._callback_generations: dict[str, int] = {}
         self._dynamic_tool_callbacks: dict[
@@ -321,7 +404,7 @@ class ChatOrchestrator:
         provider = self._provider(conversation["provider"])
         workspace = self.settings.resolve_path(conversation["workspace"])
         workspace = prepare_conversation_workspace(self.settings, workspace)
-        existing_messages = self.database.messages(conversation_id)
+        existing_messages = self._context_messages(self.database.messages(conversation_id))
         stored_text = display_text.strip() or text
         resolved_vr_mode = str(vr_mode or "").strip().casefold()
         if resolved_vr_mode not in ConversationOptions.VALID_VR_MODES:
@@ -387,11 +470,15 @@ class ChatOrchestrator:
                 self._terminal_turn_states.pop(conversation_id, None)
                 self._finalized_turns.discard(conversation_id)
                 self._assistant_buffers[conversation_id] = []
+                self._execution_states[conversation_id] = _ExecutionState(
+                    execution_id=message_id,
+                )
                 self._callback_generations[conversation_id] = (
                     self._callback_generations.get(conversation_id, 0) + 1
                 )
                 self._external_callbacks[conversation_id] = callback
                 self._pending_user_messages[conversation_id] = message_id
+                self._execution_context.owner = message_id
                 self._pending_response_modes[conversation_id] = (
                     "vr" if use_vr else "native"
                 )
@@ -432,6 +519,7 @@ class ChatOrchestrator:
             handle_turn_event = self._guarded_turn_callback(conversation_id)
 
             def run() -> None:
+                self._execution_context.owner = message_id
                 try:
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None
@@ -659,6 +747,7 @@ class ChatOrchestrator:
             self._pending_used_evidence_ids.pop(conversation_id, None)
             self._pending_response_contracts.pop(conversation_id, None)
             self._assistant_buffers.pop(conversation_id, None)
+            self._execution_states.pop(conversation_id, None)
             self._external_callbacks.pop(conversation_id, None)
             self.database.abort_user_turn(conversation_id, message_id)
             raise
@@ -691,8 +780,14 @@ class ChatOrchestrator:
                 or self._pending_user_messages.get(conversation_id) != user_message_id
             ):
                 return
-            if event.kind == "assistant_delta":
-                chunks.append(event.text)
+            if event.kind in {"assistant_started", "assistant_delta", "assistant_completed"}:
+                if event.payload.get("phase") == "commentary":
+                    self._handle_event(event)
+                elif event.kind == "assistant_delta":
+                    chunks.append(event.text)
+                elif event.kind == "assistant_completed" and event.payload.get("final_text"):
+                    # This is an internal draft; only _publish_final_response may publish it.
+                    chunks[:] = [str(event.payload["final_text"])]
             elif event.kind == "turn_started":
                 started_payload.clear()
                 started_payload.update(event.payload)
@@ -706,36 +801,39 @@ class ChatOrchestrator:
             else:
                 self._handle_event(event)
 
-        provider.send_message(
-            conversation_id,
-            native_id,
-            model,
-            effort,
-            workspace,
-            prompt,
-            callback,
-            options,
-            skills,
-        )
-        deadline = time.monotonic() + timeout_seconds
-        while not done.wait(0.2):
-            if self._pending_user_messages.get(conversation_id) != user_message_id:
-                raise OrchestrationCancelled("O turno foi substituído.")
+        try:
+            provider.send_message(
+                conversation_id,
+                native_id,
+                model,
+                effort,
+                workspace,
+                prompt,
+                callback,
+                options,
+                skills,
+            )
+            deadline = time.monotonic() + timeout_seconds
+            while not done.wait(0.2):
+                if self._pending_user_messages.get(conversation_id) != user_message_id:
+                    raise OrchestrationCancelled("O turno foi substituído.")
+                self._raise_if_cancelled(conversation_id)
+                if time.monotonic() >= deadline:
+                    provider.interrupt(conversation_id)
+                    raise ProviderError(
+                        f"Tempo limite da síntese final após {int(timeout_seconds)}s."
+                    )
             self._raise_if_cancelled(conversation_id)
-            if time.monotonic() >= deadline:
-                provider.interrupt(conversation_id)
-                raise ProviderError(
-                    f"Tempo limite da síntese final após {int(timeout_seconds)}s."
-                )
-        self._raise_if_cancelled(conversation_id)
-        if errors:
-            if "rate_limit" in error_codes:
-                raise ProviderRateLimited(errors[-1])
-            raise ProviderError(errors[-1])
-        output = "".join(chunks).strip()
-        if not output:
-            raise ProviderError("O sintetizador final não retornou conteúdo.")
-        return output, started_payload, completed_payload
+            if errors:
+                if "rate_limit" in error_codes:
+                    raise ProviderRateLimited(errors[-1])
+                raise ProviderError(errors[-1])
+            output = "".join(chunks).strip()
+            if not output:
+                raise ProviderError("O sintetizador final não retornou conteúdo.")
+            return output, started_payload, completed_payload
+        finally:
+            done.set()
 
     def _publish_final_response(
         self,
@@ -756,7 +854,18 @@ class ChatOrchestrator:
             RuntimeEvent(conversation_id, "turn_started", payload=started)
         )
         self._handle_event(
-            RuntimeEvent(conversation_id, "assistant_delta", str(text or "").strip())
+            RuntimeEvent(conversation_id, "assistant_started", payload={
+                "turn": started.get("turn", {}), "validated_public": True,
+            })
+        )
+        self._handle_event(
+            RuntimeEvent(conversation_id, "assistant_delta", str(text or "").strip(), {"validated_public": True})
+        )
+        self._handle_event(
+            RuntimeEvent(conversation_id, "assistant_completed", payload={
+                "turn": completed.get("turn", {}),
+                "final_text": str(text or "").strip(), "validated_public": True,
+            })
         )
         self._handle_event(
             RuntimeEvent(conversation_id, "turn_completed", payload=completed)
@@ -823,6 +932,7 @@ class ChatOrchestrator:
     ) -> None:
         """Parallel per-module researchers feeding one buffered synthesis."""
         run_id = uuid.uuid4().hex
+        execution_owner = self._pending_user_messages.get(conversation_id)
         with self._agent_run_lock:
             self._active_orchestration_runs[conversation_id] = run_id
             self._research_evidence[run_id] = {c.evidence_id: c for c in bundle.candidates}
@@ -957,6 +1067,7 @@ class ChatOrchestrator:
         fanout_start_monotonic = time.monotonic()
 
         def research_one(module: str, index: int) -> ModuleResearch:
+            self._execution_context.owner = execution_owner
             stagger_delay = RESEARCH_STAGGER_SECONDS * index
             if stagger_delay > 0:
                 remaining = (
@@ -1505,7 +1616,8 @@ Retorne somente JSON:
             )
         finally:
             with self._agent_run_lock:
-                self._active_orchestration_runs.pop(conversation_id, None)
+                if self._active_orchestration_runs.get(conversation_id) == run_id:
+                    self._active_orchestration_runs.pop(conversation_id, None)
                 self._research_evidence.pop(run_id, None)
 
     def _check_operational_evidence(self, conversation_id, run_id, model, workspace, request, draft, bundle):
@@ -1714,6 +1826,8 @@ Retorne somente JSON:
             workspace,
             agent_options,
         )
+        execution_owner = self._pending_user_messages.get(conversation_id)
+        self._execution_context.owner = execution_owner
         done = threading.Event()
         chunks: list[str] = []
         errors: list[str] = []
@@ -1742,7 +1856,7 @@ Retorne somente JSON:
 
         def callback(event: RuntimeEvent) -> None:
             nonlocal latest_token_usage
-            if done.is_set():
+            if done.is_set() or self._pending_user_messages.get(conversation_id) != execution_owner:
                 return
             if event.kind == "tool_event":
                 from .evidence_reads import capture_read
@@ -1790,6 +1904,8 @@ Retorne somente JSON:
             )
             deadline = time.monotonic() + timeout_seconds
             while not done.wait(0.2):
+                if self._pending_user_messages.get(conversation_id) != execution_owner:
+                    raise OrchestrationCancelled("O turno foi substituído.")
                 self._raise_if_cancelled(conversation_id)
                 if time.monotonic() >= deadline:
                     provider.interrupt(local_id)
@@ -1818,6 +1934,7 @@ Retorne somente JSON:
                 raise ProviderError(f"O agente {agent_id} não retornou conteúdo.")
             return output
         finally:
+            done.set()
             with self._agent_run_lock:
                 active = self._active_agent_runs.get(conversation_id, {})
                 active.pop(local_id, None)
@@ -1834,6 +1951,9 @@ Retorne somente JSON:
 
     def _raise_if_cancelled(self, conversation_id: str) -> None:
         with self._agent_run_lock:
+            owner = getattr(getattr(self, "_execution_context", None), "owner", None)
+            if owner is not None and self._pending_user_messages.get(conversation_id) != owner:
+                raise OrchestrationCancelled("O turno foi substituído.")
             if conversation_id in self._cancelled_conversations:
                 raise OrchestrationCancelled(conversation_id)
 
@@ -1846,6 +1966,12 @@ Retorne somente JSON:
         *,
         persist: bool = True,
     ) -> None:
+        payload = dict(payload)
+        owner = getattr(getattr(self, "_execution_context", None), "owner", None)
+        if owner is not None:
+            if self._pending_user_messages.get(conversation_id) != owner:
+                return
+            payload.setdefault("execution_id", owner)
         event = RuntimeEvent(conversation_id, kind, text, payload)
         if persist:
             self._handle_event(event)
@@ -2133,21 +2259,114 @@ Retorne somente JSON:
     def _guarded_turn_callback(self, conversation_id: str) -> EventCallback:
         """Bind a provider callback to the immutable user message for this turn."""
         message_id = self._pending_user_messages.get(conversation_id)
+        attempt_id = uuid.uuid4().hex
+        generation = self._callback_generations.get(conversation_id, 0)
 
         def callback(event: RuntimeEvent) -> None:
             with self._agent_run_lock:
                 if (
                     event.conversation_id != conversation_id
                     or self._pending_user_messages.get(conversation_id) != message_id
+                    or self._callback_generations.get(conversation_id, 0) != generation
                 ):
                     return
+                if message_id is not None:
+                    event.payload.setdefault("execution_id", message_id)
+                event.payload.setdefault("attempt_id", attempt_id)
                 self._handle_event(event)
 
         return callback
 
+    def _persist_execution_message(self, cid: str, state: _ExecutionState, key: str,
+                                   text: str, status: str = "completed") -> int:
+        meta = state.metadata[key]
+        return self.database.upsert_assistant_message(
+            cid, text, execution_id=state.execution_id,
+            execution_ordinal=meta["ordinal"],
+            provider_message_id=meta.get("provider_message_id", ""),
+            turn_id=state.native_turn_id,
+            message_phase=meta.get("phase", ""),
+            start_event_id=meta.get("start_event_id", 0),
+            response_mode=self._pending_response_modes.get(cid, "native"),
+            message_status=status,
+        )
+
+    def _handle_assistant_event(self, event: RuntimeEvent, state: _ExecutionState) -> None:
+        cid, payload = event.conversation_id, event.payload
+        item_id = str(payload.get("itemId") or payload.get("provider_message_id") or "")
+        identity = str(payload.get("event_id") or "")
+        if identity:
+            if identity in state.seen_events:
+                return
+            state.seen_events.add(identity)
+        scoped_item = f"{payload.get('attempt_id', '')}:{item_id}" if item_id else ""
+        key = state.provider_keys.get(scoped_item, "") if scoped_item else state.current_message_key
+        if key and state.metadata[key]["status"] != "streaming":
+            return  # repeated completion/start/delta for an already closed item
+        if not key:
+            key = state.start_message(scoped_item)
+        meta = state.metadata[key]
+        meta["provider_message_id"] = item_id
+        meta["phase"] = str(payload.get("phase") or meta.get("phase") or "")
+        meta["validated_public"] = bool(payload.get("validated_public") or meta.get("validated_public"))
+        payload.update(message_key=key, execution_id=state.execution_id, seq=meta["ordinal"],
+                       phase=meta["phase"])
+        public = (self._pending_response_modes.get(cid) != "vr"
+                  or meta["phase"] == "commentary" or meta["validated_public"])
+        callback = self._external_callbacks.get(cid)
+        if public and not meta.get("start_event_id"):
+            started = RuntimeEvent(cid, "assistant_started", payload=dict(payload))
+            started.payload["implicit"] = event.kind != "assistant_started"
+            meta["start_event_id"] = self.database.add_event(started)
+            if callback:
+                callback(started)
+        if event.kind == "assistant_started":
+            return
+        if event.kind == "assistant_delta":
+            state.message_texts.setdefault(key, []).append(event.text)
+        else:
+            text = str(payload.get("final_text") or "".join(state.message_texts.get(key, [])))
+            state.message_texts.pop(key, None)
+            meta.update(status="completed", text=text)
+            if state.current_message_key == key:
+                state.current_message_key = ""
+            state.completed_messages.append((key, text, meta["ordinal"], item_id))
+            payload["final_text"] = text
+            if public and text.strip():
+                payload["message_id"] = self._persist_execution_message(cid, state, key, text)
+        if public:
+            self.database.add_event(event)
+            if callback:
+                callback(event)
+
     def _handle_event(self, event: RuntimeEvent) -> None:
+        context_owner = getattr(getattr(self, "_execution_context", None), "owner", None)
+        if context_owner is not None:
+            event.payload.setdefault("execution_id", context_owner)
+        execution = self._execution_states.get(event.conversation_id)
+        owner = self._pending_user_messages.get(event.conversation_id)
+        event_owner = event.payload.get("execution_id")
+        if event_owner is not None and owner != event_owner:
+            return
+        if execution is not None:
+            event.payload.setdefault("execution_id", execution.execution_id)
+            if event.kind in {"assistant_started", "assistant_delta", "assistant_completed"}:
+                if event.conversation_id not in self._finalized_turns and event.conversation_id not in self._terminal_turn_states:
+                    self._handle_assistant_event(event, execution)
+                return
+            if event.kind == "turn_started":
+                execution.native_turn_id = str((event.payload.get("turn") or {}).get("id") or "")
+            if event.kind in {"error", "orchestration_cancelled"}:
+                for key, meta in execution.metadata.items():
+                    text = "".join(execution.message_texts.get(key, []))
+                    if meta["status"] == "streaming" and text and meta.get("start_event_id"):
+                        status = "error" if event.kind == "error" else "interrupted"
+                        self._persist_execution_message(event.conversation_id, execution, key, text, status)
+                        meta.update(status=status, text=text)
         if event.kind in {
             "assistant_delta",
+            "assistant_started",
+            "assistant_completed",
             "turn_started",
             "turn_completed",
             "error",
@@ -2176,12 +2395,10 @@ Retorne somente JSON:
                     self._terminal_turn_states[event.conversation_id] = "error"
             if cancelled:
                 return
-        self.database.add_event(event)
-        if (
-            event.kind == "assistant_delta"
-            and str(event.payload.get("phase") or "") != "commentary"
-        ):
-            self._assistant_buffers.setdefault(event.conversation_id, []).append(event.text)
+        event.payload["runtime_event_id"] = self.database.add_event(event)
+        if event.kind == "assistant_delta":
+            if str(event.payload.get("phase") or "") != "commentary":
+                self._assistant_buffers.setdefault(event.conversation_id, []).append(event.text)
         elif event.kind == "turn_started":
             turn = event.payload.get("turn") or {}
             turn_id = str(turn.get("id") or "")
@@ -2304,12 +2521,14 @@ Retorne somente JSON:
                 self._cancelled_conversations.discard(event.conversation_id)
                 self._finalized_turns.add(event.conversation_id)
             content = "".join(self._assistant_buffers.pop(event.conversation_id, []))
+            exec_state = self._execution_states.pop(event.conversation_id, None)
             self._submit_turn_finalization(
                 event,
                 content,
                 had_orchestration_run=had_orchestration_run,
                 terminal_state=terminal_state,
                 run_id=run_id,
+                execution_state=exec_state,
             )
         elif event.kind == "error":
             self.database.update_conversation(event.conversation_id, status="error")
@@ -2329,7 +2548,10 @@ Retorne somente JSON:
         had_orchestration_run: bool,
         terminal_state: str,
         run_id: str,
+        execution_state: _ExecutionState | None = None,
     ) -> None:
+        event.payload.setdefault("_owner_generation", self._callback_generations.get(event.conversation_id, 0))
+        event.payload.setdefault("_owner_message", self._pending_user_messages.get(event.conversation_id))
         try:
             future = self._turn_finalizer_executor.submit(
                 self._finalize_turn_completed,
@@ -2338,6 +2560,7 @@ Retorne somente JSON:
                 had_orchestration_run,
                 terminal_state,
                 run_id,
+                execution_state,
             )
         except RuntimeError:
             self._finalize_turn_completed(
@@ -2346,6 +2569,7 @@ Retorne somente JSON:
                 had_orchestration_run,
                 terminal_state,
                 run_id,
+                execution_state,
             )
             return
         with self._finalizers_lock:
@@ -2392,6 +2616,16 @@ Retorne somente JSON:
         for future in pending or ():
             future.cancel()
 
+    def _finalizer_owns_event(self, event: RuntimeEvent) -> bool:
+        if "_owner_generation" not in event.payload:
+            return True  # direct legacy/test callers; async submissions always bind ownership
+        row = self.database.get_conversation(event.conversation_id)
+        database_owner = int(row["active_execution_id"] or 0) if row else 0
+        if database_owner and database_owner != event.payload.get("_owner_message"):
+            return False
+        return (self._callback_generations.get(event.conversation_id, 0) == event.payload["_owner_generation"]
+                and self._pending_user_messages.get(event.conversation_id) == event.payload.get("_owner_message"))
+
     def _finalize_turn_completed(
         self,
         event: RuntimeEvent,
@@ -2399,7 +2633,12 @@ Retorne somente JSON:
         had_orchestration_run: bool,
         terminal_state: str,
         run_id: str,
+        execution_state: _ExecutionState | None = None,
     ) -> None:
+        if not self._finalizer_owns_event(event):
+            return
+        if hasattr(self, "_execution_context"):
+            self._execution_context.owner = event.payload.get("_owner_message")
         with self._agent_run_lock:
             turn_callback = self._external_callbacks.get(event.conversation_id)
             turn_generation = self._callback_generations.get(event.conversation_id, 0)
@@ -2415,7 +2654,52 @@ Retorne somente JSON:
                 return
             turn = event.payload.get("turn") or {}
             turn_id = str(turn.get("id") or "")
-            if not terminal_state and content.strip():
+            if execution_state is not None and execution_state.message_seq and any(
+                str(meta.get("text") or "".join(execution_state.message_texts.get(key, []))).strip()
+                for key, meta in execution_state.metadata.items()
+            ):
+                state = execution_state
+                state.native_turn_id = turn_id or state.native_turn_id
+                final_keys = [key for key, meta in state.metadata.items() if meta.get("phase") != "commentary"]
+                final_key = final_keys[-1] if final_keys else ""
+                for key, meta in state.metadata.items():
+                    text = str(meta.get("text") or "".join(state.message_texts.get(key, [])))
+                    if not text.strip():
+                        continue
+                    status = ("interrupted" if terminal_state == "cancelled" else "error") if terminal_state and meta["status"] == "streaming" else meta["status"] if meta["status"] in {"interrupted", "error"} else "completed"
+                    mode = self._pending_response_modes.get(event.conversation_id, "native")
+                    # Interrupted public prose can survive; unapproved VR drafts cannot.
+                    if terminal_state and mode == "vr" and meta.get("phase") != "commentary" and not meta.get("validated_public"):
+                        continue
+                    if key == final_key and mode == "vr" and not had_orchestration_run and not terminal_state and not meta.get("validated_public"):
+                        text = self._validate_direct_response(event.conversation_id, text)
+                    if not self._finalizer_owns_event(event):
+                        return
+                    message_id = self._persist_execution_message(event.conversation_id, state, key, text, status)
+                    bundle = self._pending_evidence_bundles.get(event.conversation_id)
+                    if key == final_key and bundle is not None and not terminal_state:
+                        used = self._pending_used_evidence_ids.get(event.conversation_id)
+                        candidates = ([item for item in bundle.candidates if item.evidence_id in set(used)]
+                                      if used is not None else self._candidates_cited_in_content(text, bundle))
+                        self.database.add_source_citations(event.conversation_id, message_id, [item.to_dict() for item in candidates])
+                    if meta.get("start_event_id") and meta["status"] == "completed" and meta.get("text") == text:
+                        continue
+                    if not meta.get("start_event_id"):
+                        started = RuntimeEvent(event.conversation_id, "assistant_started", payload={"execution_id": state.execution_id, "message_key": key, "seq": meta["ordinal"]})
+                        meta["start_event_id"] = self.database.add_event(started)
+                        with self.database.connect() as connection:
+                            connection.execute("UPDATE messages SET start_event_id=? WHERE id=?", (meta["start_event_id"], message_id))
+                        if turn_callback:
+                            turn_callback(started)
+                    completed = RuntimeEvent(event.conversation_id, "assistant_completed", payload={"execution_id": state.execution_id, "message_key": key, "seq": meta["ordinal"], "message_id": message_id, "final_text": text, "message_status": status})
+                    self.database.add_event(completed)
+                    if turn_callback:
+                        turn_callback(completed)
+            elif execution_state is not None and execution_state.has_completed_messages:
+                pass  # compatibility with already persisted legacy execution state
+            elif not terminal_state and content.strip():
+                # Legacy single-message path (providers without intermediate
+                # message events).
                 response_mode = self._pending_response_modes.get(
                     event.conversation_id, "vr"
                 )
@@ -2469,20 +2753,24 @@ Retorne somente JSON:
                 )
                 self.database.add_event(empty_warning)
                 derived_events.append(empty_warning)
-            self._pending_user_messages.pop(event.conversation_id, None)
-            self._pending_response_modes.pop(event.conversation_id, None)
-            self._pending_evidence_bundles.pop(event.conversation_id, None)
-            self._pending_used_evidence_ids.pop(event.conversation_id, None)
-            self._pending_response_contracts.pop(event.conversation_id, None)
-            self.database.update_conversation(
-                event.conversation_id, status=terminal_state or "idle"
-            )
+            with self._agent_run_lock:
+                if not self._finalizer_owns_event(event):
+                    return
+                if not self.database.finish_user_turn(event.conversation_id,
+                        int(event.payload.get("_owner_message") or (execution_state.execution_id if execution_state else 0)),
+                        terminal_state or "idle"):
+                    return
+                self._pending_user_messages.pop(event.conversation_id, None)
+                self._pending_response_modes.pop(event.conversation_id, None)
+                self._pending_evidence_bundles.pop(event.conversation_id, None)
+                self._pending_used_evidence_ids.pop(event.conversation_id, None)
+                self._pending_response_contracts.pop(event.conversation_id, None)
             if run_id and not terminal_state:
                 completion = RuntimeEvent(
                     event.conversation_id,
                     "orchestration_completed",
                     "Fluxo VR concluído.",
-                    {"run_id": run_id},
+                    {"run_id": run_id, **({"execution_id": execution_state.execution_id} if execution_state else {})},
                 )
                 self.database.add_event(completion)
                 derived_events.append(completion)
@@ -2496,7 +2784,8 @@ Retorne somente JSON:
                 "Falha ao finalizar o turno da conversa %s",
                 event.conversation_id,
             )
-            self._emit_terminal_error(event.conversation_id, str(exc))
+            if self._finalizer_owns_event(event):
+                self._emit_terminal_error(event.conversation_id, str(exc))
         finally:
             with self._agent_run_lock:
                 if (
@@ -2692,6 +2981,11 @@ Retorne somente JSON:
             mcp_tools,
         )
 
+    @staticmethod
+    def _context_messages(rows: list[Any]) -> list[Any]:
+        return [row for row in rows if ("message_phase" not in row.keys() or row["message_phase"] != "commentary")
+                and ("message_status" not in row.keys() or row["message_status"] not in {"error", "interrupted", "cancelled"})]
+
     def clone(
         self,
         conversation_id: str,
@@ -2725,7 +3019,7 @@ Retorne somente JSON:
             vr_enabled=bool(source["vr_enabled"]),
             vr_mode=source_options.vr_mode,
         )
-        messages = self.database.messages(conversation_id)
+        messages = self._context_messages(self.database.messages(conversation_id))
         transcript = "\n\n".join(
             f"{row['role'].upper()}: {row['content']}" for row in messages[-30:]
         )
@@ -2799,7 +3093,7 @@ Retorne somente JSON:
                 new_id, options.model, options.effort, workspace, options
             )
             transcript = "\n\n".join(
-                f"{str(row['role']).upper()}: {row['content']}" for row in previous
+                f"{str(row['role']).upper()}: {row['content']}" for row in self._context_messages(previous)
             )
             if transcript:
                 self.database.add_message(
@@ -2949,6 +3243,7 @@ Retorne somente JSON:
                 self._dynamic_tool_callbacks.pop(key, None)
             self._terminal_turn_states.pop(conversation_id, None)
         self._assistant_buffers.pop(conversation_id, None)
+        self._execution_states.pop(conversation_id, None)
         self._finalized_turns.discard(conversation_id)
         if quarantine and quarantine.exists():
             shutil.rmtree(quarantine)
@@ -3379,6 +3674,7 @@ Retorne somente JSON:
         self._callback_generations.clear()
         self._dynamic_tool_callbacks.clear()
         self._assistant_buffers.clear()
+        self._execution_states.clear()
         self._pending_user_messages.clear()
         self._pending_used_evidence_ids.clear()
         self._pending_dynamic_tools.clear()
