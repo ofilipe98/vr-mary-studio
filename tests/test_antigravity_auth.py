@@ -1,5 +1,6 @@
 import http.server
 import json
+import os
 import re
 import socket
 import threading
@@ -7,6 +8,8 @@ import time
 import unittest
 import urllib.parse
 from unittest.mock import MagicMock, patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from vrsoft_extractor.mary.antigravity_auth import (
     AUTH_MARKER_T3,
@@ -273,7 +276,7 @@ class TestAntigravityAuthManager(unittest.TestCase):
         mock_proc.stdout.read.side_effect = lambda size: b"" if stop_event.is_set() else (stop_event.wait(0.2) and b"")
         mock_proc.stderr = MagicMock()
         mock_proc.stderr.read.side_effect = lambda size: b"" if stop_event.is_set() else (stop_event.wait(0.2) and b"")
-        mock_proc.wait.side_effect = lambda: (stop_event.wait(0.5) and 0)
+        mock_proc.wait.side_effect = lambda timeout=None: (stop_event.wait(0.5) and 0)
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen_mock:
             manager = AntigravityAuthManager(
@@ -387,7 +390,7 @@ class TestAntigravityAuthManager(unittest.TestCase):
         self.assertIn("300s", attempt.error_detail)
         proc_mock.terminate.assert_called_once()
 
-    def test_process_exit_zero_marks_succeeded_and_authenticated(self):
+    def test_process_exit_zero_does_not_prove_authentication(self):
         manager = AntigravityAuthManager(
             command_resolver=lambda: "dummy_agy",
             env_factory=lambda: {},
@@ -398,15 +401,15 @@ class TestAntigravityAuthManager(unittest.TestCase):
         manager._active_attempt = attempt
 
         manager._wait_process("att_ok", proc_mock)
-        self.assertEqual(attempt.state, "succeeded")
-        self.assertEqual(manager.account_state, "authenticated")
-        self.assertIn("sucesso", manager.account_status_label)
+        self.assertEqual(attempt.state, "idle")
+        self.assertEqual(manager.account_state, "unknown")
+        self.assertIn("Validar conta", manager.account_status_label)
 
 
 class TestStudioAntigravityAuthIntegration(unittest.TestCase):
     def setUp(self):
-        from PySide6.QtCore import QCoreApplication
-        self.app = QCoreApplication.instance() or QCoreApplication([])
+        from PySide6.QtWidgets import QApplication
+        self.app = QApplication.instance() or QApplication([])
 
     def test_studio_refresh_providers_exposes_dimensions(self):
         from vrsoft_extractor.mary.frontend.studio import StudioBridge

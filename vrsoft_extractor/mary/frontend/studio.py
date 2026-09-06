@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -187,6 +188,7 @@ class StudioBridge(QObject):
     syncChanged = Signal()
     settingsChanged = Signal()
     providersChanged = Signal()
+    _antigravityAuthChanged = Signal()
     archivedChanged = Signal()
     logsChanged = Signal()
     terminalChanged = Signal()
@@ -301,15 +303,23 @@ class StudioBridge(QObject):
         self._video_output_timer.setInterval(80)
         self._video_output_timer.timeout.connect(self._flush_video_output)
         self._syncProgressReceived.connect(self._apply_sync_progress)
+        self._antigravityAuthChanged.connect(self._refresh_antigravity_auth, Qt.QueuedConnection)
         self._antigravity_auth = AntigravityAuthManager(
             command_resolver=resolve_agy,
             env_factory=google_account_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
         )
+        self._agy_check_cancel = threading.Event()
+        self._agy_check_process = None
 
     def _on_antigravity_auth_state_changed(self) -> None:
         if not getattr(self, "_closed", False):
-            QTimer.singleShot(0, self.refreshProviders)
+            self._antigravityAuthChanged.emit()
+
+    @Slot()
+    def _refresh_antigravity_auth(self) -> None:
+        if not self._closed:
+            self.refreshProviders()
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1721,6 +1731,9 @@ class StudioBridge(QObject):
             available = command is not None
             auth_info = self._antigravity_auth.get_ui_snapshot() if (provider == "antigravity" and hasattr(self, "_antigravity_auth")) else {}
             account_status = auth_info.get("accountStatus", getattr(self, "_agy_account_status", "Conta Google ainda não verificada")) if provider == "antigravity" else "Autenticação gerenciada pelo CLI"
+            checking = provider == "antigravity" and getattr(self, "_agy_check_running", False)
+            if checking:
+                account_status = "Validando conta Google…"
             self._providers.append({
                 "id": provider,
                 "name": str(self._preferences.value(f"providers/{provider}/displayName", labels[provider])),
@@ -1732,7 +1745,7 @@ class StudioBridge(QObject):
                 "expiresAt": auth_info.get("expiresAt", ""),
                 "errorDetail": auth_info.get("errorDetail", ""),
                 "isWaiting": auth_info.get("isWaiting", False),
-                "isVerifying": auth_info.get("isVerifying", False),
+                "isVerifying": checking or auth_info.get("isVerifying", False),
                 "isStarting": auth_info.get("isStarting", False),
                 "description": descriptions[provider],
                 "enabled": enabled,
@@ -1751,6 +1764,8 @@ class StudioBridge(QObject):
 
     @Slot()
     def openAntigravityLogin(self) -> None:
+        if getattr(self, "_agy_check_running", False) or self._closed:
+            return
         try:
             command = resolve_agy()
             if not command:
@@ -1766,6 +1781,7 @@ class StudioBridge(QObject):
     @Slot()
     def cancelAntigravityLogin(self) -> None:
         try:
+            self._cancel_antigravity_check()
             if hasattr(self, "_antigravity_auth"):
                 self._antigravity_auth.cancel_login()
             self.refreshProviders()
@@ -1782,47 +1798,83 @@ class StudioBridge(QObject):
         self._tasks.add(task)
         def finish_error(exc):
             self._tasks.discard(task)
+            if self._closed:
+                return
             self.toastRequested.emit(f"Falha ao validar retorno OAuth: {exc}", "error")
             self.refreshProviders()
         def finish_success(_):
             self._tasks.discard(task)
+            if self._closed:
+                return
             self.refreshProviders()
         task.signals.failed.connect(finish_error)
         task.signals.finished.connect(finish_success)
         self._pool.start(task)
 
+    def _cancel_antigravity_check(self) -> None:
+        self._agy_check_cancel.set()
+        AntigravityAuthManager._stop_process(self._agy_check_process)
+
+    def _run_antigravity_check(self, command: str):
+        args = [command, "-p", "Responda apenas OK. Não use ferramentas.",
+                "--mode", "plan", "--output-format", "json", "--print-timeout", "45s"]
+        env = google_account_environment()
+        if self._agy_check_cancel.is_set():
+            raise RuntimeError("Validação cancelada.")
+        process = subprocess.Popen(args, cwd=str(Path.home()), env=env,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, encoding="utf-8", errors="replace",
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        self._agy_check_process = process
+        try:
+            if self._agy_check_cancel.is_set():
+                raise RuntimeError("Validação cancelada.")
+            stdout, stderr = process.communicate(timeout=90)
+            return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+        finally:
+            AntigravityAuthManager._stop_process(process)
+            for stream in (process.stdout, process.stderr):
+                if stream:
+                    stream.close()
+            self._agy_check_process = None
+
     @Slot()
     def validateAntigravityAccount(self) -> None:
-        if getattr(self, "_agy_check_running", False):
+        if getattr(self, "_agy_check_running", False) or self._closed:
             return
         command = resolve_agy()
         if not command:
             self.toastRequested.emit("Instale o Antigravity CLI primeiro.", "warning")
             return
         self._agy_check_running = True
+        self._agy_check_cancel.clear()
+        checked_attempt = self._antigravity_auth.active_attempt
+        checked_phase = checked_attempt.state if checked_attempt else "idle"
         self._agy_account_status = "Validando conta Google…"
         self.refreshProviders()
         def check():
-            result = subprocess.run([command, "-p", "Responda apenas OK. Não use ferramentas.",
-                                     "--mode", "plan", "--output-format", "json", "--print-timeout", "30s"],
-                                    cwd=str(Path.home()), env=google_account_environment(),
-                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=40,
-                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            result = self._run_antigravity_check(command)
             try:
                 payload = json.loads(result.stdout)
             except Exception:
                 payload = {}
-            if result.returncode or payload.get("status") != "SUCCESS":
-                err_text = ((result.stderr or "") + " " + (result.stdout or "")).strip()
-                if "invalid_grant" in err_text or "unauthenticated" in err_text.lower():
-                    raise RuntimeError("Credenciais Google inválidas ou expiradas. Efetue login novamente.")
-                raise RuntimeError("Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos.")
+            if (result.returncode or not isinstance(payload, dict)
+                    or payload.get("status") != "SUCCESS"
+                    or not isinstance(payload.get("response"), str) or not payload["response"].strip()):
+                raise RuntimeError("Não foi possível verificar a conta. Confira o login no CLI e a disponibilidade do serviço.")
             return "Conta Google validada com uma resposta real"
         task = _Task(check)
         self._tasks.add(task)
         def finish_success(message):
             self._tasks.discard(task)
             self._agy_check_running = False
+            if self._closed or self._agy_check_cancel.is_set() or self._antigravity_auth.active_attempt is not checked_attempt:
+                if not self._closed:
+                    self.refreshProviders()
+                return
+            if checked_attempt and checked_attempt.state in ("cancelled", "failed") and checked_attempt.state != checked_phase:
+                self.refreshProviders()
+                return
             self._agy_account_status = str(message)
             if hasattr(self, "_antigravity_auth"):
                 self._antigravity_auth.mark_authenticated_from_validation(str(message))
@@ -1830,11 +1882,18 @@ class StudioBridge(QObject):
         def finish_error(exc):
             self._tasks.discard(task)
             self._agy_check_running = False
-            msg = str(exc)
-            if "não foi possível inicializar a sessão" in msg and hasattr(self, "_antigravity_auth"):
-                self._antigravity_auth.mark_session_or_model_error(msg)
-            else:
-                self._agy_account_status = msg
+            if self._closed or self._agy_check_cancel.is_set() or self._antigravity_auth.active_attempt is not checked_attempt:
+                if not self._closed:
+                    self.refreshProviders()
+                return
+            if checked_attempt and checked_attempt.state in ("cancelled", "failed") and checked_attempt.state != checked_phase:
+                self.refreshProviders()
+                return
+            # Exceptions may contain captured CLI output/URLs. Publish only a
+            # fixed diagnostic, preserving any previously confirmed account.
+            self._antigravity_auth.mark_session_or_model_error(
+                "Não foi possível verificar a conta. Confira o login no CLI e a disponibilidade do serviço."
+            )
             self.refreshProviders()
         task.signals.finished.connect(finish_success)
         task.signals.failed.connect(finish_error)
@@ -2012,6 +2071,7 @@ class StudioBridge(QObject):
         if self._closed:
             return
         self._closed = True
+        self._cancel_antigravity_check()
         if hasattr(self, "_antigravity_auth"):
             self._antigravity_auth.cancel_login()
         self._video_output_timer.stop()

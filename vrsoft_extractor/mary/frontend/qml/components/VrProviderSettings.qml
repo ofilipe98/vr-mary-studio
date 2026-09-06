@@ -28,10 +28,13 @@ Item {
     readonly property bool isWaiting: Boolean(selected.isWaiting)
     readonly property bool isVerifying: Boolean(selected.isVerifying)
     readonly property bool isStarting: Boolean(selected.isStarting)
+    readonly property bool hasCallback: isWaiting && authUrl.length > 0
     readonly property bool validating: isVerifying || account.indexOf("Validando") === 0
     readonly property bool authenticated: accountState === "authenticated" || account.indexOf("Conta Google validada") === 0
     readonly property bool loginPending: isWaiting || isStarting || account.indexOf("Conclua o login") === 0
-    readonly property bool authError: google && (attemptState === "failed" || (account.length > 0 && !validating && !authenticated && !loginPending && account.indexOf("Conta Google ainda") !== 0))
+    readonly property bool authError: google && (attemptState === "failed" || account.indexOf("Não foi possível") === 0 || accountState === "unauthenticated")
+    onIsWaitingChanged: { if (!isWaiting) manualCallbackField.text = "" }
+    onSelectedProviderChanged: manualCallbackField.text = ""
     readonly property bool runtimeBusy: selected.runtimeState === "updating" || selected.runtimeState === "installing"
 
     function providerLabel(p) {
@@ -45,8 +48,9 @@ Item {
         if (p.id !== "antigravity") return {text: "CLI instalado", tone: "success"}
         var a = String(p.accountStatus || "")
         if (p.isVerifying || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
-        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0) return {text: "Pronto", tone: "success"}
         if (p.isWaiting || p.isStarting || a.indexOf("Conclua o login") === 0) return {text: "Login em andamento", tone: "warning"}
+        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0) return {text: "Conta autenticada", tone: "success"}
+        if (p.attemptState === "idle" || p.attemptState === "cancelled") return {text: "Conta não verificada", tone: "warning"}
         if (!a || a.indexOf("Conta Google ainda") === 0) return {text: "Conta não verificada", tone: "warning"}
         return {text: "Falha na validação", tone: "danger"}
     }
@@ -264,9 +268,10 @@ Item {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: root.isWaiting && root.expiresAt ? ("Aguardando autorização no navegador. " + root.expiresAt + ". Se a página não abrir automaticamente, abra o link ou envie o retorno.")
+                                text: root.isWaiting && !root.hasCallback ? (root.account + " " + root.expiresAt)
+                                    : root.isWaiting && root.expiresAt ? ("Aguardando autorização no navegador. " + root.expiresAt + ". Abra o link para continuar.")
                                     : root.authError ? (root.selected.errorDetail || root.account)
-                                    : root.authenticated ? "A conta respondeu à validação. Modelos e limites são fornecidos pelo Antigravity."
+                                    : root.authenticated ? root.account
                                     : root.loginPending ? "Conclua a autenticação no navegador e valide a conta para confirmar a conexão."
                                     : "Entre com sua conta Google pelo CLI ou valide uma sessão existente. O login é gerenciado pelo Antigravity."
                                 color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.Wrap
@@ -275,23 +280,23 @@ Item {
                                 Layout.fillWidth: true; spacing: 8
                                 VrProviderAction {
                                     objectName: "providerGoogleLogin"
-                                    text: root.openingLogin || root.isStarting ? "Abrindo login…" : root.isWaiting ? "Abrir no navegador" : root.authenticated || root.loginPending ? "Abrir login" : "Entrar com Google"
+                                    text: root.openingLogin || root.isStarting ? "Abrindo login…" : root.hasCallback ? "Abrir no navegador" : root.isWaiting ? "Login aberto no CLI" : root.authenticated ? "Abrir login" : "Entrar com Google"
                                     variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
-                                    enabled: !!root.selected.available && !root.validating && !root.openingLogin && !root.runtimeBusy
+                                    enabled: !!root.selected.available && !root.validating && !root.isStarting && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
                                     onClicked: {
                                         root.openingLogin = true
                                         loginTimer.start()
                                     }
                                 }
                                 VrProviderAction {
-                                    visible: root.isWaiting
+                                    visible: root.hasCallback
                                     text: "Copiar link"
                                     variant: "secondary"
                                     enabled: Boolean(root.authUrl)
                                     onClicked: studio.copyText(root.authUrl)
                                 }
                                 VrProviderAction {
-                                    visible: root.isWaiting
+                                    visible: root.isWaiting || root.isStarting || root.isVerifying
                                     text: "Cancelar login"
                                     variant: "ghost"
                                     onClicked: studio.cancelAntigravityLogin()
@@ -305,10 +310,11 @@ Item {
                                 }
                             }
                             ColumnLayout {
-                                visible: root.isWaiting
+                                visible: root.hasCallback
                                 Layout.fillWidth: true
                                 spacing: 6
                                 Text {
+                                    Layout.fillWidth: true
                                     text: "Retorno manual (se o redirecionamento local não concluir):"
                                     color: frontend.palette.subtleText
                                     font.family: Theme.fontFamily
