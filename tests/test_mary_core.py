@@ -11,7 +11,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from vrsoft_extractor.mary.classifier import classify, parse_product_catalog
 from vrsoft_extractor.mary.chat_tools import (
@@ -2500,6 +2500,13 @@ class MaryCoreTest(unittest.TestCase):
         )
         row = database.get_conversation(conversation_id)
         self.assertEqual(row["context_used_tokens"], 5_000)
+        self.assertEqual(row["total_processed_tokens"], 130_000)
+
+        for used in (6000, 6000, 3000):
+            orchestrator._handle_event(RuntimeEvent(conversation_id, "token_usage", payload={
+                "tokenUsage": {"last": {"totalTokens": used}, "modelContextWindow": 128_000, "contextOnly": True}}))
+        row = database.get_conversation(conversation_id)
+        self.assertEqual(row["context_used_tokens"], 3000)
         self.assertEqual(row["total_processed_tokens"], 130_000)
 
     def test_concurrent_turn_claim_persists_exactly_one_user_message(self):

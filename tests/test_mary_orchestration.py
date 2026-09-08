@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import subprocess
+
 import json
 import io
 import os
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -1485,7 +1486,8 @@ def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
         )
 
     command = popen.call_args.args[0]
-    assert command[command.index("-p") + 1] == "mensagem nativa"
+    assert "mensagem nativa" not in command
+    assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
     assert "--permission-mode" not in command
     assert "--add-dir" not in command
     assert "--allowedTools" not in command

@@ -1,5 +1,3 @@
-from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 import json
 import shutil
@@ -186,7 +184,8 @@ def test_ultra_repairs_semantic_issues_before_final_rejection(tmp_path, monkeypa
     from vrsoft_extractor.mary.supervision import ResponseViolation
     problem = (ResponseViolation('unsupported_claims', 'Afirmação sem suporte.', 'Remova a afirmação.'),)
     reviews = []
-    def review(*args):
+    def review(*args, timeout_seconds):
+        assert 0 < timeout_seconds <= 90
         reviews.append(args[5].answer_markdown)
         return problem if len(reviews) == 1 or not supported_after_fix else ()
     drafts = iter(['Sempre executa. Fato preservado.', 'Fato preservado.', 'Fato preservado.'])
@@ -196,7 +195,6 @@ def test_ultra_repairs_semantic_issues_before_final_rejection(tmp_path, monkeypa
         return json.dumps({'answer_markdown': next(drafts), 'used_evidence_ids': ['wiki:nf-fiscal:1']}), {}, {}
     monkeypatch.setattr(orch, '_run_buffered_main_turn', synthesis)
     monkeypatch.setattr(orch, '_check_operational_evidence', review)
-    monkeypatch.setattr('vrsoft_extractor.mary.orchestrator.validate_fanout_draft', lambda *a, **kw: ())
     try:
         fixture._run_send(orch, cid, events)
         answer = next(r['content'] for r in db.messages(cid) if r['role'] == 'assistant')

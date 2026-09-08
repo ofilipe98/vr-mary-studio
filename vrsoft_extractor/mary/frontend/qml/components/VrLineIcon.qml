@@ -153,14 +153,14 @@ Canvas {
             ctx.quadraticCurveTo(5, 5, 7, 5); ctx.lineTo(14, 5); ctx.stroke()
         } else if (kind === "attachment") {
             ctx.beginPath()
-            ctx.moveTo(8.2, 12.8)
-            ctx.lineTo(14.7, 6.3)
-            ctx.quadraticCurveTo(17.2, 3.8, 19.5, 6.1)
-            ctx.quadraticCurveTo(21.8, 8.4, 19.3, 10.9)
-            ctx.lineTo(10.2, 20)
-            ctx.quadraticCurveTo(6.7, 23.5, 3.5, 20.3)
-            ctx.quadraticCurveTo(0.3, 17.1, 3.8, 13.6)
-            ctx.lineTo(12.4, 5)
+            ctx.moveTo(21.44, 11.05)
+            ctx.lineTo(12.24, 20.24)
+            ctx.arc(8, 16, 6, Math.PI * 0.25, Math.PI * 1.25, false)
+            ctx.lineTo(12.34, 3.18)
+            ctx.arc(15.17, 6.01, 4, -Math.PI * 0.75, Math.PI * 0.25, false)
+            ctx.lineTo(9.41, 17.41)
+            ctx.arc(8, 16, 2, Math.PI * 0.25, Math.PI * 1.25, false)
+            ctx.lineTo(15.07, 6.10)
             ctx.stroke()
         } else if (kind === "archive") {
             rect(4, 7, 16, 13, 2)
@@ -223,6 +223,12 @@ Canvas {
             ctx.lineTo(15, 9); ctx.lineTo(18.5, 12.5); ctx.lineTo(5.5, 12.5)
             ctx.lineTo(9, 9); ctx.closePath(); ctx.stroke()
             line(12, 12.5, 12, 20)
+        } else if (kind === "gauge" || kind === "speedometer") {
+            ctx.beginPath(); ctx.arc(12, 13, 7.5, Math.PI * 0.8, Math.PI * 2.2); ctx.stroke()
+            line(12, 13, 16, 9.5)
+            ctx.beginPath(); ctx.arc(12, 13, 1.2, 0, Math.PI * 2); ctx.fill()
+        } else if (kind === "trendUp" || kind === "arrowUpRight") {
+            line(7, 17, 17, 7); line(11, 7, 17, 7); line(17, 7, 17, 13)
         }
     }
 }

@@ -56,11 +56,11 @@ Item {
                     anchors.fill: parent
                     radius: Theme.radiusControl
                     color: root.currentIndex === tab.index
-                        ? (root.understated ? "transparent" : frontend.palette.accentSoft)
+                        ? (root.understated ? "transparent" : Theme.palette.accentSoft)
                         : tabHover.hovered || tab.activeFocus
-                            ? (root.understated ? frontend.palette.chatControl : frontend.palette.hover) : "transparent"
+                            ? (root.understated ? Theme.palette.chatControl : Theme.palette.hover) : "transparent"
                     border.width: tab.activeFocus ? 2 : 0
-                    border.color: frontend.palette.focus
+                    border.color: Theme.palette.focus
 
                     Behavior on color {
                         enabled: !frontend.reduceMotion
@@ -73,14 +73,14 @@ Item {
                     anchors.bottom: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: tabLabel.width; height: 2; radius: 1
-                    color: frontend.palette.text
+                    color: Theme.palette.text
                 }
                 Text {
                     id: tabLabel
                     anchors.centerIn: parent
                     text: tab.modelData
                     color: root.currentIndex === tab.index
-                        ? frontend.palette.text : frontend.palette.mutedText
+                        ? Theme.palette.text : Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: root.understated ? Theme.fontSize(13) : Theme.bodySize
                     font.weight: root.currentIndex === tab.index

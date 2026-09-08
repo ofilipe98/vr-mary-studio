@@ -1,4 +1,5 @@
-from pathlib import Path
+import pytest
+
 from unittest.mock import patch
 
 from test_chat_presentation import (
@@ -7,6 +8,8 @@ from test_chat_presentation import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
+
+pytestmark = pytest.mark.qml
 
 
 def test_centered_landing_project_picker_and_image_paste(tmp_path):
@@ -31,6 +34,7 @@ def test_centered_landing_project_picker_and_image_paste(tmp_path):
             assert abs(card.x() + card.width()/2 - landing.x() - landing.width()/2) < 1
             assert abs(card.y() - landing.y() - landing.height() - 24) < 1
             button = window.findChild(QObject, 'landingProjectButton')
+            assert button.property('text') == 'Como posso ajudar no seu projeto?'
             button.click()
             QTest.qWait(100)
             menu = window.findChild(QObject, 'landingProjectMenu')
@@ -46,7 +50,7 @@ def test_centered_landing_project_picker_and_image_paste(tmp_path):
             assert chat.addCurrentProjectFolder()
             window.findChild(QObject, 'addProjectPopup').close()
             QTest.qWait(80)
-            assert 'Meu Projeto' in button.property('text')
+            assert button.property('text') == 'Como posso ajudar no projeto Meu Projeto?'
             editor = window.findChild(QObject, 'chatComposerInput')
             editor.forceActiveFocus()
             picture = QImage(32, 24, QImage.Format_ARGB32)
@@ -76,6 +80,103 @@ def test_centered_landing_project_picker_and_image_paste(tmp_path):
             assert not engine._qml_warnings, [w.toString() for w in engine._qml_warnings]
     finally:
         app.clipboard().clear()
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_settings_lazy_tabs_and_archived_rows_follow_theme(tmp_path):
+    from test_chat_presentation import find_items
+
+    app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    for index in range(2):
+        cid = db.create_conversation(f'Arquivada {index}', 'codex', 'test', settings.root)
+        db.update_conversation(cid, archived=1)
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR', theme_override='dark_orange')
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, 'refreshModels'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            frontend.setCurrentPage(7)
+            QTest.qWait(400)
+            page = window.findChild(QObject, 'settingsPage')
+            providers = window.findChild(QObject, 'providerSettingsLoader')
+            ultra = window.findChild(QObject, 'vrUltraSettingsLoader')
+            assert not providers.property('active')
+            assert not ultra.property('active')
+            for tab, loader in ((1, providers), (2, ultra)):
+                page.setProperty('tabIndex', tab)
+                for _ in range(100):
+                    QTest.qWait(10)
+                    if loader.property('item') is not None:
+                        break
+                item = loader.property('item')
+                assert item is not None
+                page.setProperty('tabIndex', 0)
+                app.processEvents()
+                assert loader.property('item') is item
+            studio.refreshArchived('')
+            page.setProperty('tabIndex', 5)
+            QTest.qWait(100)
+            rows = find_items(window.contentItem(), 'archivedConversationRow')
+            assert len(rows) == 2
+            for theme in ('dark_orange', 'light', 'dark_orange'):
+                frontend.setTheme(theme)
+                app.processEvents()
+                for row in rows:
+                    color = row.property('color')
+                    if row.property('index') % 2:
+                        assert color.name() == frontend.palette['chatSidebar'].lower()
+                    else:
+                        assert color.alpha() == 0
+            assert not engine._qml_warnings, [w.toString() for w in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_app_opens_on_new_conversation_when_conversations_exist(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+
+    cid = db.create_conversation('Conversa Existente', 'codex', 'test', settings.root)
+    db.add_message(cid, 'user', 'Ola mundo')
+    db.add_message(cid, 'assistant', 'Ola! Como posso ajudar?')
+
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    chat = ChatBridge(settings, db, prefs, open_new_chat=True)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        assert chat.conversationCount == 1
+        assert chat.isDraft
+        assert not chat.hasSelection
+        assert chat.selectedIndex == -1
+        assert chat.selectedTitle == 'Nova conversa'
+        assert chat.messages.rowCount() == 0
+
+        with patch.object(chat, 'refreshModels'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            QTest.qWait(200)
+            landing = window.findChild(QObject, 'chatLanding')
+            assert landing is not None
+            assert landing.property('visible')
+            composer_input = window.findChild(QObject, 'chatComposerInput')
+            assert composer_input is not None
+            assert composer_input.property('text') == ''
+    finally:
         if window:
             window.close()
         studio.close()

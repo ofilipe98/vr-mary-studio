@@ -100,8 +100,7 @@ def test_api_redirect_is_not_followed_with_credentials():
 
 
 @pytest.fixture
-def session(tmp_path, monkeypatch):
-    monkeypatch.setattr("vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0)
+def session(tmp_path):
     values = ultra._orchestrator(tmp_path, "ultra")
     yield values
     values[2].drain_turn_finalizations()

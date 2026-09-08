@@ -22,7 +22,7 @@ ComboBox {
         leftPadding: 0
         rightPadding: 0
         text: control.displayText
-        color: frontend.palette.text
+        color: Theme.palette.text
         font: control.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideMiddle
@@ -32,16 +32,16 @@ ComboBox {
         x: control.width - width - 13
         y: (control.height - height) / 2 - 1
         text: "▾"
-        color: frontend.palette.mutedText
+        color: Theme.palette.mutedText
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSize(14)
     }
 
     background: Rectangle {
         radius: Theme.radiusControl
-        color: control.hovered ? frontend.palette.hover : frontend.palette.surfaceRaised
+        color: control.hovered ? Theme.palette.hover : Theme.palette.surfaceRaised
         border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.border
+        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.border
     }
 
     delegate: ItemDelegate {
@@ -60,13 +60,13 @@ ComboBox {
                 Layout.preferredWidth: visible ? 14 : 0
                 Layout.preferredHeight: 14
                 kind: "folder"
-                foreground: frontend.palette.mutedText
+                foreground: Theme.palette.mutedText
             }
             Text {
                 Layout.fillWidth: true
                 text: control.textRole ? optionDelegate.modelData[control.textRole]
                     : optionDelegate.modelData
-                color: frontend.palette.text
+                color: Theme.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize
                 verticalAlignment: Text.AlignVCenter
@@ -86,7 +86,7 @@ ComboBox {
                     kind: "settings"
                     strokeWidth: 1.55
                     foreground: settingsMouse.containsMouse
-                        ? frontend.palette.text : frontend.palette.mutedText
+                        ? Theme.palette.text : Theme.palette.mutedText
                 }
                 ToolTip.visible: settingsMouse.containsMouse
                 ToolTip.text: "Configurar pasta"
@@ -104,7 +104,7 @@ ComboBox {
         }
         background: Rectangle {
             radius: control.showSettingsAction ? 6 : 8
-            color: parent.highlighted ? frontend.palette.selection : frontend.palette.surface
+            color: parent.highlighted ? Theme.palette.selection : Theme.palette.surface
         }
     }
 
@@ -125,9 +125,9 @@ ComboBox {
         }
 
         background: Rectangle {
-            color: frontend.palette.surface
+            color: Theme.palette.surface
             border.width: 1
-            border.color: frontend.palette.border
+            border.color: Theme.palette.border
             radius: Theme.radiusPopup
         }
     }

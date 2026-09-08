@@ -1,4 +1,6 @@
 """Behavior checks for the presentation layer; no live provider calls."""
+import pytest
+
 import os
 from unittest.mock import patch
 
@@ -16,6 +18,8 @@ from vrsoft_extractor.mary.frontend.chat import ChatBridge
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.frontend.text_rendering import presentation_blocks
 from vrsoft_extractor.mary.frontend.text_rendering import CodeSyntaxHighlighter
+
+pytestmark = pytest.mark.qml
 
 
 def test_sources_preserve_prose_code_and_incomplete_links():

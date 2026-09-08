@@ -98,7 +98,7 @@ Rectangle {
                 iconKind: ""
                 symbol: "↵"
                 foreground: checked
-                    ? frontend.palette.text : frontend.palette.mutedText
+                    ? Theme.palette.text : Theme.palette.mutedText
                 ToolTip.visible: hovered
                 ToolTip.text: checked ? "Não quebrar linhas" : "Quebrar linhas"
             }
@@ -115,7 +115,7 @@ Rectangle {
                 iconKind: root.copied ? "" : "copy"
                 symbol: root.copied ? "✓" : ""
                 foreground: root.copied
-                    ? frontend.palette.success : frontend.palette.mutedText
+                    ? Theme.palette.success : Theme.palette.mutedText
                 ToolTip.visible: hovered
                 ToolTip.text: root.copied ? "Copiado" : "Copiar código"
                 onClicked: root.copyCode()

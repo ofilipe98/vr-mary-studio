@@ -10,9 +10,9 @@ RowLayout {
     property bool busy: false
     property bool announceChanges: false
     onTextChanged: if (announceChanges && visible && text.length) Accessible.announce(text)
-    readonly property color statusColor: tone === "success" ? frontend.palette.success
-        : tone === "warning" ? frontend.palette.warning
-        : tone === "danger" ? frontend.palette.danger : frontend.palette.subtleText
+    readonly property color statusColor: tone === "success" ? Theme.palette.success
+        : tone === "warning" ? Theme.palette.warning
+        : tone === "danger" ? Theme.palette.danger : Theme.palette.subtleText
     spacing: 8
     Accessible.role: Accessible.StaticText
     Accessible.name: text
@@ -30,7 +30,7 @@ RowLayout {
     Text {
         Layout.fillWidth: true
         text: root.text
-        color: root.tone === "danger" ? root.statusColor : frontend.palette.mutedText
+        color: root.tone === "danger" ? root.statusColor : Theme.palette.mutedText
         font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
         elide: Text.ElideRight
     }

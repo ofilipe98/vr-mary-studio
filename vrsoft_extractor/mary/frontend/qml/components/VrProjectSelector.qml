@@ -49,13 +49,13 @@ Button {
             Layout.preferredWidth: 15
             Layout.preferredHeight: 15
             kind: "folder"
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
             strokeWidth: 1.55
         }
         Text {
             Layout.fillWidth: true
             text: control.currentItem.label || "Todos os projetos"
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(11)
             font.weight: Font.DemiBold
@@ -66,7 +66,7 @@ Button {
             Layout.preferredWidth: 12
             Layout.preferredHeight: 12
             kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
             strokeWidth: 1.45
         }
     }
@@ -74,10 +74,10 @@ Button {
     background: Rectangle {
         radius: Theme.radiusSmall
         color: control.down || control.hovered || selectorPopup.opened
-            ? frontend.palette.chatControl : frontend.palette.surfaceRaised
+            ? Theme.palette.chatControl : Theme.palette.surfaceRaised
         border.width: 1
         border.color: control.activeFocus
-            ? frontend.palette.focus : frontend.palette.border
+            ? Theme.palette.focus : Theme.palette.border
     }
 
     Popup {
@@ -120,8 +120,8 @@ Button {
                 width: projectList.width
                 height: 32
                 radius: 6
-                color: selected ? frontend.palette.selection
-                    : rowHover.hovered ? frontend.palette.chatControl : "transparent"
+                color: selected ? Theme.palette.selection
+                    : rowHover.hovered ? Theme.palette.chatControl : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
@@ -133,13 +133,13 @@ Button {
                         Layout.preferredHeight: 14
                         kind: "folder"
                         foreground: projectRow.selected
-                            ? frontend.palette.text : frontend.palette.mutedText
+                            ? Theme.palette.text : Theme.palette.mutedText
                         strokeWidth: 1.5
                     }
                     Text {
                         Layout.fillWidth: true
                         text: projectRow.modelData.label
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(11)
                         font.weight: projectRow.selected ? Font.DemiBold : Font.Normal
@@ -156,7 +156,7 @@ Button {
                         iconKind: "settings"
                         iconSize: 13
                         foreground: hovered
-                            ? frontend.palette.text : frontend.palette.mutedText
+                            ? Theme.palette.text : Theme.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Configurar pasta"
                         Accessible.name: "Configurar " + projectRow.modelData.label
@@ -168,7 +168,7 @@ Button {
                         Layout.preferredWidth: visible ? 12 : 0
                         Layout.preferredHeight: 12
                         kind: "chevronDown"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         strokeWidth: 1.45
                     }
                 }
@@ -187,9 +187,9 @@ Button {
         }
 
         background: Rectangle {
-            color: frontend.palette.surface
+            color: Theme.palette.surface
             border.width: 1
-            border.color: frontend.palette.border
+            border.color: Theme.palette.border
             radius: 10
         }
     }

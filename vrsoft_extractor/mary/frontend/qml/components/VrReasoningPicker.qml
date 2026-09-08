@@ -25,7 +25,11 @@ Button {
     signal effortActivated(int index)
     signal tierActivated(int index)
 
-    function openPicker() { optionsPopup.open() }
+    function openPicker() {
+        if ((control.effortModel && control.effortModel.length > 0) || (control.tierModel && control.tierModel.length > 0)) {
+            optionsPopup.open()
+        }
+    }
 
     implicitHeight: Theme.compactControlHeight
     implicitWidth: Math.max(96, compactRow.implicitWidth + 14)
@@ -35,7 +39,10 @@ Button {
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down ? 0.97 : 1
-    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+    onClicked: {
+        if (!((control.effortModel && control.effortModel.length > 0) || (control.tierModel && control.tierModel.length > 0))) return
+        optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+    }
 
     Behavior on scale {
         enabled: !frontend.reduceMotion

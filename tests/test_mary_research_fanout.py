@@ -22,7 +22,6 @@ from vrsoft_extractor.mary.research_fanout import (
     MAX_PARALLEL_RESEARCHERS,
     ModuleResearch,
     build_researcher_prompt,
-    build_synthesis_prompt,
     fanout_payload,
     merge_module_research,
     parse_researcher_output,
@@ -354,10 +353,7 @@ class _FlakyFanoutProvider(_FakeFanoutProvider):
         callback(RuntimeEvent(conversation_id, "turn_completed"))
 
 
-def test_run_module_fanout_publishes_merged_answer(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
-    )
+def test_run_module_fanout_publishes_merged_answer(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     database.upsert_document(
@@ -441,10 +437,7 @@ def test_run_module_fanout_publishes_merged_answer(tmp_path: Path, monkeypatch) 
     assert any(row["document_id"] == 1 for row in citations)
 
 
-def test_researchers_cycle_through_model_pool(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
-    )
+def test_researchers_cycle_through_model_pool(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
@@ -527,7 +520,7 @@ def test_researcher_retry_recovers_transient_failure(tmp_path: Path) -> None:
     assert len(pdv_calls) == 2, "PDV deveria ser re-tentado uma vez"
 
 
-def test_all_researchers_failed_falls_back_to_direct(tmp_path: Path) -> None:
+def test_all_researchers_failed_does_not_bypass_budget_and_validation(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
@@ -578,14 +571,12 @@ def test_all_researchers_failed_falls_back_to_direct(tmp_path: Path) -> None:
         if assistant_rows:
             break
         threading.Event().wait(0.05)
-    assert assistant_rows and assistant_rows[-1]["content"] == "RESPOSTA DIRETA"
+    assert assistant_rows and "evid" in assistant_rows[-1]["content"]
+    assert "RESPOSTA DIRETA" not in assistant_rows[-1]["content"]
 
 
-def test_run_module_fanout_is_provider_agnostic(tmp_path: Path, monkeypatch) -> None:
+def test_run_module_fanout_is_provider_agnostic(tmp_path: Path) -> None:
     """The fan-out only needs the standard provider surface (opencode works)."""
-    monkeypatch.setattr(
-        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
-    )
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)

@@ -39,7 +39,7 @@ Button {
             Layout.preferredWidth: 25
             Layout.preferredHeight: 25
             kind: control.iconKind
-            foreground: frontend.palette.mutedText
+            foreground: Theme.palette.mutedText
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -47,7 +47,7 @@ Button {
             Text {
                 Layout.fillWidth: true
                 text: control.title
-                color: frontend.palette.text
+                color: Theme.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(14)
                 font.weight: Font.DemiBold
@@ -56,7 +56,7 @@ Button {
             Text {
                 Layout.fillWidth: true
                 text: control.description
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(11)
                 font.weight: Font.Normal
@@ -68,9 +68,9 @@ Button {
     background: Rectangle {
         radius: 10
         color: control.down || control.hovered
-            ? frontend.palette.chatControl : frontend.palette.chatComposer
+            ? Theme.palette.chatControl : Theme.palette.chatComposer
         border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder
+        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }

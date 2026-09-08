@@ -497,4 +497,7 @@ APPROVAL_PRESETS: dict[str, ApprovalPreset] = {
 
 
 def approval_preset(profile: str) -> ApprovalPreset:
+    if profile == "research_readonly":
+        return ApprovalPreset("research_readonly", "Pesquisa somente leitura", "Pesquisa recuperável sem alterações externas.",
+                              "read-only", "readOnly", "never")
     return APPROVAL_PRESETS.get(str(profile), APPROVAL_PRESETS["auto"])

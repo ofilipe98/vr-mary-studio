@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from vrsoft_extractor.mary.antigravity import AntigravityProvider, google_account_environment
+from vrsoft_extractor.mary.antigravity import LegacyAntigravityProvider as AntigravityProvider, google_account_environment
+from vrsoft_extractor.mary.antigravity_provider import AntigravityProvider as AcpProvider
 from vrsoft_extractor.mary.providers import ProviderError, provider_registry
 
 
@@ -85,7 +86,7 @@ def test_google_environment_removes_api_keys(tmp_path, monkeypatch):
 
 def test_registered_and_new_session_has_no_fabricated_id():
     providers = provider_registry()
-    assert isinstance(providers["antigravity"], AntigravityProvider)
+    assert isinstance(providers["antigravity"], AcpProvider)
     assert providers["antigravity"].start_conversation("chat", "default", "medium", Path.cwd()) == ""
     for provider in providers.values():
         provider.close()

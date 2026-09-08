@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -7,7 +8,20 @@ import "../theme"
 
 Item {
     id: root
+    property alias chatHeaderHandle: chatHeader
+    property alias chatMainHandle: chatMain
+    property alias composerAssistDelayHandle: composerAssistDelay
+    property alias landingHandle: landing
+    property alias messageListHandle: messageList
+    readonly property real usagePanelHeight: usageLimitsDialog.visible ? usageLimitsDialog.height + 8 : 0
+    readonly property var approvalSelector: composerCard.approvalSelectorItem
+    readonly property var composerInput: composerCard.composerInputItem
+    readonly property var effortSelector: composerCard.effortSelectorItem
+    readonly property var modelSelector: composerCard.modelSelectorItem
     objectName: "chatPage"
+    required property var chatBridge
+    required property var studioBridge
+    required property var frontendBridge
     component ProjectMenuEntry: MenuItem {
         id: entry
         implicitHeight: 34
@@ -43,6 +57,7 @@ Item {
     ]
     property var approvalPayload: ({})
     property var composerSuggestions: []
+    property int composerAssistIndex: 0
     property var surfaceFiles: []
     property var expandedFileFolders: ({})
     property string surfaceFilePath: ""
@@ -57,7 +72,7 @@ Item {
         { key: "support", label: "Suporte", icon: "expertSupport" },
         { key: "implementation", label: "Implantação", icon: "expertImplementation" }
     ]
-    property real expertReveal: chat.vrMode !== "off" ? 1.0 : 0.0
+    property real expertReveal: root.chatBridge.vrMode !== "off" ? 1.0 : 0.0
     readonly property real expertStripHeight: 42 * expertReveal
     property string addProjectView: "sources"
     property bool projectSettingsVisible: false
@@ -77,20 +92,20 @@ Item {
     ]
 
     Behavior on conversationSidebarWidth {
-        enabled: !frontend.reduceMotion
+        enabled: !root.frontendBridge.reduceMotion
         NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
     }
     Behavior on surfacePanelWidth {
-        enabled: !frontend.reduceMotion
+        enabled: !root.frontendBridge.reduceMotion
         NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
     }
     Behavior on expertReveal {
-        enabled: !frontend.reduceMotion
+        enabled: !root.frontendBridge.reduceMotion
         NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
     }
 
     onSurfaceIndexChanged: {
-        if (frontend.reduceMotion || !root.surfaceVisible) {
+        if (root.frontendBridge.reduceMotion || !root.surfaceVisible) {
             surfaceSwitch.stop()
             root.displayedSurfaceIndex = root.surfaceIndex
             surfaceStack.opacity = 1
@@ -103,18 +118,18 @@ Item {
     Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
 
     Connections {
-        target: chat
+        target: root.chatBridge
         function onApprovalRequested(payload) {
             root.approvalPayload = payload
             approvalDialog.open()
         }
         function onStateChanged() {
-            if (chat.turnRunning && !root.previousTurnRunning) {
+            if (root.chatBridge.turnRunning && !root.previousTurnRunning) {
                 root.taskBarDismissed = false
                 root.taskBarExpanded = false
                 root.activityExpanded = false
             }
-            root.previousTurnRunning = chat.turnRunning
+            root.previousTurnRunning = root.chatBridge.turnRunning
         }
         function onMessageCopied(_content) {
             root.copyFeedbackVisible = true
@@ -125,7 +140,7 @@ Item {
             composerInput.cursorPosition = composerInput.length
         }
         function onBrowserNavigationRequested(address) {
-            if (!frontend.browserAgentAccess || !frontend.browserAutoShowPreview)
+            if (!root.frontendBridge.browserAgentAccess || !root.frontendBridge.browserAutoShowPreview)
                 return
             root.openSurface(1)
             root.navigateBrowser(address)
@@ -136,19 +151,24 @@ Item {
     }
 
     Connections {
-        target: studio
-        function onProvidersChanged() { chat.refreshModels() }
+        target: root.studioBridge
+        function onProvidersChanged() {
+            var providers = root.studioBridge.providerItems
+            for (var i = 0; i < providers.length; ++i)
+                if (providers[i].runtimeState === "installing") return
+            root.chatBridge.refreshModels()
+        }
     }
 
     Component.onCompleted: {
-        root.previousTurnRunning = chat.turnRunning
+        root.previousTurnRunning = root.chatBridge.turnRunning
         // Finish constructing delegates before refreshModels emits stateChanged.
-        Qt.callLater(chat.refreshModels)
+        Qt.callLater(root.chatBridge.refreshModels)
     }
 
     Timer {
         interval: 1000
-        running: root.visible && chat.turnRunning
+        running: root.visible && root.chatBridge.turnRunning
         repeat: true
         onTriggered: root.clockNow = Date.now() / 1000
     }
@@ -189,12 +209,12 @@ Item {
             transform: Translate {
                 x: root.conversationSidebarVisible ? 0 : -Theme.motionDistance
                 Behavior on x {
-                    enabled: !frontend.reduceMotion
+                    enabled: !root.frontendBridge.reduceMotion
                     NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
                 }
             }
             Behavior on opacity {
-                enabled: !frontend.reduceMotion
+                enabled: !root.frontendBridge.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
             Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatDivider }
@@ -208,7 +228,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 44
                     showToggle: false
-                    onBrandActivated: frontend.setCurrentPage(1)
+                    onBrandActivated: root.frontendBridge.setCurrentPage(1)
                 }
 
                 RowLayout {
@@ -269,8 +289,8 @@ Item {
                         onClicked: {
                             root.projectSettingsVisible = false
                             conversationSearch.clear()
-                            chat.saveCurrentDraft(composerInput.text)
-                            chat.startNewChat()
+                            root.chatBridge.saveCurrentDraft(composerInput.text)
+                            root.chatBridge.startNewChat()
                             composerInput.clear()
                             Qt.callLater(function() {
                                 newChatProjectPopup.open()
@@ -292,12 +312,12 @@ Item {
                         objectName: "projectSelector"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
-                        model: chat.projectItems
-                        currentIndex: chat.currentProjectIndex
+                        model: root.chatBridge.projectItems
+                        currentIndex: root.chatBridge.currentProjectIndex
                         popupObjectName: "projectSelectorMenu"
                         onActivated: index => {
                             root.projectSettingsVisible = false
-                            chat.setProject(index)
+                            root.chatBridge.setProject(index)
                         }
                         onSettingsRequested: index => root.openProjectSettings(index)
                     }
@@ -345,12 +365,13 @@ Item {
                     reuseItems: true
                     cacheBuffer: 240
                     spacing: 3
-                    model: chat.conversations
-                    currentIndex: chat.selectedIndex
+                    model: root.chatBridge.conversations
+                    currentIndex: root.chatBridge.selectedIndex
                     ScrollBar.vertical: VrScrollBar { }
                     section.property: "section"
                     section.criteria: ViewSection.FullString
                     section.delegate: Rectangle {
+                        id: conversationSection
                         required property string section
                         width: conversationList.width
                         height: 26
@@ -358,7 +379,7 @@ Item {
                         RowLayout {
                             anchors.fill: parent
                             spacing: 7
-                            Text { text: section; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); font.weight: Font.DemiBold }
+                            Text { text: conversationSection.section; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); font.weight: Font.DemiBold }
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider; opacity: 0.6 }
                         }
                     }
@@ -380,7 +401,7 @@ Item {
                         width: conversationList.width
                         height: 78
                         radius: 8
-                        color: chat.selectedIndex === index ? Theme.palette.selection
+                        color: root.chatBridge.selectedIndex === index ? Theme.palette.selection
                             : itemHover.hovered ? Theme.palette.chatControl : "transparent"
                         ColumnLayout {
                             anchors.left: parent.left
@@ -432,13 +453,14 @@ Item {
                                                 -Math.PI / 2, Math.PI * 0.85); ctx.stroke()
                                         }
                                         RotationAnimator on rotation {
-                                            running: conversationItem.running && !frontend.reduceMotion
+                                            running: conversationItem.running && !root.frontendBridge.reduceMotion
                                             loops: Animation.Infinite
                                             from: 0; to: 360; duration: 1100
                                         }
                                     }
                                 }
                                 Text {
+                                    visible: !conversationItem.editing
                                     text: conversationItem.running
                                         ? "Trabalhando " + root.elapsedFromEpoch(conversationItem.startedAtEpoch)
                                         : root.relativeAge(conversationItem.updatedAt)
@@ -446,6 +468,30 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                     font.weight: conversationItem.running ? Font.DemiBold : Font.Normal
+                                }
+                                VrIconButton {
+                                    id: discardDraftButton
+                                    objectName: "discardDraftButton"
+                                    visible: conversationItem.editing
+                                    Layout.preferredWidth: 18
+                                    Layout.preferredHeight: 18
+                                    implicitWidth: 18
+                                    implicitHeight: 18
+                                    iconKind: "close"
+                                    iconSize: 10
+                                    round: true
+                                    focusPolicy: Qt.NoFocus
+                                    foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Descartar rascunho"
+                                    ToolTip.delay: 300
+                                    Accessible.name: "Descartar rascunho"
+                                    onClicked: {
+                                        if (conversationItem.conversationId === root.chatBridge.selectedConversationId) {
+                                            composerInput.clear()
+                                        }
+                                        root.chatBridge.discardDraft(conversationItem.conversationId)
+                                    }
                                 }
                             }
                             Text {
@@ -488,6 +534,12 @@ Item {
                         TapHandler {
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             onTapped: function(eventPoint, button) {
+                                if (discardDraftButton.visible) {
+                                    var p = discardDraftButton.mapFromItem(conversationItem, eventPoint.position.x, eventPoint.position.y)
+                                    if (p.x >= 0 && p.x <= discardDraftButton.width && p.y >= 0 && p.y <= discardDraftButton.height) {
+                                        return
+                                    }
+                                }
                                 if (button === Qt.RightButton) {
                                     var menuPoint = conversationItem.mapToItem(
                                         root, eventPoint.position.x, eventPoint.position.y)
@@ -501,7 +553,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        visible: !chat.hasConversations
+                        visible: !root.chatBridge.hasConversations
                         width: parent.width - 20
                         text: conversationSearch.text ? "Nenhuma conversa encontrada." : "Nenhum chat iniciado."
                         color: Theme.palette.mutedText
@@ -534,7 +586,7 @@ Item {
                     ToolTip.visible: hovered
                     ToolTip.text: "Configurações"
                     Accessible.name: "Abrir Configurações"
-                    onClicked: frontend.setCurrentPage(7)
+                    onClicked: root.frontendBridge.setCurrentPage(7)
                 }
             }
         }
@@ -552,12 +604,12 @@ Item {
                 sidebarVisible: root.conversationSidebarVisible
                 panelVisible: root.surfaceVisible
                 hasMessages: messageList.count > 0
-                title: chat.selectedTitle
-                projectLabel: chat.currentProjectIndex > 0 && chat.currentProjectIndex < chat.projectItems.length
-                    ? chat.projectItems[chat.currentProjectIndex].label : "Projeto"
-                agentCount: chat.agentItems.length
+                title: root.chatBridge.selectedTitle
+                projectLabel: root.chatBridge.currentProjectIndex > 0 && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
+                    ? root.chatBridge.projectItems[root.chatBridge.currentProjectIndex].label : "Projeto"
+                agentCount: root.chatBridge.agentItems.length
                 onToggleSidebar: root.conversationSidebarVisible = !root.conversationSidebarVisible
-                onCopyConversation: chat.copyConversation()
+                onCopyConversation: root.chatBridge.copyConversation()
                 onShowAgents: {
                     root.openSurface(5)
                     if (root.selectedAgentIndex < 0) root.selectedAgentIndex = 0
@@ -621,7 +673,7 @@ Item {
                     spacing: Theme.messageGap
                     Repeater {
                         id: messageRepeater
-                        model: chat.messages
+                        model: root.chatBridge.messages
                         delegate: Item {
                             id: messageItem
                             required property int index
@@ -644,11 +696,11 @@ Item {
                             Component {
                                 id: activityComponent
                                 VrChatActivity {
-                                    items: messageItem.messageKey ? messageItem.activityData : chat.traceItems
-                                    reasoningText: messageItem.messageKey ? "" : chat.reasoningText
-                                    statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : chat.statusText
-                                    elapsedLabel: chat.activityElapsedLabel
-                                    running: messageItem.messageKey ? messageItem.isStreaming : chat.turnRunning
+                                    items: messageItem.messageKey ? messageItem.activityData : root.chatBridge.traceItems
+                                    reasoningText: messageItem.messageKey ? "" : root.chatBridge.reasoningText
+                                    statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : root.chatBridge.statusText
+                                    elapsedLabel: root.chatBridge.activityElapsedLabel
+                                    running: messageItem.messageKey ? messageItem.isStreaming : root.chatBridge.turnRunning
                                     expanded: root.activityExpanded
                                     onToggleRequested: root.activityExpanded = !root.activityExpanded
                                 }
@@ -657,7 +709,7 @@ Item {
                                 id: userComponent
                                 VrUserMessage {
                                     content: messageItem.displayContent
-                                    onCopyRequested: chat.copyMessage(messageItem.index)
+                                    onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
                                 }
                             }
                             Component {
@@ -665,8 +717,8 @@ Item {
                                 VrAssistantMessage {
                                     onLayoutChanging: messageList.preserveReader()
                                     markdown: messageItem.displayContent
-                                    streaming: messageItem.isStreaming || (chat.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
-                                    onCopyRequested: chat.copyMessage(messageItem.index)
+                                    streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
+                                    onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
                                 }
                             }
                         }
@@ -735,19 +787,93 @@ Item {
                 objectName: "chatLanding"
                 visible: messageList.count === 0
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: composerCard.y - height - 24
+                y: composerCard.y - root.usagePanelHeight - height - 24
                 width: Math.min(parent.width - 48, 720)
                 spacing: 8
-                Text {
-                    width: parent.width
-                    text: root.greetingText()
-                    color: Theme.palette.text
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(22)
-                    font.weight: Font.Normal
-                    horizontalAlignment: Text.AlignHCenter
+                RowLayout {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, parent.width)
+                    spacing: 6
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        text: landingProjectButton.projectLabel.length
+                            ? "Como posso ajudar no projeto" : "Como posso ajudar no"
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(22)
+                        wrapMode: Text.WordWrap
+                    }
+                    VrButton {
+                        id: landingProjectButton
+                        objectName: "landingProjectButton"
+                        Layout.maximumWidth: landing.width * 0.55
+                        Layout.minimumWidth: 0
+                        Layout.preferredWidth: implicitWidth
+                        implicitWidth: contentItem.implicitWidth
+                        implicitHeight: contentItem.implicitHeight
+                        padding: 0
+                        leftPadding: 0
+                        rightPadding: 0
+                        variant: "ghost"
+                        property string projectLabel: root.chatBridge.currentProjectIndex > 0
+                            && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
+                            ? root.chatBridge.projectItems[root.chatBridge.currentProjectIndex].label : ""
+                        text: projectLabel.length ? "Como posso ajudar no projeto " + projectLabel + "?"
+                            : "Como posso ajudar no seu projeto?"
+                        Accessible.name: text
+                        Accessible.description: "Selecionar a pasta do projeto"
+                        contentItem: Text {
+                            text: landingProjectButton.projectLabel.length ? "<u>"
+                                + landingProjectButton.projectLabel.replace(/&/g, "&amp;")
+                                    .replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</u>?"
+                                : "<u>seu projeto</u>?"
+                            textFormat: Text.RichText
+                            color: Theme.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(22)
+                            horizontalAlignment: Text.AlignLeft
+                            wrapMode: Text.WordWrap
+                        }
+                        onClicked: landingProjectMenu.open()
+                        Menu {
+                            id: landingProjectMenu
+                            objectName: "landingProjectMenu"
+                            x: 0
+                            y: parent.height + 6
+                            width: Math.min(260, Overlay.overlay.width - 16)
+                            margins: 8
+                            padding: 5
+                            background: Rectangle {
+                                radius: 10
+                                color: Theme.palette.chatSidebar
+                                border.color: Theme.palette.chatBorder
+                            }
+                            Instantiator {
+                                model: root.filteredProjects("")
+                                delegate: ProjectMenuEntry {
+                                    required property var modelData
+                                    text: modelData.label
+                                    onTriggered: root.chatBridge.setProject(Number(modelData.sourceIndex))
+                                }
+                                onObjectAdded: (index, object) => landingProjectMenu.insertItem(index, object)
+                                onObjectRemoved: (index, object) => landingProjectMenu.removeItem(object)
+                            }
+                            MenuSeparator { }
+                            ProjectMenuEntry {
+                                objectName: "landingChooseFolder"
+                                text: "Escolher pasta do projeto…"
+                                onTriggered: {
+                                    root.addProjectView = "folder"
+                                    root.chatBridge.beginProjectFolderBrowse()
+                                    addProjectPopup.open()
+                                }
+                            }
+                        }
+                    }
                 }
                 Text {
+                    objectName: "landingSupportingText"
                     width: parent.width
                     text: root.greetingPrompt()
                     color: Theme.palette.mutedText
@@ -756,62 +882,29 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }
-                VrButton {
-                    id: landingProjectButton
-                    objectName: "landingProjectButton"
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: Math.min(implicitWidth, parent.width)
-                    variant: "ghost"
-                    text: (chat.currentProjectIndex > 0
-                        ? chat.projectItems[chat.currentProjectIndex].label : "Escolher projeto") + "  ▾"
-                    onClicked: landingProjectMenu.open()
-                    Menu {
-                        id: landingProjectMenu
-                        objectName: "landingProjectMenu"
-                        y: parent.height
-                        width: 260
-                        padding: 5
-                        background: Rectangle {
-                            radius: 10
-                            color: Theme.palette.chatSidebar
-                            border.color: Theme.palette.chatBorder
-                        }
-                        Instantiator {
-                            model: root.filteredProjects("")
-                            delegate: ProjectMenuEntry {
-                                required property var modelData
-                                text: modelData.label
-                                onTriggered: chat.setProject(Number(modelData.sourceIndex))
-                            }
-                            onObjectAdded: (index, object) => landingProjectMenu.insertItem(index, object)
-                            onObjectRemoved: (index, object) => landingProjectMenu.removeItem(object)
-                        }
-                        MenuSeparator { }
-                        ProjectMenuEntry {
-                            objectName: "landingChooseFolder"
-                            text: "Escolher pasta do projeto…"
-                            onTriggered: {
-                                root.addProjectView = "folder"
-                                chat.beginProjectFolderBrowse()
-                                addProjectPopup.open()
-                            }
-                        }
-                    }
-                }
+            }
+
+            VrResearchResume {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: composerCard.top
+                anchors.bottomMargin: 10
+                z: 20
+                research: root.chatBridge.resumableResearch || ({})
+                onResumeRequested: function(grantBudget) { root.chatBridge.resumeResearch(grantBudget) }
             }
 
             VrTaskBar {
                 id: taskBar
-                visible: chat.turnRunning
-                    && chat.activitySteps.length > 0
+                visible: root.chatBridge.turnRunning
+                    && root.chatBridge.activitySteps.length > 0
                     && !root.taskBarDismissed
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
                 anchors.bottomMargin: 8
                 width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
                 z: 20
-                steps: chat.activitySteps
-                running: chat.turnRunning
+                steps: root.chatBridge.activitySteps
+                running: root.chatBridge.turnRunning
                 expanded: root.taskBarExpanded
                 onToggleRequested: root.taskBarExpanded = !root.taskBarExpanded
                 onCloseRequested: root.taskBarDismissed = true
@@ -870,244 +963,7 @@ Item {
                 }
             }
 
-            Rectangle {
-                id: composerCard
-                objectName: "chatComposerCard"
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: messageList.count > 0 ? parent.height - height - root.expertStripHeight - 24
-                    : Math.max(chatHeader.height + landing.height + 32,
-                        (parent.height + chatHeader.height + landing.height + 24 - height - root.expertStripHeight) / 2)
-                width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
-                height: composerInput.height
-                    + (chat.attachments.length ? 88 : 54)
-                radius: Theme.composerRadius
-                color: Theme.palette.chatComposer
-                border.width: 1
-                border.color: root.composerDropActive
-                    ? Theme.palette.brandOrange
-                    : composerInput.activeFocus
-                        ? Theme.palette.focus : Theme.palette.chatBorder
-
-                DropArea {
-                    id: composerDropArea
-                    objectName: "chatComposerDropArea"
-                    anchors.fill: parent
-                    z: 100
-                    onEntered: function(drag) {
-                        root.composerDropActive = drag.hasUrls
-                        drag.accepted = drag.hasUrls
-                    }
-                    onExited: root.composerDropActive = false
-                    onDropped: function(drop) {
-                        root.composerDropActive = false
-                        if (drop.hasUrls) {
-                            chat.addDroppedAttachments(drop.urls)
-                            drop.acceptProposedAction()
-                        }
-                    }
-                }
-
-                VrTextArea {
-                    id: composerInput
-                    objectName: "chatComposerInput"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
-                    anchors.topMargin: 8
-                    height: Math.min(chatMain.height * 0.28, Math.max(54,
-                        contentHeight + topPadding + bottomPadding))
-                    clip: true
-                    placeholderText: chatMain.width < 600 ? "Pergunte algo…" : "Pergunte algo…  @ arquivos · / comandos"
-                    readOnly: chat.turnRunning
-                    background: Item { }
-                    onTextChanged: composerAssistDelay.restart()
-                    Keys.priority: Keys.BeforeItem
-                    Keys.onPressed: event => {
-                        if (event.matches(StandardKey.Paste) && chat.pasteClipboardAttachment())
-                            event.accepted = true
-                    }
-                    Keys.onReturnPressed: event => root.handleComposerEnter(event)
-                    Keys.onEnterPressed: event => root.handleComposerEnter(event)
-                }
-
-                ListView {
-                    id: attachmentList
-                    objectName: "chatAttachmentList"
-                    visible: chat.attachments.length > 0
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: composerInput.bottom
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
-                    anchors.topMargin: 2
-                    height: visible ? 30 : 0
-                    orientation: ListView.Horizontal
-                    spacing: 6
-                    clip: true
-                    model: chat.attachments
-                    delegate: Rectangle {
-                        required property int index
-                        required property var modelData
-                        width: Math.min(220, attachmentLabel.implicitWidth + 34)
-                        height: 26
-                        radius: 8
-                        color: Theme.palette.chatControl
-                        border.width: 1
-                        border.color: Theme.palette.chatBorder
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 4
-                            spacing: 4
-                            Text {
-                                id: attachmentLabel
-                                width: parent.parent.width - 30
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.name
-                                elide: Text.ElideMiddle
-                                color: Theme.palette.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(10)
-                            }
-                            VrIconButton {
-                                width: 22
-                                height: 22
-                                anchors.verticalCenter: parent.verticalCenter
-                                iconKind: "close"
-                                iconSize: 11
-                                foreground: Theme.palette.mutedText
-                                onClicked: chat.removeAttachment(index)
-                            }
-                        }
-                    }
-                }
-
-                Flickable {
-                    id: composerControls
-                    anchors.left: parent.left
-                    anchors.right: sendButton.left
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 8
-                    anchors.bottomMargin: 8
-                    height: 34
-                    contentWidth: controlsRow.width
-                    contentHeight: height
-                    clip: true
-                    flickableDirection: Flickable.HorizontalFlick
-                    boundsBehavior: Flickable.StopAtBounds
-                    RowLayout {
-                    id: controlsRow
-                    width: Math.max(implicitWidth, composerControls.width)
-                    height: 34
-                    spacing: 5
-                    VrIconButton {
-                        id: attachButton
-                        objectName: "chatAttachButton"
-                        implicitWidth: 32
-                        implicitHeight: 32
-                        iconKind: "attachment"
-                        iconSize: 17
-                        foreground: Theme.palette.mutedText
-                        enabled: !chat.turnRunning
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Anexar arquivos"
-                        Accessible.name: "Anexar arquivos"
-                        onClicked: chat.chooseAttachments()
-                    }
-                    VrModelPicker {
-                        id: modelSelector
-                        objectName: "chatModelPicker"
-                        model: chat.modelItems
-                        currentIndex: chat.modelIndex
-                        enabled: !chat.turnRunning
-                        onActivated: index => chat.setModel(index)
-                        onFavoriteToggled: index => chat.toggleModelFavorite(index)
-                    }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder }
-                    VrReasoningPicker {
-                        id: effortSelector
-                        objectName: "chatReasoningPicker"
-                        effortModel: chat.effortItems
-                        tierModel: chat.serviceTierItems
-                        currentEffortIndex: chat.effortIndex
-                        currentTierIndex: chat.serviceTierIndex
-                        onEffortActivated: index => chat.setEffort(index)
-                        onTierActivated: index => chat.setServiceTier(index)
-                    }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder }
-                    VrPermissionPicker {
-                        id: approvalSelector
-                        objectName: "chatPermissionPicker"
-                        model: chat.approvalItems
-                        currentIndex: chat.approvalIndex
-                        onActivated: index => chat.setApproval(index)
-                    }
-                    Item { Layout.fillWidth: true }
-                    VrButton {
-                        id: vrModeButton
-                        objectName: "vrModeButton"
-                        implicitWidth: chat.vrMode === "ultra" ? 104 : 58
-                        implicitHeight: 32
-                        leftPadding: 7; rightPadding: 7
-                        text: chat.vrMode === "ultra" ? "VR Ultra" : "VR"
-                        variant: chat.vrMode !== "off" ? "primary" : "ghost"
-                        background: Rectangle {
-                            radius: 10
-                            color: chat.vrMode !== "off"
-                                ? (parent.down
-                                    ? Qt.darker(Theme.palette.accessibleOrange, 1.12)
-                                    : Theme.palette.accessibleOrange)
-                                : parent.hovered ? Theme.palette.chatControl : "transparent"
-                            border.width: chat.vrMode !== "off" || parent.activeFocus ? 1 : 0
-                            border.color: chat.vrMode === "ultra"
-                                ? Theme.palette.brandOrange
-                                : parent.activeFocus ? Theme.palette.focus : Theme.palette.brandOrange
-                        }
-                        onClicked: chat.cycleVrMode()
-                    }
-                    VrContextButton {
-                        id: contextUsageButton
-                        objectName: "contextUsageButton"
-                        implicitWidth: 30; implicitHeight: 30
-                        visible: chat.hasContextWindow
-                        fraction: chat.contextUsageFraction
-                        usageLabel: chat.contextUsageCompactLabel
-                        totalLabel: chat.totalProcessedLabel
-                        note: chat.contextUsageNote
-                    }
-                    }
-                }
-                    VrIconButton {
-                        id: sendButton
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.rightMargin: 12
-                        anchors.bottomMargin: 8
-                        implicitWidth: 32; implicitHeight: 32; round: true
-                        enabled: chat.turnRunning || composerInput.text.trim().length > 0 || chat.attachments.length > 0
-                        ToolTip.visible: hovered || activeFocus
-                        ToolTip.text: chat.turnRunning ? "Interromper geração" : "Enviar · Enter (Shift+Enter para nova linha)"
-                        Accessible.name: chat.turnRunning ? "Interromper geração" : "Enviar mensagem"
-                        iconSource: Qt.resolvedUrl(chat.turnRunning
-                            ? "../../../assets/chat-stop.svg"
-                            : "../../../assets/chat-send.svg")
-                        foreground: "#FFFFFF"
-                        background: Rectangle {
-                            radius: height / 2
-                            color: chat.turnRunning
-                                ? (parent.down
-                                    ? Qt.darker(Theme.palette.danger, 1.18)
-                                    : Theme.palette.danger)
-                                : (parent.down
-                                    ? Theme.palette.brandOrange
-                                    : Theme.palette.accessibleOrange)
-                        }
-                        onClicked: chat.turnRunning ? chat.stopTurn() : root.submitMessage()
-                    }
-            }
+            VrChatComposer { id: composerCard; page: root }
 
             Item {
                 id: expertProfileStrip
@@ -1175,83 +1031,72 @@ Item {
                 }
             }
 
-            // VR Ultra uses only the institutional orange. The restrained
-            // pulse communicates activity without introducing other colors.
+            // One continuous gradient stroke: no overlapping dashes or seam at the loop.
             Rectangle {
                 id: ultraGlowOuter
-                visible: chat.vrMode === "ultra"
+                visible: root.chatBridge.vrMode === "ultra"
                 anchors.centerIn: composerCard
-                width: composerCard.width + 16
-                height: composerCard.height + 16
-                radius: 30
+                width: composerCard.width + 6
+                height: composerCard.height + 6
+                radius: composerCard.radius + 3
                 color: "transparent"
-                border.width: 5
-                border.color: Qt.rgba(1.0, 0.45, 0.0, 0.18)
-                opacity: 0.78
-                SequentialAnimation on opacity {
-                    running: ultraGlowOuter.visible && root.visible && chat.turnRunning && !frontend.reduceMotion
-                    loops: Animation.Infinite
-                    NumberAnimation { from: 0.55; to: 0.86; duration: 1400; easing.type: Easing.InOutSine }
-                    NumberAnimation { from: 0.86; to: 0.55; duration: 1400; easing.type: Easing.InOutSine }
-                }
+                border.width: 3
+                border.color: Qt.alpha(Theme.palette.accessibleOrange, 0.12)
             }
             Canvas {
                 id: ultraArc
-                visible: chat.vrMode === "ultra"
+                objectName: "chatUltraBorder"
+                visible: root.chatBridge.vrMode === "ultra"
                 anchors.centerIn: composerCard
                 width: composerCard.width + 8
                 height: composerCard.height + 8
                 property real sweep: 0
+                property real strokeWidth: root.chatBridge.turnRunning ? 2 : 1.6
+                onStrokeWidthChanged: requestPaint()
                 onSweepChanged: requestPaint()
                 onVisibleChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
 
-                function traceRoundRect(ctx, inset, radius) {
-                    var left = inset
-                    var top = inset
-                    var right = width - inset
-                    var bottom = height - inset
-                    ctx.beginPath()
-                    ctx.moveTo(left + radius, top)
-                    ctx.lineTo(right - radius, top)
-                    ctx.quadraticCurveTo(right, top, right, top + radius)
-                    ctx.lineTo(right, bottom - radius)
-                    ctx.quadraticCurveTo(right, bottom, right - radius, bottom)
-                    ctx.lineTo(left + radius, bottom)
-                    ctx.quadraticCurveTo(left, bottom, left, bottom - radius)
-                    ctx.lineTo(left, top + radius)
-                    ctx.quadraticCurveTo(left, top, left + radius, top)
-                    ctx.closePath()
-                }
-
                 onPaint: {
                     var ctx = getContext("2d")
                     ctx.reset()
-                    ctx.lineCap = "round"
-                    ctx.lineWidth = 2.2
-                    ctx.globalAlpha = 0.92
-                    traceRoundRect(ctx, 2, 27)
-                    ctx.strokeStyle = Theme.palette.brandOrange
-                    ctx.setLineDash([])
+                    // Leave room for antialiasing outside the rounded composer edge.
+                    var inset = 3.5
+                    var left = inset, top = inset
+                    var right = width - inset, bottom = height - inset
+                    var r = Math.min(composerCard.radius + 0.5, (bottom - top) / 2)
+                    var angle = sweep * Math.PI * 2
+                    var dx = Math.cos(angle) * width / 2
+                    var dy = Math.sin(angle) * height / 2
+                    var gradient = ctx.createLinearGradient(width / 2 - dx, height / 2 - dy,
+                                                            width / 2 + dx, height / 2 + dy)
+                    gradient.addColorStop(0, "#F04424")
+                    gradient.addColorStop(0.35, "#F57616")
+                    gradient.addColorStop(0.7, "#EFB825")
+                    gradient.addColorStop(1, "#F7D85C")
+                    ctx.beginPath()
+                    ctx.moveTo(left + r, top)
+                    ctx.lineTo(right - r, top)
+                    ctx.arcTo(right, top, right, top + r, r)
+                    ctx.lineTo(right, bottom - r)
+                    ctx.arcTo(right, bottom, right - r, bottom, r)
+                    ctx.lineTo(left + r, bottom)
+                    ctx.arcTo(left, bottom, left, bottom - r, r)
+                    ctx.lineTo(left, top + r)
+                    ctx.arcTo(left, top, left + r, top, r)
+                    ctx.closePath()
+                    ctx.strokeStyle = gradient
+                    ctx.lineWidth = strokeWidth
                     ctx.stroke()
-
-                    ctx.lineWidth = 3.0
-                    ctx.lineCap = "round"
-                    var perimeter = 2 * (width + height) - 8 * 26 + 2 * Math.PI * 26
-                    traceRoundRect(ctx, 2, 27)
-                    ctx.globalAlpha = 1.0
-                    ctx.strokeStyle = Theme.palette.brandOrange
-                    ctx.setLineDash([perimeter * 0.16, perimeter * 0.06,
-                        perimeter * 0.08, perimeter * 0.70])
-                    ctx.lineDashOffset = -sweep * perimeter
-                    ctx.stroke()
-                    ctx.setLineDash([])
                 }
-                SequentialAnimation on sweep {
-                    running: ultraArc.visible && root.visible && chat.turnRunning && !frontend.reduceMotion
+                NumberAnimation on sweep {
+                    running: ultraArc.visible && root.visible && (!root.frontendBridge || !root.frontendBridge.reduceMotion)
                     loops: Animation.Infinite
-                    NumberAnimation { from: 0; to: 1; duration: 4200; easing.type: Easing.Linear }
+                    from: 0
+                    to: 1
+                    duration: root.chatBridge.turnRunning ? 3600 : 6000
+                    easing.type: Easing.Linear
                 }
             }
 
@@ -1265,17 +1110,17 @@ Item {
                 projectName: root.projectSettingsName
                 projectPath: root.projectSettingsPath
                 projectIconPath: root.projectSettingsIconPath
-                threadCount: chat.conversationCount
+                threadCount: root.chatBridge.conversationCount
                 onCloseRequested: root.projectSettingsVisible = false
                 onSaveRequested: name => {
-                    if (chat.renameProject(root.projectSettingsIndex, name))
+                    if (root.chatBridge.renameProject(root.projectSettingsIndex, name))
                         root.projectSettingsName = name
                 }
-                onIconRequested: chat.chooseProjectIcon(root.projectSettingsIndex)
-                onOpenFolderRequested: chat.openProjectFolder(root.projectSettingsIndex)
-                onCopyPathRequested: chat.copyProjectPath(root.projectSettingsIndex)
+                onIconRequested: root.chatBridge.chooseProjectIcon(root.projectSettingsIndex)
+                onOpenFolderRequested: root.chatBridge.openProjectFolder(root.projectSettingsIndex)
+                onCopyPathRequested: root.chatBridge.copyProjectPath(root.projectSettingsIndex)
                 onRemoveRequested: {
-                    if (chat.removeProject(root.projectSettingsIndex))
+                    if (root.chatBridge.removeProject(root.projectSettingsIndex))
                         root.projectSettingsVisible = false
                 }
             }
@@ -1300,12 +1145,12 @@ Item {
             transform: Translate {
                 x: root.surfaceVisible ? 0 : Theme.motionDistance
                 Behavior on x {
-                    enabled: !frontend.reduceMotion
+                    enabled: !root.frontendBridge.reduceMotion
                     NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
                 }
             }
             Behavior on opacity {
-                enabled: !frontend.reduceMotion
+                enabled: !root.frontendBridge.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
             ColumnLayout {
@@ -1346,11 +1191,11 @@ Item {
                                     padding: 0
                                     hoverEnabled: true
                                     transformOrigin: Item.Center
-                                    scale: !frontend.reduceMotion && down ? 0.97 : 1
+                                    scale: !root.frontendBridge.reduceMotion && down ? 0.97 : 1
                                     onClicked: root.surfaceIndex = modelData.page
 
                                     Behavior on scale {
-                                        enabled: !frontend.reduceMotion
+                                        enabled: !root.frontendBridge.reduceMotion
                                         NumberAnimation {
                                             duration: Theme.pressDuration
                                             easing.type: Easing.OutCubic
@@ -1403,7 +1248,7 @@ Item {
                                         }
 
                                         Behavior on color {
-                                            enabled: !frontend.reduceMotion
+                                            enabled: !root.frontendBridge.reduceMotion
                                             ColorAnimation { duration: Theme.fastDuration }
                                         }
                                     }
@@ -1466,6 +1311,7 @@ Item {
                             clip: true
                             model: root.surfaceTabs
                             delegate: Rectangle {
+                                id: surfaceChoice
                                 required property var modelData
                                 width: surfacePickerList.width
                                 height: 36
@@ -1480,18 +1326,18 @@ Item {
                                     VrLineIcon {
                                         Layout.preferredWidth: 16
                                         Layout.preferredHeight: 16
-                                        kind: modelData.kind
+                                        kind: surfaceChoice.modelData.kind
                                         foreground: Theme.palette.mutedText
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: modelData.title
+                                        text: surfaceChoice.modelData.title
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(12)
                                     }
                                     Text {
-                                        text: modelData.title.charAt(0)
+                                        text: surfaceChoice.modelData.title.charAt(0)
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(10)
@@ -1500,7 +1346,7 @@ Item {
                                 HoverHandler { id: surfaceChoiceHover }
                                 TapHandler {
                                     onTapped: {
-                                        root.openSurface(modelData.page)
+                                        root.openSurface(surfaceChoice.modelData.page)
                                         surfacePickerPopup.close()
                                     }
                                 }
@@ -1514,7 +1360,7 @@ Item {
                         }
                     }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.chatDivider }
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; Layout.preferredHeight: 1; color: Theme.palette.chatDivider }
                 StackLayout {
                     id: surfaceStack
                     objectName: "surfaceContentStack"
@@ -1662,7 +1508,7 @@ Item {
                                 spacing: 5
                                 Text {
                                     text: (Qt.platform.os === "windows" ? "PS " : "")
-                                        + frontend.projectPath + ">"
+                                        + root.frontendBridge.projectPath + ">"
                                     color: Theme.palette.text
                                     font.family: "Cascadia Mono"
                                     font.pixelSize: Theme.fontSize(12)
@@ -1671,7 +1517,7 @@ Item {
                                     id: terminalCommandInput
                                     objectName: "terminalCommandInput"
                                     Layout.fillWidth: true
-                                    readOnly: studio.terminalRunning
+                                    readOnly: root.studioBridge.terminalRunning
                                     color: Theme.palette.text
                                     selectionColor: Theme.palette.focus
                                     selectedTextColor: Theme.palette.text
@@ -1682,18 +1528,18 @@ Item {
                                     placeholderText: ""
                                     background: Item {}
                                     onAccepted: {
-                                        studio.runTerminalCommand(text)
+                                        root.studioBridge.runTerminalCommand(text)
                                         clear()
                                     }
                                 }
                                 VrButton {
                                     objectName: "terminalStopButton"
-                                    visible: studio.terminalRunning
-                                    enabled: studio.terminalRunning
+                                    visible: root.studioBridge.terminalRunning
+                                    enabled: root.studioBridge.terminalRunning
                                     text: "Parar"
                                     variant: "danger"
                                     implicitHeight: 30
-                                    onClicked: studio.stopTerminalCommand()
+                                    onClicked: root.studioBridge.stopTerminalCommand()
                                 }
                             }
                         }
@@ -1705,7 +1551,7 @@ Item {
                                 readOnly: true
                                 selectByMouse: true
                                 wrapMode: TextArea.WrapAnywhere
-                                text: studio.terminalOutput
+                                text: root.studioBridge.terminalOutput
                                 color: Theme.palette.text
                                 background: Rectangle {
                                     objectName: "terminalOutputBackground"
@@ -1724,7 +1570,7 @@ Item {
                             Layout.margins: 8
                             placeholderText: "Buscar arquivos"
                             onTextChanged: fileSearchDelay.restart()
-                            onAccepted: root.surfaceFiles = chat.fileSuggestions(text)
+                            onAccepted: root.surfaceFiles = root.chatBridge.fileSuggestions(text)
                         }
                         ListView {
                             id: fileList
@@ -1742,40 +1588,40 @@ Item {
                                 id: fileTreeRow
                                 required property var modelData
                                 width: ListView.view.width
-                                height: root.fileTreeItemVisible(modelData) ? 30 : 0
+                                height: root.fileTreeItemVisible(fileTreeRow.modelData) ? 30 : 0
                                 visible: height > 0
                                 radius: 6
-                                color: root.surfaceFilePath === modelData.path
+                                color: root.surfaceFilePath === fileTreeRow.modelData.path
                                     ? Theme.palette.selection
                                     : fileTreeHover.hovered ? Theme.palette.chatControl : "transparent"
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.leftMargin: 6 + Math.min(8, Number(modelData.depth || 0)) * 14
+                                    anchors.leftMargin: 6 + Math.min(8, Number(fileTreeRow.modelData.depth || 0)) * 14
                                     anchors.rightMargin: 6
                                     spacing: 5
                                     VrLineIcon {
-                                        visible: modelData.isDirectory === true
+                                        visible: fileTreeRow.modelData.isDirectory === true
                                         Layout.preferredWidth: 11
                                         Layout.preferredHeight: 11
-                                        kind: root.expandedFileFolders[modelData.label]
+                                        kind: root.expandedFileFolders[fileTreeRow.modelData.label]
                                             ? "chevronDown" : "chevronRight"
                                         foreground: Theme.palette.mutedText
                                     }
                                     Item {
-                                        visible: modelData.isDirectory !== true
+                                        visible: fileTreeRow.modelData.isDirectory !== true
                                         Layout.preferredWidth: 11
                                         Layout.preferredHeight: 11
                                     }
                                     VrLineIcon {
                                         Layout.preferredWidth: 15
                                         Layout.preferredHeight: 15
-                                        kind: modelData.isDirectory === true ? "folder" : "files"
-                                        foreground: modelData.isDirectory === true
+                                        kind: fileTreeRow.modelData.isDirectory === true ? "folder" : "files"
+                                        foreground: fileTreeRow.modelData.isDirectory === true
                                             ? Theme.palette.brandOrange : Theme.palette.mutedText
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: modelData.name || modelData.label
+                                        text: fileTreeRow.modelData.name || fileTreeRow.modelData.label
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontSize(11)
@@ -1785,12 +1631,12 @@ Item {
                                 HoverHandler { id: fileTreeHover }
                                 TapHandler {
                                     onTapped: {
-                                        if (modelData.isDirectory === true) {
-                                            root.toggleFileFolder(modelData.label)
+                                        if (fileTreeRow.modelData.isDirectory === true) {
+                                            root.toggleFileFolder(fileTreeRow.modelData.label)
                                             return
                                         }
-                                        root.surfaceFilePath = modelData.path
-                                        root.surfaceFilePreview = chat.readFilePreview(modelData.path)
+                                        root.surfaceFilePath = fileTreeRow.modelData.path
+                                        root.surfaceFilePreview = root.chatBridge.readFilePreview(fileTreeRow.modelData.path)
                                     }
                                 }
                             }
@@ -1808,7 +1654,7 @@ Item {
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             Text { Layout.fillWidth: true; text: root.surfaceFilePath || "Selecione um arquivo para visualizar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideMiddle }
-                            VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: studio.openLocalPath(root.surfaceFilePath) }
+                            VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: root.studioBridge.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
                             Layout.fillWidth: true
@@ -1841,7 +1687,7 @@ Item {
                             Layout.margins: 8
                             placeholderText: "Pesquisar Wikis e KB"
                             onTextChanged: contextSearchDelay.restart()
-                            onAccepted: root.contextItems = chat.contextSuggestions(text)
+                            onAccepted: root.contextItems = root.chatBridge.contextSuggestions(text)
                         }
                         ListView {
                             id: contextList
@@ -1856,6 +1702,7 @@ Item {
                             model: root.contextItems
                             ScrollBar.vertical: VrScrollBar { }
                             delegate: Rectangle {
+                        id: contextChoice
                                 required property var modelData
                                 width: ListView.view.width
                                 height: 72
@@ -1865,11 +1712,11 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     spacing: 3
-                                    Text { width: parent.width; text: modelData.title + " · " + modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: contextChoice.modelData.title + " · " + contextChoice.modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                    Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
-                                TapHandler { onTapped: root.insertReference(modelData.reference) }
+                                TapHandler { onTapped: root.insertReference(contextChoice.modelData.reference) }
                             }
                             VrMiddleAutoScroller {
                                 objectName: "contextAutoScroller"
@@ -1886,8 +1733,8 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             Layout.margins: 10
-                            text: chat.agentItems.length > 0
-                                ? "Agentes · " + chat.agentItems.length
+                            text: root.chatBridge.agentItems.length > 0
+                                ? "Agentes · " + root.chatBridge.agentItems.length
                                 : "Nenhum agente nesta conversa. As tarefas delegadas aparecerão aqui."
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
@@ -1904,42 +1751,43 @@ Item {
                             Layout.rightMargin: 8
                             clip: true
                             spacing: 4
-                            model: chat.agentItems
+                            model: root.chatBridge.agentItems
                             delegate: Rectangle {
+                        id: agentChoice
                                 required property int index
                                 required property var modelData
                                 width: agentList.width
                                 height: 58
                                 radius: 8
-                                color: root.selectedAgentIndex === index ? Theme.palette.selection
+                                color: root.selectedAgentIndex === agentChoice.index ? Theme.palette.selection
                                     : agentHover.hovered ? Theme.palette.chatControl : "transparent"
-                                border.width: root.selectedAgentIndex === index ? 1 : 0
+                                border.width: root.selectedAgentIndex === agentChoice.index ? 1 : 0
                                 border.color: Theme.palette.chatBorder
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.margins: 8
                                     Text {
-                                        text: modelData.status === "concluído" ? "✓"
-                                            : modelData.status === "falhou" ? "!"
-                                            : modelData.status === "executando" ? "●" : "○"
-                                        color: modelData.status === "concluído" ? Theme.palette.success
-                                            : modelData.status === "falhou" ? Theme.palette.danger
-                                            : modelData.status === "executando" ? Theme.palette.brandOrange
+                                        text: agentChoice.modelData.status === "concluído" ? "✓"
+                                            : agentChoice.modelData.status === "falhou" ? "!"
+                                            : agentChoice.modelData.status === "executando" ? "●" : "○"
+                                        color: agentChoice.modelData.status === "concluído" ? Theme.palette.success
+                                            : agentChoice.modelData.status === "falhou" ? Theme.palette.danger
+                                            : agentChoice.modelData.status === "executando" ? Theme.palette.brandOrange
                                             : Theme.palette.mutedText
                                         font.pixelSize: Theme.fontSize(14)
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
-                                        Text { Layout.fillWidth: true; text: modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                        Text { Layout.fillWidth: true; text: modelData.model + " · " + modelData.effort + " · " + modelData.statusLabel; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: agentChoice.modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: agentChoice.modelData.model + " · " + agentChoice.modelData.effort + " · " + agentChoice.modelData.statusLabel; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
                                     }
                                 }
                                 HoverHandler { id: agentHover }
-                                TapHandler { onTapped: root.selectedAgentIndex = index }
+                                TapHandler { onTapped: root.selectedAgentIndex = agentChoice.index }
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.chatDivider }
+                        Rectangle { Layout.fillWidth: true; implicitHeight: 1; Layout.preferredHeight: 1; color: Theme.palette.chatDivider }
                         ScrollView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -1963,16 +1811,16 @@ Item {
         }
     }
 
-    Timer { id: searchDelay; interval: 180; onTriggered: chat.setSearch(conversationSearch.text) }
+    Timer { id: searchDelay; interval: 180; onTriggered: root.chatBridge.setSearch(conversationSearch.text) }
     Timer { id: composerAssistDelay; interval: 120; onTriggered: root.updateComposerSuggestions() }
-    Timer { id: fileSearchDelay; interval: 160; onTriggered: root.surfaceFiles = chat.fileSuggestions(fileSearch.text) }
-    Timer { id: contextSearchDelay; interval: 200; onTriggered: root.contextItems = chat.contextSuggestions(contextSearch.text) }
+    Timer { id: fileSearchDelay; interval: 160; onTriggered: root.surfaceFiles = root.chatBridge.fileSuggestions(fileSearch.text) }
+    Timer { id: contextSearchDelay; interval: 200; onTriggered: root.contextItems = root.chatBridge.contextSuggestions(contextSearch.text) }
     Timer { id: copyFeedbackTimer; interval: 1300; onTriggered: root.copyFeedbackVisible = false }
 
     Connections {
-        target: chat
+        target: root.chatBridge
         function onFileSuggestionsChanged() {
-            root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
+            root.surfaceFiles = root.chatBridge.fileSuggestions(fileSearch.text)
             root.updateComposerSuggestions()
         }
     }
@@ -2002,21 +1850,43 @@ Item {
             clip: true
             spacing: 2
             model: root.composerSuggestions
+            currentIndex: root.composerAssistIndex
+            highlightMoveDuration: 0
             delegate: Rectangle {
+                id: assistItem
+                required property int index
                 required property var modelData
                 width: assistList.width
                 height: 44
                 radius: 7
-                color: assistHover.hovered ? Theme.palette.chatControl : "transparent"
+                color: (assistItem.index === root.composerAssistIndex || assistHover.hovered) ? Theme.palette.chatControl : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 9
                     anchors.rightMargin: 9
-                    Text { Layout.preferredWidth: 140; text: modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                    Text { Layout.fillWidth: true; text: modelData.description || ""; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                    Text {
+                        Layout.preferredWidth: 140
+                        text: assistItem.modelData.label
+                        color: assistItem.modelData.action === "skill" ? Theme.palette.brandOrange : Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: assistItem.modelData.description || ""
+                        color: Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(10)
+                        elide: Text.ElideRight
+                    }
                 }
-                HoverHandler { id: assistHover }
-                TapHandler { onTapped: root.chooseComposerSuggestion(modelData) }
+                HoverHandler {
+                    id: assistHover
+                    onHoveredChanged: if (hovered) root.composerAssistIndex = assistItem.index
+                }
+                TapHandler { onTapped: root.chooseComposerSuggestion(assistItem.modelData) }
             }
         }
     }
@@ -2298,9 +2168,9 @@ Item {
                     width: addProjectList.width
                     height: 48
                     radius: 7
-                    color: sourceHover.hovered && modelData.enabled
+                    color: sourceHover.hovered && sourceRow.modelData.enabled
                         ? Theme.palette.chatControl : "transparent"
-                    opacity: modelData.enabled ? 1.0 : 0.72
+                    opacity: sourceRow.modelData.enabled ? 1.0 : 0.72
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 9
@@ -2309,8 +2179,8 @@ Item {
                         VrLineIcon {
                             Layout.preferredWidth: 18
                             Layout.preferredHeight: 18
-                            kind: modelData.icon
-                            foreground: modelData.enabled
+                            kind: sourceRow.modelData.icon
+                            foreground: sourceRow.modelData.enabled
                                 ? Theme.palette.text : Theme.palette.mutedText
                         }
                         ColumnLayout {
@@ -2318,16 +2188,16 @@ Item {
                             spacing: 0
                             Text {
                                 Layout.fillWidth: true
-                                text: modelData.title
+                                text: sourceRow.modelData.title
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
-                                font.weight: modelData.key === "local" ? Font.DemiBold : Font.Normal
+                                font.weight: sourceRow.modelData.key === "local" ? Font.DemiBold : Font.Normal
                                 elide: Text.ElideRight
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: modelData.description
+                                text: sourceRow.modelData.description
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(10)
@@ -2335,7 +2205,7 @@ Item {
                             }
                         }
                         Rectangle {
-                            visible: modelData.badge.length > 0
+                            visible: sourceRow.modelData.badge.length > 0
                             Layout.preferredWidth: badgeText.implicitWidth + 14
                             Layout.preferredHeight: 24
                             radius: 5
@@ -2345,7 +2215,7 @@ Item {
                             Text {
                                 id: badgeText
                                 anchors.centerIn: parent
-                                text: modelData.badge
+                                text: sourceRow.modelData.badge
                                 color: Theme.palette.warning
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(9)
@@ -2421,11 +2291,12 @@ Item {
             spacing: 2
             Repeater {
                 model: [
-                    { kind: "pin", label: chat.selectedPinned ? "Desafixar conversa" : "Fixar conversa", action: "pin" },
+                    { kind: "pin", label: root.chatBridge.selectedPinned ? "Desafixar conversa" : "Fixar conversa", action: "pin" },
                     { kind: "archive", label: "Arquivar conversa", action: "archive" },
                     { kind: "trash", label: "Excluir conversa", action: "delete" }
                 ]
                 delegate: Rectangle {
+                        id: conversationAction
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
@@ -2433,15 +2304,15 @@ Item {
                     color: menuHover.hovered ? Theme.palette.chatControl : "transparent"
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9; spacing: 8
-                        VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: modelData.kind; foreground: modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
-                        Text { Layout.fillWidth: true; text: modelData.label; color: modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                        VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
+                        Text { Layout.fillWidth: true; text: conversationAction.modelData.label; color: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                     }
                     HoverHandler { id: menuHover }
                     TapHandler {
                         onTapped: {
                             conversationContextMenu.close()
-                            if (modelData.action === "pin") chat.togglePinnedCurrent()
-                            else if (modelData.action === "archive") chat.archiveCurrentConversation()
+                            if (conversationAction.modelData.action === "pin") root.chatBridge.togglePinnedCurrent()
+                            else if (conversationAction.modelData.action === "archive") root.chatBridge.archiveCurrentConversation()
                             else conversationDeleteDialog.open()
                         }
                     }
@@ -2457,6 +2328,19 @@ Item {
         }
     }
 
+    VrUsageLimitsDialog {
+        id: usageLimitsDialog
+        chatBridge: root.chatBridge
+        targetItem: composerCard
+    }
+
+    Connections {
+        target: root.chatBridge
+        function onShowUsageLimitsRequested() {
+            usageLimitsDialog.open()
+        }
+    }
+
     Dialog {
         id: extensionsDialog
         anchors.centerIn: parent
@@ -2465,13 +2349,13 @@ Item {
         modal: true
         title: "Skills, tools e MCP"
         standardButtons: Dialog.Close
-        onOpened: chat.refreshExtensions()
+        onOpened: root.chatBridge.refreshExtensions()
         contentItem: ColumnLayout {
             spacing: 8
             RowLayout {
                 Layout.fillWidth: true
                 Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
-                VrButton { text: chat.extensionsLoading ? "Carregando…" : "Atualizar"; enabled: !chat.extensionsLoading; onClicked: chat.refreshExtensions() }
+                VrButton { text: root.chatBridge.extensionsLoading ? "Carregando…" : "Atualizar"; enabled: !root.chatBridge.extensionsLoading; onClicked: root.chatBridge.refreshExtensions() }
             }
             Rectangle {
                 Layout.fillWidth: true
@@ -2485,7 +2369,7 @@ Item {
                     anchors.margins: 6
                     spacing: 3
                     clip: true
-                    model: chat.extensionItems
+                    model: root.chatBridge.extensionItems
                     delegate: VrCheckBox {
                         required property int index
                         required property var modelData
@@ -2494,15 +2378,15 @@ Item {
                         checked: modelData.selected
                         ToolTip.visible: hovered
                         ToolTip.text: modelData.description
-                        onToggled: chat.toggleExtension(index, checked)
+                        onToggled: root.chatBridge.toggleExtension(index, checked)
                     }
                     VrEmptyState {
                         anchors.centerIn: parent
-                        visible: parent.count === 0 && !chat.extensionsLoading
+                        visible: parent.count === 0 && !root.chatBridge.extensionsLoading
                         title: "Nenhum recurso encontrado"
                         description: "O catálogo depende do provedor e do projeto selecionados."
                         actionText: "Tentar novamente"
-                        onAction: chat.refreshExtensions()
+                        onAction: root.chatBridge.refreshExtensions()
                     }
                 }
             }
@@ -2522,10 +2406,10 @@ Item {
             Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
-                VrButton { text: "Negar"; onClicked: { chat.decideApproval(false, false); approvalDialog.close() } }
+                VrButton { text: "Negar"; onClicked: { root.chatBridge.decideApproval(false, false); approvalDialog.close() } }
                 Item { Layout.fillWidth: true }
-                VrButton { text: "Aprovar uma vez"; onClicked: { chat.decideApproval(true, false); approvalDialog.close() } }
-                VrButton { text: "Aprovar nesta sessão"; variant: "primary"; onClicked: { chat.decideApproval(true, true); approvalDialog.close() } }
+                VrButton { text: "Aprovar uma vez"; onClicked: { root.chatBridge.decideApproval(true, false); approvalDialog.close() } }
+                VrButton { text: "Aprovar nesta sessão"; variant: "primary"; onClicked: { root.chatBridge.decideApproval(true, true); approvalDialog.close() } }
             }
         }
         background: Rectangle { color: Theme.palette.surface; border.width: 1; border.color: Theme.palette.warning; radius: Theme.radiusPopup }
@@ -2540,13 +2424,13 @@ Item {
 
     function activateModelShortcut(index) {
         if (newChatProjectPopup.opened || approvalDialog.opened) return
-        if (chat.turnRunning || index >= chat.modelItems.length) return
-        chat.setModel(index)
+        if (root.chatBridge.turnRunning || index >= root.chatBridge.modelItems.length) return
+        root.chatBridge.setModel(index)
     }
 
     function activateConversation(conversationId) {
-        chat.saveCurrentDraft(composerInput.text)
-        chat.selectConversationId(conversationId)
+        root.chatBridge.saveCurrentDraft(composerInput.text)
+        root.chatBridge.selectConversationId(conversationId)
         messageList.followTail = true
         tailTimer.restart()
     }
@@ -2578,9 +2462,9 @@ Item {
             root.surfaceFilePath = ""
             root.surfaceFilePreview = ""
             root.expandedFileFolders = ({})
-            root.surfaceFiles = chat.fileSuggestions(fileSearch.text)
+            root.surfaceFiles = root.chatBridge.fileSuggestions(fileSearch.text)
         }
-        if (page === 5 && root.selectedAgentIndex < 0 && chat.agentItems.length)
+        if (page === 5 && root.selectedAgentIndex < 0 && root.chatBridge.agentItems.length)
             root.selectedAgentIndex = 0
     }
 
@@ -2600,12 +2484,12 @@ Item {
                 VrButton { text: "Cancelar"; onClicked: conversationDeleteDialog.close() }
                 Item { Layout.fillWidth: true }
                 VrButton {
-                    text: chat.conversationDeleteRunning ? "Excluindo…" : "Excluir"
+                    text: root.chatBridge.conversationDeleteRunning ? "Excluindo…" : "Excluir"
                     variant: "danger"
-                    enabled: !chat.conversationDeleteRunning
+                    enabled: !root.chatBridge.conversationDeleteRunning
                     onClicked: {
                         conversationDeleteDialog.close()
-                        chat.trashCurrentConversation()
+                        root.chatBridge.trashCurrentConversation()
                         composerInput.clear()
                     }
                 }
@@ -2654,7 +2538,7 @@ Item {
     }
 
     function filteredProjects(query) {
-        var source = chat.projectItems || []
+        var source = root.chatBridge.projectItems || []
         var needle = String(query || "").trim().toLowerCase()
         var result = []
         var hasConcreteProject = false
@@ -2692,7 +2576,7 @@ Item {
 
     function chooseNewChatProject(item) {
         if (!item || item.sourceIndex === undefined) return
-        chat.setProject(Number(item.sourceIndex))
+        root.chatBridge.setProject(Number(item.sourceIndex))
         newChatProjectPopup.close()
         composerInput.forceActiveFocus()
     }
@@ -2710,10 +2594,10 @@ Item {
     }
 
     function openProjectSettings(index) {
-        var source = chat.projectItems || []
+        var source = root.chatBridge.projectItems || []
         if (index <= 0 || index >= source.length) return
-        chat.setProject(index)
-        source = chat.projectItems || []
+        root.chatBridge.setProject(index)
+        source = root.chatBridge.projectItems || []
         var item = source[index]
         if (!item || !String(item.path || "").length) return
         root.surfaceVisible = false
@@ -2730,7 +2614,7 @@ Item {
 
     function syncOpenProjectSettings() {
         if (!root.projectSettingsVisible || !root.projectSettingsPath.length) return
-        var source = chat.projectItems || []
+        var source = root.chatBridge.projectItems || []
         for (var index = 1; index < source.length; ++index) {
             if (String(source[index].path || "") !== root.projectSettingsPath) continue
             root.projectSettingsIndex = index
@@ -2742,20 +2626,20 @@ Item {
     }
 
     function projectSettingsOriginalName() {
-        var source = chat.projectItems || []
+        var source = root.chatBridge.projectItems || []
         if (root.projectSettingsIndex <= 0 || root.projectSettingsIndex >= source.length)
             return ""
         return String(source[root.projectSettingsIndex].label || "")
     }
 
     function currentModelLabel() {
-        var models = chat.modelItems || []
-        var modelIndex = Number(chat.modelIndex)
+        var models = root.chatBridge.modelItems || []
+        var modelIndex = Number(root.chatBridge.modelIndex)
         var modelLabel = modelIndex >= 0 && modelIndex < models.length
             ? String(models[modelIndex].label || models[modelIndex].value || "Modelo atual")
             : "Modelo atual"
-        var efforts = chat.effortItems || []
-        var effortIndex = Number(chat.effortIndex)
+        var efforts = root.chatBridge.effortItems || []
+        var effortIndex = Number(root.chatBridge.effortIndex)
         var effortLabel = effortIndex >= 0 && effortIndex < efforts.length
             ? String(efforts[effortIndex].label || "") : ""
         return effortLabel.length ? modelLabel + " · " + effortLabel : modelLabel
@@ -2783,7 +2667,7 @@ Item {
 
     function openLocalFolderBrowser() {
         root.addProjectView = "folder"
-        chat.beginProjectFolderBrowse()
+        root.chatBridge.beginProjectFolderBrowse()
     }
 
     function activateProjectSource(sourceKey) {
@@ -2793,12 +2677,53 @@ Item {
     }
 
     function submitMessage() {
-        if ((!composerInput.text.trim().length && !chat.attachments.length) || chat.turnRunning) return
+        if ((!composerInput.text.trim().length && !root.chatBridge.attachments.length) || root.chatBridge.turnRunning) return
         var value = composerInput.text
         messageList.followTail = true
         composerInput.clear()
         composerAssistPopup.close()
-        chat.sendMessage(value)
+        root.chatBridge.sendMessage(value)
+    }
+
+    function handleComposerTab(event) {
+        if (composerAssistPopup.visible && composerSuggestions.length > 0) {
+            event.accepted = true
+            var idx = Math.max(0, Math.min(composerAssistIndex, composerSuggestions.length - 1))
+            chooseComposerSuggestion(composerSuggestions[idx])
+            return true
+        }
+        return false
+    }
+
+    function handleComposerUp(event) {
+        if (composerAssistPopup.visible && composerSuggestions.length > 0) {
+            event.accepted = true
+            composerAssistIndex = (composerAssistIndex - 1 + composerSuggestions.length) % composerSuggestions.length
+            assistList.currentIndex = composerAssistIndex
+            assistList.positionViewAtIndex(composerAssistIndex, ListView.Contain)
+            return true
+        }
+        return false
+    }
+
+    function handleComposerDown(event) {
+        if (composerAssistPopup.visible && composerSuggestions.length > 0) {
+            event.accepted = true
+            composerAssistIndex = (composerAssistIndex + 1) % composerSuggestions.length
+            assistList.currentIndex = composerAssistIndex
+            assistList.positionViewAtIndex(composerAssistIndex, ListView.Contain)
+            return true
+        }
+        return false
+    }
+
+    function handleComposerEscape(event) {
+        if (composerAssistPopup.visible) {
+            event.accepted = true
+            composerAssistPopup.close()
+            return true
+        }
+        return false
     }
 
     function handleComposerEnter(event) {
@@ -2806,14 +2731,20 @@ Item {
             event.accepted = false
             return
         }
+        if (composerAssistPopup.visible && composerSuggestions.length > 0) {
+            event.accepted = true
+            var idx = Math.max(0, Math.min(composerAssistIndex, composerSuggestions.length - 1))
+            chooseComposerSuggestion(composerSuggestions[idx])
+            return
+        }
         event.accepted = true
         root.submitMessage()
     }
 
     function agentDetailText() {
-        if (root.selectedAgentIndex < 0 || root.selectedAgentIndex >= chat.agentItems.length)
+        if (root.selectedAgentIndex < 0 || root.selectedAgentIndex >= root.chatBridge.agentItems.length)
             return "Selecione um agente para ver tarefa, roteamento e saída."
-        var item = chat.agentItems[root.selectedAgentIndex]
+        var item = root.chatBridge.agentItems[root.selectedAgentIndex]
         var sections = [item.label + "\n" + item.model + " · effort " + item.effort + " · " + item.statusLabel]
         if (item.module) sections.push("Módulo: " + item.module)
         if (item.source) sections.push("Fonte: " + item.source)
@@ -2830,31 +2761,78 @@ Item {
         var trimmed = value.trim()
         var commands = [
             {label:"/model",description:"Escolher modelo e provedor",action:"model"},
-            {label:"/effort",description:"Definir esforço de raciocínio",action:"effort"},
+            ...(root.chatBridge.supportsReasoning ? [{label:"/effort",description:"Definir esforço de raciocínio",action:"effort"}] : []),
             {label:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
-            {label:"/skills",description:"Ver skills disponíveis",action:"skills"},
+            {label:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
+            {label:"/usage-limits",description:"Ver limites de uso e quotas do provedor",action:"usage-limits"},
             {label:"/tools",description:"Ver tools e MCP",action:"tools"},
             {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"},
             {label:"/pesquisa",description:"Pesquisa multiagente: /pesquisa <pergunta>",action:"pesquisa"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
-            composerSuggestions = commands.filter(function(item) {
+            var matches = commands.filter(function(item) {
                 return item.label.substring(1).toLowerCase().indexOf(needle) >= 0
             })
-            composerAssistPopup.open()
+            if (root.chatBridge.showSkillsInSlashMenu) {
+                var skills = root.chatBridge.skillSuggestions(needle)
+                for (var i = 0; i < skills.length; i++) {
+                    var s = skills[i]
+                    matches.push({
+                        label: "/" + s.name,
+                        description: s.shortDescription || s.description || "Skill",
+                        action: "skill",
+                        skill: s,
+                        start: 0
+                    })
+                }
+            }
+            composerSuggestions = matches
+            if (composerSuggestions.length) {
+                root.composerAssistIndex = 0
+                composerAssistPopup.open()
+            } else {
+                composerAssistPopup.close()
+            }
             return
+        }
+        var dollar = value.lastIndexOf("$")
+        if (dollar >= 0) {
+            var querySkill = value.substring(dollar + 1)
+            if (querySkill.indexOf(" ") < 0 && querySkill.indexOf("\n") < 0) {
+                var skillsFound = root.chatBridge.skillSuggestions(querySkill)
+                composerSuggestions = skillsFound.map(function(item) {
+                    return {
+                        label: "$" + item.name,
+                        description: item.shortDescription || item.description || "Skill",
+                        action: "skill",
+                        skill: item,
+                        start: dollar
+                    }
+                })
+                if (composerSuggestions.length) {
+                    root.composerAssistIndex = 0
+                    composerAssistPopup.open()
+                } else {
+                    composerAssistPopup.close()
+                }
+                return
+            }
         }
         var at = value.lastIndexOf("@")
         if (at >= 0) {
             var query = value.substring(at + 1)
             if (query.indexOf(" ") < 0 && query.indexOf("\n") < 0) {
-                var files = chat.fileSuggestions(query)
+                var files = root.chatBridge.fileSuggestions(query)
                 composerSuggestions = files.map(function(item) {
                     return {label:item.label,description:"Arquivo do projeto",action:"reference",path:item.path,start:at}
                 })
-                if (composerSuggestions.length) composerAssistPopup.open()
-                else composerAssistPopup.close()
+                if (composerSuggestions.length) {
+                    root.composerAssistIndex = 0
+                    composerAssistPopup.open()
+                } else {
+                    composerAssistPopup.close()
+                }
                 return
             }
         }
@@ -2864,12 +2842,26 @@ Item {
 
     function chooseComposerSuggestion(item) {
         composerAssistPopup.close()
-        if (item.action === "model") modelSelector.openPicker()
-        else if (item.action === "effort") effortSelector.openPicker()
+        if (item.action === "usage-limits") {
+            composerInput.clear()
+            root.chatBridge.openUsageLimits()
+            composerInput.forceActiveFocus()
+        }
+        else if (item.action === "skill") {
+            root.chatBridge.addActiveSkill(item.skill)
+            var start = item.start !== undefined ? item.start : 0
+            var before = composerInput.text.substring(0, start)
+            composerInput.text = before.trim() ? before.trim() + " " : ""
+            composerInput.cursorPosition = composerInput.length
+            composerInput.forceActiveFocus()
+        }
+        else if (item.action === "model") modelSelector.openPicker()
+        else if (item.action === "effort" && root.chatBridge.supportsReasoning) effortSelector.openPicker()
         else if (item.action === "permissions") approvalSelector.openPicker()
-        else if (item.action === "vr") chat.cycleVrMode()
+        else if (item.action === "vr") root.chatBridge.cycleVrMode()
         else if (item.action === "pesquisa") {
             composerInput.text = "/pesquisa "
+            composerInput.cursorPosition = composerInput.length
             composerInput.forceActiveFocus()
         }
         else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
@@ -2877,6 +2869,7 @@ Item {
             var before = composerInput.text.substring(0, item.start)
             composerInput.text = before + "@\"" + item.path + "\" "
             composerInput.cursorPosition = composerInput.length
+            composerInput.forceActiveFocus()
         }
     }
 
@@ -2885,13 +2878,6 @@ Item {
         composerInput.text += separator + reference + " "
         composerInput.cursorPosition = composerInput.length
         composerInput.forceActiveFocus()
-    }
-
-    function greetingText() {
-        var hour = new Date(root.clockNow * 1000).getHours()
-        if (hour >= 5 && hour < 12) return "Bom dia! Como posso ajudar?"
-        if (hour >= 12 && hour < 18) return "Boa tarde! Como posso ajudar?"
-        return "Boa noite! Como posso ajudar?"
     }
 
     function greetingPrompt() {
@@ -2907,18 +2893,18 @@ Item {
     }
 
     function expertProfileSelected(key) {
-        if (!chat.seniorProfileEnabled) return false
-        if (key === "senior") return chat.vrResponseMode === "auto"
-        return chat.vrResponseMode === key
+        if (!root.chatBridge.seniorProfileEnabled) return false
+        if (key === "senior") return root.chatBridge.vrResponseMode === "auto"
+        return root.chatBridge.vrResponseMode === key
     }
 
     function activateExpertProfile(key) {
         if (root.expertProfileSelected(key)) {
-            chat.setSeniorProfileEnabled(false)
+            root.chatBridge.setSeniorProfileEnabled(false)
             return
         }
-        chat.setSeniorProfileEnabled(true)
-        chat.setVrResponseMode(key === "senior" ? "auto" : key)
+        root.chatBridge.setSeniorProfileEnabled(true)
+        root.chatBridge.setVrResponseMode(key === "senior" ? "auto" : key)
     }
 
     function navigateBrowser(value) {

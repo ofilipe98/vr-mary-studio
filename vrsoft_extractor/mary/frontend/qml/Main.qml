@@ -14,15 +14,15 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
     title: frontend.appName
-    color: frontend.palette.background
+    color: Theme.palette.background
 
     Binding { target: Theme; property: "viewportWidth"; value: window.width }
     Binding { target: Theme; property: "viewportHeight"; value: window.height }
 
     // Pages stay alive after the first visit: recreating ChatPreview on every
     // switch was the dominant tab-change cost (measured at 40-110 ms).
-    property bool chatVisited: false
-    property bool hubVisited: false
+    property bool chatVisited: frontend.currentPage === 1
+    property bool hubVisited: frontend.currentPage !== 1
 
     Connections {
         target: studio
@@ -51,7 +51,6 @@ ApplicationWindow {
         id: chatLoader
         anchors.fill: parent
         active: window.chatVisited || frontend.currentPage === 1
-        onLoaded: window.chatVisited = true
         visible: active && frontend.currentPage === 1
         opacity: frontend.currentPage === 1 ? 1 : 0.72
         sourceComponent: chatComponent
@@ -73,7 +72,6 @@ ApplicationWindow {
         id: hubLoader
         anchors.fill: parent
         active: window.hubVisited || frontend.currentPage !== 1
-        onLoaded: window.hubVisited = true
         visible: active && frontend.currentPage !== 1
         opacity: frontend.currentPage !== 1 ? 1 : 0.72
         sourceComponent: settingsHubComponent
@@ -106,17 +104,17 @@ ApplicationWindow {
         contentItem: Text {
             id: toastText
             text: toast.message
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.bodySize
             wrapMode: Text.WordWrap
         }
         background: Rectangle {
-            color: frontend.palette.surfaceRaised
+            color: Theme.palette.surfaceRaised
             radius: Theme.radiusPopup
             border.width: 1
-            border.color: toast.kind === "error" ? frontend.palette.danger
-                : toast.kind === "warning" ? frontend.palette.warning : frontend.palette.success
+            border.color: toast.kind === "error" ? Theme.palette.danger
+                : toast.kind === "warning" ? Theme.palette.warning : Theme.palette.success
         }
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120 } }
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 120 } }
@@ -124,6 +122,13 @@ ApplicationWindow {
         Timer { id: toastTimer; interval: 4200; onTriggered: toast.close() }
     }
 
-    Component { id: chatComponent; ChatPreview { } }
+    Component {
+        id: chatComponent
+        ChatPreview {
+            chatBridge: chat
+            studioBridge: studio
+            frontendBridge: frontend
+        }
+    }
     Component { id: settingsHubComponent; SettingsHub { } }
 }

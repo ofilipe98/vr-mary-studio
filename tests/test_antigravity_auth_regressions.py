@@ -2,7 +2,6 @@
 import io
 import json
 import os
-import subprocess
 import threading
 import time
 from types import SimpleNamespace
@@ -148,27 +147,29 @@ def test_expired_callback_is_not_forwarded_before_timer_runs():
 
 def test_cancel_during_process_creation_reaps_late_child():
     manager = AntigravityAuthManager(lambda: "agy", lambda: {})
-    process = MagicMock()
-    process.poll.return_value = None
-    def launch(*_, **kwargs):
-        assert "stdin" not in kwargs and "stdout" not in kwargs
-        assert kwargs["creationflags"] == subprocess.CREATE_NEW_CONSOLE
-        assert "BROWSER" not in kwargs["env"]
+    client = MagicMock()
+    cancelled = threading.Event()
+    def launch():
         manager.cancel_login()
-        return process
-    with patch("subprocess.Popen", side_effect=launch):
+        cancelled.set()
+    client.start.side_effect = launch
+    with patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", return_value=client):
         attempt = manager.start_login()
+        assert cancelled.wait(2)
     assert attempt.state == "cancelled"
-    process.terminate.assert_called_once()
+    assert client.close.called
+    client.request.assert_not_called()
     assert manager._oauth_timer is None
 
 
 def test_environment_failure_finishes_attempt_and_allows_retry():
     manager = AntigravityAuthManager(lambda: "agy", MagicMock(side_effect=ValueError("SECRET")))
-    with pytest.raises(RuntimeError) as error:
-        manager.start_login()
+    failed = threading.Event()
+    manager._on_state_changed = lambda: failed.set() if manager.active_attempt.state == "failed" else None
+    manager.start_login()
+    assert failed.wait(2)
     assert manager.active_attempt.state == "failed"
-    assert "SECRET" not in str(error.value) + str(manager.get_ui_snapshot())
+    assert "SECRET" not in str(manager.get_ui_snapshot())
 
 
 @pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
@@ -209,6 +210,23 @@ def test_worker_signal_reaches_ui_thread(bridge):
         pytest.fail("Worker notification never reached the Qt UI thread")
 
 
+def test_validated_login_opens_browser_once_from_queued_ui_signal(bridge):
+    result, app = bridge
+    manager = result._antigravity_auth
+    attempt = LoginAttempt("browser-test")
+    manager._active_attempt = attempt
+    with patch("vrsoft_extractor.mary.frontend.studio.QDesktopServices.openUrl", return_value=True) as opener:
+        worker = threading.Thread(target=manager._on_auth_url_received, args=(attempt.attempt_id, auth_url()))
+        worker.start()
+        worker.join()
+        for _ in range(10):
+            app.processEvents()
+        result._refresh_antigravity_auth()
+        assert opener.call_count == 1
+        assert opener.call_args.args[0].toString() == auth_url()
+        assert result._agy_opened_attempt == attempt.attempt_id
+
+
 @pytest.mark.parametrize("authenticated", [False, True])
 def test_validation_failure_visible_without_inventing_or_erasing_login(bridge, authenticated):
     result, app = bridge
@@ -232,7 +250,7 @@ def test_validation_failure_visible_without_inventing_or_erasing_login(bridge, a
 def test_saved_account_can_be_validated_after_failed_attempt(bridge):
     result, app = bridge
     result._antigravity_auth._active_attempt = LoginAttempt("old", state="failed")
-    response = SimpleNamespace(returncode=0, stdout='{"status":"SUCCESS","response":"OK"}')
+    response = {"sessionId": "test", "models": {"availableModels": [{"modelId": "test"}]}}
     with patch.object(result, "_run_antigravity_check", return_value=response):
         result.validateAntigravityAccount()
         deadline = time.monotonic() + 3
@@ -245,19 +263,16 @@ def test_saved_account_can_be_validated_after_failed_attempt(bridge):
 
 def test_cancel_during_validation_process_launch_reaps_process(bridge):
     result, _ = bridge
-    process = MagicMock()
-    process.poll.return_value = None
-    def launch(*args, **kwargs):
+    client = MagicMock()
+    def launch():
         result._agy_check_cancel.set()
-        return process
-    with patch("vrsoft_extractor.mary.frontend.studio.google_account_environment", return_value={}), \
-            patch("vrsoft_extractor.mary.frontend.studio.subprocess.Popen", side_effect=launch):
+    client.start.side_effect = launch
+    with patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
+            patch("vrsoft_extractor.mary.frontend.studio.AcpClient", return_value=client):
         with pytest.raises(RuntimeError):
             result._run_antigravity_check("agy")
-    process.terminate.assert_called_once()
-    process.stdout.close.assert_called_once()
-    process.stderr.close.assert_called_once()
-    assert result._agy_check_process is None
+    client.close.assert_called_once()
+    assert result._agy_check_client is None
 
 
 def test_cancelled_validation_cannot_publish_late_success(bridge):
@@ -266,7 +281,7 @@ def test_cancelled_validation_cannot_publish_late_success(bridge):
     def check(_):
         entered.set()
         release.wait(2)
-        return SimpleNamespace(returncode=0, stdout='{"status":"SUCCESS","response":"OK"}')
+        return {"sessionId": "test", "models": {"availableModels": [{"modelId": "test"}]}}
     with patch.object(result, "_run_antigravity_check", side_effect=check):
         result.validateAntigravityAccount()
         assert entered.wait(2)

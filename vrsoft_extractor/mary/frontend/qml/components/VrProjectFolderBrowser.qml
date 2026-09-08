@@ -52,7 +52,7 @@ Item {
                 implicitWidth: 34
                 implicitHeight: 34
                 iconKind: "back"
-                foreground: frontend.palette.text
+                foreground: Theme.palette.text
                 onClicked: root.backRequested()
             }
             VrTextField {
@@ -75,19 +75,19 @@ Item {
                 Layout.preferredWidth: shortcutLabel.implicitWidth + 10
                 Layout.preferredHeight: 22
                 radius: 5
-                color: frontend.palette.chatControl
+                color: Theme.palette.chatControl
                 Text {
                     id: shortcutLabel
                     anchors.centerIn: parent
                     text: "Ctrl Enter"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(9)
                 }
             }
         }
 
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: frontend.palette.chatDivider }
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider }
 
         Text {
             Layout.fillWidth: true
@@ -96,7 +96,7 @@ Item {
             Layout.topMargin: 14
             Layout.bottomMargin: 6
             text: "Diretórios"
-            color: frontend.palette.mutedText
+            color: Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(11)
             font.weight: Font.DemiBold
@@ -135,7 +135,7 @@ Item {
                 background: Rectangle {
                     radius: 6
                     color: folderRow.hovered || folderList.currentIndex === folderRow.index
-                        ? frontend.palette.chatControl : "transparent"
+                        ? Theme.palette.chatControl : "transparent"
                 }
                 contentItem: RowLayout {
                     spacing: 9
@@ -150,7 +150,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         text: folderRow.modelData.label
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
                         elide: Text.ElideRight
@@ -162,7 +162,7 @@ Item {
                 anchors.centerIn: parent
                 visible: folderList.count === 0
                 text: "Nenhuma subpasta disponível"
-                color: frontend.palette.mutedText
+                color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(12)
             }
@@ -171,9 +171,9 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 42
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatDivider
+            border.color: Theme.palette.chatDivider
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 14
@@ -181,7 +181,7 @@ Item {
                 spacing: 10
                 Text {
                     text: "↑↓  Navegar    Enter  Abrir    Backspace  Voltar    Esc  Fechar"
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
@@ -192,7 +192,7 @@ Item {
                     onClicked: chat.openCurrentProjectFolder()
                     contentItem: Text {
                         text: parent.text
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
                         horizontalAlignment: Text.AlignHCenter

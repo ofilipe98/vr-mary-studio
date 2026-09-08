@@ -12,7 +12,7 @@ ColumnLayout {
     spacing: 3
     Text {
         text: root.title
-        color: frontend.palette.text
+        color: Theme.palette.text
         font.family: Theme.fontFamily
         font.pixelSize: root.compact ? Theme.fontSize(24) : Theme.titleSize
         font.weight: Font.DemiBold
@@ -20,7 +20,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         text: root.subtitle
-        color: frontend.palette.mutedText
+        color: Theme.palette.mutedText
         font.family: Theme.fontFamily
         font.pixelSize: root.compact ? Theme.fontSize(13) : Theme.bodySize
         elide: Text.ElideRight

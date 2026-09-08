@@ -52,7 +52,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
             radius: 7
-            color: activityHover.hovered ? frontend.palette.hover : "transparent"
+            color: activityHover.hovered ? Theme.palette.hover : "transparent"
 
             RowLayout {
                 anchors.fill: parent
@@ -71,7 +71,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: root.headerText()
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.captionSize
                     font.weight: root.running ? Font.DemiBold : Font.Normal
@@ -102,7 +102,7 @@ Rectangle {
                 activeFocusOnPress: true
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
-                color: frontend.palette.text
+                color: Theme.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(13)
             }
@@ -117,7 +117,7 @@ Rectangle {
                 Keys.onSpacePressed: root.logExpanded = !root.logExpanded
                 Layout.preferredHeight: 25
                 radius: 7
-                color: logToggleHover.hovered ? frontend.palette.hover : "transparent"
+                color: logToggleHover.hovered ? Theme.palette.hover : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
@@ -126,14 +126,14 @@ Rectangle {
                         Layout.preferredWidth: 11
                         Layout.preferredHeight: 11
                         kind: root.logExpanded ? "chevronDown" : "chevronRight"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                     }
                     Text {
                         Layout.fillWidth: true
                         text: root.logExpanded
                             ? "Ocultar atividades anteriores"
                             : "+" + root.hiddenCount + " atividades anteriores"
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
                     }
@@ -173,7 +173,7 @@ Rectangle {
             activeFocusOnPress: false
             selectByMouse: true
             wrapMode: TextEdit.Wrap
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
             font.weight: Font.Normal
@@ -229,7 +229,7 @@ Rectangle {
                     Layout.leftMargin: 10
                     Layout.preferredHeight: 27
                     radius: 7
-                    color: actionHover.hovered ? frontend.palette.hover : "transparent"
+                    color: actionHover.hovered ? Theme.palette.hover : "transparent"
 
                     RowLayout {
                         anchors.fill: parent
@@ -242,13 +242,13 @@ Rectangle {
                             Layout.preferredHeight: 13
                             kind: root.itemIcon(actionRoot.modelData)
                             foreground: actionRoot.modelData.state === "running"
-                                ? frontend.palette.brandOrange : frontend.palette.mutedText
+                                ? Theme.palette.brandOrange : Theme.palette.mutedText
                         }
 
                         Text {
                             Layout.fillWidth: true
                             text: String(actionRoot.modelData.text || "Atividade")
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.captionSize
                             font.weight: actionRoot.modelData.state === "running"
@@ -261,7 +261,7 @@ Rectangle {
                             Layout.preferredWidth: 11
                             Layout.preferredHeight: 11
                             kind: actionRoot.detailExpanded ? "chevronDown" : "chevronRight"
-                            foreground: frontend.palette.mutedText
+                            foreground: Theme.palette.mutedText
                         }
                     }
 
@@ -278,9 +278,9 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(actionDetail.implicitHeight + 18, 260)
                     radius: 8
-                    color: frontend.palette.surfaceRaised
+                    color: Theme.palette.surfaceRaised
                     border.width: 1
-                    border.color: frontend.palette.chatBorder
+                    border.color: Theme.palette.chatBorder
                     clip: true
 
                     ScrollView {
@@ -295,7 +295,7 @@ Rectangle {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: "Cascadia Mono"
                             font.pixelSize: Theme.captionSize
                             background: Item { }

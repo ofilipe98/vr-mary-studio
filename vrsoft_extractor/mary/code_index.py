@@ -111,6 +111,10 @@ class JavaCodeIndex:
                 );
                 CREATE INDEX IF NOT EXISTS idx_code_sources_release
                     ON code_sources(release_id, release_hash);
+                CREATE INDEX IF NOT EXISTS idx_code_sources_release_jar
+                    ON code_sources(release_id, jar_relative_path);
+                CREATE INDEX IF NOT EXISTS idx_code_sources_schema
+                    ON code_sources(schema_version);
                 CREATE INDEX IF NOT EXISTS idx_code_sources_qualified
                     ON code_sources(qualified_name COLLATE NOCASE);
                 CREATE TABLE IF NOT EXISTS code_symbols (
@@ -199,6 +203,13 @@ class JavaCodeIndex:
     def _migrate_source_identity(connection: sqlite3.Connection) -> None:
         """Add release_id to legacy source identities without re-decompiling."""
 
+        # This probe reads the small schema index. Fetching complete source rows
+        # would scan their bodies even when every identity is already current.
+        if connection.execute(
+            "SELECT 1 FROM code_sources WHERE schema_version != ? LIMIT 1",
+            (CODE_INDEX_SCHEMA_VERSION,),
+        ).fetchone() is None:
+            return
         rows = connection.execute(
             """SELECT id, release_id, release_hash, artifact_sha256,
                       class_version, qualified_name, content_hashes_json
@@ -868,7 +879,7 @@ class JavaCodeIndex:
                 str(item["jar_relative_path"])
                 for item in connection.execute(
                     """SELECT DISTINCT jar_relative_path FROM code_sources
-                       WHERE release_id = ? ORDER BY jar_relative_path COLLATE NOCASE""",
+                       WHERE release_id = ?""",
                     (release_id,),
                 )
             }

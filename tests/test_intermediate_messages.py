@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.models import RuntimeEvent
@@ -74,13 +72,13 @@ class TestExecutionState:
 
     def test_multiple_messages(self) -> None:
         state = _ExecutionState(execution_id=10)
-        k1 = state.start_message()
+        state.start_message()
         state.append_delta("First")
         k1_result, t1, o1 = state.complete_message()
         state.completed_messages.append((k1_result, t1, o1, ""))
         assert k1_result == "10:1"
 
-        k2 = state.start_message()
+        state.start_message()
         state.append_delta("Second")
         k2_result, t2, o2 = state.complete_message()
         state.completed_messages.append((k2_result, t2, o2, ""))

@@ -119,7 +119,7 @@ def bridge(tmp_path):
     from vrsoft_extractor.mary.config import MarySettings
     from vrsoft_extractor.mary.db import MaryDatabase
     from vrsoft_extractor.mary.frontend.chat import ChatBridge
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
     db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
     cid = db.create_conversation("Audit", "codex", "test", settings.root)
@@ -272,7 +272,10 @@ def test_provider_consumers_with_real_event_shapes(tmp_path):
     import json
     import threading
     from vrsoft_extractor.mary.providers import ClaudeProvider, OpenCodeProvider
-    from vrsoft_extractor.mary.antigravity import AntigravityProvider
+    try:
+        from vrsoft_extractor.mary.antigravity import LegacyAntigravityProvider as AntigravityProvider
+    except ImportError:
+        from vrsoft_extractor.mary.antigravity import AntigravityProvider
 
     def process(events):
         proc = MagicMock()

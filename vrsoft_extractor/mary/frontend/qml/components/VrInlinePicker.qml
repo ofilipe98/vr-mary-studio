@@ -44,19 +44,19 @@ Button {
         Text {
             visible: !parent.children[0].visible && control.symbol.length > 0
             text: control.symbol
-            color: frontend.palette.mutedText
+            color: Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(15)
         }
         Text {
             text: control.currentItem[control.textRole] || "Selecionar"
-            color: frontend.palette.text
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
         }
         Text {
             text: "⌄"
-            color: frontend.palette.mutedText
+            color: Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
         }
@@ -65,9 +65,9 @@ Button {
     background: Rectangle {
         radius: 8
         color: control.down || control.hovered || optionsPopup.opened
-            ? frontend.palette.chatControl : "transparent"
+            ? Theme.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
-        border.color: frontend.palette.focus
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -84,9 +84,9 @@ Button {
         padding: 6
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         background: Rectangle {
-            color: frontend.palette.chatComposer
+            color: Theme.palette.chatComposer
             border.width: 1
-            border.color: frontend.palette.chatBorder
+            border.color: Theme.palette.chatBorder
             radius: 11
         }
         contentItem: ListView {
@@ -102,8 +102,8 @@ Button {
                 height: 40
                 radius: 7
                 color: control.currentIndex === index
-                    ? frontend.palette.selection : optionHover.hovered
-                        ? frontend.palette.chatControl : "transparent"
+                    ? Theme.palette.selection : optionHover.hovered
+                        ? Theme.palette.chatControl : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 10
@@ -111,14 +111,14 @@ Button {
                     Text {
                         Layout.fillWidth: true
                         text: modelData[control.textRole] || modelData
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
                     }
                     Text {
                         visible: control.currentIndex === index
                         text: "✓"
-                        color: frontend.palette.brandOrange
+                        color: Theme.palette.brandOrange
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
                     }

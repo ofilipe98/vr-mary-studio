@@ -37,14 +37,14 @@ Rectangle {
 
                 Text {
                     text: "Tarefas"
-                    color: frontend.palette.text
+                    color: Theme.palette.text
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: root.completedCount() + "/" + root.steps.length
-                    color: frontend.palette.mutedText
+                    color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(10)
                 }
@@ -52,7 +52,7 @@ Rectangle {
                     visible: !root.expanded
                     Layout.fillWidth: true
                     text: root.currentStepText()
-                    color: frontend.palette.text
+                    color: Theme.palette.text
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(11)
                     font.weight: Font.DemiBold
@@ -77,14 +77,14 @@ Rectangle {
                     Layout.preferredWidth: 13
                     Layout.preferredHeight: 13
                     kind: root.expanded ? "chevronDown" : "chevronUp"
-                    foreground: frontend.palette.mutedText
+                    foreground: Theme.palette.mutedText
                 }
                 VrIconButton {
                     implicitWidth: 26
                     implicitHeight: 26
                     iconSize: 12
                     iconKind: "close"
-                    foreground: frontend.palette.mutedText
+                    foreground: Theme.palette.mutedText
                     ToolTip.visible: hovered
                     ToolTip.text: "Fechar tarefas"
                     onClicked: root.closeRequested()
@@ -116,13 +116,13 @@ Rectangle {
                         radius: 4
                         color: root.stateColor(String(modelData.state || "pending"))
                         border.width: modelData.state === "pending" ? 1 : 0
-                        border.color: frontend.palette.mutedText
+                        border.color: Theme.palette.mutedText
                     }
                     Text {
                         Layout.fillWidth: true
                         text: modelData.text || ""
                         color: modelData.state === "running"
-                            ? frontend.palette.text : frontend.palette.mutedText
+                            ? Theme.palette.text : Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
                         font.weight: modelData.state === "running" ? Font.DemiBold : Font.Normal
@@ -133,7 +133,7 @@ Rectangle {
                     Text {
                         visible: modelData.state === "running"
                         text: "agora"
-                        color: frontend.palette.mutedText
+                        color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(9)
                     }
@@ -158,15 +158,15 @@ Rectangle {
     }
 
     function stateColor(state) {
-        if (state === "completed") return frontend.palette.success
-        if (state === "error" || state === "cancelled") return frontend.palette.danger
-        if (state === "running") return frontend.palette.brandOrange
+        if (state === "completed") return Theme.palette.success
+        if (state === "error" || state === "cancelled") return Theme.palette.danger
+        if (state === "running") return Theme.palette.brandOrange
         return "transparent"
     }
 
     function segmentColor(index) {
         var step = root.steps[index] || ({})
         return root.stateColor(String(step.state || "pending")) === "transparent"
-            ? frontend.palette.chatBorder : root.stateColor(String(step.state || "pending"))
+            ? Theme.palette.chatBorder : root.stateColor(String(step.state || "pending"))
     }
 }

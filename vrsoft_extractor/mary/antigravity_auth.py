@@ -1,15 +1,8 @@
-"""Google login lifecycle and bounded OAuth URL utilities.
-
-The installed agy CLI owns browser sign-in and the OS keyring. Its documented
-interactive login needs a terminal, not redirected stdin. Native login therefore
-does not expose a manual callback: the URL helpers require a verified adapter
-before they can be used by a runtime. Exiting the CLI is not authentication proof.
-"""
+"""Google OAuth lifecycle for the installed Antigravity ACP runtime."""
 from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import threading
 import time
@@ -18,7 +11,6 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Callable, Literal
 
 logger = logging.getLogger(__name__)
@@ -247,7 +239,6 @@ def validate_callback_url(callback_url: str, expected_auth: ValidatedAuthUrl) ->
 
     # Exactly one code OR one error, never both
     code = params.get("code")
-    error = params.get("error")
 
     if "code" in params and "error" in params:
         raise OAuthValidationError("A URL de retorno não pode conter code e error simultaneamente.")
@@ -291,7 +282,7 @@ def forward_callback_to_listener(callback_url: str, expected_auth: ValidatedAuth
         if exc.code in (200, 204, 301, 302, 303, 307, 308):
             return
         raise RuntimeError(f"O listener local retornou status HTTP {exc.code}.") from None
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError):
         raise RuntimeError("Falha ao conectar ao listener local da tentativa.") from None
 
 
@@ -369,7 +360,7 @@ class AuthStreamParser:
             return
 
         # Check for T3 JSON marker: __T3_ANTIGRAVITY_AUTH_URL__"https://..."
-        if line.startswith(AUTH_MARKER_T3):
+        if AUTH_MARKER_T3 in line:
             idx = line.find(AUTH_MARKER_T3)
             suffix = line[idx + len(AUTH_MARKER_T3):].strip()
             if suffix.startswith('"'):
@@ -383,7 +374,7 @@ class AuthStreamParser:
 
         # Check for runtime output prefixes
         for prefix in (AUTH_PREFIX_ACP, AUTH_PREFIX_BROWSER, AUTH_PREFIX_GENERIC):
-            if line.startswith(prefix):
+            if prefix in line:
                 idx = line.find(prefix)
                 candidate = line[idx + len(prefix):].strip()
                 # Preserve the complete URL. Punctuation is legal in opaque
@@ -410,6 +401,7 @@ class LoginAttempt:
     process: subprocess.Popen | None = None
     callback_consumed: bool = False
     deadline: float | None = None
+    client: object | None = field(default=None, repr=False)
 
 
 class AntigravityAuthManager:
@@ -487,40 +479,45 @@ class AntigravityAuthManager:
             self._account_status_label = "Iniciando autenticação Google…"
             self._notify_changed()
 
-        # Native agy login is interactive. No documented BROWSER command contract
-        # exists for this CLI; do not launch its TUI with hidden redirected stdin.
+        threading.Thread(target=self._run_login, args=(attempt, command), daemon=True).start()
+        return attempt
+
+    def _run_login(self, attempt, command):
+        from .antigravity_acp import AcpClient
+        client = None
         try:
-            env = self._env_factory()
-            if os.name != "nt":
-                raise RuntimeError("Abra agy em um terminal e depois valide a conta.")
-            process = subprocess.Popen(
-                [command], cwd=str(Path.home()), env=env,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
+            client = AcpClient(command=command, env=self._env_factory(),
+                               on_auth_url=lambda url: self._on_auth_url_received(attempt.attempt_id, url))
+            with self._lock:
+                if not self._is_active(attempt.attempt_id):
+                    return
+                attempt.client = client
+            client.start()
+            with self._lock:
+                if not self._is_active(attempt.attempt_id):
+                    return
+                attempt.process = client.process
+                attempt.state = "verifying"
+                self._account_status_label = "Preparando autorização Google…"
+                self._oauth_timer = threading.Timer(OAUTH_TIMEOUT_SECONDS, self._on_oauth_timeout, args=(attempt.attempt_id,))
+                self._oauth_timer.daemon = True
+                self._oauth_timer.start()
+            self._notify_changed()
+            client.request("authenticate", {"methodId": "oauth-personal"}, OAUTH_TIMEOUT_SECONDS)
+            with self._lock:
+                if not self._is_active(attempt.attempt_id):
+                    return
+                self._account_state = "authenticated"
+                self._finish_attempt("succeeded", "Conta Google autenticada pelo Antigravity.")
+            self._notify_changed()
         except Exception:
             with self._lock:
-                if self._is_active(attempt_id):
-                    self._finish_attempt("failed", "Não foi possível abrir o CLI. Confira a instalação e a configuração da conta Google.")
+                if self._is_active(attempt.attempt_id):
+                    self._finish_attempt("failed", "Não foi possível concluir a autenticação Google. Tente novamente.")
             self._notify_changed()
-            raise RuntimeError("Não foi possível abrir o login interativo do Antigravity CLI.") from None
-
-        with self._lock:
-            if not self._is_active(attempt_id):
-                self._stop_process(process)
-                return attempt
-            attempt.process = process
-            attempt.state = "waiting"
-            attempt.expires_at = datetime.now() + timedelta(seconds=OAUTH_TIMEOUT_SECONDS)
-            attempt.deadline = time.monotonic() + OAUTH_TIMEOUT_SECONDS
-            attempt.expires_at_label = f"Esta tentativa expira às {attempt.expires_at.strftime('%H:%M')}"
-            self._account_status_label = "Conclua o login no terminal do Antigravity e clique em Validar conta."
-            self._oauth_timer = threading.Timer(OAUTH_TIMEOUT_SECONDS, self._on_oauth_timeout, args=(attempt_id,))
-            self._oauth_timer.daemon = True
-            self._oauth_timer.start()
-        self._notify_changed()
-        logger.info("antigravity.auth.start")
-        threading.Thread(target=self._wait_process, args=(attempt_id, process), daemon=True).start()
-        return attempt
+        finally:
+            if client:
+                client.close()
 
     def _is_active(self, attempt_id: str) -> bool:
         attempt = self._active_attempt
@@ -559,14 +556,18 @@ class AntigravityAuthManager:
                 return
             self._finish_attempt("cancelled", "Autenticação cancelada pelo usuário")
             process = attempt.process
-        self._stop_process(process)
+            client = attempt.client
+        if client:
+            client.close()
+        else:
+            self._stop_process(process)
         self._notify_changed()
 
     def submit_callback(self, callback_url: str) -> None:
         with self._lock:
             attempt = self._active_attempt
             if not attempt or attempt.state != "waiting" or not attempt.validated_auth:
-                raise RuntimeError("O CLI nativo conclui o retorno no próprio terminal; não há callback integrado ativo.")
+                raise RuntimeError("Nenhuma tentativa de login aguardando retorno do navegador.")
             if attempt.deadline is not None and time.monotonic() >= attempt.deadline:
                 self._on_oauth_timeout(attempt.attempt_id)
                 raise RuntimeError("A tentativa de login expirou.")
@@ -586,7 +587,7 @@ class AntigravityAuthManager:
             # code or resurrect cancelled/expired attempts on a network error.
             with self._lock:
                 if self._is_active(attempt.attempt_id):
-                    self._account_status_label = "Retorno enviado sem confirmação. Aguarde o CLI ou reinicie a tentativa."
+                    self._account_status_label = "Retorno enviado sem confirmação. Aguarde ou reinicie a tentativa."
             self._notify_changed()
             raise RuntimeError("Não foi possível confirmar a entrega do retorno OAuth.") from None
 
@@ -641,7 +642,7 @@ class AntigravityAuthManager:
     def _on_auth_url_received(self, attempt_id: str, raw_url: str) -> None:
         try:
             validated = validate_authorization_url(raw_url)
-        except OAuthValidationError as exc:
+        except OAuthValidationError:
             # Reject invalid URLs safely
             logger.warning("URL de autorização rejeitada na validação")
             return
@@ -660,7 +661,10 @@ class AntigravityAuthManager:
                 else:
                     # CONFLICT: Two different valid URLs in the same attempt
                     self._finish_attempt("failed", "Conflito de URLs de autorização detectado.")
-                    self._stop_process(attempt.process)
+                    if attempt.client:
+                        threading.Thread(target=attempt.client.close, daemon=True).start()
+                    else:
+                        self._stop_process(attempt.process)
                     self._notify_changed()
                     return
 
@@ -704,7 +708,11 @@ class AntigravityAuthManager:
                 return
             self._finish_attempt("failed", message)
             process = attempt.process
-        self._stop_process(process)
+            client = attempt.client
+        if client:
+            client.close()
+        else:
+            self._stop_process(process)
         self._notify_changed()
 
     def _on_init_timeout(self, attempt_id: str) -> None:

@@ -1,3 +1,5 @@
+import pytest
+
 import json
 import os
 import threading
@@ -31,6 +33,8 @@ from vrsoft_extractor.mary.frontend.chat import (
 )
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.models import RuntimeEvent
+
+pytestmark = pytest.mark.qml
 
 
 class QmlFrontendTest(unittest.TestCase):
@@ -292,6 +296,25 @@ class QmlFrontendTest(unittest.TestCase):
                 picker.click()
                 self.application.processEvents()
                 self.assertFalse(popup.property("visible"), popup_name)
+            chat_bridge.startNewChat()
+            self.application.processEvents()
+            item_agy = {
+                "provider": "antigravity",
+                "value": "gemini-3.8-flash-high",
+                "displayName": "Gemini 3.8 Flash (High)",
+                "key": "antigravity:gemini-3.8-flash-high",
+            }
+            chat_bridge._model_items.append(item_agy)
+            chat_bridge.setModel(len(chat_bridge._model_items) - 1)
+            self.application.processEvents()
+            self.assertFalse(chat_bridge.supportsReasoning)
+            self.assertFalse(reasoning_picker.property("visible"))
+            chat_bridge.setModel(0)
+            self.application.processEvents()
+            self.assertTrue(chat_bridge.supportsReasoning)
+            self.assertTrue(reasoning_picker.property("visible"))
+            chat_bridge.selectConversation(0)
+            self.application.processEvents()
             self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
             self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
@@ -1089,6 +1112,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.codeAnalysisRelease, "current")
             self.assertFalse(bridge.codeAnalysisReleaseItems[0]["coverageLoaded"])
             bridge.refreshCodeAnalysisReleases()
+            for _ in range(200):
+                if bridge.codeAnalysisReleaseItems[0]["coverageLoaded"]:
+                    break
+                QTest.qWait(25)
+            self.assertTrue(bridge.codeAnalysisReleaseItems[0]["coverageLoaded"])
             self.assertIn("0/1 JARs indexados", bridge.codeAnalysisReleaseItems[0]["label"])
             self.assertIn(
                 "classpath desconhecido", bridge.codeAnalysisReleaseItems[0]["label"]
@@ -1512,7 +1540,7 @@ class QmlFrontendTest(unittest.TestCase):
 
         self.assertIn('objectName: "vrUltraSettingsLoader"', settings_qml)
         self.assertIn("active: root.tabIndex === 2", settings_qml)
-        self.assertIn("root.vrUltraPreloaded", settings_qml)
+        self.assertIn("root.vrUltraVisited", settings_qml)
         self.assertIn("asynchronous: true", settings_qml)
         self.assertIn("ProgressBar {", ultra_qml)
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', ultra_qml)
@@ -1722,11 +1750,11 @@ class QmlFrontendTest(unittest.TestCase):
             bridge.setCodeProcessingMaxCpuCores(4)
             with (
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.JvmToolchain",
                     FakeToolchain,
                 ),
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage",
                     return_value=manager,
                 ),
                 patch.object(bridge._orchestrator, "send") as model_send,
@@ -1852,11 +1880,11 @@ class QmlFrontendTest(unittest.TestCase):
 
             with (
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.JvmToolchain",
                     FakeToolchain,
                 ),
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage",
                     return_value=FakeCoverage(),
                 ),
             ):
@@ -1904,11 +1932,11 @@ class QmlFrontendTest(unittest.TestCase):
 
             with (
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.JvmToolchain",
                     MissingToolchain,
                 ),
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage"
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage"
                 ) as coverage,
             ):
                 self.assertTrue(bridge.startCodeProcessing())
@@ -2019,7 +2047,7 @@ class QmlFrontendTest(unittest.TestCase):
 
             manager = FakeCoverage()
             with patch(
-                "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage",
                 return_value=manager,
             ):
                 bridge.refreshCodeProcessingStatus()
@@ -2040,11 +2068,11 @@ class QmlFrontendTest(unittest.TestCase):
 
             with (
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.JvmToolchain",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.JvmToolchain",
                     FakeToolchain,
                 ),
                 patch(
-                    "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage",
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage",
                     return_value=manager,
                 ),
             ):
@@ -2128,7 +2156,7 @@ class QmlFrontendTest(unittest.TestCase):
             }
 
             with patch(
-                "vrsoft_extractor.mary.frontend.chat.ErpCodeCoverage"
+                "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage"
             ) as coverage_manager:
                 coverage_manager.return_value.status.return_value = coverage
                 bridge = ChatBridge(settings, database)
@@ -2901,6 +2929,9 @@ class QmlFrontendTest(unittest.TestCase):
         chat_qml = (MAIN_QML.parent / "pages" / "ChatPreview.qml").read_text(
             encoding="utf-8"
         )
+        composer_qml = (MAIN_QML.parent / "components" / "VrChatComposer.qml").read_text(
+            encoding="utf-8"
+        )
         profile_qml = (
             MAIN_QML.parent / "components" / "VrProfileIcon.qml"
         ).read_text(encoding="utf-8")
@@ -2919,11 +2950,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("VrProfileIcon", chat_qml)
         self.assertIn("expertSenior", chat_qml)
         self.assertIn("Theme.palette.chatControl", profile_qml)
-        self.assertIn("contentHeight + topPadding + bottomPadding", chat_qml)
-        self.assertIn("Math.min(chatMain.height * 0.28, Math.max(54", chat_qml)
+        self.assertIn("VrChatComposer {", chat_qml)
+        self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
+        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54", composer_qml)
         self.assertIn(
-            'variant: chat.vrMode !== "off" ? "primary" : "ghost"',
-            chat_qml,
+            'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
+            composer_qml,
         )
         markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
         self.assertIn("Theme.bodySize", markdown_qml)
@@ -2931,7 +2963,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "messageScrollBar"', chat_qml)
         self.assertIn("if (followTail) tailTimer.restart()", chat_qml)
         self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
-        self.assertIn("function greetingText()", chat_qml)
+        self.assertIn('"Como posso ajudar no projeto " + projectLabel + "?"', chat_qml)
 
     def test_trashing_a_conversation_does_not_block_the_ui_thread(self):
         with TemporaryDirectory() as temporary:
@@ -3213,6 +3245,9 @@ class QmlFrontendTest(unittest.TestCase):
         chat_qml = (
             MAIN_QML.parent / "pages" / "ChatPreview.qml"
         ).read_text(encoding="utf-8")
+        composer_qml = (
+            MAIN_QML.parent / "components" / "VrChatComposer.qml"
+        ).read_text(encoding="utf-8")
         knowledge_qml = (
             MAIN_QML.parent / "pages" / "KnowledgePage.qml"
         ).read_text(encoding="utf-8")
@@ -3222,8 +3257,8 @@ class QmlFrontendTest(unittest.TestCase):
 
         self.assertIn("Arquivar conversa", chat_qml)
         self.assertIn("Excluir conversa", chat_qml)
-        self.assertIn("Keys.onReturnPressed", chat_qml)
-        self.assertIn("Keys.onEnterPressed", chat_qml)
+        self.assertIn("Keys.onReturnPressed", composer_qml)
+        self.assertIn("Keys.onEnterPressed", composer_qml)
         markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
         self.assertIn("onLinkActivated", markdown_qml)
         self.assertIn("onLinkActivated", knowledge_qml)
@@ -3496,6 +3531,37 @@ class QmlFrontendTest(unittest.TestCase):
             reloaded = ChatBridge(settings, database, preferences)
             self.assertTrue(reloaded.conversations.item(0)["editing"])
 
+            # Discarding empty draft removes it and trashes empty conversation
+            self.assertTrue(reloaded.discardDraft(conversation_id))
+            self.assertEqual(reloaded.conversationCount, 0)
+            self.assertEqual(len(database.list_conversations(state="active")), 0)
+
+    def test_discard_draft_preserves_conversation_with_messages(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            cid = database.create_conversation("Conversa Existente", "codex", "gpt-5.6", settings.root)
+            database.add_message(cid, "user", "Olá")
+            database.add_message(cid, "assistant", "Olá! Como posso ajudar?")
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = ChatBridge(settings, database, preferences)
+            bridge.selectConversationId(cid)
+            bridge.saveCurrentDraft("Rascunho de nova mensagem")
+            self.assertTrue(bridge.conversations.item(0)["editing"])
+            self.assertEqual(bridge.conversations.item(0)["section"], "Rascunhos")
+
+            # Discarding draft removes draft status but keeps conversation and messages
+            self.assertTrue(bridge.discardDraft(cid))
+            self.assertEqual(bridge.conversationCount, 1)
+            self.assertFalse(bridge.conversations.item(0)["editing"])
+            self.assertEqual(bridge.conversations.item(0)["section"], "Conversas")
+            self.assertEqual(len(database.messages(cid)), 2)
+
     def test_pinned_conversations_sort_before_regular_active_chats(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3623,10 +3689,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertNotIn("ToolTip.visible", picker_qml)
         self.assertIn("CloseOnPressOutsideParent", picker_qml)
 
-        chat_qml = (
-            MAIN_QML.parent / "pages" / "ChatPreview.qml"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("createLinearGradient", chat_qml)
+        self.assertNotIn("createLinearGradient", picker_qml)
 
     def test_draft_catalog_moves_away_from_a_disabled_provider(self):
         with TemporaryDirectory() as temporary:
@@ -3766,7 +3829,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Keys.onRightPressed", tab_bar_qml)
         self.assertIn("Flickable.HorizontalFlick", tab_bar_qml)
         self.assertNotIn("Flow {", tab_bar_qml)
-        self.assertIn("frontend.palette.accentSoft", tab_bar_qml)
+        self.assertIn("Theme.palette.accentSoft", tab_bar_qml)
         self.assertNotIn('"primary" : "ghost"', settings_qml)
         self.assertNotIn("variant: root.tabIndex === index", settings_qml)
         self.assertIn("objectName: \"settingsTabBar\"", settings_qml)
@@ -3838,6 +3901,8 @@ class QmlFrontendTest(unittest.TestCase):
                 [warning.toString() for warning in engine._qml_warnings],
             )
             window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
             window.show()
             QTest.qWait(100)
             tab_bar = window.findChild(QObject, "settingsTabBar")
@@ -3862,7 +3927,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(settings_results.property("visible"))
             self.assertGreater(settings_results.property("count"), 0)
             self.assertEqual(chat_bridge.search, "")
-            self.assertEqual(tab_bar.property("count"), 6)
+            self.assertEqual(tab_bar.property("count"), 7)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             self.assertTrue(settings_hub.activateSettingSearchResult(0))
             self.application.processEvents()
@@ -3924,6 +3989,19 @@ class QmlFrontendTest(unittest.TestCase):
             QTest.keyClick(quick_window, Qt.Key_Return)
             self.application.processEvents()
             self.assertEqual(tab_bar.property("currentIndex"), 1)
+
+            # All settings tabs share the compact navigation behavior.
+            window.setWidth(390)
+            QTest.qWait(80)
+            compact_return = window.findChild(QObject, "settingsCompactReturn")
+            for tab in range(6):
+                tab_bar.activate(tab)
+                self.application.processEvents()
+                self.assertFalse(settings_navigation.property("visible"))
+                self.assertTrue(compact_return.property("visible"))
+            window.setWidth(1280)
+            QTest.qWait(80)
+            self.assertTrue(settings_navigation.property("visible"))
 
             bridge.setCurrentPage(0)
             self.application.processEvents()
@@ -4020,25 +4098,26 @@ class QmlFrontendTest(unittest.TestCase):
 
 
 
-    def test_antigravity_catalog_keeps_selected_variant_in_one_model_row(self):
+    def test_antigravity_models_do_not_expose_reasoning_effort_picker(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
             database = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
             bridge = ChatBridge(settings, database, QSettings(str(root / "preferences.ini"), QSettings.IniFormat))
             bridge._provider = "antigravity"
-            bridge._model = "gemini-3.1-pro-low"
+            bridge._model = "gemini-3.8-flash-high"
             bridge._effort = "low"
-            item = {"provider": "antigravity", "value": "gemini-3.1-pro-high",
-                    "key": "antigravity:gemini-3.1-pro-high", "displayName": "Gemini 3.1 Pro",
-                    "aliases": ["gemini-3.1-pro-high", "gemini-3.1-pro-low"],
+            item = {"provider": "antigravity", "value": "gemini-3.8-flash-high",
+                    "key": "antigravity:gemini-3.8-flash-high", "displayName": "Gemini 3.8 Flash (High)",
+                    "aliases": ["gemini-3.8-flash-high"],
                     "efforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]}
             with patch.object(bridge, "_enabled_provider_names", return_value=["antigravity"]):
                 bridge._apply_model_catalog([item])
             self.assertEqual(len(bridge.modelItems), 1)
-            self.assertEqual(bridge.modelItems[bridge.modelIndex]["displayName"], "Gemini 3.1 Pro")
-            self.assertEqual([x["value"] for x in bridge.effortItems], ["auto", "low", "high"])
-            self.assertEqual(bridge.effortItems[bridge.effortIndex]["value"], "low")
+            self.assertEqual(bridge.modelItems[bridge.modelIndex]["displayName"], "Gemini 3.8 Flash (High)")
+            self.assertEqual(bridge.effortItems, [])
+            self.assertFalse(bridge.supportsReasoning)
+            self.assertEqual(bridge.effortIndex, -1)
 
 
 if __name__ == "__main__":

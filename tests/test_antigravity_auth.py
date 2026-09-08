@@ -2,9 +2,7 @@ import http.server
 import json
 import os
 import re
-import socket
 import threading
-import time
 import unittest
 import urllib.parse
 from unittest.mock import MagicMock, patch
@@ -13,9 +11,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from vrsoft_extractor.mary.antigravity_auth import (
     AUTH_MARKER_T3,
-    INIT_TIMEOUT_SECONDS,
-    MAX_AUTH_LINE_BYTES,
-    OAUTH_TIMEOUT_SECONDS,
     AntigravityAuthManager,
     AuthStreamParser,
     LoginAttempt,
@@ -270,24 +265,21 @@ class TestCallbackValidationAndForwarding(unittest.TestCase):
 class TestAntigravityAuthManager(unittest.TestCase):
     def test_double_click_reuses_active_attempt(self):
         stop_event = threading.Event()
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.read.side_effect = lambda size: b"" if stop_event.is_set() else (stop_event.wait(0.2) and b"")
-        mock_proc.stderr = MagicMock()
-        mock_proc.stderr.read.side_effect = lambda size: b"" if stop_event.is_set() else (stop_event.wait(0.2) and b"")
-        mock_proc.wait.side_effect = lambda timeout=None: (stop_event.wait(0.5) and 0)
-
-        with patch("subprocess.Popen", return_value=mock_proc) as popen_mock:
+        started = threading.Event()
+        client = MagicMock()
+        client.start.side_effect = lambda: started.set()
+        client.request.side_effect = lambda *args: (stop_event.wait(2) and {})
+        with patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", return_value=client) as factory:
             manager = AntigravityAuthManager(
                 command_resolver=lambda: "dummy_agy",
                 env_factory=lambda: {},
             )
             try:
                 attempt1 = manager.start_login()
+                self.assertTrue(started.wait(2))
                 attempt2 = manager.start_login()
                 self.assertEqual(attempt1.attempt_id, attempt2.attempt_id)
-                self.assertEqual(popen_mock.call_count, 1)
+                self.assertEqual(factory.call_count, 1)
             finally:
                 stop_event.set()
                 manager.cancel_login()

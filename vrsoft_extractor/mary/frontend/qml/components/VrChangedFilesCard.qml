@@ -20,9 +20,9 @@ Rectangle {
 
     implicitHeight: cardColumn.implicitHeight + 24
     radius: 18
-    color: frontend.palette.surfaceRaised
+    color: Theme.palette.surfaceRaised
     border.width: 1
-    border.color: frontend.palette.chatBorder
+    border.color: Theme.palette.chatBorder
 
     ColumnLayout {
         id: cardColumn
@@ -40,13 +40,13 @@ Rectangle {
                 Layout.preferredWidth: 12
                 Layout.preferredHeight: 12
                 kind: root.filesExpanded ? "chevronDown" : "chevronRight"
-                foreground: frontend.palette.mutedText
+                foreground: Theme.palette.mutedText
             }
 
             Text {
                 text: root.fileCount + " arquivo"
                     + (root.fileCount === 1 ? " alterado" : "s alterados")
-                color: frontend.palette.text
+                color: Theme.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(11)
                 font.weight: Font.DemiBold
@@ -55,7 +55,7 @@ Rectangle {
             Text {
                 visible: root.additions > 0
                 text: "+" + root.additions
-                color: frontend.palette.success
+                color: Theme.palette.success
                 font.family: "Cascadia Mono"
                 font.pixelSize: Theme.fontSize(10)
             }
@@ -63,7 +63,7 @@ Rectangle {
             Text {
                 visible: root.deletions > 0
                 text: "-" + root.deletions
-                color: frontend.palette.danger
+                color: Theme.palette.danger
                 font.family: "Cascadia Mono"
                 font.pixelSize: Theme.fontSize(10)
             }
@@ -77,9 +77,9 @@ Rectangle {
                 Layout.preferredHeight: 26
                 radius: 8
                 color: diffHover.hovered
-                    ? frontend.palette.hover : frontend.palette.chatControl
+                    ? Theme.palette.hover : Theme.palette.chatControl
                 border.width: 1
-                border.color: frontend.palette.chatBorder
+                border.color: Theme.palette.chatBorder
 
                 RowLayout {
                     anchors.centerIn: parent
@@ -88,12 +88,12 @@ Rectangle {
                         Layout.preferredWidth: 11
                         Layout.preferredHeight: 11
                         kind: "edit"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                     }
                     Text {
                         id: diffButtonLabel
                         text: root.diffExpanded ? "Fechar diff" : "Abrir diff"
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(10)
                         font.weight: Font.DemiBold
@@ -113,7 +113,7 @@ Rectangle {
             visible: root.folderSummary.length > 0
             Layout.fillWidth: true
             text: root.folderSummary
-            color: frontend.palette.mutedText
+            color: Theme.palette.mutedText
             font.family: "Cascadia Mono"
             font.pixelSize: Theme.fontSize(9)
             elide: Text.ElideRight
@@ -133,7 +133,7 @@ Rectangle {
                     width: Math.min(fileChipText.implicitWidth + 18, fileFlow.width)
                     height: 25
                     radius: 7
-                    color: frontend.palette.chatControl
+                    color: Theme.palette.chatControl
 
                     Row {
                         anchors.fill: parent
@@ -145,14 +145,14 @@ Rectangle {
                             width: 10
                             height: 10
                             kind: "files"
-                            foreground: frontend.palette.mutedText
+                            foreground: Theme.palette.mutedText
                         }
                         Text {
                             id: fileChipText
                             anchors.verticalCenter: parent.verticalCenter
                             width: Math.min(implicitWidth, fileFlow.width - 28)
                             text: String(modelData.name || modelData.path || "arquivo")
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: "Cascadia Mono"
                             font.pixelSize: Theme.fontSize(9)
                             elide: Text.ElideMiddle
@@ -166,7 +166,7 @@ Rectangle {
             visible: root.files.length > 4
             text: root.filesExpanded
                 ? "Mostrar menos" : "Mostrar todos os " + root.files.length + " arquivos"
-            color: frontend.palette.mutedText
+            color: Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(9)
 
@@ -192,7 +192,7 @@ Rectangle {
                     Text {
                         Layout.fillWidth: true
                         text: String(modelData.path || "")
-                        color: frontend.palette.text
+                        color: Theme.palette.text
                         font.family: "Cascadia Mono"
                         font.pixelSize: Theme.fontSize(9)
                         elide: Text.ElideMiddle
@@ -202,9 +202,9 @@ Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(diffText.implicitHeight + 16, 320)
                         radius: 8
-                        color: frontend.palette.chatBackground
+                        color: Theme.palette.chatBackground
                         border.width: 1
-                        border.color: frontend.palette.chatBorder
+                        border.color: Theme.palette.chatBorder
                         clip: true
 
                         TextEdit {
@@ -216,7 +216,7 @@ Rectangle {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
-                            color: frontend.palette.mutedText
+                            color: Theme.palette.mutedText
                             font.family: "Cascadia Mono"
                             font.pixelSize: Theme.fontSize(9)
                         }

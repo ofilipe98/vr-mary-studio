@@ -13,8 +13,7 @@ Item {
     property bool idlePagesPreloaded: false
     readonly property bool settingsActive: frontend.currentPage === 7
     readonly property SettingsPage loadedSettings: settingsPageLoader.item as SettingsPage
-    readonly property bool compactProviders: settingsActive && loadedSettings
-        && loadedSettings.tabIndex === 1 && root.width < 980
+    readonly property bool compactSettings: settingsActive && root.width < 980
     readonly property bool settingsSearching: settingsActive
         && settingsSearch.trim().length > 0
     readonly property var settingsSearchItems: [
@@ -108,7 +107,7 @@ Item {
         root.syncSearchField()
     }
 
-    Rectangle { anchors.fill: parent; color: frontend.palette.background }
+    Rectangle { anchors.fill: parent; color: Theme.palette.background }
 
     SplitView {
         anchors.fill: parent
@@ -117,17 +116,17 @@ Item {
         handle: Rectangle {
             implicitWidth: 5
             color: SplitHandle.hovered || SplitHandle.pressed
-                ? frontend.palette.focus : frontend.palette.chatDivider
+                ? Theme.palette.focus : Theme.palette.chatDivider
             opacity: SplitHandle.hovered || SplitHandle.pressed ? 0.75 : 0.45
         }
 
         Rectangle {
             objectName: "settingsNavigation"
-            visible: !root.compactProviders
+            visible: !root.compactSettings
             SplitView.minimumWidth: 220
             SplitView.preferredWidth: 260
             SplitView.maximumWidth: 430
-            color: frontend.palette.navigationBackground
+            color: Theme.palette.navigationBackground
 
             ColumnLayout {
                 anchors.fill: parent
@@ -137,8 +136,8 @@ Item {
                 VrBrandHeader {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 62
-                    primaryColor: frontend.palette.navText
-                    toggleColor: frontend.palette.navMuted
+                    primaryColor: Theme.palette.navText
+                    toggleColor: Theme.palette.navMuted
                     onBrandActivated: frontend.setCurrentPage(1)
                 }
 
@@ -158,10 +157,10 @@ Item {
                             radius: 8
                             color: settingsConversationSearch.hovered
                                 || settingsConversationSearch.activeFocus
-                                ? frontend.palette.chatControl : "transparent"
+                                ? Theme.palette.chatControl : "transparent"
                             border.width: 1
                             border.color: settingsConversationSearch.activeFocus
-                                ? frontend.palette.focus : frontend.palette.chatBorder
+                                ? Theme.palette.focus : Theme.palette.chatBorder
                         }
                         onTextChanged: {
                             if (root.syncingSearch)
@@ -179,7 +178,7 @@ Item {
                         width: 15
                         height: 15
                         kind: "search"
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                     }
                     VrIconButton {
                         anchors.right: parent.right
@@ -190,7 +189,7 @@ Item {
                         height: 26
                         iconKind: "close"
                         iconSize: 11
-                        foreground: frontend.palette.mutedText
+                        foreground: Theme.palette.mutedText
                         ToolTip.visible: hovered
                         ToolTip.text: "Limpar pesquisa"
                         onClicked: settingsConversationSearch.clear()
@@ -214,7 +213,7 @@ Item {
                     Layout.topMargin: 4
                     Layout.bottomMargin: 4
                     implicitHeight: 1
-                    color: frontend.palette.navDivider
+                    color: Theme.palette.navDivider
                 }
 
                 Repeater {
@@ -248,7 +247,7 @@ Item {
                         height: 54
                         radius: Theme.radiusSmall
                         color: resultHover.hovered
-                            ? frontend.palette.chatControl : "transparent"
+                            ? Theme.palette.chatControl : "transparent"
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 10
@@ -258,7 +257,7 @@ Item {
                                 Layout.preferredWidth: 16
                                 Layout.preferredHeight: 16
                                 kind: settingResult.modelData.icon
-                                foreground: frontend.palette.navMuted
+                                foreground: Theme.palette.navMuted
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -266,7 +265,7 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: settingResult.modelData.title
-                                    color: frontend.palette.navText
+                                    color: Theme.palette.navText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     font.weight: Font.DemiBold
@@ -274,7 +273,7 @@ Item {
                                 }
                                 Text {
                                     text: settingResult.modelData.category
-                                    color: frontend.palette.navMuted
+                                    color: Theme.palette.navMuted
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(10)
                                 }
@@ -290,7 +289,7 @@ Item {
                         visible: settingsSearchResults.count === 0
                         width: parent.width - 20
                         text: "Nenhuma configuração encontrada."
-                        color: frontend.palette.navMuted
+                        color: Theme.palette.navMuted
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(12)
                         horizontalAlignment: Text.AlignHCenter
@@ -319,13 +318,13 @@ Item {
                             Layout.preferredHeight: 16
                             kind: "back"
                             foreground: settingsReturnButton.hovered
-                                ? frontend.palette.navText : frontend.palette.navMuted
+                                ? Theme.palette.navText : Theme.palette.navMuted
                         }
                         Text {
                             Layout.fillWidth: true
                             text: "Retornar"
                             color: settingsReturnButton.hovered
-                                ? frontend.palette.navText : frontend.palette.navMuted
+                                ? Theme.palette.navText : Theme.palette.navMuted
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(13)
                             font.weight: Font.DemiBold
@@ -335,7 +334,7 @@ Item {
                     background: Rectangle {
                         radius: Theme.radiusSmall
                         color: settingsReturnButton.down || settingsReturnButton.hovered
-                            ? frontend.palette.chatControl : "transparent"
+                            ? Theme.palette.chatControl : "transparent"
                     }
                 }
             }
@@ -343,7 +342,7 @@ Item {
 
         Item {
             id: pageViewport
-            SplitView.minimumWidth: root.compactProviders ? 0 : 720
+            SplitView.minimumWidth: root.compactSettings ? 0 : 720
             SplitView.fillWidth: true
 
             transform: Translate { id: pageShift; y: 0 }

@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         navigation_override=False if args.screenshot else None,
     )
     database = initialize_workspace(settings, refresh_conversations=False)
-    chat_bridge = ChatBridge(settings, database, preferences)
+    chat_bridge = ChatBridge(settings, database, preferences, open_new_chat=True)
     if args.screenshot_vr_mode:
         # Visual-test override only; do not persist or mutate a conversation.
         chat_bridge._vr_mode = args.screenshot_vr_mode
@@ -185,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
+    if not args.screenshot:
+        QTimer.singleShot(0, studio_bridge.restoreAntigravityAccount)
     if args.screenshot:
         window.setProperty("width", max(1120, args.screenshot_width))
         window.setProperty("height", max(700, args.screenshot_height))

@@ -4,6 +4,7 @@ import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
@@ -151,6 +152,8 @@ class KnowledgeRouter:
         disabled_origins: tuple[str, ...] = (),
     ) -> None:
         self.database = database
+        from contextvars import ContextVar
+        self.retrieval_revision = ContextVar("knowledge_revision", default="")
         self.root = root.resolve()
         self.per_source_limit = max(1, int(per_source_limit))
         self.total_limit = max(3, int(total_limit))
@@ -548,7 +551,7 @@ class KnowledgeRouter:
                 max_workers=min(LANE_MAX_WORKERS, len(pending))
             ) as executor:
                 futures = [
-                    executor.submit(self._run_lane_search, profile, source, module)
+                    executor.submit(copy_context().run, self._run_lane_search, profile, source, module)
                     for source in pending
                 ]
                 outcomes = [
@@ -647,6 +650,7 @@ class KnowledgeRouter:
             ) as executor:
                 futures = [
                     executor.submit(
+                        copy_context().run,
                         self._module_lane,
                         profile,
                         module,
@@ -907,6 +911,8 @@ class KnowledgeRouter:
                     source=source,
                     module=search_module,
                     source_origin=source_origin,
+                    revision=self.retrieval_revision.get(),
+                    product=profile.product,
                 )
                 for item in chunk_rows:
                     key = (
@@ -921,6 +927,8 @@ class KnowledgeRouter:
                         source=source,
                         module=search_module,
                         source_origin=source_origin,
+                        revision=self.retrieval_revision.get(),
+                        product=profile.product,
                     ):
                         converted = self._legacy_candidate_row(item)
                         key = (
@@ -944,7 +952,11 @@ class KnowledgeRouter:
                     query_found = True
             if query_found and len(rows_by_key) >= self.per_source_limit:
                 break
-        return list(rows_by_key.values()), queries
+        rows = list(rows_by_key.values())
+        enricher = getattr(self, "candidate_enricher", None)
+        if enricher is not None:
+            rows = enricher(profile, source, module, source_origin, rows, scan_limit)
+        return rows, queries
 
     def _schema_catalog_candidate_row(
         self,
@@ -1291,6 +1303,8 @@ class KnowledgeRouter:
                     - product_conflict * 0.16,
                 )
                 final_score = max(0.0, final_score)
+                if row.get("semantic_score"):
+                    final_score += 0.22 * float(row["semantic_score"])
                 confidence = min(
                     0.99,
                     0.35 + final_score * 0.45 + coverage * 0.18,

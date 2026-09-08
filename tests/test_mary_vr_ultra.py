@@ -8,7 +8,6 @@ from typing import Any
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.models import (
-    ConversationOptions,
     KnowledgeDocument,
     ModelRef,
     RuntimeEvent,
@@ -337,7 +336,7 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
     )
     monkeypatch.setattr(
         "vrsoft_extractor.mary.orchestrator.ErpReleaseCatalog.status",
-        lambda self, release_id: {
+        lambda self, release_id, **_kwargs: {
             "release_id": release_id,
             "freshness": "fresh",
             "release_manifest_sha256": "b" * 64,
@@ -394,7 +393,7 @@ def test_code_agent_rejects_stale_frozen_release_and_fanout_continues(
     )
     monkeypatch.setattr(
         "vrsoft_extractor.mary.orchestrator.ErpReleaseCatalog.status",
-        lambda self, release_id: {
+        lambda self, release_id, **_kwargs: {
             "release_id": release_id,
             "freshness": "stale",
             "release_manifest_sha256": "b" * 64,
@@ -470,10 +469,7 @@ def test_research_pool_round_robin_and_parallel_cap(tmp_path: Path) -> None:
     assert provider.parallel_peak == 1, "intensidade 1 deve ser sequencial"
 
 
-def test_research_pool_models_cycle(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "vrsoft_extractor.mary.orchestrator.RESEARCH_STAGGER_SECONDS", 0.0
-    )
+def test_research_pool_models_cycle(tmp_path: Path) -> None:
     settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "ultra")
     orchestrator.set_research_config(
         pool=[

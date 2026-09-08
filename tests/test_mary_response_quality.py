@@ -15,8 +15,6 @@ from vrsoft_extractor.mary.models import (
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.supervision import (
     ResponseContract,
-    ResponseIntent,
-    analyze_response_intent,
     strip_internal_leaks,
     validate_normal_response,
 )

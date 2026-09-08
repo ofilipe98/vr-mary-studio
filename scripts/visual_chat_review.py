@@ -10,7 +10,7 @@ os.environ.setdefault("QSG_RHI_BACKEND", "software")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QSettings, QObject, QPoint, Qt
+from PySide6.QtCore import QSettings, QObject
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary.config import MarySettings

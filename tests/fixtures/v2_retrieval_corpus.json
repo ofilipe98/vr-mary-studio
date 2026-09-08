@@ -1,0 +1,1967 @@
+{
+  "provenance": "Synthetic fixtures; not ERP product instructions or real customer records.",
+  "policy": {
+    "rrf_k": 60,
+    "warm_p95_ms": 1500,
+    "peak_rss_mb": 1500,
+    "paraphrase_gain_pp": 5,
+    "max_mrr_drop": 0.02,
+    "seed": 0
+  },
+  "documents": [
+    {
+      "id": 1,
+      "source": "wiki",
+      "source_id": "case-00",
+      "source_origin": "vrwiki",
+      "title": "Estorno no caixa",
+      "markdown": "Para desfazer uma venda já encerrada, localize o cupom e solicite o cancelamento ao supervisor. Identificador exato: VRX_9100.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/0",
+      "local_path": ""
+    },
+    {
+      "id": 101,
+      "source": "wiki",
+      "source_id": "old-00",
+      "source_origin": "vrwiki",
+      "title": "Estorno no caixa",
+      "markdown": "Para desfazer uma venda já encerrada, localize o cupom e solicite o cancelamento ao supervisor. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/0",
+      "local_path": ""
+    },
+    {
+      "id": 2,
+      "source": "kb",
+      "source_id": "case-01",
+      "source_origin": "movidesk",
+      "title": "Sangria do PDV",
+      "markdown": "A retirada de numerário do caixa deve ser registrada como sangria, com valor e operador responsável. Identificador exato: VRX_9101.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/1",
+      "local_path": ""
+    },
+    {
+      "id": 102,
+      "source": "kb",
+      "source_id": "old-01",
+      "source_origin": "movidesk",
+      "title": "Sangria do PDV",
+      "markdown": "A retirada de numerário do caixa deve ser registrada como sangria, com valor e operador responsável. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/1",
+      "local_path": ""
+    },
+    {
+      "id": 3,
+      "source": "schema",
+      "source_id": "case-02",
+      "source_origin": "local",
+      "title": "Suprimento de troco",
+      "markdown": "Registre suprimento para adicionar numerário ao caixa antes de iniciar as vendas. Identificador exato: VRX_9102.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/2",
+      "local_path": ""
+    },
+    {
+      "id": 103,
+      "source": "schema",
+      "source_id": "old-02",
+      "source_origin": "local",
+      "title": "Suprimento de troco",
+      "markdown": "Registre suprimento para adicionar numerário ao caixa antes de iniciar as vendas. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/2",
+      "local_path": ""
+    },
+    {
+      "id": 4,
+      "source": "wiki",
+      "source_id": "case-03",
+      "source_origin": "vrwiki",
+      "title": "Fechamento cego",
+      "markdown": "Na conferência cega, o operador informa a contagem sem consultar o saldo esperado do sistema. Identificador exato: VRX_9103.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/3",
+      "local_path": ""
+    },
+    {
+      "id": 104,
+      "source": "wiki",
+      "source_id": "old-03",
+      "source_origin": "vrwiki",
+      "title": "Fechamento cego",
+      "markdown": "Na conferência cega, o operador informa a contagem sem consultar o saldo esperado do sistema. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/3",
+      "local_path": ""
+    },
+    {
+      "id": 5,
+      "source": "kb",
+      "source_id": "case-04",
+      "source_origin": "movidesk",
+      "title": "Venda suspensa",
+      "markdown": "Suspenda o cupom aberto para atender outro comprador e recupere a venda suspensa depois. Identificador exato: VRX_9104.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/4",
+      "local_path": ""
+    },
+    {
+      "id": 105,
+      "source": "kb",
+      "source_id": "old-04",
+      "source_origin": "movidesk",
+      "title": "Venda suspensa",
+      "markdown": "Suspenda o cupom aberto para atender outro comprador e recupere a venda suspensa depois. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/4",
+      "local_path": ""
+    },
+    {
+      "id": 6,
+      "source": "schema",
+      "source_id": "case-05",
+      "source_origin": "local",
+      "title": "Falha de comunicação TEF",
+      "markdown": "Quando a autorização eletrônica não retorna, consulte o estado da transação antes de tentar nova cobrança. Identificador exato: VRX_9105.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/5",
+      "local_path": ""
+    },
+    {
+      "id": 106,
+      "source": "schema",
+      "source_id": "old-05",
+      "source_origin": "local",
+      "title": "Falha de comunicação TEF",
+      "markdown": "Quando a autorização eletrônica não retorna, consulte o estado da transação antes de tentar nova cobrança. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/5",
+      "local_path": ""
+    },
+    {
+      "id": 7,
+      "source": "wiki",
+      "source_id": "case-06",
+      "source_origin": "vrwiki",
+      "title": "Devolução parcial",
+      "markdown": "Selecione apenas os itens devolvidos e informe as quantidades correspondentes na operação de devolução. Identificador exato: VRX_9106.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/6",
+      "local_path": ""
+    },
+    {
+      "id": 107,
+      "source": "wiki",
+      "source_id": "old-06",
+      "source_origin": "vrwiki",
+      "title": "Devolução parcial",
+      "markdown": "Selecione apenas os itens devolvidos e informe as quantidades correspondentes na operação de devolução. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/6",
+      "local_path": ""
+    },
+    {
+      "id": 8,
+      "source": "kb",
+      "source_id": "case-07",
+      "source_origin": "movidesk",
+      "title": "Conferência de recebimento",
+      "markdown": "Compare os volumes e as quantidades entregues com o pedido de compra antes de aceitar a mercadoria. Identificador exato: VRX_9107.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/7",
+      "local_path": ""
+    },
+    {
+      "id": 108,
+      "source": "kb",
+      "source_id": "old-07",
+      "source_origin": "movidesk",
+      "title": "Conferência de recebimento",
+      "markdown": "Compare os volumes e as quantidades entregues com o pedido de compra antes de aceitar a mercadoria. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/7",
+      "local_path": ""
+    },
+    {
+      "id": 9,
+      "source": "schema",
+      "source_id": "case-08",
+      "source_origin": "local",
+      "title": "Inventário rotativo",
+      "markdown": "A contagem periódica por grupos permite conferir parte do estoque sem paralisar toda a loja.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/8",
+      "local_path": ""
+    },
+    {
+      "id": 109,
+      "source": "schema",
+      "source_id": "old-08",
+      "source_origin": "local",
+      "title": "Inventário rotativo",
+      "markdown": "A contagem periódica por grupos permite conferir parte do estoque sem paralisar toda a loja. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/8",
+      "local_path": ""
+    },
+    {
+      "id": 10,
+      "source": "wiki",
+      "source_id": "case-09",
+      "source_origin": "vrwiki",
+      "title": "Transferência entre lojas",
+      "markdown": "Registre a saída na unidade de origem e a entrada na unidade de destino para movimentar estoque entre filiais.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/9",
+      "local_path": ""
+    },
+    {
+      "id": 110,
+      "source": "wiki",
+      "source_id": "old-09",
+      "source_origin": "vrwiki",
+      "title": "Transferência entre lojas",
+      "markdown": "Registre a saída na unidade de origem e a entrada na unidade de destino para movimentar estoque entre filiais. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/9",
+      "local_path": ""
+    },
+    {
+      "id": 11,
+      "source": "kb",
+      "source_id": "case-10",
+      "source_origin": "movidesk",
+      "title": "Perda por validade",
+      "markdown": "Mercadoria vencida deve ser retirada do saldo disponível por lançamento de perda com o motivo validade.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/10",
+      "local_path": ""
+    },
+    {
+      "id": 111,
+      "source": "kb",
+      "source_id": "old-10",
+      "source_origin": "movidesk",
+      "title": "Perda por validade",
+      "markdown": "Mercadoria vencida deve ser retirada do saldo disponível por lançamento de perda com o motivo validade. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/10",
+      "local_path": ""
+    },
+    {
+      "id": 12,
+      "source": "schema",
+      "source_id": "case-11",
+      "source_origin": "local",
+      "title": "Ruptura de estoque",
+      "markdown": "Acompanhe produtos sem saldo disponível e priorize sua reposição para evitar indisponibilidade na gôndola.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/11",
+      "local_path": ""
+    },
+    {
+      "id": 112,
+      "source": "schema",
+      "source_id": "old-11",
+      "source_origin": "local",
+      "title": "Ruptura de estoque",
+      "markdown": "Acompanhe produtos sem saldo disponível e priorize sua reposição para evitar indisponibilidade na gôndola. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/11",
+      "local_path": ""
+    },
+    {
+      "id": 13,
+      "source": "wiki",
+      "source_id": "case-12",
+      "source_origin": "vrwiki",
+      "title": "Conciliação bancária",
+      "markdown": "Associe cada movimento do extrato à baixa financeira correspondente e investigue diferenças de valor.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/12",
+      "local_path": ""
+    },
+    {
+      "id": 113,
+      "source": "wiki",
+      "source_id": "old-12",
+      "source_origin": "vrwiki",
+      "title": "Conciliação bancária",
+      "markdown": "Associe cada movimento do extrato à baixa financeira correspondente e investigue diferenças de valor. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/12",
+      "local_path": ""
+    },
+    {
+      "id": 14,
+      "source": "kb",
+      "source_id": "case-13",
+      "source_origin": "movidesk",
+      "title": "Pagamento em duplicidade",
+      "markdown": "Verifique as baixas do título e o extrato antes de estornar o pagamento lançado mais de uma vez.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/13",
+      "local_path": ""
+    },
+    {
+      "id": 114,
+      "source": "kb",
+      "source_id": "old-13",
+      "source_origin": "movidesk",
+      "title": "Pagamento em duplicidade",
+      "markdown": "Verifique as baixas do título e o extrato antes de estornar o pagamento lançado mais de uma vez. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/13",
+      "local_path": ""
+    },
+    {
+      "id": 15,
+      "source": "schema",
+      "source_id": "case-14",
+      "source_origin": "local",
+      "title": "Renegociação de dívida",
+      "markdown": "Agrupe títulos em aberto e gere novas parcelas conforme o acordo, preservando o histórico original.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/14",
+      "local_path": ""
+    },
+    {
+      "id": 115,
+      "source": "schema",
+      "source_id": "old-14",
+      "source_origin": "local",
+      "title": "Renegociação de dívida",
+      "markdown": "Agrupe títulos em aberto e gere novas parcelas conforme o acordo, preservando o histórico original. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/14",
+      "local_path": ""
+    },
+    {
+      "id": 16,
+      "source": "wiki",
+      "source_id": "case-15",
+      "source_origin": "vrwiki",
+      "title": "Desconto por antecipação",
+      "markdown": "Informe o abatimento negociado ao liquidar um título antes de seu vencimento.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/15",
+      "local_path": ""
+    },
+    {
+      "id": 116,
+      "source": "wiki",
+      "source_id": "old-15",
+      "source_origin": "vrwiki",
+      "title": "Desconto por antecipação",
+      "markdown": "Informe o abatimento negociado ao liquidar um título antes de seu vencimento. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/15",
+      "local_path": ""
+    },
+    {
+      "id": 17,
+      "source": "kb",
+      "source_id": "case-16",
+      "source_origin": "movidesk",
+      "title": "Juros de atraso",
+      "markdown": "No recebimento após o vencimento, aplique os encargos previstos e registre separadamente principal e juros.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/16",
+      "local_path": ""
+    },
+    {
+      "id": 117,
+      "source": "kb",
+      "source_id": "old-16",
+      "source_origin": "movidesk",
+      "title": "Juros de atraso",
+      "markdown": "No recebimento após o vencimento, aplique os encargos previstos e registre separadamente principal e juros. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/16",
+      "local_path": ""
+    },
+    {
+      "id": 18,
+      "source": "schema",
+      "source_id": "case-17",
+      "source_origin": "local",
+      "title": "Fluxo de caixa projetado",
+      "markdown": "A projeção reúne recebimentos e pagamentos futuros por data para antecipar necessidades de saldo.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/17",
+      "local_path": ""
+    },
+    {
+      "id": 118,
+      "source": "schema",
+      "source_id": "old-17",
+      "source_origin": "local",
+      "title": "Fluxo de caixa projetado",
+      "markdown": "A projeção reúne recebimentos e pagamentos futuros por data para antecipar necessidades de saldo. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/17",
+      "local_path": ""
+    },
+    {
+      "id": 19,
+      "source": "wiki",
+      "source_id": "case-18",
+      "source_origin": "vrwiki",
+      "title": "Rejeição de destinatário",
+      "markdown": "Confira CPF ou CNPJ e a situação cadastral do destinatário antes de retransmitir a nota rejeitada.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/18",
+      "local_path": ""
+    },
+    {
+      "id": 119,
+      "source": "wiki",
+      "source_id": "old-18",
+      "source_origin": "vrwiki",
+      "title": "Rejeição de destinatário",
+      "markdown": "Confira CPF ou CNPJ e a situação cadastral do destinatário antes de retransmitir a nota rejeitada. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/18",
+      "local_path": ""
+    },
+    {
+      "id": 20,
+      "source": "kb",
+      "source_id": "case-19",
+      "source_origin": "movidesk",
+      "title": "Carta de correção",
+      "markdown": "Use carta de correção apenas para informações permitidas, preservando os dados fiscais que exigem cancelamento.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/19",
+      "local_path": ""
+    },
+    {
+      "id": 120,
+      "source": "kb",
+      "source_id": "old-19",
+      "source_origin": "movidesk",
+      "title": "Carta de correção",
+      "markdown": "Use carta de correção apenas para informações permitidas, preservando os dados fiscais que exigem cancelamento. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/19",
+      "local_path": ""
+    },
+    {
+      "id": 21,
+      "source": "schema",
+      "source_id": "case-20",
+      "source_origin": "local",
+      "title": "Inutilização de numeração",
+      "markdown": "Justifique os números fiscais que não foram utilizados para regularizar a quebra da sequência.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/20",
+      "local_path": ""
+    },
+    {
+      "id": 121,
+      "source": "schema",
+      "source_id": "old-20",
+      "source_origin": "local",
+      "title": "Inutilização de numeração",
+      "markdown": "Justifique os números fiscais que não foram utilizados para regularizar a quebra da sequência. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/20",
+      "local_path": ""
+    },
+    {
+      "id": 22,
+      "source": "wiki",
+      "source_id": "case-21",
+      "source_origin": "vrwiki",
+      "title": "Contingência fiscal",
+      "markdown": "Durante indisponibilidade do autorizador, use a modalidade de contingência habilitada e transmita depois.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/21",
+      "local_path": ""
+    },
+    {
+      "id": 122,
+      "source": "wiki",
+      "source_id": "old-21",
+      "source_origin": "vrwiki",
+      "title": "Contingência fiscal",
+      "markdown": "Durante indisponibilidade do autorizador, use a modalidade de contingência habilitada e transmita depois. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/21",
+      "local_path": ""
+    },
+    {
+      "id": 23,
+      "source": "kb",
+      "source_id": "case-22",
+      "source_origin": "movidesk",
+      "title": "Importação de XML",
+      "markdown": "Carregue o arquivo eletrônico do fornecedor e confira os dados fiscais antes de confirmar a entrada.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/22",
+      "local_path": ""
+    },
+    {
+      "id": 123,
+      "source": "kb",
+      "source_id": "old-22",
+      "source_origin": "movidesk",
+      "title": "Importação de XML",
+      "markdown": "Carregue o arquivo eletrônico do fornecedor e confira os dados fiscais antes de confirmar a entrada. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/22",
+      "local_path": ""
+    },
+    {
+      "id": 24,
+      "source": "schema",
+      "source_id": "case-23",
+      "source_origin": "local",
+      "title": "Apuração de imposto",
+      "markdown": "Revise os documentos do período e totalize os débitos e créditos antes de encerrar a competência fiscal.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/23",
+      "local_path": ""
+    },
+    {
+      "id": 124,
+      "source": "schema",
+      "source_id": "old-23",
+      "source_origin": "local",
+      "title": "Apuração de imposto",
+      "markdown": "Revise os documentos do período e totalize os débitos e créditos antes de encerrar a competência fiscal. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/23",
+      "local_path": ""
+    },
+    {
+      "id": 25,
+      "source": "wiki",
+      "source_id": "case-24",
+      "source_origin": "vrwiki",
+      "title": "Etiqueta de preço",
+      "markdown": "Gere etiquetas a partir dos preços vigentes e substitua as identificações desatualizadas da gôndola.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/24",
+      "local_path": ""
+    },
+    {
+      "id": 125,
+      "source": "wiki",
+      "source_id": "old-24",
+      "source_origin": "vrwiki",
+      "title": "Etiqueta de preço",
+      "markdown": "Gere etiquetas a partir dos preços vigentes e substitua as identificações desatualizadas da gôndola. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/24",
+      "local_path": ""
+    },
+    {
+      "id": 26,
+      "source": "kb",
+      "source_id": "case-25",
+      "source_origin": "movidesk",
+      "title": "Promoção programada",
+      "markdown": "Defina início e término da oferta para que o preço promocional entre em vigor automaticamente.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/25",
+      "local_path": ""
+    },
+    {
+      "id": 126,
+      "source": "kb",
+      "source_id": "old-25",
+      "source_origin": "movidesk",
+      "title": "Promoção programada",
+      "markdown": "Defina início e término da oferta para que o preço promocional entre em vigor automaticamente. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/25",
+      "local_path": ""
+    },
+    {
+      "id": 27,
+      "source": "schema",
+      "source_id": "case-26",
+      "source_origin": "local",
+      "title": "Preço por quantidade",
+      "markdown": "Configure faixas de quantidade para aplicar valores diferenciados conforme o volume comprado.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/26",
+      "local_path": ""
+    },
+    {
+      "id": 127,
+      "source": "schema",
+      "source_id": "old-26",
+      "source_origin": "local",
+      "title": "Preço por quantidade",
+      "markdown": "Configure faixas de quantidade para aplicar valores diferenciados conforme o volume comprado. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/26",
+      "local_path": ""
+    },
+    {
+      "id": 28,
+      "source": "wiki",
+      "source_id": "case-27",
+      "source_origin": "vrwiki",
+      "title": "Bloqueio de desconto",
+      "markdown": "Limite a redução permitida por perfil e exija autorização quando o operador ultrapassar o percentual.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/27",
+      "local_path": ""
+    },
+    {
+      "id": 128,
+      "source": "wiki",
+      "source_id": "old-27",
+      "source_origin": "vrwiki",
+      "title": "Bloqueio de desconto",
+      "markdown": "Limite a redução permitida por perfil e exija autorização quando o operador ultrapassar o percentual. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/27",
+      "local_path": ""
+    },
+    {
+      "id": 29,
+      "source": "kb",
+      "source_id": "case-28",
+      "source_origin": "movidesk",
+      "title": "Margem de contribuição",
+      "markdown": "Subtraia custos e despesas variáveis da receita para avaliar quanto cada produto contribui para o resultado.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/28",
+      "local_path": ""
+    },
+    {
+      "id": 129,
+      "source": "kb",
+      "source_id": "old-28",
+      "source_origin": "movidesk",
+      "title": "Margem de contribuição",
+      "markdown": "Subtraia custos e despesas variáveis da receita para avaliar quanto cada produto contribui para o resultado. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/28",
+      "local_path": ""
+    },
+    {
+      "id": 30,
+      "source": "schema",
+      "source_id": "case-29",
+      "source_origin": "local",
+      "title": "Atualização de custo",
+      "markdown": "Recalcule o custo do produto a partir das entradas e dos componentes configurados na compra.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/29",
+      "local_path": ""
+    },
+    {
+      "id": 130,
+      "source": "schema",
+      "source_id": "old-29",
+      "source_origin": "local",
+      "title": "Atualização de custo",
+      "markdown": "Recalcule o custo do produto a partir das entradas e dos componentes configurados na compra. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/29",
+      "local_path": ""
+    },
+    {
+      "id": 31,
+      "source": "wiki",
+      "source_id": "case-30",
+      "source_origin": "vrwiki",
+      "title": "Cadastro de embalagem",
+      "markdown": "Relacione o código da caixa à unidade de venda e ao fator de conversão da embalagem.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/30",
+      "local_path": ""
+    },
+    {
+      "id": 131,
+      "source": "wiki",
+      "source_id": "old-30",
+      "source_origin": "vrwiki",
+      "title": "Cadastro de embalagem",
+      "markdown": "Relacione o código da caixa à unidade de venda e ao fator de conversão da embalagem. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/30",
+      "local_path": ""
+    },
+    {
+      "id": 32,
+      "source": "kb",
+      "source_id": "case-31",
+      "source_origin": "movidesk",
+      "title": "Código de barras duplicado",
+      "markdown": "Remova a associação indevida quando o mesmo identificador estiver vinculado a produtos diferentes.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/31",
+      "local_path": ""
+    },
+    {
+      "id": 132,
+      "source": "kb",
+      "source_id": "old-31",
+      "source_origin": "movidesk",
+      "title": "Código de barras duplicado",
+      "markdown": "Remova a associação indevida quando o mesmo identificador estiver vinculado a produtos diferentes. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/31",
+      "local_path": ""
+    },
+    {
+      "id": 33,
+      "source": "schema",
+      "source_id": "case-32",
+      "source_origin": "local",
+      "title": "Produto pesável",
+      "markdown": "Configure a identificação de balança e a interpretação do peso ou valor contido na etiqueta.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/32",
+      "local_path": ""
+    },
+    {
+      "id": 133,
+      "source": "schema",
+      "source_id": "old-32",
+      "source_origin": "local",
+      "title": "Produto pesável",
+      "markdown": "Configure a identificação de balança e a interpretação do peso ou valor contido na etiqueta. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/32",
+      "local_path": ""
+    },
+    {
+      "id": 34,
+      "source": "wiki",
+      "source_id": "case-33",
+      "source_origin": "vrwiki",
+      "title": "Lote e rastreabilidade",
+      "markdown": "Registre lote e origem para localizar as entradas e saídas de uma remessa específica.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/33",
+      "local_path": ""
+    },
+    {
+      "id": 134,
+      "source": "wiki",
+      "source_id": "old-33",
+      "source_origin": "vrwiki",
+      "title": "Lote e rastreabilidade",
+      "markdown": "Registre lote e origem para localizar as entradas e saídas de uma remessa específica. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/33",
+      "local_path": ""
+    },
+    {
+      "id": 35,
+      "source": "kb",
+      "source_id": "case-34",
+      "source_origin": "movidesk",
+      "title": "Curva ABC",
+      "markdown": "Ordene os itens por participação no faturamento para identificar os produtos de maior importância comercial.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/34",
+      "local_path": ""
+    },
+    {
+      "id": 135,
+      "source": "kb",
+      "source_id": "old-34",
+      "source_origin": "movidesk",
+      "title": "Curva ABC",
+      "markdown": "Ordene os itens por participação no faturamento para identificar os produtos de maior importância comercial. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/34",
+      "local_path": ""
+    },
+    {
+      "id": 36,
+      "source": "schema",
+      "source_id": "case-35",
+      "source_origin": "local",
+      "title": "Pedido mínimo",
+      "markdown": "Considere embalagem e quantidade mínima exigida pelo fornecedor ao montar a sugestão de compra.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/35",
+      "local_path": ""
+    },
+    {
+      "id": 136,
+      "source": "schema",
+      "source_id": "old-35",
+      "source_origin": "local",
+      "title": "Pedido mínimo",
+      "markdown": "Considere embalagem e quantidade mínima exigida pelo fornecedor ao montar a sugestão de compra. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/35",
+      "local_path": ""
+    },
+    {
+      "id": 37,
+      "source": "wiki",
+      "source_id": "case-36",
+      "source_origin": "vrwiki",
+      "title": "Permissão por perfil",
+      "markdown": "Associe funções a perfis de acesso e atribua o perfil adequado a cada usuário.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/36",
+      "local_path": ""
+    },
+    {
+      "id": 137,
+      "source": "wiki",
+      "source_id": "old-36",
+      "source_origin": "vrwiki",
+      "title": "Permissão por perfil",
+      "markdown": "Associe funções a perfis de acesso e atribua o perfil adequado a cada usuário. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/36",
+      "local_path": ""
+    },
+    {
+      "id": 38,
+      "source": "kb",
+      "source_id": "case-37",
+      "source_origin": "movidesk",
+      "title": "Auditoria de alterações",
+      "markdown": "Consulte o histórico de modificações para identificar autor, horário e valores anteriores do registro.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/37",
+      "local_path": ""
+    },
+    {
+      "id": 138,
+      "source": "kb",
+      "source_id": "old-37",
+      "source_origin": "movidesk",
+      "title": "Auditoria de alterações",
+      "markdown": "Consulte o histórico de modificações para identificar autor, horário e valores anteriores do registro. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/37",
+      "local_path": ""
+    },
+    {
+      "id": 39,
+      "source": "schema",
+      "source_id": "case-38",
+      "source_origin": "local",
+      "title": "Sessão bloqueada",
+      "markdown": "Encerre a sessão anterior ou solicite o desbloqueio administrativo quando o usuário permanecer conectado.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/38",
+      "local_path": ""
+    },
+    {
+      "id": 139,
+      "source": "schema",
+      "source_id": "old-38",
+      "source_origin": "local",
+      "title": "Sessão bloqueada",
+      "markdown": "Encerre a sessão anterior ou solicite o desbloqueio administrativo quando o usuário permanecer conectado. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/38",
+      "local_path": ""
+    },
+    {
+      "id": 40,
+      "source": "wiki",
+      "source_id": "case-39",
+      "source_origin": "vrwiki",
+      "title": "Restauração de cópia",
+      "markdown": "Valide a cópia de segurança e restaure em ambiente separado antes de substituir uma base operacional.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/39",
+      "local_path": ""
+    },
+    {
+      "id": 140,
+      "source": "wiki",
+      "source_id": "old-39",
+      "source_origin": "vrwiki",
+      "title": "Restauração de cópia",
+      "markdown": "Valide a cópia de segurança e restaure em ambiente separado antes de substituir uma base operacional. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/39",
+      "local_path": ""
+    },
+    {
+      "id": 41,
+      "source": "kb",
+      "source_id": "case-40",
+      "source_origin": "movidesk",
+      "title": "Exportação de relatório",
+      "markdown": "Escolha o formato de planilha para analisar os registros do relatório em um editor externo.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/40",
+      "local_path": ""
+    },
+    {
+      "id": 141,
+      "source": "kb",
+      "source_id": "old-40",
+      "source_origin": "movidesk",
+      "title": "Exportação de relatório",
+      "markdown": "Escolha o formato de planilha para analisar os registros do relatório em um editor externo. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/40",
+      "local_path": ""
+    },
+    {
+      "id": 42,
+      "source": "schema",
+      "source_id": "case-41",
+      "source_origin": "local",
+      "title": "Agendamento de rotina",
+      "markdown": "Cadastre horário e periodicidade para executar o processamento sem intervenção manual recorrente.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/41",
+      "local_path": ""
+    },
+    {
+      "id": 142,
+      "source": "schema",
+      "source_id": "old-41",
+      "source_origin": "local",
+      "title": "Agendamento de rotina",
+      "markdown": "Cadastre horário e periodicidade para executar o processamento sem intervenção manual recorrente. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/41",
+      "local_path": ""
+    },
+    {
+      "id": 43,
+      "source": "wiki",
+      "source_id": "case-42",
+      "source_origin": "vrwiki",
+      "title": "Integração pendente",
+      "markdown": "Confira a fila de mensagens e reenvie os registros que falharam após corrigir a causa do erro.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/42",
+      "local_path": ""
+    },
+    {
+      "id": 143,
+      "source": "wiki",
+      "source_id": "old-42",
+      "source_origin": "vrwiki",
+      "title": "Integração pendente",
+      "markdown": "Confira a fila de mensagens e reenvie os registros que falharam após corrigir a causa do erro. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/42",
+      "local_path": ""
+    },
+    {
+      "id": 44,
+      "source": "kb",
+      "source_id": "case-43",
+      "source_origin": "movidesk",
+      "title": "Sincronização de relógio",
+      "markdown": "Mantenha data e hora alinhadas entre estações e servidor para evitar divergências nos registros.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/43",
+      "local_path": ""
+    },
+    {
+      "id": 144,
+      "source": "kb",
+      "source_id": "old-43",
+      "source_origin": "movidesk",
+      "title": "Sincronização de relógio",
+      "markdown": "Mantenha data e hora alinhadas entre estações e servidor para evitar divergências nos registros. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/43",
+      "local_path": ""
+    },
+    {
+      "id": 45,
+      "source": "schema",
+      "source_id": "case-44",
+      "source_origin": "local",
+      "title": "Impressora sem papel",
+      "markdown": "Reponha a bobina e confirme o estado da impressão antes de solicitar outra via do comprovante.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/44",
+      "local_path": ""
+    },
+    {
+      "id": 145,
+      "source": "schema",
+      "source_id": "old-44",
+      "source_origin": "local",
+      "title": "Impressora sem papel",
+      "markdown": "Reponha a bobina e confirme o estado da impressão antes de solicitar outra via do comprovante. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/44",
+      "local_path": ""
+    },
+    {
+      "id": 46,
+      "source": "wiki",
+      "source_id": "case-45",
+      "source_origin": "vrwiki",
+      "title": "Separação de encomenda",
+      "markdown": "Reserve as quantidades do pedido e confira os itens durante a preparação para retirada.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/45",
+      "local_path": ""
+    },
+    {
+      "id": 146,
+      "source": "wiki",
+      "source_id": "old-45",
+      "source_origin": "vrwiki",
+      "title": "Separação de encomenda",
+      "markdown": "Reserve as quantidades do pedido e confira os itens durante a preparação para retirada. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/45",
+      "local_path": ""
+    },
+    {
+      "id": 47,
+      "source": "kb",
+      "source_id": "case-46",
+      "source_origin": "movidesk",
+      "title": "Entrega agendada",
+      "markdown": "Registre endereço e janela de atendimento para organizar o roteiro de distribuição dos pedidos.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/46",
+      "local_path": ""
+    },
+    {
+      "id": 147,
+      "source": "kb",
+      "source_id": "old-46",
+      "source_origin": "movidesk",
+      "title": "Entrega agendada",
+      "markdown": "Registre endereço e janela de atendimento para organizar o roteiro de distribuição dos pedidos. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/46",
+      "local_path": ""
+    },
+    {
+      "id": 48,
+      "source": "schema",
+      "source_id": "case-47",
+      "source_origin": "local",
+      "title": "Comissão de vendedor",
+      "markdown": "Calcule a remuneração variável conforme vendas elegíveis e percentuais do acordo comercial.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r2",
+      "status": "active",
+      "url": "https://fixture.invalid/47",
+      "local_path": ""
+    },
+    {
+      "id": 148,
+      "source": "schema",
+      "source_id": "old-47",
+      "source_origin": "local",
+      "title": "Comissão de vendedor",
+      "markdown": "Calcule a remuneração variável conforme vendas elegíveis e percentuais do acordo comercial. Procedimento histórico revogado; versão anterior.",
+      "module": "Multimodulo",
+      "product": "",
+      "revision": "r1",
+      "status": "active",
+      "url": "https://fixture.invalid/47",
+      "local_path": ""
+    }
+  ],
+  "queries": [
+    {
+      "id": "q00",
+      "text": "O cliente desistiu depois de pagar. Como volto atrás?",
+      "relevant": [
+        "wiki:case-00"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q01",
+      "text": "Preciso tirar dinheiro da gaveta durante o expediente.",
+      "relevant": [
+        "kb:case-01"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q02",
+      "text": "Faltam moedas para devolver ao comprador; como abastecer o caixa?",
+      "relevant": [
+        "schema:case-02"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q03",
+      "text": "Quero que o funcionário conte as notas sem saber quanto deveria ter.",
+      "relevant": [
+        "wiki:case-03"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q04",
+      "text": "Uma pessoa esqueceu a carteira e preciso atender a próxima sem perder os itens.",
+      "relevant": [
+        "kb:case-04"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q05",
+      "text": "O cartão ficou processando; posso passar novamente sem cobrar duas vezes?",
+      "relevant": [
+        "schema:case-05"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q06",
+      "text": "O comprador trouxe de volta só duas unidades da compra inteira.",
+      "relevant": [
+        "wiki:case-06"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q07",
+      "text": "Chegou o caminhão do fornecedor; como descobrir se veio tudo certo?",
+      "relevant": [
+        "kb:case-07"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q08",
+      "text": "Quero contar pequenas partes das mercadorias a cada dia sem fechar a operação.",
+      "relevant": [
+        "schema:case-08"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q09",
+      "text": "Como mando produtos de uma unidade para outra mantendo os saldos corretos?",
+      "relevant": [
+        "wiki:case-09"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q10",
+      "text": "Os iogurtes passaram da data e não podem mais ser vendidos; como baixar?",
+      "relevant": [
+        "kb:case-10"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q11",
+      "text": "As prateleiras estão vazias em alguns itens; como achar o que precisa repor?",
+      "relevant": [
+        "schema:case-11"
+      ],
+      "split": "development",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q12",
+      "text": "O que saiu da conta do banco não bate com os pagamentos registrados.",
+      "relevant": [
+        "wiki:case-12"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q13",
+      "text": "Paguei a mesma conta duas vezes no sistema; como corrigir?",
+      "relevant": [
+        "kb:case-13"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q14",
+      "text": "O devedor pediu para dividir o que está atrasado em prestações novas.",
+      "relevant": [
+        "schema:case-14"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q15",
+      "text": "O fornecedor cobra menos se eu quitar hoje em vez de esperar a data.",
+      "relevant": [
+        "wiki:case-15"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q16",
+      "text": "A pessoa pagou depois do prazo; onde entra o valor a mais?",
+      "relevant": [
+        "kb:case-16"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q17",
+      "text": "Como saber se vai faltar dinheiro na semana que vem?",
+      "relevant": [
+        "schema:case-17"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q18",
+      "text": "O documento fiscal não foi aceito porque os dados do comprador estão errados.",
+      "relevant": [
+        "wiki:case-18"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q19",
+      "text": "Escrevi uma observação errada numa nota autorizada; como retificar o texto?",
+      "relevant": [
+        "kb:case-19"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q20",
+      "text": "Ficou um buraco entre os números das notas emitidas.",
+      "relevant": [
+        "schema:case-20"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q21",
+      "text": "A internet caiu e a loja precisa continuar emitindo cupons.",
+      "relevant": [
+        "wiki:case-21"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q22",
+      "text": "Recebi a nota por arquivo e não quero digitar todos os produtos.",
+      "relevant": [
+        "kb:case-22"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q23",
+      "text": "Onde descubro quanto de tributo ficou para recolher no mês?",
+      "relevant": [
+        "schema:case-23"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q24",
+      "text": "O valor na prateleira é antigo; preciso imprimir os novos cartazes pequenos.",
+      "relevant": [
+        "wiki:case-24"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q25",
+      "text": "Quero que o desconto comece amanhã cedo e acabe no domingo.",
+      "relevant": [
+        "kb:case-25"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q26",
+      "text": "Se o cliente levar três pacotes, cada um deve custar menos.",
+      "relevant": [
+        "schema:case-26"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q27",
+      "text": "Os caixas estão abatendo demais; quero pedir senha do gerente acima do limite.",
+      "relevant": [
+        "wiki:case-27"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q28",
+      "text": "Qual item deixa mais dinheiro depois dos gastos ligados à venda?",
+      "relevant": [
+        "kb:case-28"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q29",
+      "text": "A mercadoria ficou mais cara no fornecedor; como refletir isso no cadastro?",
+      "relevant": [
+        "schema:case-29"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q30",
+      "text": "Compro um fardo com doze, mas vendo cada unidade separadamente.",
+      "relevant": [
+        "wiki:case-30"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q31",
+      "text": "O leitor está trazendo o produto errado porque dois itens têm o mesmo código.",
+      "relevant": [
+        "kb:case-31"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q32",
+      "text": "Como o caixa entende quantos gramas tem o queijo embalado?",
+      "relevant": [
+        "schema:case-32"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q33",
+      "text": "O fabricante recolheu uma remessa; preciso descobrir por onde ela passou.",
+      "relevant": [
+        "wiki:case-33"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q34",
+      "text": "Quais poucos produtos respondem pela maior parte do que vendemos?",
+      "relevant": [
+        "kb:case-34"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q35",
+      "text": "O distribuidor só entrega acima de um volume; como evitar pedidos pequenos?",
+      "relevant": [
+        "schema:case-35"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q36",
+      "text": "Quero que funcionários diferentes vejam apenas as telas de que precisam.",
+      "relevant": [
+        "wiki:case-36"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q37",
+      "text": "Alguém mudou um dado e preciso saber quem foi e o que havia antes.",
+      "relevant": [
+        "kb:case-37"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q38",
+      "text": "Fechei o programa de repente e agora diz que já estou usando em outro lugar.",
+      "relevant": [
+        "schema:case-38"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q39",
+      "text": "Perdi os dados; como recuperar o que foi salvo sem estragar a base atual?",
+      "relevant": [
+        "wiki:case-39"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q40",
+      "text": "Preciso levar essa listagem para mexer nas colunas fora do sistema.",
+      "relevant": [
+        "kb:case-40"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q41",
+      "text": "Quero que essa tarefa rode sozinha toda madrugada.",
+      "relevant": [
+        "schema:case-41"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q42",
+      "text": "As alterações de uma loja ainda não chegaram à outra; onde vejo o que ficou parado?",
+      "relevant": [
+        "wiki:case-42"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q43",
+      "text": "Os horários dos comprovantes saem diferentes em cada computador.",
+      "relevant": [
+        "kb:case-43"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q44",
+      "text": "O papel acabou no meio do recibo; preciso entregar uma cópia legível.",
+      "relevant": [
+        "schema:case-44"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q45",
+      "text": "O cliente vai buscar mais tarde e não posso vender os produtos que ele escolheu.",
+      "relevant": [
+        "wiki:case-45"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q46",
+      "text": "Preciso combinar em que período a compra chegará na casa da pessoa.",
+      "relevant": [
+        "kb:case-46"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "q47",
+      "text": "Quanto cada funcionário deve receber a mais pelo que conseguiu vender?",
+      "relevant": [
+        "schema:case-47"
+      ],
+      "split": "evaluation",
+      "kind": "paraphrase",
+      "revision": "r2"
+    },
+    {
+      "id": "exact0",
+      "text": "VRX_9100",
+      "relevant": [
+        "wiki:case-00"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact1",
+      "text": "VRX_9101",
+      "relevant": [
+        "kb:case-01"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact2",
+      "text": "VRX_9102",
+      "relevant": [
+        "schema:case-02"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact3",
+      "text": "VRX_9103",
+      "relevant": [
+        "wiki:case-03"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact4",
+      "text": "VRX_9104",
+      "relevant": [
+        "kb:case-04"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact5",
+      "text": "VRX_9105",
+      "relevant": [
+        "schema:case-05"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact6",
+      "text": "VRX_9106",
+      "relevant": [
+        "wiki:case-06"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "exact7",
+      "text": "VRX_9107",
+      "relevant": [
+        "kb:case-07"
+      ],
+      "split": "evaluation",
+      "kind": "exact",
+      "revision": "r2"
+    },
+    {
+      "id": "none0",
+      "text": "orbital lunar docking",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    },
+    {
+      "id": "none1",
+      "text": "receita de bolo de cenoura",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    },
+    {
+      "id": "none2",
+      "text": "previsão meteorológica de Marte",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    },
+    {
+      "id": "none3",
+      "text": "cirurgia de catarata",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    },
+    {
+      "id": "none4",
+      "text": "dinossauros do jurássico",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    },
+    {
+      "id": "none5",
+      "text": "cotação de criptomoedas",
+      "relevant": [],
+      "split": "evaluation",
+      "kind": "no_answer",
+      "revision": "r2"
+    }
+  ]
+}

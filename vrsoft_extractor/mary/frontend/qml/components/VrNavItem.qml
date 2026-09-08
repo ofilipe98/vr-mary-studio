@@ -32,10 +32,10 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: Theme.radiusControl
-        color: root.selected ? frontend.palette.accessibleOrange
-            : pointer.hovered || root.activeFocus ? frontend.palette.navHover : "transparent"
+        color: root.selected ? Theme.palette.accessibleOrange
+            : pointer.hovered || root.activeFocus ? Theme.palette.navHover : "transparent"
         border.width: root.activeFocus ? 2 : 0
-        border.color: frontend.palette.brandYellow
+        border.color: Theme.palette.brandYellow
 
         Behavior on color {
             enabled: !frontend.reduceMotion
@@ -69,7 +69,7 @@ Item {
                 height: Theme.iconSize
                 source: navIconSource
                 colorization: 1.0
-                colorizationColor: root.selected ? "#FFFFFF" : frontend.palette.navText
+                colorizationColor: root.selected ? "#FFFFFF" : Theme.palette.navText
                 opacity: root.selected ? 1 : 0.88
             }
         }
@@ -80,7 +80,7 @@ Item {
             width: Math.max(0, parent.width - Theme.iconSize - 36)
             height: parent.height
             text: root.title
-            color: root.selected ? "#FFFFFF" : frontend.palette.navText
+            color: root.selected ? "#FFFFFF" : Theme.palette.navText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
             font.weight: root.selected ? Font.DemiBold : Font.Medium

@@ -1,0 +1,207 @@
+{
+  "corpus_version": "1.0.0",
+  "documents": [
+    {
+      "id": "doc-01",
+      "source": "wiki",
+      "source_id": "wiki-icms-apuracao",
+      "title": "Manual de Apuração de ICMS e SPED Fiscal",
+      "module": "Fiscal",
+      "text": "O processo de apuração de ICMS consolida débitos e créditos fiscais do período mensal. As notas fiscais de entrada geram crédito de ICMS conforme CST/CFOP. O SPED Fiscal Bloco C relaciona todas as notas fiscais de mercadorias. O Bloco E totaliza a apuração do imposto próprio e de Substituição Tributária (ICMS-ST)."
+    },
+    {
+      "id": "doc-02",
+      "source": "kb",
+      "source_id": "kb-st-cfop",
+      "title": "Regras de Substituição Tributária e Códigos CFOP",
+      "module": "Fiscal",
+      "text": "Na Substituição Tributária (ICMS-ST), o imposto é retido na origem. Os CFOPs 5405 e 6405 identificam saídas com imposto retido anteriormente, diferenciando-se de 5102 e 6102 (tributadas integralmente). O cálculo considera a Margem de Valor Agregado (MVA) e alíquota interna de destino."
+    },
+    {
+      "id": "doc-03",
+      "source": "wiki",
+      "source_id": "wiki-pdv-contingencia",
+      "title": "Contingência Offline no Frente de Caixa PDV",
+      "module": "PDV",
+      "text": "Quando a SEFAZ estiver indisponível ou a rede local falhar, o PDV entra em contingência offline para emissão de NFC-e. As notas são assinadas localmente, gravadas em fila criptografada no SQLite do terminal e transmitidas automaticamente assim que a conexão com a SEFAZ for restabelecida."
+    },
+    {
+      "id": "doc-04",
+      "source": "kb",
+      "source_id": "kb-fechamento-caixa",
+      "title": "Procedimento de Fechamento de Caixa e Sangria",
+      "module": "PDV",
+      "text": "O operador de caixa realiza sangria de valores quando o montante em dinheiro atinge o limite de segurança. No final do turno, é efetuada a conferência cega, lançando cédulas, moedas, comprovantes de TEF e Pix, emitindo a Redução Z ou relatório de fechamento no sistema."
+    },
+    {
+      "id": "doc-05",
+      "source": "wiki",
+      "source_id": "wiki-cadastro-produtos",
+      "title": "Cadastro de Produtos VR0101 e NCM",
+      "module": "ADM_FIN_ESTOQUE",
+      "text": "Na tela VR0101 é realizado o cadastro mestre de produtos. São configurados o código de barras EAN, descrição, tributação NCM, CEST, unidade de medida, preço de venda, custo médio ponderado e estoque mínimo. A correta amarração do NCM define a alíquota de ICMS e PIS/COFINS."
+    },
+    {
+      "id": "doc-06",
+      "source": "wiki",
+      "source_id": "wiki-inventario-estoque",
+      "title": "Inventário Rotativo e Balanço de Estoque",
+      "module": "ADM_FIN_ESTOQUE",
+      "text": "O inventário de estoque pode ser geral ou rotativo por curva ABC. A contagem física com coletores de dados é comparada com a posição do sistema. Divergências de contagem geram lançamentos de ajuste com justificativa de quebra, perda ou sobra para acerto do custo médio."
+    },
+    {
+      "id": "doc-07",
+      "source": "kb",
+      "source_id": "kb-conciliacao-bancaria",
+      "title": "Conciliação Bancária e Extrato OFX",
+      "module": "ADM_FIN_ESTOQUE",
+      "text": "A conciliação bancária importa arquivos no padrão OFX ou CNAB 240/400. O sistema localiza lançamentos no contas a pagar e receber pelo valor e data de vencimento, liquidando títulos e sinalizando tarifas bancárias ou despesas não previstas."
+    },
+    {
+      "id": "doc-08",
+      "source": "wiki",
+      "source_id": "wiki-difal-consumidor",
+      "title": "Diferencial de Alíquota (DIFAL) nas Vendas Interestaduais",
+      "module": "Fiscal",
+      "text": "O DIFAL incide em operações interestaduais destinadas a consumidor final não contribuinte do ICMS. O sistema calcula a partilha considerando a alíquota interestadual (4%, 7% ou 12%) e a alíquota interna do estado de destino, adicionando o Fundo de Combate à Pobreza (FCP)."
+    },
+    {
+      "id": "doc-09",
+      "source": "schema",
+      "source_id": "schema-vrmaster-nfe",
+      "title": "Tabelas de Faturamento e NFe no VRMaster",
+      "module": "Fiscal",
+      "text": "Tabela TB_NFE_CABECALHO armazena chave de acesso, status da SEFAZ, protocolo e valor total. Tabela TB_NFE_ITENS contém CFOP, CST_ICMS, base de cálculo de ICMS e alíquota. Tabela TB_NFE_PAGAMENTOS armazena formas de pagamento e bandeiras de cartão."
+    },
+    {
+      "id": "doc-10",
+      "source": "schema",
+      "source_id": "schema-vrmaster-pdv",
+      "title": "Tabelas de PDV e Movimentação de Caixa",
+      "module": "PDV",
+      "text": "Tabela TB_PDV_MOVIMENTO registra abertura, sangria, suprimento e fechamento de caixa por operador. Tabela TB_PDV_CUPOM armazena vendas emitidas, cancelamentos de cupom fiscal e status de contingência offline."
+    }
+  ],
+  "queries": [
+    {
+      "query": "apuracao de icms mensal",
+      "relevant_docs": {"doc-01": 3, "doc-02": 1, "doc-08": 2, "doc-09": 1}
+    },
+    {
+      "query": "sped fiscal bloco c e bloco e",
+      "relevant_docs": {"doc-01": 3, "doc-09": 1}
+    },
+    {
+      "query": "regras de substituicao tributaria st mva",
+      "relevant_docs": {"doc-02": 3, "doc-01": 2, "doc-08": 1}
+    },
+    {
+      "query": "diferenca cfop 5102 e 5405",
+      "relevant_docs": {"doc-02": 3, "doc-01": 1, "doc-05": 1}
+    },
+    {
+      "query": "pdv offline contingencia nfce",
+      "relevant_docs": {"doc-03": 3, "doc-10": 2, "doc-04": 1}
+    },
+    {
+      "query": "fechamento de caixa sangria e reducao z",
+      "relevant_docs": {"doc-04": 3, "doc-10": 3, "doc-03": 1}
+    },
+    {
+      "query": "tela vr0101 cadastro de produtos e ncm",
+      "relevant_docs": {"doc-05": 3, "doc-06": 1, "doc-02": 1}
+    },
+    {
+      "query": "inventario de estoque rotativo curva abc",
+      "relevant_docs": {"doc-06": 3, "doc-05": 2}
+    },
+    {
+      "query": "conciliacao bancaria extrato ofx cnab",
+      "relevant_docs": {"doc-07": 3}
+    },
+    {
+      "query": "difal consumidor final partilha fcp",
+      "relevant_docs": {"doc-08": 3, "doc-01": 2, "doc-02": 1}
+    },
+    {
+      "query": "tabela tb_nfe_cabecalho e tb_nfe_itens",
+      "relevant_docs": {"doc-09": 3, "doc-01": 2}
+    },
+    {
+      "query": "tabela tb_pdv_movimento e tb_pdv_cupom",
+      "relevant_docs": {"doc-10": 3, "doc-04": 2, "doc-03": 1}
+    },
+    {
+      "query": "apuracao icms",
+      "relevant_docs": {"doc-01": 3, "doc-02": 1, "doc-08": 1}
+    },
+    {
+      "query": "invetario de estoke",
+      "relevant_docs": {"doc-06": 3, "doc-05": 1}
+    },
+    {
+      "query": "fechamneto de caixa",
+      "relevant_docs": {"doc-04": 3, "doc-10": 2}
+    },
+    {
+      "query": "substisao tributaria",
+      "relevant_docs": {"doc-02": 3, "doc-01": 2}
+    },
+    {
+      "query": "contingensia pdv",
+      "relevant_docs": {"doc-03": 3, "doc-10": 2}
+    },
+    {
+      "query": "cadatro produto ean",
+      "relevant_docs": {"doc-05": 3, "doc-06": 1}
+    },
+    {
+      "query": "extrato ofx bancos",
+      "relevant_docs": {"doc-07": 3}
+    },
+    {
+      "query": "credito de icms na nota fiscal de entrada",
+      "relevant_docs": {"doc-01": 3, "doc-02": 2, "doc-09": 1}
+    },
+    {
+      "query": "cancelamento de cupom fiscal no caixa",
+      "relevant_docs": {"doc-10": 3, "doc-04": 2, "doc-03": 2}
+    },
+    {
+      "query": "como funciona a sangria de valores",
+      "relevant_docs": {"doc-04": 3, "doc-10": 2}
+    },
+    {
+      "query": "ajuste de quebra e perda no estoque",
+      "relevant_docs": {"doc-06": 3, "doc-05": 1}
+    },
+    {
+      "query": "custo medio ponderado dos produtos",
+      "relevant_docs": {"doc-05": 3, "doc-06": 2}
+    },
+    {
+      "query": "calculo do fundo de combate a pobreza",
+      "relevant_docs": {"doc-08": 3, "doc-01": 1}
+    },
+    {
+      "query": "emissao de nfce em fila criptografada",
+      "relevant_docs": {"doc-03": 3, "doc-10": 1}
+    },
+    {
+      "query": "relatorio de fechamento cego",
+      "relevant_docs": {"doc-04": 3, "doc-10": 2}
+    },
+    {
+      "query": "amarracao de ncm e cest na tributacao",
+      "relevant_docs": {"doc-05": 3, "doc-02": 2, "doc-01": 1}
+    },
+    {
+      "query": "liquidacao automatica de titulos a receber",
+      "relevant_docs": {"doc-07": 3}
+    },
+    {
+      "query": "aliquota interestadual de 4 por cento ou 12",
+      "relevant_docs": {"doc-08": 3, "doc-01": 2, "doc-02": 1}
+    }
+  ]
+}

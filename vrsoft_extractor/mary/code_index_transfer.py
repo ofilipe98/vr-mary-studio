@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .code_index import CODE_INDEX_SCHEMA_VERSION, JavaCodeIndex, _code_source_key
-from .erp_releases import ErpReleaseCatalog, ErpReleaseError, sha256_file
+from .erp_releases import ErpReleaseCatalog, sha256_file
 from .jvm_batches import (
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_CLASSES,

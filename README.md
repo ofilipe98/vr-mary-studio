@@ -1,7 +1,12 @@
-# VR Norte Studio
+# VRStudio
 
 Aplicativo desktop Windows para manter a base de conhecimento VR, conversar
 com Codex, Claude e OpenCode instalados localmente e operar o extrator de vídeos VRSoft.
+
+## Estrutura do projeto
+
+Consulte [o guia de desenvolvimento](docs/DEVELOPMENT.md) para a estrutura,
+validação, scripts auxiliares e arquivos gerados.
 
 ## Recursos
 
@@ -81,7 +86,7 @@ explicitamente em vez de serem preenchidos por suposição.
 ## Instalação para desenvolvimento
 
 ```powershell
-cd D:\Codex\Projetos\vrsoft-video-extractor
+cd D:\Codex\VRStudio
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c constraints-windows-x64.txt
 $env:PLAYWRIGHT_BROWSERS_PATH='0'
@@ -334,13 +339,13 @@ O checkpoint controlado do Gate 11 chegou a 10/46 JARs, incluindo `VRPdv`,
 `VRGerenciadorNFCe`, `VRConcentrador`, `VRAutorizador` e `VRAtacado`. A medição,
 os critérios de parada e a divergência de entradas duplicadas encontrada no
 `VRAtacado.jar` estão documentados em
-`design/GATE11_EXPANSAO_CONTROLADA_PRIORITARIOS_2026-08-30.md`. `VRAtacarejo` e
+`docs/architecture/GATE11_EXPANSAO_CONTROLADA_PRIORITARIOS_2026-08-30.md`. `VRAtacarejo` e
 `VRMaster` permanecem pendentes até a política de classpath/duplicatas ser
 formalizada; consultas não devem escolher silenciosamente uma variante
 conflitante.
 
 O Gate 12 formaliza essa política em
-`design/GATE12_CLASSPATH_DUPLICATAS_2026-08-30.md`. A análise incremental grava
+`docs/architecture/GATE12_CLASSPATH_DUPLICATAS_2026-08-30.md`. A análise incremental grava
 a variante que `java.util.jar.JarFile` realmente seleciona dentro de cada JAR e
 cruza conflitos entre artefatos. Sem um perfil completo, a busca devolve
 `classpath_resolution: ambiguous` e o Agente de Código reduz a confiança.
@@ -364,7 +369,7 @@ O Gate 13 concluiu `VRAtacarejo.jar` e `VRMaster.jar`, elevando a cobertura para
 pipeline a aceitar fontes Java e Kotlin do Vineflower e a respeitar a semântica
 de capitalização do filesystem ao validar caminhos. Métricas, retries e
 critérios estão em
-`design/GATE13_COBERTURA_ATACAREJO_MASTER_2026-08-30.md`.
+`docs/architecture/GATE13_COBERTURA_ATACAREJO_MASTER_2026-08-30.md`.
 
 ### Benchmark pareado do Agente de Código
 
@@ -415,7 +420,7 @@ custo; ele bloqueia placeholders, cobertura insuficiente e símbolos ausentes:
 ```
 
 O desenho, a validação contra o índice real e as regras de integridade estão em
-`design/GATE14_PREFLIGHT_REVISAO_CEGA_2026-08-30.md`.
+`docs/architecture/GATE14_PREFLIGHT_REVISAO_CEGA_2026-08-30.md`.
 
 O Gate 15 acrescenta uma barreira de entrada para chamados reais. Suítes
 `anonymized` precisam conter 5–10 casos resolvidos, método de seleção, tamanho
@@ -442,7 +447,7 @@ O benchmark de uma suíte real também exige
 `--intake-manifest casos-codigo.intake.json`. Qualquer alteração posterior nos
 casos ou critérios invalida o manifesto e bloqueia o envio. Contrato, limites do
 scanner e critérios estão em
-`design/GATE15_INTAKE_CASOS_REAIS_2026-08-30.md`.
+`docs/architecture/GATE15_INTAKE_CASOS_REAIS_2026-08-30.md`.
 
 O Gate 16 aceita páginas de tickets Movidesk salvas como ZIP. O inventário não
 expõe assunto nem mensagens; a preparação gera um pacote pseudonimizado e uma
@@ -462,7 +467,7 @@ elegível apenas porque o ticket está resolvido ou contém termos de código.
 
 O pacote continua com `safe_for_model: false` até revisão humana, mesmo quando
 todos os detectores automáticos ficam zerados. Resultados e limites estão em
-`design/GATE16_INTAKE_ARQUIVOS_MOVIDESK_2026-08-30.md`.
+`docs/architecture/GATE16_INTAKE_ARQUIVOS_MOVIDESK_2026-08-30.md`.
 
 O Gate 17 fecha essa revisão sem enviar o histórico bruto ao modelo. No bloco
 `review` de cada candidato, o revisor preenche título e pergunta anonimizados,
@@ -484,7 +489,7 @@ A operação comprova que pacote e chave pertencem ao mesmo conjunto, detecta
 alterações no conteúdo pseudonimizado, reexecuta a auditoria de dados sensíveis
 nos campos manuais e produz o manifesto SHA-256 junto com a suíte. O pacote de
 revisão e a chave continuam locais e não devem ser compartilhados. Detalhes em
-`design/GATE17_FINALIZACAO_REVISAO_TICKETS_2026-08-30.md`.
+`docs/architecture/GATE17_FINALIZACAO_REVISAO_TICKETS_2026-08-30.md`.
 
 Para uso por vários analistas, a indexação de releases é local e independente
 de LLM. Cada workspace mantém seu próprio catálogo de até três releases e a
@@ -494,7 +499,7 @@ pipeline obrigatório usa apenas SHA-256, leitura de ZIP/JAR, Java 17,
 Vineflower/CFR, AST/grafo e SQLite/FTS. Modelos entram somente depois, na
 consulta e síntese; indisponibilidade de provedor não pode impedir uma release
 de chegar a `ready`. O plano de produto e migração do portátil genérico está em
-`design/GATE18_INDEXACAO_LOCAL_POR_ANALISTA_2026-08-30.md`.
+`docs/architecture/GATE18_INDEXACAO_LOCAL_POR_ANALISTA_2026-08-30.md`.
 
 Na máquina do analista, a origem padrão dos JARs é `C:\vr\exec`. A tela de
 configuração permite alternar entre esse diretório e a estrutura atual
@@ -664,6 +669,24 @@ Comandos adicionais:
 inscrição é enviada ao Endoo.
 
 ## Codex, Claude e OpenCode
+
+Em **Configurações → Provedores**, as abas **Codex**, **Claude** e
+**Antigravity** oferecem **Baixar e instalar CLI** quando o runtime está ausente.
+O Studio executa o instalador nativo oficial em segundo plano, mostra a etapa
+atual e permite cancelar ou tentar novamente. Não é necessário instalar npm.
+CLIs existentes são preservados; o botão fica como **CLI instalado**.
+
+Após a instalação, o executável é detectado sem reiniciar o Studio e verificado
+para uso pelo harness. Codex verifica `app-server`, Claude verifica a interface
+`stream-json` e Antigravity verifica a inicialização do servidor ACP. Essa
+verificação não envia mensagens nem autentica a conta.
+No Windows, **Entrar na conta** abre o terminal de login oficial de Codex/Claude;
+para Antigravity, use **Entrar com Google** e **Validar conta** na própria aba.
+Em macOS/Linux, o botão de Codex/Claude copia o comando de login para o terminal.
+
+Fontes dos instaladores: [Codex](https://learn.chatgpt.com/docs/codex/cli),
+[Claude Code](https://code.claude.com/docs/en/installation) e
+[Antigravity](https://antigravity.google/docs/cli/install/).
 
 - Codex usa `codex app-server` e JSON-RPC em stdio. A criação da thread envia
   os valores kebab-case `read-only`, `workspace-write` ou

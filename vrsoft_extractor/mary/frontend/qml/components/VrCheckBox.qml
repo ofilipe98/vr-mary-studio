@@ -14,9 +14,9 @@ CheckBox {
         x: control.leftPadding
         y: parent.height / 2 - height / 2
         radius: 5
-        color: control.checked ? frontend.palette.accessibleOrange : frontend.palette.surfaceRaised
+        color: control.checked ? Theme.palette.accessibleOrange : Theme.palette.surfaceRaised
         border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? frontend.palette.focus : frontend.palette.border
+        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.border
 
         Text {
             anchors.centerIn: parent
@@ -31,9 +31,10 @@ CheckBox {
     contentItem: Text {
         leftPadding: control.indicator.width + control.spacing
         text: control.text
-        color: frontend.palette.text
+        color: Theme.palette.text
         font.family: Theme.fontFamily
         font.pixelSize: Theme.bodySize
         verticalAlignment: Text.AlignVCenter
+        wrapMode: Text.WordWrap
     }
 }

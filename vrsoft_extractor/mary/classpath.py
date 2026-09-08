@@ -16,7 +16,6 @@ from uuid import uuid4
 
 from .erp_releases import (
     ErpReleaseCatalog,
-    ErpReleaseError,
     normalize_class_entry,
     validate_release_id,
 )

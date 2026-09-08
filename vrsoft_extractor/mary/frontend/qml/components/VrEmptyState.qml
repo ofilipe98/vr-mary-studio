@@ -18,18 +18,18 @@ ColumnLayout {
         width: 42
         height: 42
         radius: 21
-        color: frontend.palette.selection
+        color: Theme.palette.selection
         Text {
             anchors.centerIn: parent
             text: "—"
-            color: frontend.palette.brandOrange
+            color: Theme.palette.brandOrange
             font.pixelSize: Theme.fontSize(22)
         }
     }
     Text {
         Layout.fillWidth: true
         text: root.title
-        color: frontend.palette.text
+        color: Theme.palette.text
         font.family: Theme.fontFamily
         font.pixelSize: Theme.headingSize
         font.weight: Font.DemiBold
@@ -38,7 +38,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         text: root.description
-        color: frontend.palette.mutedText
+        color: Theme.palette.mutedText
         font.family: Theme.fontFamily
         font.pixelSize: Theme.bodySize
         wrapMode: Text.WordWrap

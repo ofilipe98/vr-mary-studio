@@ -222,43 +222,6 @@ def scan(
     return merged
 
 
-def _open_section(page, base_url: str, label: str) -> str:
-    page.goto(f"{base_url}/frontpage", wait_until="domcontentloaded")
-    _wait_quiet(page)
-    for selector in (
-        f'a:has-text("{label}")',
-        f'button:has-text("{label}")',
-        f'text="{label}"',
-        f'text=/{label}/i',
-    ):
-        try:
-            locator = page.locator(selector).first
-            if locator.count() and locator.is_visible():
-                before = page.url
-                locator.click()
-                _wait_quiet(page)
-                if page.url != before or label.lower() in page.content().lower():
-                    return page.url
-        except Exception:
-            continue
-
-    guesses = {
-        "Biblioteca": ["/biblioteca", "/library"],
-        "Cursos": ["/cursos", "/courses", "/course"],
-    }
-    for path in guesses.get(label, []):
-        url = f"{base_url}{path}"
-        try:
-            page.goto(url, wait_until="domcontentloaded")
-            _wait_quiet(page)
-            if "404" not in page.title().lower():
-                return page.url
-        except Exception:
-            continue
-    page.goto(f"{base_url}/frontpage", wait_until="domcontentloaded")
-    _wait_quiet(page)
-    return page.url
-
 
 def _crawl_api_section(
     *,

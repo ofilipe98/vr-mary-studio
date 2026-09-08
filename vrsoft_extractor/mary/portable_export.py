@@ -266,6 +266,14 @@ def _sanitize_portable_database(
     """Keep distributable knowledge while removing local user/session state."""
 
     with database.connect() as connection:
+        # Research checkpoints contain prompts and model output, just like chat
+        # messages. Relations may refer to authenticated documents omitted below.
+        existing_tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        for table in ("research_step_attempts", "research_steps", "research_runs", "document_relations"):
+            if table in existing_tables:
+                connection.execute(f"DELETE FROM {table}")
         excluded_documents = [
             int(row[0])
             for row in connection.execute(

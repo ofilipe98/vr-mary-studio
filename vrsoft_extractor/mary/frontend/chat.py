@@ -1,13 +1,10 @@
-"""Read-only presentation models for the first QML Chat VR migration slice."""
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import os
 import queue
-import re
-import sqlite3
 import threading
 import time
 from datetime import datetime
@@ -16,8 +13,6 @@ from typing import Any
 from uuid import uuid4
 
 from PySide6.QtCore import (
-    QAbstractListModel,
-    QModelIndex,
     QObject,
     Property,
     QSettings,
@@ -27,232 +22,86 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
-from .text_rendering import FENCE_RE, code_language_badge
-from ..classpath import ClasspathError, ClasspathPolicyStore
-from ..code_coverage import CodeCoverageError, ErpCodeCoverage
-from ..code_index import JavaCodeIndex
-from ..code_processing_hardware import detect_code_processing_hardware
 from ..code_processing_audit import CodeProcessingAudit
-from ..code_processing_policy import processing_window_status
 from ..config import MarySettings
 from ..db import MaryDatabase
-from ..erp_releases import ErpReleaseCatalog, ErpReleaseError
-from ..jvm_batches import DecompilationBatchError
-from ..jvm_toolchain import JvmToolchain
-from ..models import ModelRef, RuntimeEvent
+from ..models import RuntimeEvent
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
 
+LOGGER = logging.getLogger(__name__)
 
-PROVIDER_LABELS = {
-    "codex": "Codex",
-    "claude": "Claude",
-    "opencode": "OpenCode",
-    "antigravity": "Antigravity",
-}
 
-STATUS_LABELS = {
-    "idle": "Pronto",
-    "running": "Executando",
-    "error": "Falha",
-    "cancelled": "Cancelado",
-    "interrupted": "Interrompido",
-}
 
-EFFORT_LABELS = {
-    "auto": "Auto",
-    "none": "None",
-    "minimal": "Minimal",
-    "low": "Low",
-    "medium": "Medium",
-    "high": "High",
-    "xhigh": "Extra High",
-    "max": "Max",
-}
 
-_CODE_OR_URL_RE = re.compile(r"(`+.*?`+|https?://\S+)", re.DOTALL)
-_GLUED_SENTENCE_RE = re.compile(
-    r"(?<=[a-záàâãéêíóôõúüç][.!?])"
-    r"(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ][a-záàâãéêíóôõúüç])"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from .bridges.presentation import (
+    markdown_for_display,
+    ConversationListModel,
+    MessageListModel,
+    segments_for_display,
+    PROVIDER_LABELS,
+    STATUS_LABELS,
+    EFFORT_LABELS,
+    ERP_JAR_SOURCE_VR_EXEC,
+    MAX_FILE_SUGGESTION_ENTRIES,
+    ERP_JAR_SCOPE_FULL_RELEASE,
+    ERP_JAR_SCOPE_SINGLE,
+    DEFAULT_ERP_JAR_SOURCE_PATH as DEFAULT_ERP_JAR_SOURCE_PATH,
+    EXPECTED_ERP_JAR_COUNT,
+    CODE_PROCESSING_HARDWARE,
+    CODE_PROCESSING_HEAP_OPTIONS,
+    CODE_PROCESSING_TIMEOUT_OPTIONS,
+    CODE_PROCESSING_CPU_CORE_OPTIONS,
+    CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS,
+    CODE_PROCESSING_WINDOW_OPTIONS,
+    DEFAULT_CODE_PROCESSING_HEAP_MB,
+    DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS,
+    DEFAULT_CODE_PROCESSING_CPU_CORES,
+    DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER,
+    DEFAULT_CODE_PROCESSING_WINDOW,
 )
-ERP_JAR_SOURCE_VR_EXEC = "vr_exec"
-ERP_JAR_SOURCE_WORKSPACE = "workspace"
-MAX_FILE_SUGGESTION_ENTRIES = 50_000
-ERP_JAR_SCOPE_FULL_RELEASE = "full_release"
-ERP_JAR_SCOPE_SINGLE = "single_jar"
-DEFAULT_ERP_JAR_SOURCE_PATH = Path(r"C:\vr\exec")
-EXPECTED_ERP_JAR_COUNT = 46
-CODE_PROCESSING_HARDWARE = detect_code_processing_hardware()
-CODE_PROCESSING_HEAP_OPTIONS = (1024, 2048, 4096)
-CODE_PROCESSING_TIMEOUT_OPTIONS = (300, 600, 1200)
-CODE_PROCESSING_CPU_CORE_OPTIONS = CODE_PROCESSING_HARDWARE.cpu_options
-CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS = (5, 8, 10)
-CODE_PROCESSING_WINDOW_OPTIONS = (
-    {"label": "Sempre", "value": "always"},
-    {"label": "Madrugada · 00h-06h", "value": "night"},
-    {"label": "Fora do expediente · 18h-06h", "value": "off_hours"},
-)
-DEFAULT_CODE_PROCESSING_HEAP_MB = CODE_PROCESSING_HARDWARE.recommended_heap_mb
-DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS = 300
-DEFAULT_CODE_PROCESSING_CPU_CORES = CODE_PROCESSING_HARDWARE.recommended_cpu_cores
-DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER = 10
-DEFAULT_CODE_PROCESSING_WINDOW = "always"
-CODE_PROCESSING_HARDWARE_PROFILE_VERSION = 2
-
-
-def markdown_for_display(markdown: str) -> str:
-    """Repair provider spacing without changing inline code or URLs."""
-
-    parts = _CODE_OR_URL_RE.split(str(markdown or ""))
-    return "".join(
-        part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
-        for index, part in enumerate(parts)
-    )
-
-
-def short_event_text(value: object, limit: int = 140) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "…"
-
-
-class _MappingListModel(QAbstractListModel):
-    """Small reusable model whose public surface is a fixed set of QML roles."""
-
-    ROLE_NAMES: tuple[str, ...] = ()
-
-    def __init__(self, parent: QObject | None = None) -> None:
-        super().__init__(parent)
-        self._items: list[dict[str, Any]] = []
-        self._roles = {
-            Qt.UserRole + index + 1: name.encode("utf-8")
-            for index, name in enumerate(self.ROLE_NAMES)
-        }
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        return 0 if parent.isValid() else len(self._items)
-
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
-        if not index.isValid() or index.row() >= len(self._items):
-            return None
-        role_name = self._roles.get(role)
-        if role_name is None:
-            return None
-        name = role_name.decode("utf-8")
-        return self._items[index.row()].get(name, [] if name == "activityData" else False if name == "isStreaming" else "" if name == "messageKey" else None)
-
-    def roleNames(self) -> dict[int, bytes]:  # noqa: N802
-        return self._roles
-
-    def replace(self, items: list[dict[str, Any]]) -> None:
-        self.beginResetModel()
-        self._items = list(items)
-        self.endResetModel()
-
-    def item(self, index: int) -> dict[str, Any] | None:
-        if index < 0 or index >= len(self._items):
-            return None
-        return self._items[index]
-
-    def append(self, item: dict[str, Any]) -> None:
-        index = len(self._items)
-        self.beginInsertRows(QModelIndex(), index, index)
-        self._items.append(dict(item))
-        self.endInsertRows()
-
-    def update_last(self, **values: Any) -> None:
-        if not self._items:
-            return
-        index = len(self._items) - 1
-        self._items[index].update(values)
-        model_index = self.index(index, 0)
-        self.dataChanged.emit(model_index, model_index, list(self._roles))
-
-    def update_by_key(self, key_field: str, key_value: Any, **values: Any) -> bool:
-        """Update the item where item[key_field] == key_value."""
-        for index in range(len(self._items) - 1, -1, -1):
-            if self._items[index].get(key_field) == key_value:
-                self._items[index].update(values)
-                model_index = self.index(index, 0)
-                self.dataChanged.emit(model_index, model_index, list(self._roles))
-                return True
-        return False
-
-
-class ConversationListModel(_MappingListModel):
-    ROLE_NAMES = (
-        "conversationId",
-        "title",
-        "subtitle",
-        "provider",
-        "modelName",
-        "status",
-        "statusLabel",
-        "running",
-        "workspace",
-        "projectLabel",
-        "updatedAt",
-        "editing",
-        "pinned",
-        "section",
-        "startedAtEpoch",
-    )
-
-
-class MessageListModel(_MappingListModel):
-    ROLE_NAMES = (
-        "messageId",
-        "role",
-        "content",
-        "displayContent",
-        "segments",
-        "createdAt",
-        "responseMode",
-        "messageKey",
-        "isStreaming",
-        "activityData",
-    )
-
-
-def segments_for_display(markdown: str) -> list[dict[str, str]]:
-    """Split a markdown answer into text and fenced-code card segments."""
-    text = str(markdown or "")
-    matches = list(FENCE_RE.finditer(text))
-    if not matches:
-        return []
-    segments: list[dict[str, str]] = []
-
-    def append_text(part: str) -> None:
-        if str(part).strip():
-            segments.append(
-                {"kind": "text", "content": markdown_for_display(part)}
-            )
-
-    cursor = 0
-    for match in matches:
-        if match.start() > cursor:
-            append_text(text[cursor:match.start()])
-        language = str(match.group(1) or "").strip().casefold() or "text"
-        segments.append(
-            {
-                "kind": "code",
-                "content": str(match.group(2) or ""),
-                "language": language,
-                "badge": code_language_badge(language),
-            }
-        )
-        cursor = match.end()
-    if cursor < len(text):
-        append_text(text[cursor:])
-    return segments
-
+from .bridges.codeadmin import CodeAdminDomain
+from .bridges.providersettings import ProviderSettingsDomain
+from .bridges.activity import ActivityDomain
+from .bridges.conversations import ConversationsDomain
 
 class ChatBridge(QObject):
+    @property
+    def _CodeAdmin_domain(self):
+        return CodeAdminDomain(self)
+
+    @property
+    def _ProviderSettings_domain(self):
+        return ProviderSettingsDomain(self)
+
+    @property
+    def _Activity_domain(self):
+        return ActivityDomain(self)
+
+    @property
+    def _Conversations_domain(self):
+        return ConversationsDomain(self)
+
     """Expose existing conversation reads without changing domain behavior."""
 
     conversationsChanged = Signal()
@@ -268,17 +117,26 @@ class ChatBridge(QObject):
     draftRestored = Signal(str)
     browserNavigationRequested = Signal(str)
     _conversationTrashFinished = Signal(object)
+    _codeAnalysisCoverageWarmed = Signal(object)
+    activeSkillsChanged = Signal()
+    showSkillsInSlashMenuChanged = Signal()
+    showUsageLimitsRequested = Signal()
+    usageLimitsChanged = Signal()
 
     def __init__(
         self,
         settings: MarySettings,
         database: MaryDatabase,
         preferences: QSettings | None = None,
+        *,
+        open_new_chat: bool = False,
     ) -> None:
         super().__init__()
         self._settings = settings
         self._database = database
         self._orchestrator = ChatOrchestrator(settings, database)
+        from .bridges.retrieval import RetrievalBridge
+        self._retrieval_settings = RetrievalBridge(self._orchestrator.retrieval_service, self)
         self._preferences = preferences or QSettings(
             ORGANIZATION_NAME, SETTINGS_APP_NAME
         )
@@ -291,6 +149,8 @@ class ChatBridge(QObject):
         self._project_folder = Path.home().resolve(strict=False)
         self._project_folder_items: list[dict[str, str]] = []
         self._search = ""
+        self._active_skills: list[dict[str, Any]] = []
+        self._usage_snapshot: dict[str, Any] = {}
         self._selected_index = -1
         self._selected: dict[str, Any] = {}
         self._draft = False
@@ -361,6 +221,15 @@ class ChatBridge(QObject):
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items: list[dict[str, Any]] = []
+        self._release_coverage_root = settings.root
+        self._release_coverage_generation = 0
+        self._release_coverage_thread: threading.Thread | None = None
+        self._release_coverage_stop = threading.Event()
+        self._release_coverage_cache = self._CodeAdmin_domain._load_cached_release_coverage()
+        self._codeAnalysisCoverageWarmed.connect(
+            self._on_coverage_warmed,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._code_analysis_jar_source = ERP_JAR_SOURCE_VR_EXEC
         self._code_analysis_jar_source_items: list[dict[str, Any]] = []
         self._code_analysis_snapshot_scope = ERP_JAR_SCOPE_FULL_RELEASE
@@ -493,7 +362,7 @@ class ChatBridge(QObject):
         self._reset_model_items()
         self._refresh_projects()
         self.refresh()
-        if not self._all_conversations:
+        if open_new_chat or not self._all_conversations:
             self.startNewChat()
 
     _runtimeEvent = Signal(object)
@@ -572,6 +441,10 @@ class ChatBridge(QObject):
         if self._draft:
             return "Nova conversa"
         return str(self._selected.get("title") or "Selecione uma conversa")
+
+    @Property(str, notify=selectionChanged)
+    def selectedConversationId(self) -> str:  # noqa: N802
+        return self._selected_conversation_id()
 
     @Property(str, notify=selectionChanged)
     def selectedMeta(self) -> str:  # noqa: N802
@@ -1027,6 +900,16 @@ class ChatBridge(QObject):
             },
         ]
 
+    @Property(str, notify=stateChanged)
+    def provider(self) -> str:
+        return self._provider
+
+    @Property(bool, notify=stateChanged)
+    def supportsReasoning(self) -> bool:  # noqa: N802
+        return self._provider != "antigravity" and bool(
+            self.effortItems or self.serviceTierItems
+        )
+
     @Property(int, notify=stateChanged)
     def effortIndex(self) -> int:  # noqa: N802
         values = [item["value"] for item in self.effortItems]
@@ -1107,21 +990,7 @@ class ChatBridge(QObject):
         return f"Limite informado pelo provedor para {model_name}. Compactação ocorre quando necessário."
 
     def _provider_context_window(self) -> int:
-        item = self._current_model_item()
-        candidates = (
-            item.get("contextWindow"),
-            item.get("context_window"),
-            item.get("contextWindowTokens"),
-            item.get("inputTokenLimit"),
-        )
-        for value in candidates:
-            try:
-                parsed = int(value or 0)
-            except (TypeError, ValueError):
-                continue
-            if parsed > 0:
-                return parsed
-        return 0
+        return self._ProviderSettings_domain._provider_context_window()
 
     @Property(str, notify=stateChanged)
     def totalProcessedLabel(self) -> str:  # noqa: N802
@@ -1179,6 +1048,7 @@ class ChatBridge(QObject):
         if self._closed:
             return
         self._closed = True
+        self._release_coverage_stop.set()
         for timer in (
             self._file_suggestions_timer,
             self._file_suggestions_poll_timer,
@@ -1201,12 +1071,14 @@ class ChatBridge(QObject):
             status_threads = list(self._code_processing_status_threads)
         for thread in status_threads:
             thread.join(timeout=1.0)
+        if self._release_coverage_thread is not None:
+            self._release_coverage_thread.join(timeout=1.0)
         self._orchestrator.close()
         self._active_turns.clear()
         self._sync_selected_turn_state()
 
     def _selected_conversation_id(self) -> str:
-        return str(self._selected.get("conversationId") or "")
+        return self._Conversations_domain._selected_conversation_id()
 
     def _sync_selected_turn_state(self) -> None:
         """Keep private compatibility fields scoped to the selected conversation."""
@@ -1217,16 +1089,7 @@ class ChatBridge(QObject):
         self._running_conversation_id = conversation_id if running else ""
 
     def _enabled_provider_names(self) -> list[str]:
-        enabled: list[str] = []
-        for provider in ("codex", "claude", "opencode", "antigravity"):
-            raw = self._preferences.value(f"providers/{provider}/enabled", True)
-            if isinstance(raw, bool):
-                active = raw
-            else:
-                active = str(raw).strip().casefold() not in {"", "0", "false", "no", "off"}
-            if active:
-                enabled.append(provider)
-        return enabled or ["codex"]
+        return self._ProviderSettings_domain._enabled_provider_names()
 
     def _remember_current_chat_options(self) -> None:
         self._preferences.setValue("chat/last_provider", self._provider)
@@ -1243,300 +1106,54 @@ class ChatBridge(QObject):
         self._preferences.sync()
 
     def _current_model_item(self) -> dict[str, Any]:
-        return next(
-            (
-                item
-                for item in self._model_items
-                if item.get("provider") == self._provider
-                and str(item.get("value") or "") == self._model
-            ),
-            {},
-        )
+        return self._ProviderSettings_domain._current_model_item()
 
     def _supported_efforts_for_current_model(self) -> list[str]:
-        metadata = self._current_model_item()
-        raw_efforts = metadata.get("efforts") or []
-        efforts: list[str] = []
-        for item in raw_efforts:
-            if isinstance(item, str):
-                value = item
-            elif isinstance(item, dict):
-                value = (
-                    item.get("reasoningEffort")
-                    or item.get("effort")
-                    or item.get("value")
-                    or item.get("id")
-                    or ""
-                )
-            else:
-                value = ""
-            normalized = str(value).strip().casefold()
-            if normalized == "ultra":
-                normalized = "max"
-            if normalized in EFFORT_LABELS and normalized not in efforts:
-                efforts.append(normalized)
-        if efforts:
-            return ["auto", *efforts]
-        if self._provider == "antigravity":
-            return ["auto", "low", "medium", "high"]
-        return (
-            ["auto", "low", "medium", "high", "xhigh", "max"]
-            if self._provider == "claude"
-            else ["auto", "minimal", "low", "medium", "high", "xhigh", "max"]
-        )
+        return self._ProviderSettings_domain._supported_efforts_for_current_model()
 
     def _model_effort_preferences(self) -> dict[str, str]:
-        raw = self._preferences.value("chat/model_efforts", "{}")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else dict(raw or {})
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {}
-        return {
-            str(key): str(value).strip().casefold()
-            for key, value in values.items()
-            if str(key).strip() and str(value).strip()
-        }
+        return self._ProviderSettings_domain._model_effort_preferences()
 
     def _model_effort_key(self) -> str:
-        return f"{self._provider}:{self._model}"
+        return self._ProviderSettings_domain._model_effort_key()
 
     def _remember_model_effort(self, effort: str) -> None:
-        value = str(effort or "").strip().casefold()
-        if not value or not self._model:
-            return
-        if value == "ultra":
-            value = "max"
-        preferences = self._model_effort_preferences()
-        preferences[self._model_effort_key()] = value
-        self._preferences.setValue(
-            "chat/model_efforts",
-            json.dumps(preferences, ensure_ascii=False, sort_keys=True),
-        )
+        return self._ProviderSettings_domain._remember_model_effort(effort)
 
     def _restore_effort_for_current_model(self) -> None:
-        supported = [item["value"] for item in self.effortItems]
-        if not supported:
-            self._effort = "medium"
-            return
-        saved = self._model_effort_preferences().get(self._model_effort_key(), "")
-        preferred = saved or self._effort or self._settings.default_effort
-        if preferred == "ultra":
-            preferred = "max"
-        if preferred not in supported:
-            concrete = [value for value in supported if value != "auto"]
-            preferred = (
-                "medium" if "medium" in concrete else (concrete or supported)[0]
-            )
-        self._effort = preferred
+        return self._ProviderSettings_domain._restore_effort_for_current_model()
+
+    def _load_cached_model_catalog(self) -> list[dict[str, Any]]:
+        return self._ProviderSettings_domain._load_cached_model_catalog()
+
+    def _save_cached_model_catalog(self, items: list[dict[str, Any]]) -> None:
+        return self._ProviderSettings_domain._save_cached_model_catalog(items)
 
     def _reset_model_items(self) -> None:
-        enabled = self._enabled_provider_names()
-        provider = self._provider if self._provider in enabled else enabled[0]
-        self._provider = provider
-        label = self._model or PROVIDER_LABELS.get(provider, provider.title())
-        provider_label = PROVIDER_LABELS.get(provider, provider.title())
-        self._model_items = [{
-            "label": label,
-            "displayName": label,
-            "value": self._model,
-            "provider": provider,
-            "providerLabel": provider_label,
-            "description": "Última seleção disponível",
-            "key": f"{provider}:{self._model or '__default__'}",
-        }]
+        return self._ProviderSettings_domain._reset_model_items()
 
     @Slot()
     def refreshModels(self) -> None:  # noqa: N802
-        if self._model_catalog_loading:
-            return
-        self._model_catalog_loading = True
-        self.stateChanged.emit()
-        enabled_providers = tuple(self._enabled_provider_names())
-        providers = dict(self._orchestrator.providers)
-        results = self._model_catalog_results
-
-        def load() -> None:
-            items: list[dict[str, Any]] = []
-            for provider_name in enabled_providers:
-                provider = providers.get(provider_name)
-                if provider is None:
-                    continue
-                provider_label = PROVIDER_LABELS.get(provider_name, provider_name.title())
-                try:
-                    models = provider.list_models() if provider.available() else []
-                except Exception:
-                    models = []
-                for raw in models:
-                    model_id = str(raw.get("id") or raw.get("model") or "").strip()
-                    if not model_id:
-                        continue
-                    display_name = str(raw.get("displayName") or raw.get("display_name") or model_id)
-                    raw_limit = raw.get("limit") or raw.get("limits") or {}
-                    if not isinstance(raw_limit, dict):
-                        raw_limit = {}
-                    context_window = next(
-                        (
-                            value
-                            for value in (
-                                raw.get("contextWindow"),
-                                raw.get("context_window"),
-                                raw.get("contextWindowTokens"),
-                                raw.get("inputTokenLimit"),
-                                raw_limit.get("context"),
-                                raw_limit.get("contextWindow"),
-                            )
-                            if value not in (None, "")
-                        ),
-                        0,
-                    )
-                    items.append({
-                        "label": f"{display_name} · {provider_label}",
-                        "displayName": display_name,
-                        "value": model_id,
-                        "provider": provider_name,
-                        "providerLabel": provider_label,
-                        "description": str(raw.get("description") or model_id),
-                        "key": f"{provider_name}:{model_id}",
-                        "efforts": raw.get("supportedReasoningEfforts") or raw.get("supported_reasoning_efforts") or [],
-                        "aliases": raw.get("aliases") or [],
-                        "serviceTiers": raw.get("serviceTiers") or raw.get("service_tiers") or [],
-                        "contextWindow": context_window,
-                    })
-            results.put(items)
-
-        self._model_catalog_poll_timer.start()
-        threading.Thread(target=load, daemon=True).start()
+        return self._ProviderSettings_domain.refreshModels()
 
     @Slot()
     def _poll_model_catalog(self) -> None:
-        latest: list[dict[str, Any]] | None = None
-        while True:
-            try:
-                latest = self._model_catalog_results.get_nowait()
-            except queue.Empty:
-                break
-        if latest is None:
-            if not self._model_catalog_loading:
-                self._model_catalog_poll_timer.stop()
-            return
-        self._apply_model_catalog(latest)
-        if not self._model_catalog_loading:
-            self._model_catalog_poll_timer.stop()
+        return self._ProviderSettings_domain._poll_model_catalog()
 
     @Slot(object)
-    def _apply_model_catalog(self, values: object) -> None:
-        items = [dict(item) for item in list(values or []) if isinstance(item, dict)]
-        enabled_providers = set(self._enabled_provider_names())
-        if self._provider == "antigravity":
-            equivalent = next((item for item in items
-                               if item.get("provider") == "antigravity"
-                               and self._model in item.get("aliases", [])), None)
-            if equivalent is not None:
-                self._model = str(equivalent["value"])
-            for item in items:
-                if item.get("provider") == "antigravity" and any(
-                    f"antigravity:{alias}" in self._favorite_model_keys
-                    for alias in item.get("aliases", [])
-                ):
-                    self._favorite_model_keys.add(item["key"])
-        if self._draft and not self._model:
-            preferred = next(
-                (
-                    item
-                    for item in items
-                    if item.get("provider") == self._provider
-                    and str(item.get("value") or "")
-                ),
-                None,
-            )
-            if preferred is not None:
-                self._model = str(preferred.get("value") or "")
-                self._remember_current_chat_options()
-        current_key = f"{self._provider}:{self._model or '__default__'}"
-        if not any(str(item.get("key") or "") == current_key for item in items):
-            current = self._model_items[self.modelIndex] if self._model_items else None
-            if current:
-                historical = dict(current)
-                historical["inactive"] = self._provider not in enabled_providers
-                items.insert(0, historical)
-        if self._draft and self._provider not in enabled_providers and items:
-            preferred = next(
-                (item for item in items if not item.get("inactive")), items[0]
-            )
-            self._provider = str(
-                preferred.get("provider") or next(iter(enabled_providers), "codex")
-            )
-            self._model = str(preferred.get("value") or "")
-            self._remember_current_chat_options()
-            items = [item for item in items if not item.get("inactive")]
-        self._model_items = items or self._model_items
-        self._restore_effort_for_current_model()
-        if not self.serviceTierItems:
-            self._service_tier = ""
-        self._model_catalog_loading = False
-        self.stateChanged.emit()
+    def _apply_model_catalog(self, values: object, is_final: bool = True) -> None:
+        return self._ProviderSettings_domain._apply_model_catalog(values, is_final)
 
     @Slot(int)
     def setModel(self, index: int) -> None:  # noqa: N802
-        if not 0 <= index < len(self._model_items) or self.turnRunning:
-            return
-        item = self._model_items[index]
-        provider = str(item.get("provider") or "codex")
-        model = str(item.get("value") or "")
-        if (provider, model) == (self._provider, self._model):
-            return
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if conversation_id and any(
-            str(row["role"] or "") == "user"
-            for row in self._database.messages(conversation_id)
-        ):
-            self._status_text = "Modelo principal bloqueado após a primeira mensagem"
-            self.stateChanged.emit()
-            return
-        try:
-            if conversation_id:
-                self._orchestrator.switch_provider(
-                    conversation_id, provider, model, self._effort
-                )
-        except Exception as exc:
-            self._status_text = f"Falha: {exc}"
-            self.stateChanged.emit()
-            return
-        self._provider = provider
-        self._model = model
-        self._restore_effort_for_current_model()
-        if not self.serviceTierItems:
-            self._service_tier = ""
-        self._remember_current_chat_options()
-        self._status_text = "Pronto"
-        self.refresh()
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.setModel(index)
 
     @Slot(int)
     def toggleModelFavorite(self, index: int) -> None:  # noqa: N802
-        if not 0 <= index < len(self._model_items):
-            return
-        key = str(self._model_items[index].get("key") or "")
-        if not key:
-            return
-        if key in self._favorite_model_keys:
-            self._favorite_model_keys.remove(key)
-        else:
-            self._favorite_model_keys.add(key)
-        self._preferences.setValue(
-            "chat/favorite_models",
-            json.dumps(sorted(self._favorite_model_keys), ensure_ascii=False),
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.toggleModelFavorite(index)
 
     def _load_favorite_model_keys(self) -> set[str]:
-        raw = self._preferences.value("chat/favorite_models", "[]")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
-        return {str(value) for value in values if str(value).strip()}
+        return self._ProviderSettings_domain._load_favorite_model_keys()
 
     @Slot(result="QVariantList")
     def chooseAttachments(self) -> list[dict[str, str]]:  # noqa: N802
@@ -1816,109 +1433,19 @@ class ChatBridge(QObject):
 
     @Slot()
     def refreshExtensions(self) -> None:  # noqa: N802
-        self._extensions_generation += 1
-        generation = self._extensions_generation
-        self._extensions_loading = True
-        self.stateChanged.emit()
-        provider_name = self._provider
-        workspace = (self._project_scope or self._settings.root).resolve(strict=False)
-        orchestrator = self._orchestrator
-        results = self._extension_catalog_results
-
-        def load() -> None:
-            values: list[dict[str, Any]] = []
-            try:
-                skill_result = orchestrator.skills(provider_name, workspace)
-            except Exception:
-                skill_result = {"skills": []}
-            for item in skill_result.get("skills", []):
-                name = str(item.get("name") or "")
-                if not name:
-                    continue
-                values.append({
-                    "key": f"skill:{name}:{item.get('path') or ''}",
-                    "kind": "skill",
-                    "name": str(item.get("displayName") or name),
-                    "description": str(item.get("description") or item.get("scope") or "Skill"),
-                    "payload": dict(item),
-                })
-            try:
-                tools = orchestrator.mcp_tools(provider_name)
-            except Exception:
-                tools = []
-            for item in tools:
-                server = str(item.get("server") or "")
-                tool = str(item.get("tool") or "")
-                if not server:
-                    continue
-                values.append({
-                    "key": f"mcp:{server}:{tool}",
-                    "kind": "mcp",
-                    "name": f"{server} · {tool or 'servidor'}",
-                    "description": str(item.get("description") or item.get("serverDescription") or "MCP"),
-                    "payload": {"server": server, "tool": tool},
-                })
-            results.put(
-                {
-                    "generation": generation,
-                    "provider": provider_name,
-                    "workspace": str(workspace),
-                    "items": values,
-                }
-            )
-
-        self._extension_catalog_poll_timer.start()
-        threading.Thread(target=load, daemon=True).start()
+        return self._ProviderSettings_domain.refreshExtensions()
 
     @Slot()
     def _poll_extension_catalog(self) -> None:
-        latest: dict[str, Any] | None = None
-        while True:
-            try:
-                latest = self._extension_catalog_results.get_nowait()
-            except queue.Empty:
-                break
-        if latest is None:
-            if not self._extensions_loading:
-                self._extension_catalog_poll_timer.stop()
-            return
-        self._apply_extension_catalog(latest)
-        if not self._extensions_loading:
-            self._extension_catalog_poll_timer.stop()
+        return self._ProviderSettings_domain._poll_extension_catalog()
 
     @Slot(object)
     def _apply_extension_catalog(self, values: object) -> None:
-        payload = dict(values) if isinstance(values, dict) else {"items": values}
-        generation = int(payload.get("generation") or self._extensions_generation)
-        current_workspace = str(
-            (self._project_scope or self._settings.root).resolve(strict=False)
-        )
-        if (
-            generation != self._extensions_generation
-            or str(payload.get("provider") or self._provider) != self._provider
-            or str(payload.get("workspace") or current_workspace) != current_workspace
-        ):
-            return
-        self._extension_items = [
-            dict(item)
-            for item in list(payload.get("items") or [])
-            if isinstance(item, dict)
-        ]
-        available = {str(item.get("key") or "") for item in self._extension_items}
-        self._selected_extension_keys.intersection_update(available)
-        self._extensions_loading = False
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain._apply_extension_catalog(values)
 
     @Slot(int, bool)
     def toggleExtension(self, index: int, selected: bool) -> None:  # noqa: N802
-        if not 0 <= index < len(self._extension_items):
-            return
-        key = str(self._extension_items[index].get("key") or "")
-        if selected:
-            self._selected_extension_keys.add(key)
-        else:
-            self._selected_extension_keys.discard(key)
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.toggleExtension(index, selected)
 
     @Slot()
     def refresh(self) -> None:
@@ -2006,198 +1533,48 @@ class ChatBridge(QObject):
 
     @Slot(int)
     def setProject(self, index: int) -> None:  # noqa: N802
-        if index < 0 or index >= len(self._projects):
-            return
-        if index == self._current_project_index:
-            return
-        selected_id = str(self._selected.get("conversationId") or "")
-        self._current_project_index = index
-        raw_path = self._projects[index]["path"]
-        self._project_scope = Path(raw_path).resolve(strict=False) if raw_path else None
-        self._invalidate_file_suggestions()
-        self._preferences.setValue("chat/current_project", raw_path)
-        self._preferences.sync()
-        self.projectsChanged.emit()
-        if self._draft:
-            self.selectionChanged.emit()
-        self._apply_filter(selected_id)
+        return self._Conversations_domain.setProject(index)
 
     @Slot(int, str, result=bool)
     def renameProject(self, index: int, name: str) -> bool:  # noqa: N802
-        if index <= 0 or index >= len(self._projects):
-            return False
-        label = " ".join(str(name or "").split())
-        if not label:
-            return False
-        target_path = str(Path(self._projects[index]["path"]).resolve(strict=False))
-        values = self._stored_project_entries()
-        for item in values:
-            raw_path = str(item.get("path") or "").strip()
-            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == Path(
-                target_path
-            ):
-                item["label"] = label
-                break
-        else:
-            values.append({"path": target_path, "label": label})
-        self._store_project_entries(values)
-        self._refresh_projects()
-        self.refresh()
-        return True
+        return self._Conversations_domain.renameProject(index, name)
 
     @Slot(int, result=bool)
     def openProjectFolder(self, index: int) -> bool:  # noqa: N802
-        if index <= 0 or index >= len(self._projects):
-            return False
-        path = Path(self._projects[index]["path"]).resolve(strict=False)
-        if not path.is_dir():
-            return False
-        return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
+        return self._Conversations_domain.openProjectFolder(index)
 
     @Slot(int)
     def copyProjectPath(self, index: int) -> None:  # noqa: N802
-        if index <= 0 or index >= len(self._projects):
-            return
-        path = str(self._projects[index]["path"])
-        QGuiApplication.clipboard().setText(path)
-        self.messageCopied.emit(path)
+        return self._Conversations_domain.copyProjectPath(index)
 
     @Slot(int, result=str)
     def chooseProjectIcon(self, index: int) -> str:  # noqa: N802
-        if index <= 0 or index >= len(self._projects):
-            return ""
-        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
-        selected, _filter = QFileDialog.getOpenFileName(
-            None,
-            "Escolher ícone do projeto",
-            str(project_path),
-            "Imagens (*.png *.jpg *.jpeg *.webp *.bmp *.ico)",
-        )
-        if not selected:
-            return ""
-        icon_path = str(Path(selected).expanduser().resolve(strict=False))
-        values = self._stored_project_entries()
-        for item in values:
-            raw_path = str(item.get("path") or "").strip()
-            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
-                item["icon"] = icon_path
-                break
-        else:
-            values.append(
-                {
-                    "path": str(project_path),
-                    "label": self._projects[index]["label"],
-                    "icon": icon_path,
-                }
-            )
-        self._store_project_entries(values)
-        self._refresh_projects()
-        return icon_path
+        return self._Conversations_domain.chooseProjectIcon(index)
 
     @Slot(int, result=bool)
     def removeProject(self, index: int) -> bool:  # noqa: N802
-        if index <= 0 or index >= len(self._projects):
-            return False
-        target = Path(self._projects[index]["path"]).resolve(strict=False)
-        hidden = self._stored_project_paths("chat/hidden_projects")
-        if target not in hidden:
-            hidden.append(target)
-            self._preferences.setValue(
-                "chat/hidden_projects",
-                json.dumps([str(path) for path in hidden], ensure_ascii=False),
-            )
-        values = [
-            item
-            for item in self._stored_project_entries()
-            if Path(item["path"]).expanduser().resolve(strict=False) != target
-        ]
-        self._store_project_entries(values)
-        self._preferences.setValue("chat/current_project", "")
-        self._preferences.sync()
-        self._refresh_projects()
-        self.refresh()
-        return True
+        return self._Conversations_domain.removeProject(index)
 
     def _load_draft_records(self) -> dict[str, dict[str, Any]]:
-        raw = self._preferences.value("chat/drafts", "{}")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else dict(raw or {})
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {}
-        return {
-            str(key): dict(value)
-            for key, value in values.items()
-            if str(key).strip() and isinstance(value, dict)
-        }
+        return self._Conversations_domain._load_draft_records()
 
     def _persist_draft_records(self) -> None:
-        self._preferences.setValue(
-            "chat/drafts",
-            json.dumps(self._draft_records, ensure_ascii=False, sort_keys=True),
-        )
-        self._preferences.sync()
+        return self._Conversations_domain._persist_draft_records()
 
     def _load_pinned_conversation_ids(self) -> set[str]:
-        raw = self._preferences.value("chat/pinned_conversations", "[]")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return set()
-        return {str(value) for value in values if str(value).strip()}
+        return self._Conversations_domain._load_pinned_conversation_ids()
 
     def _persist_pinned_conversation_ids(self) -> None:
-        self._preferences.setValue(
-            "chat/pinned_conversations",
-            json.dumps(sorted(self._pinned_conversation_ids), ensure_ascii=False),
-        )
-        self._preferences.sync()
+        return self._Conversations_domain._persist_pinned_conversation_ids()
 
     @Slot(str, result=bool)
     def saveCurrentDraft(self, text: str) -> bool:  # noqa: N802
-        content = str(text or "")
-        conversation_id = self._selected_conversation_id()
-        if not content.strip() and not self._attachments:
-            if conversation_id and conversation_id in self._draft_records:
-                self._draft_records.pop(conversation_id, None)
-                self._persist_draft_records()
-                self.refresh()
-            return False
-        if not conversation_id:
-            workspace = self._project_scope or self._settings.root
-            try:
-                conversation_id = self._orchestrator.new_conversation(
-                    self._provider,
-                    self._model,
-                    self._effort,
-                    service_tier=self._service_tier,
-                    approval_profile=self._approval_profile,
-                    defer_provider_start=True,
-                    workspace=workspace,
-                    vr_mode=self._vr_mode,
-                )
-            except Exception as exc:
-                self._status_text = f"Falha ao salvar rascunho: {exc}"
-                self.stateChanged.emit()
-                return False
-        attachments = [dict(item) for item in self._attachments]
-        self._draft_records[conversation_id] = {
-            "text": content,
-            "attachments": attachments,
-            "savedAt": datetime.now().astimezone().isoformat(),
-        }
-        row = self._database.get_conversation(conversation_id)
-        has_messages = bool(self._database.messages(conversation_id))
-        if row is not None and not has_messages:
-            first_line = next(
-                (line.strip() for line in content.splitlines() if line.strip()), ""
-            )
-            title = first_line or (attachments[0]["name"] if attachments else "Nova conversa")
-            self._database.update_conversation(
-                conversation_id, title=title[:72].rstrip()
-            )
-        self._persist_draft_records()
-        self.refresh()
-        return True
+        return self._Conversations_domain.saveCurrentDraft(text)
+
+    @Slot(result=bool)
+    @Slot(str, result=bool)
+    def discardDraft(self, conversation_id: str = "") -> bool:  # noqa: N802
+        return self._Conversations_domain.discardDraft(conversation_id)
 
     @Slot()
     def togglePinnedCurrent(self) -> None:  # noqa: N802
@@ -2294,156 +1671,27 @@ class ChatBridge(QObject):
 
     @Slot(int)
     def copyMessage(self, index: int) -> None:  # noqa: N802
-        message = self._messages.item(index)
-        application = QGuiApplication.instance()
-        if message is None or application is None:
-            return
-        content = str(message.get("content") or "")
-        application.clipboard().setText(content)
-        self.messageCopied.emit(content)
+        return self._Conversations_domain.copyMessage(index)
 
     @Slot()
     def copyConversation(self) -> None:  # noqa: N802
-        """Copy every message, including rows outside the virtualized viewport."""
-        application = QGuiApplication.instance()
-        if application is None:
-            return
-        parts = []
-        for index in range(self._messages.rowCount()):
-            message = self._messages.item(index) or {}
-            role = str(message.get("role") or "")
-            content = str(message.get("content") or "")
-            if role == "activity" or not content:
-                continue
-            label = {"user": "Você", "assistant": "VR"}.get(role, role)
-            parts.append(f"{label}:\n{content}")
-        content = "\n\n".join(parts)
-        application.clipboard().setText(content)
-        self.messageCopied.emit(content)
+        return self._Conversations_domain.copyConversation()
 
     @Slot(int)
     def selectConversation(self, index: int) -> None:  # noqa: N802
-        selected = self._conversations.item(index)
-        if selected is None:
-            self._clear_selection()
-            return
-        if index == self._selected_index and selected == self._selected:
-            return
-        previous_id = str(self._selected.get("conversationId") or "")
-        changing_conversation = previous_id != str(selected.get("conversationId") or "")
-        self._draft = False
-        if changing_conversation:
-            self._reset_stream_state()
-            self._activity_steps = []
-            self._activity_items = []
-            self._reset_trace_state()
-            self._turn_segments = []
-            self._turn_text = ""
-            self._segment_cursor = 0
-            self._reasoning_text = ""
-            self._activity_elapsed_seconds = 0
-            self._agent_items = []
-            self._invalidate_file_suggestions()
-        self._selected_index = index
-        self._selected = dict(selected)
-        draft_record = self._draft_records.get(str(selected["conversationId"]))
-        if changing_conversation:
-            if draft_record is not None:
-                self._attachments = [
-                    {
-                        "name": str(item.get("name") or Path(str(item.get("path") or "")).name),
-                        "path": str(item.get("path") or ""),
-                    }
-                    for item in list(draft_record.get("attachments") or [])
-                    if isinstance(item, dict) and str(item.get("path") or "")
-                ]
-                self.draftRestored.emit(str(draft_record.get("text") or ""))
-            else:
-                self._attachments = []
-                self.draftRestored.emit("")
-        row = self._database.get_conversation(str(selected["conversationId"]))
-        if row is not None:
-            self._provider = str(row["provider"] or "codex")
-            self._model = str(row["model"] or "")
-            self._effort = str(row["effort"] or "medium")
-            self._service_tier = str(row["service_tier"] or "")
-            self._approval_profile = str(row["approval_profile"] or "auto")
-            self._vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
-                "vr" if bool(row["vr_enabled"]) else "off"
-            )
-            self._remember_current_chat_options()
-        if changing_conversation:
-            self._restore_activity_from_history(str(selected["conversationId"]))
-        self._sync_selected_turn_state()
-        if changing_conversation and self.turnRunning:
-            self._status_text = "Executando…"
-            self._activity_started_at = (
-                time.monotonic() - self._activity_elapsed_seconds
-            )
-            self._activity_clock.start()
-        elif changing_conversation:
-            status = str(selected.get("status") or "idle")
-            self._status_text = STATUS_LABELS.get(status, status.title())
-        self._reload_selected_messages()
-        if changing_conversation and self.turnRunning and self._streaming_text:
-            self._ensure_streaming_message()
-            update_kwargs = dict(
-                content=self._streaming_text,
-                displayContent=markdown_for_display(self._displayed_streaming_text),
-                segments=self._turn_display_segments(
-                    reveal_limit=len(self._displayed_streaming_text)
-                ),
-            )
-            if self._current_message_key:
-                self._messages.update_by_key(
-                    "messageKey", self._current_message_key, **update_kwargs
-                )
-            else:
-                self._messages.update_last(**update_kwargs)
-        self.stateChanged.emit()
+        return self._Conversations_domain.selectConversation(index)
 
     @Slot(str)
     def selectConversationId(self, conversation_id: str) -> None:  # noqa: N802
-        target = str(conversation_id or "")
-        index = next(
-            (
-                item_index
-                for item_index, item in enumerate(self._conversations._items)
-                if str(item.get("conversationId") or "") == target
-            ),
-            -1,
-        )
-        if index >= 0:
-            self.selectConversation(index)
+        return self._Conversations_domain.selectConversationId(conversation_id)
 
     @Slot(int)
     def setEffort(self, index: int) -> None:  # noqa: N802
-        if not 0 <= index < len(self.effortItems):
-            return
-        self._effort = self.effortItems[index]["value"]
-        self._preferences.setValue("chat/last_effort", self._effort)
-        self._preferences.setValue("chat/default_effort", self._effort)
-        self._remember_model_effort(self._effort)
-        self._preferences.sync()
-        if self._selected:
-            self._database.update_conversation(
-                str(self._selected["conversationId"]), effort=self._effort
-            )
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.setEffort(index)
 
     @Slot(int)
     def setServiceTier(self, index: int) -> None:  # noqa: N802
-        if not 0 <= index < len(self.serviceTierItems):
-            return
-        self._service_tier = self.serviceTierItems[index]["value"]
-        self._preferences.setValue("chat/last_service_tier", self._service_tier)
-        self._preferences.sync()
-        if self._selected:
-            self._database.update_conversation(
-                str(self._selected["conversationId"]),
-                service_tier=self._service_tier,
-            )
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.setServiceTier(index)
 
     @Slot(int)
     def setApproval(self, index: int) -> None:  # noqa: N802
@@ -2492,607 +1740,83 @@ class ChatBridge(QObject):
         self.stateChanged.emit()
 
     def _load_research_config(self) -> None:
-        raw_keys = self._preferences.value("research/model_pool", "[]")
-        try:
-            values = json.loads(str(raw_keys or "[]"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
-        self._research_model_keys = [
-            str(item) for item in values if str(item or "").strip()
-        ][:1]
-        try:
-            parallel = int(self._preferences.value("research/max_parallel", 3))
-        except (TypeError, ValueError):
-            parallel = 3
-        self._research_max_parallel = max(1, min(3, parallel))
-        self._code_analysis_enabled = self._stored_bool(
-            self._preferences.value("research/code_analysis_enabled", False),
-            False,
-        )
-        release_preference = self._workspace_research_preference(
-            "code_analysis_release"
-        )
-        requested_release = str(
-            self._preferences.value(
-                release_preference,
-                self._preferences.value("research/code_analysis_release", "current"),
-            )
-            or "current"
-        ).strip() or "current"
-        self._code_analysis_release = requested_release
-        source_preference = self._workspace_research_preference(
-            "code_analysis_jar_source"
-        )
-        requested_source = str(
-            self._preferences.value(
-                source_preference,
-                ERP_JAR_SOURCE_VR_EXEC,
-            )
-            or ERP_JAR_SOURCE_VR_EXEC
-        ).strip()
-        self._code_analysis_jar_source = (
-            requested_source
-            if requested_source
-            in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE}
-            else ERP_JAR_SOURCE_VR_EXEC
-        )
-        scope_preference = self._workspace_research_preference(
-            "code_analysis_snapshot_scope"
-        )
-        requested_scope = str(
-            self._preferences.value(
-                scope_preference,
-                ERP_JAR_SCOPE_FULL_RELEASE,
-            )
-            or ERP_JAR_SCOPE_FULL_RELEASE
-        ).strip()
-        self._code_analysis_snapshot_scope = (
-            requested_scope
-            if requested_scope in {ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE}
-            else ERP_JAR_SCOPE_FULL_RELEASE
-        )
-        single_jar_preference = self._workspace_research_preference(
-            "code_analysis_single_jar_path"
-        )
-        requested_single_jar = str(
-            self._preferences.value(single_jar_preference, "") or ""
-        ).strip()
-        self._code_analysis_single_jar_path = (
-            requested_single_jar
-            if requested_single_jar.casefold().endswith(".jar")
-            else ""
-        )
-        heap_preference = self._workspace_research_preference(
-            "code_processing_max_heap_mb"
-        )
-        timeout_preference = self._workspace_research_preference(
-            "code_processing_timeout_seconds"
-        )
-        cpu_preference = self._workspace_research_preference(
-            "code_processing_max_cpu_cores"
-        )
-        hardware_profile_preference = self._workspace_research_preference(
-            "code_processing_hardware_profile_version"
-        )
-        disk_preference = self._workspace_research_preference(
-            "code_processing_disk_multiplier"
-        )
-        window_preference = self._workspace_research_preference(
-            "code_processing_window"
-        )
-        try:
-            requested_heap = int(
-                self._preferences.value(
-                    heap_preference, DEFAULT_CODE_PROCESSING_HEAP_MB
-                )
-            )
-        except (TypeError, ValueError):
-            requested_heap = DEFAULT_CODE_PROCESSING_HEAP_MB
-        try:
-            requested_timeout = int(
-                self._preferences.value(
-                    timeout_preference, DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
-                )
-            )
-        except (TypeError, ValueError):
-            requested_timeout = DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
-        try:
-            requested_cpu = int(
-                self._preferences.value(
-                    cpu_preference, DEFAULT_CODE_PROCESSING_CPU_CORES
-                )
-            )
-        except (TypeError, ValueError):
-            requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
-        try:
-            hardware_profile_version = int(
-                self._preferences.value(hardware_profile_preference, 0)
-            )
-        except (TypeError, ValueError):
-            hardware_profile_version = 0
-        if hardware_profile_version < CODE_PROCESSING_HARDWARE_PROFILE_VERSION:
-            requested_heap = DEFAULT_CODE_PROCESSING_HEAP_MB
-            requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
-        try:
-            requested_disk = int(
-                self._preferences.value(
-                    disk_preference, DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
-                )
-            )
-        except (TypeError, ValueError):
-            requested_disk = DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
-        requested_window = str(
-            self._preferences.value(
-                window_preference, DEFAULT_CODE_PROCESSING_WINDOW
-            )
-            or DEFAULT_CODE_PROCESSING_WINDOW
-        )
-        self._code_processing_max_heap_mb = (
-            requested_heap
-            if requested_heap in CODE_PROCESSING_HEAP_OPTIONS
-            else DEFAULT_CODE_PROCESSING_HEAP_MB
-        )
-        self._code_processing_timeout_seconds = (
-            requested_timeout
-            if requested_timeout in CODE_PROCESSING_TIMEOUT_OPTIONS
-            else DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
-        )
-        self._code_processing_max_cpu_cores = (
-            requested_cpu
-            if requested_cpu in CODE_PROCESSING_CPU_CORE_OPTIONS
-            else DEFAULT_CODE_PROCESSING_CPU_CORES
-        )
-        self._code_processing_disk_multiplier = (
-            requested_disk
-            if requested_disk in CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS
-            else DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
-        )
-        available_windows = {
-            str(item["value"]) for item in CODE_PROCESSING_WINDOW_OPTIONS
-        }
-        self._code_processing_window = (
-            requested_window
-            if requested_window in available_windows
-            else DEFAULT_CODE_PROCESSING_WINDOW
-        )
-        self._refresh_code_analysis_releases(include_coverage=False)
-        self._refresh_code_analysis_jar_sources()
-        self._preferences.setValue(
-            release_preference,
-            self._code_analysis_release,
-        )
-        self._preferences.setValue(
-            source_preference,
-            self._code_analysis_jar_source,
-        )
-        self._preferences.setValue(
-            scope_preference,
-            self._code_analysis_snapshot_scope,
-        )
-        self._preferences.setValue(
-            single_jar_preference,
-            self._code_analysis_single_jar_path,
-        )
-        self._preferences.setValue(
-            heap_preference,
-            self._code_processing_max_heap_mb,
-        )
-        self._preferences.setValue(
-            timeout_preference,
-            self._code_processing_timeout_seconds,
-        )
-        self._preferences.setValue(
-            cpu_preference,
-            self._code_processing_max_cpu_cores,
-        )
-        self._preferences.setValue(
-            hardware_profile_preference,
-            CODE_PROCESSING_HARDWARE_PROFILE_VERSION,
-        )
-        self._preferences.setValue(
-            disk_preference,
-            self._code_processing_disk_multiplier,
-        )
-        self._preferences.setValue(window_preference, self._code_processing_window)
-        try:
-            ErpReleaseCatalog(
-                self._settings.root,
-                storage_budget_multiplier=self._code_processing_disk_multiplier,
-            ).set_storage_budget_multiplier(
-                self._code_processing_disk_multiplier, inspect_storage=False
-            )
-        except (ErpReleaseError, OSError, ValueError):
-            pass
-        if not self._code_analysis_release_items and self._code_analysis_enabled:
-            self._code_analysis_enabled = False
-            self._preferences.setValue("research/code_analysis_enabled", False)
-        self._preferences.sync()
-        self._senior_profile_enabled = self._stored_bool(
-            self._preferences.value("research/senior_profile_enabled", False),
-            False,
-        )
-        saved_mode = self._normalize_response_mode(
-            self._preferences.value("research/response_mode", "auto")
-        )
-        self._vr_response_mode = saved_mode if self._senior_profile_enabled else "auto"
+        return self._ProviderSettings_domain._load_research_config()
 
     def _apply_research_config(self) -> None:
-        wanted = set(self._research_model_keys)
-        pool = [
-            ModelRef(
-                provider=str(item.get("provider") or ""),
-                model=str(item.get("value") or ""),
-                display_name=str(item.get("label") or ""),
-            )
-            for item in self._model_items
-            if str(item.get("key") or "") in wanted and item.get("provider")
-        ]
-        try:
-            self._orchestrator.set_research_config(
-                pool=pool,
-                max_parallel=self._research_max_parallel,
-            )
-        except Exception:
-            pass
+        return self._ProviderSettings_domain._apply_research_config()
 
     @Slot("QVariantList")
     def setResearchModels(self, keys: list) -> None:  # noqa: N802
-        selected: list[str] = []
-        for item in keys:
-            key = str(item or "").strip()
-            if key:
-                selected.append(key)
-            if selected:
-                break
-        self._research_model_keys = selected
-        self._preferences.setValue(
-            "research/model_pool",
-            json.dumps(self._research_model_keys),
-        )
-        self._preferences.sync()
-        self._apply_research_config()
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.setResearchModels(keys)
 
     @Slot(int)
     def setResearchMaxParallel(self, value: int) -> None:  # noqa: N802
-        try:
-            parallel = int(value)
-        except (TypeError, ValueError):
-            return
-        self._research_max_parallel = max(1, min(3, parallel))
-        self._preferences.setValue("research/max_parallel", self._research_max_parallel)
-        self._preferences.sync()
-        self._apply_research_config()
-        self.stateChanged.emit()
+        return self._ProviderSettings_domain.setResearchMaxParallel(value)
 
     @Slot(bool)
     def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
-        self._code_analysis_enabled = bool(
-            enabled
-            and self._code_analysis_release_items
-            and self.codeAnalysisReleaseFresh
-        )
-        self._preferences.setValue(
-            "research/code_analysis_enabled", self._code_analysis_enabled
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeAnalysisEnabled(enabled)
 
     @Slot(str)
     def setCodeAnalysisRelease(self, release_id: str) -> None:  # noqa: N802
-        selected = str(release_id or "").strip()
-        if self._code_processing_running:
-            return
-        available = {
-            str(item.get("releaseId") or "")
-            for item in self._code_analysis_release_items
-        }
-        if (
-            not selected
-            or selected not in available
-            or selected == self._code_analysis_release
-        ):
-            return
-        self._cancel_code_processing_status_refresh()
-        self._code_analysis_release = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_analysis_release"),
-            selected,
-        )
-        self._preferences.sync()
-        self._refresh_code_analysis_jar_sources()
-        self.refreshCodeProcessingStatus()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeAnalysisRelease(release_id)
 
     @Slot(str)
     def setCodeAnalysisJarSource(self, source: str) -> None:  # noqa: N802
-        selected = str(source or "").strip()
-        if selected not in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE}:
-            return
-        if selected == self._code_analysis_jar_source:
-            return
-        self._code_analysis_jar_source = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_analysis_jar_source"),
-            selected,
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeAnalysisJarSource(source)
 
     @Slot(str)
     def setCodeAnalysisSnapshotScope(self, scope: str) -> None:  # noqa: N802
-        selected = str(scope or "").strip()
-        if (
-            selected not in {ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE}
-            or selected == self._code_analysis_snapshot_scope
-            or self._release_snapshot_running
-            or self._code_processing_running
-        ):
-            return
-        self._code_analysis_snapshot_scope = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_analysis_snapshot_scope"),
-            selected,
-        )
-        self._preferences.sync()
-        self._release_snapshot_status = ""
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeAnalysisSnapshotScope(scope)
 
     @Slot(str, result=bool)
     def setCodeAnalysisSingleJarPath(self, value: str) -> bool:  # noqa: N802
-        candidate = Path(str(value or "").strip()).resolve(strict=False)
-        if (
-            self._release_snapshot_running
-            or self._code_processing_running
-            or not candidate.is_file()
-            or candidate.suffix.casefold() != ".jar"
-        ):
-            self._release_snapshot_status = "Selecione um arquivo JAR válido."
-            self.stateChanged.emit()
-            return False
-        self._code_analysis_single_jar_path = str(candidate)
-        self._preferences.setValue(
-            self._workspace_research_preference("code_analysis_single_jar_path"),
-            self._code_analysis_single_jar_path,
-        )
-        self._preferences.sync()
-        self._release_snapshot_status = f"JAR selecionado: {candidate.name}"
-        self.stateChanged.emit()
-        return True
+        return self._CodeAdmin_domain.setCodeAnalysisSingleJarPath(value)
 
     @Slot(result=str)
     def selectCodeAnalysisSingleJar(self) -> str:  # noqa: N802
-        initial = self.codeAnalysisJarSourcePath or str(self._settings.root)
-        selected, _filter = QFileDialog.getOpenFileName(
-            None,
-            "Selecionar JAR para análise",
-            initial,
-            "Arquivos JAR (*.jar)",
-        )
-        if selected and self.setCodeAnalysisSingleJarPath(selected):
-            return self._code_analysis_single_jar_path
-        return ""
+        return self._CodeAdmin_domain.selectCodeAnalysisSingleJar()
 
     @Slot(int)
     def setCodeProcessingMaxHeapMb(self, value: int) -> None:  # noqa: N802
-        selected = int(value)
-        if (
-            self._code_processing_running
-            or selected not in CODE_PROCESSING_HEAP_OPTIONS
-            or selected == self._code_processing_max_heap_mb
-        ):
-            return
-        self._code_processing_max_heap_mb = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_processing_max_heap_mb"),
-            selected,
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingMaxHeapMb(value)
 
     @Slot(int)
     def setCodeProcessingTimeoutSeconds(self, value: int) -> None:  # noqa: N802
-        selected = int(value)
-        if (
-            self._code_processing_running
-            or selected not in CODE_PROCESSING_TIMEOUT_OPTIONS
-            or selected == self._code_processing_timeout_seconds
-        ):
-            return
-        self._code_processing_timeout_seconds = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_processing_timeout_seconds"),
-            selected,
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingTimeoutSeconds(value)
 
     @Slot(int)
     def setCodeProcessingMaxCpuCores(self, value: int) -> None:  # noqa: N802
-        selected = int(value)
-        if (
-            self._code_processing_running
-            or selected not in CODE_PROCESSING_CPU_CORE_OPTIONS
-            or selected == self._code_processing_max_cpu_cores
-        ):
-            return
-        self._code_processing_max_cpu_cores = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_processing_max_cpu_cores"),
-            selected,
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingMaxCpuCores(value)
 
     @Slot(int)
     def setCodeProcessingDiskMultiplier(self, value: int) -> None:  # noqa: N802
-        selected = int(value)
-        if (
-            self._code_processing_running
-            or selected not in CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS
-            or selected == self._code_processing_disk_multiplier
-        ):
-            return
-        try:
-            ErpReleaseCatalog(
-                self._settings.root,
-                storage_budget_multiplier=selected,
-            ).set_storage_budget_multiplier(selected, inspect_storage=False)
-        except (ErpReleaseError, OSError, ValueError) as exc:
-            self._code_processing_status = f"Limite de disco não alterado: {exc}"
-            self.stateChanged.emit()
-            return
-        self._code_processing_disk_multiplier = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_processing_disk_multiplier"),
-            selected,
-        )
-        self._preferences.sync()
-        self.refreshCodeProcessingStatus()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingDiskMultiplier(value)
 
     @Slot(str)
     def setCodeProcessingWindow(self, value: str) -> None:  # noqa: N802
-        selected = str(value or "").strip()
-        available = {str(item["value"]) for item in CODE_PROCESSING_WINDOW_OPTIONS}
-        if (
-            self._code_processing_running
-            or selected not in available
-            or selected == self._code_processing_window
-        ):
-            return
-        self._code_processing_window = selected
-        self._preferences.setValue(
-            self._workspace_research_preference("code_processing_window"),
-            selected,
-        )
-        self._preferences.sync()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingWindow(value)
 
     @Slot(str)
     def setCodeProcessingRetryBatch(self, batch_id: str) -> None:  # noqa: N802
-        selected = str(batch_id or "").strip()
-        available = {
-            str(item.get("batchId") or "")
-            for item in self._code_processing_attention_batches
-        }
-        if (
-            self._code_processing_running
-            or selected not in available
-            or selected == self._code_processing_retry_batch
-        ):
-            return
-        self._code_processing_retry_batch = selected
-        selected_item = next(
-            item
-            for item in self._code_processing_attention_batches
-            if item.get("batchId") == selected
-        )
-        self._code_processing_current_batch = selected
-        self._code_processing_current_jar = str(selected_item.get("jar") or "")
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.setCodeProcessingRetryBatch(batch_id)
 
     def _selected_code_analysis_release_item(self) -> dict[str, Any]:
-        return next(
-            (
-                item
-                for item in self._code_analysis_release_items
-                if str(item.get("releaseId") or "")
-                == self._code_analysis_release
-            ),
-            {},
-        )
+        return self._CodeAdmin_domain._selected_code_analysis_release_item()
 
     @Slot()
     def refreshCodeProcessingStatus(self) -> None:  # noqa: N802
-        if self._code_processing_running or self._code_processing_status_loading:
-            return
-        release_id = self._code_analysis_release
-        if not release_id:
-            self._reset_code_processing_status("Adicione uma release para processar.")
-            self.stateChanged.emit()
-            return
-        self._code_processing_status_loading = True
-        self._code_processing_status_generation += 1
-        generation = self._code_processing_status_generation
-        workspace = self._settings.root
-        results = self._code_processing_status_results
-        self._code_processing_status = "Consultando cobertura local..."
-        self.stateChanged.emit()
-
-        def load() -> None:
-            try:
-                try:
-                    coverage = ErpCodeCoverage(workspace).status(release_id)
-                except Exception as exc:
-                    results.put((generation, release_id, None, None, str(exc)))
-                    return
-                latest_audit = CodeProcessingAudit(workspace).latest(
-                    release_id=release_id
-                )
-                results.put((generation, release_id, coverage, latest_audit, ""))
-            finally:
-                with self._code_processing_status_threads_lock:
-                    self._code_processing_status_threads.discard(
-                        threading.current_thread()
-                    )
-
-        self._code_processing_status_poll_timer.start()
-        thread = threading.Thread(target=load, daemon=True)
-        with self._code_processing_status_threads_lock:
-            self._code_processing_status_threads.add(thread)
-        thread.start()
+        return self._CodeAdmin_domain.refreshCodeProcessingStatus()
 
     def _cancel_code_processing_status_refresh(self) -> None:
-        self._code_processing_status_generation += 1
-        self._code_processing_status_loading = False
-        self._code_processing_status_poll_timer.stop()
+        return self._CodeAdmin_domain._cancel_code_processing_status_refresh()
 
     @Slot()
     def _poll_code_processing_status(self) -> None:
-        latest: tuple[
-            int,
-            str,
-            dict[str, Any] | None,
-            dict[str, Any] | None,
-            str,
-        ] | None = None
-        while True:
-            try:
-                latest = self._code_processing_status_results.get_nowait()
-            except queue.Empty:
-                break
-        if latest is None:
-            return
-        generation, release_id, coverage, audit_event, error = latest
-        if generation != self._code_processing_status_generation:
-            return
-        self._code_processing_status_loading = False
-        self._code_processing_status_poll_timer.stop()
-        if release_id != self._code_analysis_release or self._code_processing_running:
-            self.stateChanged.emit()
-            return
-        if error:
-            self._reset_code_processing_status(
-                f"Não foi possível consultar a cobertura: {error}"
-            )
-        elif isinstance(coverage, dict):
-            self._apply_code_processing_coverage(coverage)
-            self._restore_code_processing_audit(audit_event, coverage)
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain._poll_code_processing_status()
 
     def _reset_code_processing_status(self, message: str) -> None:
-        self._code_processing_status = message
-        self._code_processing_progress = 0
-        self._code_processing_covered_jars = 0
-        self._code_processing_total_jars = 0
-        self._code_processing_can_retry = False
-        self._code_processing_current_jar = ""
-        self._code_processing_current_batch = ""
-        self._code_processing_attention_batches = []
-        self._code_processing_retry_batch = ""
-        self._code_processing_eta = {}
-        self._code_processing_capacity = {}
+        return self._CodeAdmin_domain._reset_code_processing_status(message)
 
     @staticmethod
     def _format_megabytes(value: int) -> str:
@@ -3105,265 +1829,29 @@ class ChatBridge(QObject):
         return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
 
     def _apply_code_processing_coverage(self, coverage: dict[str, Any]) -> None:
-        total = max(0, int(coverage.get("expected_jar_count") or 0))
-        covered = max(0, int(coverage.get("covered_jar_count") or 0))
-        remaining = max(0, int(coverage.get("remaining_jar_count") or 0))
-        blocked = list(coverage.get("blocked_plans") or [])
-        active = list(coverage.get("active_plans") or [])
-        self._code_processing_eta = dict(coverage.get("eta") or {})
-        self._code_processing_capacity = dict(coverage.get("capacity") or {})
-        self._code_processing_total_jars = total
-        self._code_processing_covered_jars = min(covered, total) if total else covered
-        reported_progress = coverage.get("progress_percent")
-        if reported_progress is None:
-            calculated_progress = covered * 100 / total if total else 0.0
-        else:
-            calculated_progress = float(reported_progress)
-        calculated_progress = round(max(0.0, min(100.0, calculated_progress)), 1)
-        self._code_processing_progress = (
-            max(float(self._code_processing_progress), calculated_progress)
-            if self._code_processing_running
-            else calculated_progress
-        )
-        attention_items: list[dict[str, Any]] = []
-        for plan in blocked:
-            if not isinstance(plan, dict):
-                continue
-            selected_jars = [str(item) for item in plan.get("selected_jars") or []]
-            for batch in plan.get("attention_batches") or []:
-                if not isinstance(batch, dict) or not batch.get("batch_id"):
-                    continue
-                batch_id = str(batch["batch_id"])
-                jar = str(batch.get("jar_relative_path") or "")
-                if not jar and len(selected_jars) == 1:
-                    jar = selected_jars[0]
-                state = str(batch.get("state") or "failed")
-                ordinal = int(batch.get("ordinal") or 0) + 1
-                attention_items.append(
-                    {
-                        "batchId": batch_id,
-                        "jar": jar,
-                        "state": state,
-                        "ordinal": ordinal,
-                        "label": (
-                            f"{jar or 'JAR não identificado'} · lote {ordinal} · {state}"
-                        ),
-                    }
-                )
-        self._code_processing_attention_batches = attention_items
-        attention_ids = {
-            str(item.get("batchId") or "") for item in attention_items
-        }
-        if self._code_processing_retry_batch not in attention_ids:
-            self._code_processing_retry_batch = (
-                str(attention_items[0]["batchId"]) if attention_items else ""
-            )
-        self._code_processing_can_retry = bool(attention_items)
-        current_plan = next(
-            (
-                plan
-                for plan in [*active, *blocked]
-                if isinstance(plan, dict) and plan.get("current_batch")
-            ),
-            {},
-        )
-        current_batch = dict(current_plan.get("current_batch") or {})
-        self._code_processing_current_jar = str(
-            current_batch.get("jar_relative_path") or ""
-        )
-        if not self._code_processing_current_jar and remaining:
-            pending_jars = list(coverage.get("remaining_jars") or [])
-            self._code_processing_current_jar = (
-                str(pending_jars[0]) if pending_jars else ""
-            )
-        self._code_processing_current_batch = str(
-            current_batch.get("batch_id") or ""
-        )
-        if remaining == 0 and total:
-            self._code_processing_status = (
-                f"Processamento concluído: {covered}/{total} JARs indexados."
-            )
-        elif self._code_processing_can_retry:
-            self._code_processing_status = (
-                f"Atenção necessária: {covered}/{total} JARs indexados; "
-                "há lote com falha ou saída parcial."
-            )
-        elif active:
-            self._code_processing_status = (
-                f"Plano retomável: {covered}/{total} JARs indexados."
-            )
-        else:
-            self._code_processing_status = (
-                f"Pronto para processar: {covered}/{total} JARs indexados."
-            )
+        return self._CodeAdmin_domain._apply_code_processing_coverage(coverage)
 
     def _restore_code_processing_audit(
         self,
         audit_event: dict[str, Any] | None,
         coverage: dict[str, Any],
     ) -> None:
-        if not isinstance(audit_event, dict):
-            return
-        manifest_hash = str(coverage.get("release_manifest_sha256") or "")
-        audit_hash = str(audit_event.get("release_manifest_sha256") or "")
-        if not manifest_hash or audit_hash != manifest_hash:
-            return
-        self._code_processing_release = str(audit_event.get("release_id") or "")
-        self._code_processing_manifest_hash = audit_hash
-        self._code_processing_run_id = str(audit_event.get("run_id") or "")
-        event = str(audit_event.get("event") or "")
-        details = dict(audit_event.get("details") or {})
-        restored_telemetry = details.get("telemetry")
-        if isinstance(restored_telemetry, dict):
-            self._code_processing_telemetry = dict(restored_telemetry)
-        if event == "failed":
-            error = str(details.get("error") or "erro desconhecido")
-            self._code_processing_status = f"Última execução falhou: {error}"
-        elif event == "paused":
-            self._code_processing_status = (
-                "Processamento pausado entre lotes: "
-                f"{self._code_processing_covered_jars}/"
-                f"{self._code_processing_total_jars} JARs indexados."
-            )
-        elif event in {"started", "toolchain_validated", "progress", "batch_retried"}:
-            self._code_processing_status = (
-                "Execução anterior foi interrompida; pronta para retomar: "
-                f"{self._code_processing_covered_jars}/"
-                f"{self._code_processing_total_jars} JARs indexados."
-            )
+        return self._CodeAdmin_domain._restore_code_processing_audit(audit_event, coverage)
 
     @Slot(result=bool)
     def startCodeProcessing(self) -> bool:  # noqa: N802
-        return self._start_code_processing(retry_batch_id="")
+        return self._CodeAdmin_domain.startCodeProcessing()
 
     @Slot(result=bool)
     def retryCodeProcessing(self) -> bool:  # noqa: N802
-        if not self._code_processing_can_retry or not self._code_processing_retry_batch:
-            return False
-        return self._start_code_processing(
-            retry_batch_id=self._code_processing_retry_batch
-        )
+        return self._CodeAdmin_domain.retryCodeProcessing()
 
     def _start_code_processing(self, *, retry_batch_id: str) -> bool:
-        if self._code_processing_running or self._release_snapshot_running:
-            return False
-        if (
-            self._code_processing_total_jars > 0
-            and self._code_processing_covered_jars
-            >= self._code_processing_total_jars
-        ):
-            return False
-        release_id = self._code_analysis_release
-        selected = self._selected_code_analysis_release_item()
-        if not release_id or not selected:
-            self._code_processing_status = "Selecione uma release inventariada."
-            self.stateChanged.emit()
-            return False
-        if selected.get("freshness") != "fresh":
-            self._code_processing_status = (
-                "A release está desatualizada; gere um novo snapshot antes de processar."
-            )
-            self.stateChanged.emit()
-            return False
-        window_status = processing_window_status(self._code_processing_window)
-        if not window_status["allowed"]:
-            self._code_processing_status = (
-                "Fora da janela ociosa configurada: "
-                + str(window_status["label"])
-                + "."
-            )
-            self.stateChanged.emit()
-            return False
-        try:
-            manifest = ErpReleaseCatalog(self._settings.root).load_manifest(release_id)
-        except (ErpReleaseError, OSError, ValueError) as exc:
-            self._code_processing_status = f"Manifesto da release indisponível: {exc}"
-            self.stateChanged.emit()
-            return False
-        manifest_hash = str(manifest.get("release_manifest_sha256") or "").strip()
-        if not manifest_hash:
-            self._code_processing_status = "O manifesto da release não possui SHA-256."
-            self.stateChanged.emit()
-            return False
-
-        self._cancel_code_processing_status_refresh()
-        self._code_processing_release = release_id
-        self._code_processing_manifest_hash = manifest_hash
-        self._code_processing_run_id = uuid4().hex
-        self._code_processing_telemetry = {}
-        max_heap_mb = self._code_processing_max_heap_mb
-        timeout_seconds = self._code_processing_timeout_seconds
-        max_cpu_cores = self._code_processing_max_cpu_cores
-        parallel_workers = CODE_PROCESSING_HARDWARE.parallel_workers_for(
-            max_cpu_cores,
-            max_heap_mb,
-        )
-        process_priority = "normal" if parallel_workers > 1 else "low"
-        disk_multiplier = self._code_processing_disk_multiplier
-        processing_window = self._code_processing_window
-        try:
-            CodeProcessingAudit(self._settings.root).record(
-                "started",
-                run_id=self._code_processing_run_id,
-                release_id=release_id,
-                manifest_sha256=manifest_hash,
-                details={
-                    "retry_batch_id": retry_batch_id,
-                    "max_heap_mb": max_heap_mb,
-                    "timeout_seconds": timeout_seconds,
-                    "max_cpu_cores": max_cpu_cores,
-                    "process_priority": process_priority,
-                    "disk_budget_multiplier": disk_multiplier,
-                    "processing_window": processing_window,
-                    "global_java_concurrency": parallel_workers,
-                    "covered_jar_count": self._code_processing_covered_jars,
-                    "expected_jar_count": self._code_processing_total_jars,
-                },
-            )
-        except OSError as exc:
-            self._code_processing_status = (
-                f"Não foi possível criar a trilha de auditoria local: {exc}"
-            )
-            self.stateChanged.emit()
-            return False
-        self._code_processing_running = True
-        self._code_processing_pause_requested = False
-        self._code_processing_pause_event.clear()
-        self._code_processing_status = (
-            f"Validando Java 17 e decompiladores para {release_id}..."
-        )
-        self._code_processing_can_retry = False
-        self.stateChanged.emit()
-        self._code_processing_poll_timer.start()
-        self._code_processing_thread = threading.Thread(
-            target=self._run_code_processing,
-            args=(
-                release_id,
-                manifest_hash,
-                retry_batch_id,
-                max_heap_mb,
-                timeout_seconds,
-                max_cpu_cores,
-                parallel_workers,
-                process_priority,
-                disk_multiplier,
-                processing_window,
-            ),
-            daemon=True,
-        )
-        self._code_processing_thread.start()
-        return True
+        return self._CodeAdmin_domain._start_code_processing(retry_batch_id=retry_batch_id)
 
     @Slot()
     def pauseCodeProcessing(self) -> None:  # noqa: N802
-        if not self._code_processing_running or self._code_processing_pause_requested:
-            return
-        self._code_processing_pause_requested = True
-        self._code_processing_pause_event.set()
-        self._code_processing_status = (
-            "Pausa solicitada; os lotes Java atuais serão concluídos com segurança."
-        )
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.pauseCodeProcessing()
 
     def _run_code_processing(
         self,
@@ -3378,279 +1866,7 @@ class ChatBridge(QObject):
         disk_multiplier: int,
         processing_window: str,
     ) -> None:
-        results = self._code_processing_results
-
-        def publish(event: dict[str, Any]) -> None:
-            results.put(event)
-            self._codeProcessingReady.emit()
-
-        audit = CodeProcessingAudit(self._settings.root)
-        run_id = self._code_processing_run_id
-        started_monotonic = time.monotonic()
-        job_telemetry: dict[str, Any] = {
-            "processed_batches": 0,
-            "decompiler_duration_ms": 0,
-            "peak_rss_bytes": 0,
-            "cpu_user_ms": 0,
-            "cpu_kernel_ms": 0,
-            "input_bytes": 0,
-            "output_bytes": 0,
-            "timed_out_batches": 0,
-            "metrics_available": False,
-            "cpu_limit_applied": False,
-            "wall_duration_ms": 0,
-        }
-        try:
-            toolchain = JvmToolchain(
-                self._settings.root,
-                app_dir=self._settings.app_dir,
-            )
-            doctor = toolchain.doctor()
-            java_ready = bool((doctor.get("java") or {}).get("available"))
-            decompiler_ready = any(
-                bool((doctor.get(name) or {}).get("available"))
-                for name in ("vineflower", "cfr")
-            )
-            if not java_ready or not decompiler_ready:
-                unavailable = []
-                for name, label in (
-                    ("java", "Java 17 isolado"),
-                    ("vineflower", "Vineflower"),
-                    ("cfr", "CFR"),
-                ):
-                    status = doctor.get(name) or {}
-                    if not bool(status.get("available")):
-                        detail = str(status.get("error") or "indisponível")
-                        unavailable.append(f"{label}: {detail}")
-                raise CodeCoverageError(
-                    "Java 17 isolado e ao menos um decompilador verificado são necessários. "
-                    + " | ".join(unavailable)
-                )
-            audit.record(
-                "toolchain_validated",
-                run_id=run_id,
-                release_id=release_id,
-                manifest_sha256=manifest_hash,
-                details={
-                    "java_ready": java_ready,
-                    "decompiler_ready": decompiler_ready,
-                },
-            )
-
-            catalog = ErpReleaseCatalog(
-                self._settings.root,
-                storage_budget_multiplier=disk_multiplier,
-            )
-            catalog.set_storage_budget_multiplier(disk_multiplier)
-            manager = ErpCodeCoverage(
-                self._settings.root,
-                catalog=catalog,
-                adapters=(
-                    toolchain.adapters()
-                    if hasattr(toolchain, "adapters")
-                    else None
-                ),
-            )
-            coverage = manager.status(release_id)
-            self._require_frozen_code_manifest(coverage, manifest_hash)
-            if retry_batch_id:
-                attention = [
-                    batch
-                    for plan in coverage.get("blocked_plans") or []
-                    if isinstance(plan, dict)
-                    for batch in plan.get("attention_batches") or []
-                    if isinstance(batch, dict) and batch.get("batch_id")
-                ]
-                if not attention:
-                    raise CodeCoverageError("Nenhum lote com falha está disponível para retry.")
-                attention_by_id = {
-                    str(item["batch_id"]): item for item in attention
-                }
-                if retry_batch_id not in attention_by_id:
-                    raise CodeCoverageError(
-                        "O lote selecionado para retry não está mais bloqueado: "
-                        + retry_batch_id
-                    )
-                manager.executor.retry(retry_batch_id)
-                audit.record(
-                    "batch_retried",
-                    run_id=run_id,
-                    release_id=release_id,
-                    manifest_sha256=manifest_hash,
-                    details={"batch_id": retry_batch_id},
-                )
-                coverage = manager.status(release_id)
-                self._require_frozen_code_manifest(coverage, manifest_hash)
-            publish({"kind": "progress", "coverage": coverage})
-
-            while True:
-                window_status = processing_window_status(processing_window)
-                if not window_status["allowed"]:
-                    telemetry = self._merge_code_processing_telemetry(
-                        job_telemetry, [], started_monotonic
-                    )
-                    self._record_code_processing_coverage(
-                        audit,
-                        "paused",
-                        run_id,
-                        release_id,
-                        manifest_hash,
-                        coverage,
-                        telemetry,
-                    )
-                    publish(
-                        {
-                            "kind": "paused",
-                            "coverage": coverage,
-                            "telemetry": telemetry,
-                            "reason": (
-                                "janela ociosa encerrada: "
-                                + str(window_status["label"])
-                            ),
-                        }
-                    )
-                    return
-                if self._code_processing_pause_event.is_set():
-                    telemetry = self._merge_code_processing_telemetry(
-                        job_telemetry, [], started_monotonic
-                    )
-                    self._record_code_processing_coverage(
-                        audit,
-                        "paused",
-                        run_id,
-                        release_id,
-                        manifest_hash,
-                        coverage,
-                        telemetry,
-                    )
-                    publish(
-                        {"kind": "paused", "coverage": coverage, "telemetry": telemetry}
-                    )
-                    return
-                if int(coverage.get("remaining_jar_count") or 0) == 0:
-                    telemetry = self._merge_code_processing_telemetry(
-                        job_telemetry, [], started_monotonic
-                    )
-                    self._record_code_processing_coverage(
-                        audit,
-                        "completed",
-                        run_id,
-                        release_id,
-                        manifest_hash,
-                        coverage,
-                        telemetry,
-                    )
-                    publish(
-                        {
-                            "kind": "completed",
-                            "coverage": coverage,
-                            "telemetry": telemetry,
-                        }
-                    )
-                    return
-                if coverage.get("blocked_plans"):
-                    telemetry = self._merge_code_processing_telemetry(
-                        job_telemetry, [], started_monotonic
-                    )
-                    self._record_code_processing_coverage(
-                        audit,
-                        "attention",
-                        run_id,
-                        release_id,
-                        manifest_hash,
-                        coverage,
-                        telemetry,
-                    )
-                    publish(
-                        {
-                            "kind": "attention",
-                            "coverage": coverage,
-                            "telemetry": telemetry,
-                        }
-                    )
-                    return
-
-                publish({"kind": "batch_started", "coverage": coverage})
-                advanced = manager.advance(
-                    release_id,
-                    approved=True,
-                    jars_per_plan=1,
-                    batch_limit=parallel_workers,
-                    max_heap_mb=max_heap_mb,
-                    timeout_seconds=timeout_seconds,
-                    max_cpu_cores=max_cpu_cores,
-                    parallel_workers=parallel_workers,
-                    process_priority=process_priority,
-                    processing_window=processing_window,
-                    progress=lambda item: publish(
-                        {"kind": "phase_progress", **dict(item)}
-                    ),
-                )
-                coverage = dict(advanced.get("coverage") or {})
-                self._require_frozen_code_manifest(coverage, manifest_hash)
-                executed = [
-                    item
-                    for item in advanced.get("executed") or []
-                    if isinstance(item, dict)
-                ]
-                telemetry = self._merge_code_processing_telemetry(
-                    job_telemetry, executed, started_monotonic
-                )
-                self._record_code_processing_coverage(
-                    audit,
-                    "progress",
-                    run_id,
-                    release_id,
-                    manifest_hash,
-                    coverage,
-                    telemetry,
-                )
-                publish(
-                    {"kind": "progress", "coverage": coverage, "telemetry": telemetry}
-                )
-                if any(
-                    str(item.get("state") or "") in {"failed", "partial"}
-                    for item in executed
-                    if isinstance(item, dict)
-                ):
-                    self._record_code_processing_coverage(
-                        audit,
-                        "attention",
-                        run_id,
-                        release_id,
-                        manifest_hash,
-                        coverage,
-                        telemetry,
-                    )
-                    publish(
-                        {
-                            "kind": "attention",
-                            "coverage": coverage,
-                            "telemetry": telemetry,
-                        }
-                    )
-                    return
-                if not executed and int(coverage.get("remaining_jar_count") or 0) > 0:
-                    raise CodeCoverageError(
-                        "O plano não avançou nenhum lote; revise o estado antes de continuar."
-                    )
-        except Exception as exc:
-            telemetry = self._merge_code_processing_telemetry(
-                job_telemetry, [], started_monotonic
-            )
-            try:
-                audit.record(
-                    "failed",
-                    run_id=run_id,
-                    release_id=release_id,
-                    manifest_sha256=manifest_hash,
-                    details={"error": str(exc), "telemetry": telemetry},
-                )
-            except OSError:
-                pass
-            publish(
-                {"kind": "error", "error": str(exc), "telemetry": telemetry}
-            )
+        return self._CodeAdmin_domain._run_code_processing(release_id, manifest_hash, retry_batch_id, max_heap_mb, timeout_seconds, max_cpu_cores, parallel_workers, process_priority, disk_multiplier, processing_window)
 
     @staticmethod
     def _record_code_processing_coverage(
@@ -3662,20 +1878,7 @@ class ChatBridge(QObject):
         coverage: dict[str, Any],
         telemetry: dict[str, Any] | None = None,
     ) -> None:
-        details = {
-            "covered_jar_count": int(coverage.get("covered_jar_count") or 0),
-            "expected_jar_count": int(coverage.get("expected_jar_count") or 0),
-            "remaining_jar_count": int(coverage.get("remaining_jar_count") or 0),
-        }
-        if telemetry:
-            details["telemetry"] = dict(telemetry)
-        audit.record(
-            event,
-            run_id=run_id,
-            release_id=release_id,
-            manifest_sha256=manifest_hash,
-            details=details,
-        )
+        return CodeAdminDomain._record_code_processing_coverage(audit, event, run_id, release_id, manifest_hash, coverage, telemetry)
 
     @staticmethod
     def _merge_code_processing_telemetry(
@@ -3683,583 +1886,50 @@ class ChatBridge(QObject):
         executions: list[dict[str, Any]],
         started_monotonic: float,
     ) -> dict[str, Any]:
-        for execution in executions:
-            if not isinstance(execution, dict):
-                continue
-            telemetry = execution.get("telemetry")
-            if not isinstance(telemetry, dict):
-                continue
-            aggregate["processed_batches"] = int(
-                aggregate.get("processed_batches") or 0
-            ) + 1
-            for field in (
-                "decompiler_duration_ms",
-                "cpu_user_ms",
-                "cpu_kernel_ms",
-                "input_bytes",
-                "output_bytes",
-            ):
-                source_field = (
-                    "duration_ms" if field == "decompiler_duration_ms" else field
-                )
-                aggregate[field] = int(aggregate.get(field) or 0) + max(
-                    0, int(telemetry.get(source_field) or 0)
-                )
-            aggregate["peak_rss_bytes"] = max(
-                int(aggregate.get("peak_rss_bytes") or 0),
-                max(0, int(telemetry.get("peak_rss_bytes") or 0)),
-            )
-            aggregate["metrics_available"] = bool(
-                aggregate.get("metrics_available")
-                or telemetry.get("metrics_available")
-            )
-            aggregate["cpu_limit_applied"] = bool(
-                aggregate.get("cpu_limit_applied")
-                or telemetry.get("cpu_limit_applied")
-            )
-            aggregate["timed_out_batches"] = int(
-                aggregate.get("timed_out_batches") or 0
-            ) + int(bool(telemetry.get("timed_out")))
-        aggregate["wall_duration_ms"] = int(
-            (time.monotonic() - started_monotonic) * 1000
-        )
-        return dict(aggregate)
+        return CodeAdminDomain._merge_code_processing_telemetry(aggregate, executions, started_monotonic)
 
     @staticmethod
     def _require_frozen_code_manifest(
         coverage: dict[str, Any], manifest_hash: str
     ) -> None:
-        current = str(coverage.get("release_manifest_sha256") or "")
-        if not current or current != manifest_hash:
-            raise CodeCoverageError(
-                "O manifesto da release mudou depois do início; a execução foi interrompida."
-            )
+        return CodeAdminDomain._require_frozen_code_manifest(coverage, manifest_hash)
 
     @Slot()
     def _poll_code_processing(self) -> None:
-        events: list[dict[str, Any]] = []
-        while True:
-            try:
-                events.append(self._code_processing_results.get_nowait())
-            except queue.Empty:
-                break
-        if not events:
-            return
-
-        for event in events:
-            coverage = event.get("coverage")
-            if isinstance(coverage, dict):
-                self._apply_code_processing_coverage(coverage)
-            telemetry = event.get("telemetry")
-            if isinstance(telemetry, dict):
-                self._code_processing_telemetry = dict(telemetry)
-            kind = str(event.get("kind") or "")
-            if kind == "progress":
-                self._code_processing_status = (
-                    f"Processando {self._code_processing_release}: "
-                    f"{self._code_processing_covered_jars}/"
-                    f"{self._code_processing_total_jars} JARs indexados."
-                )
-            elif kind == "phase_progress":
-                current = max(0, int(event.get("current") or 0))
-                total = max(1, int(event.get("total") or 1))
-                ratio = min(1.0, current / total)
-                phase = str(event.get("phase") or "")
-                if phase == "scanning":
-                    candidate = round(3.0 * ratio, 1)
-                    action = "Lendo classes do JAR"
-                else:
-                    candidate = round(3.0 + (2.0 * ratio), 1)
-                    action = "Montando lotes de descompilação"
-                self._code_processing_progress = max(
-                    float(self._code_processing_progress), candidate
-                )
-                self._code_processing_status = (
-                    f"{action}: {min(current, total)}/{total} classes."
-                )
-            elif kind == "batch_started":
-                target = self._code_processing_current_jar or "próximo JAR"
-                self._code_processing_status = (
-                    f"Processando {self._code_processing_release}: {target} · "
-                    f"{self._code_processing_covered_jars}/"
-                    f"{self._code_processing_total_jars} JARs concluídos."
-                )
-            elif kind == "paused":
-                self._code_processing_running = False
-                self._code_processing_pause_requested = False
-                reason = str(event.get("reason") or "").strip()
-                self._code_processing_status = (
-                    f"Processamento pausado entre lotes: "
-                    f"{self._code_processing_covered_jars}/"
-                    f"{self._code_processing_total_jars} JARs indexados."
-                    + (f" Motivo: {reason}." if reason else "")
-                )
-            elif kind == "attention":
-                self._code_processing_running = False
-                self._code_processing_pause_requested = False
-            elif kind == "completed":
-                self._code_processing_running = False
-                self._code_processing_pause_requested = False
-            elif kind == "error":
-                self._code_processing_running = False
-                self._code_processing_pause_requested = False
-                self._code_processing_status = (
-                    "Falha no processamento local: "
-                    + str(event.get("error") or "erro desconhecido")
-                )
-        if not self._code_processing_running:
-            self._code_processing_poll_timer.stop()
-            self._refresh_code_analysis_releases()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain._poll_code_processing()
 
     @Slot(str, result=bool)
     def snapshotCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
-        """Detect, categorize and inventory local JARs off the UI thread."""
-
-        selected_release = str(release_id or "").strip()
-        single_jar = self._code_analysis_snapshot_scope == ERP_JAR_SCOPE_SINGLE
-        source = (
-            self._code_analysis_single_jar_path
-            if single_jar
-            else self.codeAnalysisJarSourcePath
-        )
-        if self._release_snapshot_running or self._code_processing_running:
-            return False
-        if not source:
-            self._release_snapshot_status = (
-                "Selecione o JAR que será analisado."
-                if single_jar
-                else "Selecione um diretório de JARs."
-            )
-            self.stateChanged.emit()
-            return False
-        if single_jar:
-            candidate = Path(source).resolve(strict=False)
-            if not candidate.is_file() or candidate.suffix.casefold() != ".jar":
-                self._release_snapshot_status = "Selecione um arquivo JAR válido."
-                self.stateChanged.emit()
-                return False
-
-        self._release_snapshot_running = True
-        self._release_snapshot_status = (
-            (
-                f"Detectando aplicação e versão de {Path(source).name} localmente..."
-                if single_jar
-                else "Detectando aplicações e preparando a release localmente..."
-            )
-        )
-        self.stateChanged.emit()
-        results = self._release_snapshot_results
-        workspace = self._settings.root
-
-        def snapshot() -> None:
-            try:
-                manifest = ErpReleaseCatalog(
-                    workspace,
-                    expected_jar_count=(1 if single_jar else EXPECTED_ERP_JAR_COUNT),
-                ).snapshot_detected_release(
-                    source,
-                    release_id=selected_release,
-                    analysis_scope=(
-                        ERP_JAR_SCOPE_SINGLE
-                        if single_jar
-                        else ERP_JAR_SCOPE_FULL_RELEASE
-                    ),
-                )
-            except Exception as exc:
-                results.put(
-                    {
-                        "ok": False,
-                        "release_id": selected_release,
-                        "error": str(exc),
-                    }
-                )
-                self._releaseSnapshotReady.emit()
-                return
-            results.put(
-                {
-                    "ok": True,
-                    "release_id": str(manifest.get("release_id") or selected_release),
-                    "jar_count": int(manifest.get("jar_count") or 0),
-                    "package_jar_count": int(manifest.get("package_jar_count") or 0),
-                    "base_release_id": str(manifest.get("base_release_id") or ""),
-                    "analysis_scope": str(manifest.get("analysis_scope") or ""),
-                    "expected_jar_count": int(
-                        manifest.get("expected_jar_count") or 0
-                    ),
-                    "updated_applications": list(
-                        manifest.get("updated_applications") or []
-                    ),
-                }
-            )
-            self._releaseSnapshotReady.emit()
-
-        self._release_snapshot_poll_timer.start()
-        threading.Thread(target=snapshot, daemon=True).start()
-        return True
+        return self._CodeAdmin_domain.snapshotCodeAnalysisRelease(release_id)
 
     @Slot(str, result=bool)
     def removeCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
-        """Remove an inventoried release after confirmation in the UI."""
-
-        selected_release = str(release_id or "").strip()
-        if (
-            not selected_release
-            or self._release_snapshot_running
-            or self._code_processing_running
-        ):
-            return False
-
-        available = {
-            str(item.get("releaseId") or "")
-            for item in self._code_analysis_release_items
-        }
-        if selected_release not in available:
-            self._release_snapshot_status = (
-                f"Não foi possível remover a release {selected_release}: "
-                "ela não está mais inventariada."
-            )
-            self.stateChanged.emit()
-            return False
-
-        self._release_snapshot_running = True
-        self._release_snapshot_status = (
-            f"Removendo o índice da release {selected_release} localmente..."
-        )
-        self.stateChanged.emit()
-        results = self._release_snapshot_results
-        workspace = self._settings.root
-
-        def remove() -> None:
-            try:
-                result = ErpReleaseCatalog(workspace).remove_index(
-                    selected_release,
-                    approved=True,
-                )
-            except Exception as exc:
-                results.put(
-                    {
-                        "operation": "remove",
-                        "ok": False,
-                        "release_id": selected_release,
-                        "error": str(exc),
-                    }
-                )
-                self._releaseSnapshotReady.emit()
-                return
-            results.put(
-                {
-                    "operation": "remove",
-                    "ok": True,
-                    **result,
-                }
-            )
-            self._releaseSnapshotReady.emit()
-
-        self._release_snapshot_poll_timer.start()
-        threading.Thread(target=remove, daemon=True).start()
-        return True
+        return self._CodeAdmin_domain.removeCodeAnalysisRelease(release_id)
 
     @Slot(result=bool)
     def cleanCodeProcessingOrphans(self) -> bool:  # noqa: N802
-        """Delete only unreferenced generated payload after UI confirmation."""
-
-        if (
-            self._release_snapshot_running
-            or self._code_processing_running
-            or not self.codeProcessingCanCleanOrphans
-        ):
-            return False
-        self._release_snapshot_running = True
-        self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
-        self.stateChanged.emit()
-        results = self._release_snapshot_results
-        workspace = self._settings.root
-
-        def clean() -> None:
-            try:
-                result = ErpReleaseCatalog(workspace).purge_orphaned_index_data(
-                    approved=True
-                )
-            except Exception as exc:
-                results.put(
-                    {
-                        "operation": "clean_orphans",
-                        "ok": False,
-                        "error": str(exc),
-                    }
-                )
-                self._releaseSnapshotReady.emit()
-                return
-            results.put({"operation": "clean_orphans", "ok": True, **result})
-            self._releaseSnapshotReady.emit()
-
-        self._release_snapshot_poll_timer.start()
-        threading.Thread(target=clean, daemon=True).start()
-        return True
+        return self._CodeAdmin_domain.cleanCodeProcessingOrphans()
 
     @Slot()
     def _poll_release_snapshot(self) -> None:
-        latest: dict[str, Any] | None = None
-        while True:
-            try:
-                latest = self._release_snapshot_results.get_nowait()
-            except queue.Empty:
-                break
-        if latest is None:
-            return
-
-        self._release_snapshot_running = False
-        self._release_snapshot_poll_timer.stop()
-        release_id = str(latest.get("release_id") or "")
-        if str(latest.get("operation") or "") == "clean_orphans":
-            if bool(latest.get("ok")):
-                reclaimed = int(latest.get("reclaimed_bytes") or 0)
-                count = int(latest.get("removed_item_count") or 0)
-                self._release_snapshot_status = (
-                    f"Limpeza concluída: {count} artefato(s) órfão(s), "
-                    f"{reclaimed / (1024 * 1024):.1f} MB liberados. "
-                    "Os JARs de origem foram preservados."
-                )
-                self.refreshCodeProcessingStatus()
-            else:
-                detail = str(latest.get("error") or "falha desconhecida")
-                self._release_snapshot_status = (
-                    f"Não foi possível limpar os artefatos órfãos: {detail}"
-                )
-            self.stateChanged.emit()
-            return
-        if str(latest.get("operation") or "") == "remove":
-            if bool(latest.get("ok")):
-                self._refresh_code_analysis_releases()
-                self._preferences.setValue(
-                    self._workspace_research_preference("code_analysis_release"),
-                    self._code_analysis_release,
-                )
-                self._preferences.setValue(
-                    "research/code_analysis_enabled",
-                    self._code_analysis_enabled,
-                )
-                self._preferences.sync()
-                self._refresh_code_analysis_jar_sources()
-                self.refreshCodeProcessingStatus()
-                reclaimed = int(latest.get("reclaimed_bytes") or 0)
-                self._release_snapshot_status = (
-                    f"Release {release_id} removida do índice. "
-                    f"{reclaimed / (1024 * 1024):.1f} MB liberados; "
-                    "os JARs de origem foram preservados."
-                )
-            else:
-                detail = str(latest.get("error") or "falha desconhecida")
-                self._release_snapshot_status = (
-                    f"Não foi possível remover a release {release_id}: {detail}"
-                )
-            self.stateChanged.emit()
-            return
-        if bool(latest.get("ok")):
-            self._refresh_code_analysis_releases()
-            available = {
-                str(item.get("releaseId") or "")
-                for item in self._code_analysis_release_items
-            }
-            if release_id in available:
-                self._code_analysis_release = release_id
-                self._preferences.setValue(
-                    self._workspace_research_preference("code_analysis_release"),
-                    release_id,
-                )
-                self._preferences.sync()
-            self._refresh_code_analysis_jar_sources()
-            self.refreshCodeProcessingStatus()
-            jar_count = int(latest.get("jar_count") or 0)
-            package_jar_count = int(latest.get("package_jar_count") or jar_count)
-            base_release_id = str(latest.get("base_release_id") or "")
-            analysis_scope = str(latest.get("analysis_scope") or "")
-            expected_jar_count = int(latest.get("expected_jar_count") or 0)
-            updated = [str(item) for item in latest.get("updated_applications") or []]
-            jar_label = "JAR copiado e verificado" if jar_count == 1 else "JARs copiados e verificados"
-            self._release_snapshot_status = (
-                f"Release {release_id} detectada e adicionada: {jar_count} {jar_label} "
-                f"localmente; pacote recebido com {package_jar_count}."
-                + (
-                    f" Release parcial: {jar_count} de {expected_jar_count} JARs."
-                    if analysis_scope == "partial_release"
-                    else ""
-                )
-                + (f" Base completa: {base_release_id}." if base_release_id else "")
-                + (f" Atualizados: {', '.join(updated)}." if updated else "")
-            )
-        else:
-            detail = str(latest.get("error") or "falha desconhecida")
-            release_label = release_id or "automática"
-            self._release_snapshot_status = (
-                f"Não foi possível adicionar a release {release_label}: {detail}"
-            )
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain._poll_release_snapshot()
 
     def _workspace_research_preference(self, name: str) -> str:
-        identity = str(self._settings.root.resolve()).replace("\\", "/").casefold()
-        workspace_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-        return f"research/workspaces/{workspace_id}/{name}"
+        return self._ProviderSettings_domain._workspace_research_preference(name)
 
     def _refresh_code_analysis_jar_sources(self) -> None:
-        workspace_path = self._settings.erp_releases_dir
-        options = (
-            (
-                ERP_JAR_SOURCE_VR_EXEC,
-                "Instalação local do ERP",
-                DEFAULT_ERP_JAR_SOURCE_PATH,
-            ),
-            (
-                ERP_JAR_SOURCE_WORKSPACE,
-                "Workspace atual",
-                workspace_path,
-            ),
-        )
-        items: list[dict[str, Any]] = []
-        catalog = ErpReleaseCatalog(self._settings.root)
-        for value, label, path in options:
-            resolved = path.resolve(strict=False)
-            exists = resolved.is_dir()
-            jar_count = catalog.count_source_jars(resolved) if exists else 0
-            status = (
-                f"{jar_count} JAR(s) encontrados"
-                if exists
-                else "Pasta não encontrada"
-            )
-            items.append(
-                {
-                    "value": value,
-                    "label": f"{label} · {resolved}",
-                    "path": str(resolved),
-                    "exists": exists,
-                    "jarCount": jar_count,
-                    "status": status,
-                }
-            )
-        self._code_analysis_jar_source_items = items
+        return self._CodeAdmin_domain._refresh_code_analysis_jar_sources()
+
+    @Slot(object)
+    def _on_coverage_warmed(self, result: object) -> None:
+        return self._CodeAdmin_domain._on_coverage_warmed(result)
 
     def _refresh_code_analysis_releases(self, *, include_coverage: bool = True) -> None:
-        try:
-            statuses = ErpReleaseCatalog(self._settings.root).list_statuses()
-        except (OSError, ValueError):
-            statuses = []
-        items: list[dict[str, Any]] = []
-        code_index = JavaCodeIndex(self._settings.root)
-        for status in statuses[:3]:
-            release_id = str(status.get("release_id") or "").strip()
-            if not release_id or status.get("state") == "failed":
-                continue
-            freshness = str(status.get("freshness") or "unknown")
-            jar_count = int(status.get("jar_count") or 0)
-            try:
-                coverage = code_index.coverage(release_id) if include_coverage else {}
-            except (
-                DecompilationBatchError,
-                ErpReleaseError,
-                OSError,
-                ValueError,
-                sqlite3.Error,
-            ):
-                coverage = {}
-            try:
-                classpath = ClasspathPolicyStore(self._settings.root).status(release_id)
-            except (ClasspathError, ErpReleaseError, OSError, ValueError, sqlite3.Error):
-                classpath = {}
-            covered_jar_count = int(coverage.get("covered_jar_count") or 0)
-            coverage_label = (
-                f"{covered_jar_count}/{jar_count} JARs indexados"
-                if include_coverage else f"{jar_count} JARs · cobertura sob consulta"
-            )
-            analysis_scope = str(status.get("analysis_scope") or "full_release")
-            scope_label = (
-                "escopo: 1 JAR"
-                if analysis_scope == ERP_JAR_SCOPE_SINGLE
-                else "release incremental"
-                if analysis_scope == "incremental_release"
-                else "release parcial"
-                if analysis_scope == "partial_release"
-                else "release completa"
-            )
-            classpath_status = str(classpath.get("classpath_status") or "unknown")
-            classpath_label = {
-                "resolved": "classpath resolvido",
-                "partial": "classpath parcial",
-                "unknown": "classpath desconhecido",
-            }.get(classpath_status, f"classpath {classpath_status}")
-            freshness_label = {
-                "fresh": "atualizado",
-                "stale": "desatualizado",
-                "missing": "origem ausente",
-            }.get(freshness, "frescor desconhecido")
-            items.append(
-                {
-                    "releaseId": release_id,
-                    "manifestSha256": str(
-                        status.get("release_manifest_sha256") or ""
-                    ),
-                    "label": (
-                        f"{release_id} · {coverage_label} · {scope_label} · {freshness_label} · "
-                        f"{classpath_label}"
-                    ),
-                    "freshness": freshness,
-                    "state": str(status.get("state") or "incomplete"),
-                    "coveredJarCount": covered_jar_count,
-                    "coverageLoaded": include_coverage,
-                    "jarCount": jar_count,
-                    "analysisScope": analysis_scope,
-                    "classpathStatus": classpath_status,
-                    "warning": " ".join(
-                        [
-                            *(str(item) for item in status.get("warnings") or []),
-                            *(
-                                [
-                                    "A ordem efetiva do classpath ainda não foi confirmada; "
-                                    "resultados conflitantes serão sinalizados."
-                                ]
-                                if classpath_status != "resolved"
-                                else []
-                            ),
-                        ]
-                    ),
-                }
-            )
-        self._code_analysis_release_items = items
-        available = {str(item["releaseId"]) for item in items}
-        if self._code_analysis_release not in available:
-            self._code_analysis_release = str(items[0]["releaseId"]) if items else ""
-        selected = self._selected_code_analysis_release_item()
-        if (
-            self._code_analysis_enabled
-            and (not selected or selected.get("freshness") != "fresh")
-        ):
-            self._code_analysis_enabled = False
+        return self._CodeAdmin_domain._refresh_code_analysis_releases(include_coverage=include_coverage)
 
     @Slot()
     def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
-        previous = self._code_analysis_release
-        was_enabled = self._code_analysis_enabled
-        preferences_changed = False
-        self._refresh_code_analysis_releases()
-        self._refresh_code_analysis_jar_sources()
-        if not self._code_analysis_release_items:
-            self._code_analysis_enabled = False
-        if self._code_analysis_release != previous:
-            self._preferences.setValue(
-                self._workspace_research_preference("code_analysis_release"),
-                self._code_analysis_release,
-            )
-            preferences_changed = True
-        if self._code_analysis_enabled != was_enabled:
-            self._preferences.setValue(
-                "research/code_analysis_enabled",
-                self._code_analysis_enabled,
-            )
-            preferences_changed = True
-        if preferences_changed:
-            self._preferences.sync()
-        self.refreshCodeProcessingStatus()
-        self.stateChanged.emit()
+        return self._CodeAdmin_domain.refreshCodeAnalysisReleases()
 
     @staticmethod
     def _normalize_response_mode(value: object) -> str:
@@ -4297,127 +1967,196 @@ class ChatBridge(QObject):
 
     @Slot(result=str)
     def addProject(self) -> str:  # noqa: N802
-        selected = QFileDialog.getExistingDirectory(
-            None,
-            "Adicionar projeto ao Chat VR",
-            str(self._settings.root),
-        )
-        if not selected:
-            return ""
-        return self._add_project_path(Path(selected))
+        return self._Conversations_domain.addProject()
 
     @Slot()
     def beginProjectFolderBrowse(self) -> None:  # noqa: N802
-        self._set_project_folder(Path.home())
+        return self._Conversations_domain.beginProjectFolderBrowse()
 
     @Slot(str)
     def browseProjectFolder(self, value: str) -> None:  # noqa: N802
-        raw = str(value or "").strip()
-        if not raw:
-            return
-        candidate = Path(raw).expanduser()
-        if not candidate.is_absolute():
-            candidate = self._project_folder / candidate
-        self._set_project_folder(candidate)
+        return self._Conversations_domain.browseProjectFolder(value)
 
     @Slot()
     def browseParentProjectFolder(self) -> None:  # noqa: N802
-        self._set_project_folder(self._project_folder.parent)
+        return self._Conversations_domain.browseParentProjectFolder()
 
     @Slot(result=str)
     def addCurrentProjectFolder(self) -> str:  # noqa: N802
-        return self._add_project_path(self._project_folder)
+        return self._Conversations_domain.addCurrentProjectFolder()
 
     @Slot()
     def openCurrentProjectFolder(self) -> None:  # noqa: N802
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._project_folder)))
+        return self._Conversations_domain.openCurrentProjectFolder()
 
     def _set_project_folder(self, value: Path) -> None:
-        path = value.expanduser().resolve(strict=False)
-        if not path.is_dir():
-            return
-        items: list[dict[str, str]] = []
-        try:
-            children = sorted(
-                (child for child in path.iterdir() if child.is_dir()),
-                key=lambda child: child.name.casefold(),
-            )
-        except OSError:
-            children = []
-        for child in children:
-            items.append({"label": child.name, "path": str(child)})
-        self._project_folder = path
-        self._project_folder_items = items
-        self.projectFolderChanged.emit()
+        return self._Conversations_domain._set_project_folder(value)
 
     def _add_project_path(self, selected: Path) -> str:
-        path = selected.expanduser().resolve(strict=False)
-        if not path.is_dir():
-            return ""
-        values = self._stored_project_entries()
-        stored = [item.get("path", "") if isinstance(item, dict) else item for item in values]
-        if str(path) not in stored:
-            values.append({"path": str(path)})
-            self._store_project_entries(values)
-        hidden = self._stored_project_paths("chat/hidden_projects")
-        if path in hidden:
-            self._preferences.setValue(
-                "chat/hidden_projects",
-                json.dumps(
-                    [str(item) for item in hidden if item != path], ensure_ascii=False
-                ),
-            )
-            self._preferences.sync()
-        self._refresh_projects()
-        target = next(
-            (index for index, item in enumerate(self._projects) if item["path"] == str(path)),
-            0,
-        )
-        self.setProject(target)
-        return str(path)
+        return self._Conversations_domain._add_project_path(selected)
 
     def _stored_project_entries(self) -> list[dict[str, str]]:
-        raw = self._preferences.value("chat/projects", "[]")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
-        entries: list[dict[str, str]] = []
-        for value in values:
-            if isinstance(value, dict):
-                path = str(value.get("path") or "").strip()
-                label = str(value.get("label") or "").strip()
-                icon = str(value.get("icon") or "").strip()
-            else:
-                path = str(value or "").strip()
-                label = ""
-                icon = ""
-            if path:
-                entries.append({"path": path, "label": label, "icon": icon})
-        return entries
+        return self._Conversations_domain._stored_project_entries()
 
     def _stored_project_paths(self, key: str) -> list[Path]:
-        raw = self._preferences.value(key, "[]")
-        try:
-            values = json.loads(str(raw)) if isinstance(raw, str) else list(raw or [])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            values = []
-        paths: list[Path] = []
-        for value in values:
-            candidate = Path(str(value or "")).expanduser().resolve(strict=False)
-            if str(value or "").strip() and candidate not in paths:
-                paths.append(candidate)
-        return paths
+        return self._Conversations_domain._stored_project_paths(key)
 
     def _store_project_entries(self, values: list[dict[str, str]]) -> None:
-        self._preferences.setValue(
-            "chat/projects", json.dumps(values, ensure_ascii=False)
-        )
-        self._preferences.sync()
+        return self._Conversations_domain._store_project_entries(values)
+
+    @Property("QVariantList", notify=activeSkillsChanged)
+    def activeSkills(self) -> list[dict[str, Any]]:  # noqa: N802
+        return list(self._active_skills)
+
+    @Slot(dict)
+    def addActiveSkill(self, skill: dict) -> None:  # noqa: N802
+        if not skill:
+            return
+        skill_id = str(skill.get("id") or skill.get("name") or "")
+        if any(str(s.get("id") or s.get("name") or "") == skill_id for s in self._active_skills):
+            return
+        self._active_skills.append(dict(skill))
+        self.activeSkillsChanged.emit()
+
+    @Slot(int)
+    def removeActiveSkill(self, index: int) -> None:  # noqa: N802
+        if 0 <= index < len(self._active_skills):
+            self._active_skills.pop(index)
+            self.activeSkillsChanged.emit()
+
+    @Slot()
+    def clearActiveSkills(self) -> None:  # noqa: N802
+        if self._active_skills:
+            self._active_skills.clear()
+            self.activeSkillsChanged.emit()
+
+    @Property(bool, notify=showSkillsInSlashMenuChanged)
+    def showSkillsInSlashMenu(self) -> bool:  # noqa: N802
+        val = self._preferences.value("chat/show_skills_in_slash_menu", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().casefold() in ("true", "1", "yes")
+
+    @Slot(bool)
+    def setShowSkillsInSlashMenu(self, value: bool) -> None:  # noqa: N802
+        self._preferences.setValue("chat/show_skills_in_slash_menu", bool(value))
+        self.showSkillsInSlashMenuChanged.emit()
+
+    @Slot(str, result="QVariantList")
+    def skillSuggestions(self, query: str) -> list[dict[str, Any]]:  # noqa: N802
+        workspace = (self._project_scope or self._settings.root).resolve(strict=False)
+        try:
+            return self._orchestrator.search_skills(
+                query, provider=self._provider, workspace=workspace
+            )
+        except Exception as exc:
+            LOGGER.warning("Erro em skillSuggestions: %s", exc)
+            return []
+
+    @Slot(result="QVariantList")
+    def allSkills(self) -> list[dict[str, Any]]:  # noqa: N802
+        workspace = (self._project_scope or self._settings.root).resolve(strict=False)
+        try:
+            res = self._orchestrator.skills(self._provider, workspace)
+            return res.get("skills", [])
+        except Exception as exc:
+            LOGGER.warning("Erro em allSkills: %s", exc)
+            return []
+
+    @Slot(str, str, str, str, str, result="QVariantMap")
+    def createSkill(
+        self,
+        provider: str,
+        name: str,
+        description: str,
+        instructions: str,
+        scope: str = "project",
+    ) -> dict[str, Any]:  # noqa: N802
+        workspace = (self._project_scope or self._settings.root).resolve(strict=False)
+        try:
+            skill = self._orchestrator.create_skill(
+                provider=provider or self._provider,
+                name=name,
+                description=description,
+                instructions=instructions,
+                workspace=workspace,
+                scope=scope,
+            )
+            return {"success": True, "skill": skill}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    @Slot(str, str, str, result="QVariantMap")
+    def updateSkill(
+        self,
+        skill_id: str,
+        instructions: str = "",
+        description: str = "",
+    ) -> dict[str, Any]:  # noqa: N802
+        try:
+            skill = self._orchestrator.update_skill(
+                skill_id=skill_id,
+                instructions=instructions if instructions else None,
+                description=description if description else None,
+            )
+            return {"success": True, "skill": skill}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    @Property("QVariantMap", notify=usageLimitsChanged)
+    def usageSnapshot(self) -> dict[str, Any]:  # noqa: N802
+        if not self._usage_snapshot:
+            self.refreshUsageLimits(force=False)
+        return dict(self._usage_snapshot)
+
+    @Slot()
+    @Slot(bool)
+    def refreshUsageLimits(self, force: bool = True) -> None:  # noqa: N802
+        provider_name = self._provider
+        def worker():
+            try:
+                snap = self._orchestrator.usage_limits(provider_name, force_refresh=force)
+                self._usage_snapshot = snap
+                self.usageLimitsChanged.emit()
+            except Exception as exc:
+                LOGGER.warning("Erro em refreshUsageLimits: %s", exc)
+        threading.Thread(target=worker, daemon=True, name=f"usage-refresh-{provider_name}").start()
+
+    @Slot()
+    def openUsageLimits(self) -> None:  # noqa: N802
+        self.refreshUsageLimits(force=True)
+        self.showUsageLimitsRequested.emit()
 
     @Slot(str)
     def sendMessage(self, text: str) -> None:  # noqa: N802
+        self._send_message(text)
+
+    @Property("QVariantMap", notify=stateChanged)
+    def resumableResearch(self) -> dict:  # noqa: N802
+        cid = str(self._selected.get("conversationId") or "")
+        repository = getattr(self._orchestrator, "research_repository", None)
+        run = repository.latest_resumable(cid) if repository and cid and not self.turnRunning else None
+        if not run:
+            return {}
+        budget = json.loads(run["budget_json"])
+        return {"runId": run["run_id"], "status": run["status"],
+                "publicationReady": bool(run["status"] == "completed" and json.loads(run["result_json"] or "{}").get("publication_text")),
+                "callsRemaining": budget.get("remaining_calls", 0),
+                "secondsRemaining": budget.get("time_remaining_seconds", 0)}
+
+    @Property(QObject, constant=True)
+    def retrievalSettings(self):  # noqa: N802
+        return self._retrieval_settings
+
+    @Slot(bool)
+    def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
+        return self._ProviderSettings_domain.resumeResearch(grant_budget)
+
+    def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> None:
         content = str(text or "").strip()
+        if content.lower() == "/usage-limits" or content.lower().startswith("/usage-limits "):
+            self.openUsageLimits()
+            return
         if self.turnRunning or (not content and not self._attachments):
             return
         if not content:
@@ -4445,6 +2184,18 @@ class ChatBridge(QObject):
             for item in selected_extensions
             if item.get("kind") == "skill"
         ]
+        active_chips = list(self._active_skills)
+        known_skill_keys = {
+            str(s.get("id") or s.get("name") or "") for s in skills
+        }
+        for chip in active_chips:
+            k = str(chip.get("id") or chip.get("name") or "")
+            if k and k not in known_skill_keys:
+                skills.append(dict(chip))
+                known_skill_keys.add(k)
+        if self._active_skills:
+            self._active_skills.clear()
+            self.activeSkillsChanged.emit()
         mcp_tools = [
             dict(item.get("payload") or {})
             for item in selected_extensions
@@ -4480,7 +2231,7 @@ class ChatBridge(QObject):
             )
             if selected_index >= 0:
                 self.selectConversation(selected_index)
-        elif mcp_tools:
+        elif mcp_tools and not resume_run_id:
             try:
                 configured_id = self._orchestrator.configure_tools(
                     conversation_id, [], mcp_tools
@@ -4538,6 +2289,7 @@ class ChatBridge(QObject):
                 "role": "user",
                 "content": content,
                 "displayContent": content,
+                "skills": [dict(s) for s in skills],
                 "segments": [],
                 "createdAt": "",
                 "responseMode": "vr" if self._vr_mode != "off" else "native",
@@ -4556,7 +2308,7 @@ class ChatBridge(QObject):
                 content,
                 content,
                 self._vr_mode != "off",
-                image_paths=image_paths,
+                image_paths=[] if resume_run_id else image_paths,
                 vr_mode=self._vr_mode,
                 force_research=force_research,
                 code_analysis_enabled=(
@@ -4574,6 +2326,7 @@ class ChatBridge(QObject):
                     if self._senior_profile_enabled
                     else "auto"
                 ),
+                **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
             )
             if conversation_id in self._draft_records:
                 self._draft_records.pop(conversation_id, None)
@@ -4608,76 +2361,15 @@ class ChatBridge(QObject):
 
     @Slot()
     def archiveCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = self._selected_conversation_id()
-        if not conversation_id or conversation_id in self._active_turns:
-            return
-        try:
-            self._orchestrator.archive(conversation_id)
-        except Exception as exc:
-            self._status_text = f"Falha: {exc}"
-            self.stateChanged.emit()
-            return
-        self._draft_records.pop(conversation_id, None)
-        self._pinned_conversation_ids.discard(conversation_id)
-        self._persist_draft_records()
-        self._persist_pinned_conversation_ids()
-        self.refresh()
-        self.conversationArchived.emit(conversation_id)
-        self.startNewChat()
+        return self._Conversations_domain.archiveCurrentConversation()
 
     @Slot()
     def trashCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = self._selected_conversation_id()
-        if (
-            not conversation_id
-            or conversation_id in self._active_turns
-            or self._conversation_delete_running
-        ):
-            return
-        self._conversation_delete_running = True
-        self._conversation_delete_id = conversation_id
-        self._deleting_conversation_ids.add(conversation_id)
-        self.startNewChat()
-        self.refresh()
-        self._status_text = "Movendo conversa para a lixeira…"
-        self.stateChanged.emit()
-
-        def trash() -> None:
-            result: dict[str, Any] = {
-                "conversation_id": conversation_id,
-                "error": "",
-            }
-            try:
-                self._orchestrator.trash(conversation_id)
-            except Exception as exc:
-                result["error"] = str(exc)
-            self._conversationTrashFinished.emit(result)
-
-        threading.Thread(target=trash, daemon=True).start()
+        return self._Conversations_domain.trashCurrentConversation()
 
     @Slot(object)
     def _finish_conversation_trash(self, value: object) -> None:
-        result = dict(value) if isinstance(value, dict) else {}
-        conversation_id = str(result.get("conversation_id") or "")
-        error = str(result.get("error") or "")
-        self._deleting_conversation_ids.discard(conversation_id)
-        if conversation_id == self._conversation_delete_id:
-            self._conversation_delete_running = False
-            self._conversation_delete_id = ""
-        if self._closed:
-            return
-        if error:
-            self._status_text = f"Falha ao excluir conversa: {error}"
-            self.refresh()
-            self.stateChanged.emit()
-            return
-        self._draft_records.pop(conversation_id, None)
-        self._pinned_conversation_ids.discard(conversation_id)
-        self._persist_draft_records()
-        self._persist_pinned_conversation_ids()
-        self.refresh()
-        self._status_text = "Conversa movida para a lixeira."
-        self.stateChanged.emit()
+        return self._Conversations_domain._finish_conversation_trash(value)
 
     @Slot(bool, bool)
     def decideApproval(self, approved: bool, session: bool) -> None:  # noqa: N802
@@ -4704,150 +2396,7 @@ class ChatBridge(QObject):
 
     @Slot(object)
     def _on_runtime_event(self, event: RuntimeEvent) -> None:
-        if not isinstance(event, RuntimeEvent):
-            return
-        execution_id = int(event.payload.get("execution_id") or 0)
-        if execution_id:
-            previous = self._ui_execution_ids.get(event.conversation_id, 0)
-            if execution_id < previous or (event.conversation_id, execution_id) in self._ui_terminal_executions:
-                return
-            self._ui_execution_ids[event.conversation_id] = execution_id
-            if event.kind in {"turn_completed", "orchestration_completed", "orchestration_cancelled", "error"}:
-                self._ui_terminal_executions.add((event.conversation_id, execution_id))
-        if event.kind == "turn_started":
-            self._active_turns.add(event.conversation_id)
-        selected_id = self._selected_conversation_id()
-        if event.conversation_id != selected_id:
-            self._on_background_runtime_event(event)
-            return
-        self._sync_selected_turn_state()
-        if execution_id and event.kind in {"assistant_started", "tool_event"} and any(
-            row.get("role") == "activity" and not row.get("messageKey") for row in self._messages._items
-        ):
-            self._messages.replace([row for row in self._messages._items if row.get("role") != "activity" or row.get("messageKey")])
-        self._record_execution_event(event)
-        if event.kind == "tool_event" and execution_id:
-            activity = self._execution_activity(event)
-            if activity is not None:
-                if not self._messages.update_by_key("messageKey", activity["messageKey"], **{k: v for k, v in activity.items() if k != "messageKey"}):
-                    self._messages.append(activity)
-        if event.kind == "assistant_started":
-            key = str(event.payload.get("message_key") or "")
-            if key:
-                if any(row.get("messageKey") == key for row in self._messages._items):
-                    return
-                self._current_message_key = key
-                self._streaming_text = ""
-                self._displayed_streaming_text = ""
-                self._stream_pending_text = ""
-                self._turn_text = ""
-                self._turn_segments = []
-                self._segment_cursor = 0
-                self._message_streaming_texts[key] = ""
-                self._message_displayed_texts[key] = ""
-                self._message_pending_texts[key] = ""
-                self._messages.append({
-                    "messageId": -1,
-                    "role": "assistant",
-                    "content": "",
-                    "displayContent": "",
-                    "segments": [],
-                    "createdAt": "",
-                    "responseMode": "vr" if self._vr_mode != "off" else "native",
-                    "messageKey": key,
-                    "isStreaming": True,
-                })
-                self._schedule_state_update()
-            return
-        if event.kind == "assistant_completed":
-            key = str(event.payload.get("message_key") or "")
-            if key:
-                final_text = str(event.payload.get("final_text") or "")
-                display_text = final_text or self._message_streaming_texts.get(key, "")
-                self._messages.update_by_key(
-                    "messageKey", key,
-                    content=display_text,
-                    displayContent=markdown_for_display(display_text),
-                    segments=segments_for_display(display_text),
-                    isStreaming=False,
-                    messageId=int(event.payload.get("message_id") or -1),
-                )
-                self._message_streaming_texts.pop(key, None)
-                self._message_displayed_texts.pop(key, None)
-                self._message_pending_texts.pop(key, None)
-                if self._current_message_key == key:
-                    self._current_message_key = ""
-                    if not any(self._message_pending_texts.values()):
-                        self._stream_timer.stop()
-                    self._stream_pending_text = ""
-                    self._streaming_text = ""
-                    self._displayed_streaming_text = ""
-                self._schedule_state_update()
-            return
-        if event.kind == "assistant_delta":
-            incoming_key = str(event.payload.get("message_key") or "")
-            if incoming_key and any(row.get("messageKey") == incoming_key and not row.get("isStreaming") for row in self._messages._items):
-                return
-            delta = str(event.text or "")
-            if not delta:
-                return
-            if str(event.payload.get("phase") or "") == "commentary" and not event.payload.get("message_key"):
-                self._record_trace_text_delta(event, item_type="commentary")
-                self._status_text = "Trabalhando…"
-                self._schedule_state_update()
-                return
-            self._streaming_text += delta
-            self._turn_text += delta
-            self._stream_pending_text += delta
-            key = str(event.payload.get("message_key") or self._current_message_key)
-            if key:
-                self._message_streaming_texts[key] = self._message_streaming_texts.get(key, "") + delta
-                self._message_pending_texts[key] = self._message_pending_texts.get(key, "") + delta
-            if not self._assistant_stream_started:
-                self._assistant_stream_started = True
-                if not event.payload.get("message_key"):
-                    self._advance_default_activity()
-                self._schedule_state_update()
-            self._ensure_streaming_message()
-            if not self._stream_timer.isActive():
-                self._stream_timer.start()
-        elif event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
-            self._approval_request = dict(event.payload)
-            self._approval_request["conversation_id"] = event.conversation_id
-            self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
-            self._status_text = "Aguardando aprovação…"
-            self.approvalRequested.emit(dict(self._approval_request))
-            self.stateChanged.emit()
-        elif event.kind == "reasoning_delta":
-            self._reasoning_text += str(event.text or "")
-            self._record_trace_text_delta(event, item_type="reasoning")
-            self._status_text = "Pensando…"
-            self._schedule_state_update()
-        elif event.kind in {"tool_event", "provider_reconnecting", "provider_reconnected"}:
-            if event.kind == "tool_event":
-                browser_address = self._browser_address_from_event(event)
-                if browser_address:
-                    self.browserNavigationRequested.emit(browser_address)
-            self._status_text = (
-                "Executando uma ação…"
-                if event.kind == "tool_event"
-                else event.text or "Trabalhando…"
-            )
-            self.stateChanged.emit()
-        elif event.kind == "response_empty":
-            self._status_text = "O provedor concluiu sem conteúdo."
-            self.stateChanged.emit()
-
-        elif event.kind == "research_failed":
-            self._status_text = f"Pesquisa falhou: {short_event_text(event.text)}"
-            self.stateChanged.emit()
-        elif event.kind == "context_transferred":
-            self._status_text = "Contexto transferido para nova sessão."
-            self.stateChanged.emit()
-        elif event.kind in {"turn_completed", "orchestration_completed"}:
-            self._queue_terminal_state(event.kind)
-        elif event.kind in {"error", "orchestration_cancelled"}:
-            self._queue_terminal_state(event.kind)
+        return self._Activity_domain._on_runtime_event(event)
 
     @staticmethod
     def _browser_address_from_event(event: RuntimeEvent) -> str:
@@ -4871,19 +2420,7 @@ class ChatBridge(QObject):
         return ""
 
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
-        if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
-            self._approval_request = dict(event.payload)
-            self._approval_request["conversation_id"] = event.conversation_id
-            self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
-            self.approvalRequested.emit(dict(self._approval_request))
-            return
-        if event.kind in {
-            "turn_completed",
-            "orchestration_completed",
-            "error",
-            "orchestration_cancelled",
-        }:
-            self._finish_background_turn(event.conversation_id)
+        return self._Activity_domain._on_background_runtime_event(event)
 
     def _finish_background_turn(self, conversation_id: str) -> None:
         self._active_turns.discard(str(conversation_id or ""))
@@ -4893,102 +2430,24 @@ class ChatBridge(QObject):
         self.refresh()
 
     def _ensure_streaming_message(self) -> None:
-        if self._current_message_key and any(row.get("messageKey") == self._current_message_key for row in self._messages._items):
-            return
-        if self._messages._items and self._messages._items[-1].get("role") == "assistant":
-            return
-        self._messages.append(
-            {
-                "messageId": -1,
-                "role": "assistant",
-                "content": self._streaming_text,
-                "displayContent": "",
-                "segments": [],
-                "createdAt": "",
-                "responseMode": "vr" if self._vr_mode != "off" else "native",
-                "messageKey": self._current_message_key,
-                "isStreaming": True,
-            }
-        )
+        return self._Activity_domain._ensure_streaming_message()
 
     def _reset_stream_state(self) -> None:
-        if hasattr(self, "_stream_timer"):
-            self._stream_timer.stop()
-        if hasattr(self, "_activity_clock"):
-            self._activity_clock.stop()
-        self._current_message_key = ""
-        self._message_streaming_texts.clear()
-        self._message_displayed_texts.clear()
-        self._message_pending_texts.clear()
-        self._streaming_text = ""
-        self._displayed_streaming_text = ""
-        self._stream_pending_text = ""
-        self._stream_terminal_kind = ""
-        self._turn_segments = []
-        self._turn_text = ""
-        self._segment_cursor = 0
-        self._assistant_stream_started = False
-        self._activity_started_at = 0.0
-        self._activity_elapsed_seconds = 0
+        return self._Activity_domain._reset_stream_state()
 
     def _reset_trace_state(self) -> None:
-        self._trace_items = []
-        self._trace_sequence = 0
+        return self._Activity_domain._reset_trace_state()
 
     def _schedule_state_update(self) -> None:
         if not self._state_update_timer.isActive():
             self._state_update_timer.start()
 
     def _tick_activity_clock(self) -> None:
-        if not self._activity_started_at:
-            self._activity_clock.stop()
-            return
-        elapsed = max(0, int(time.monotonic() - self._activity_started_at))
-        if elapsed != self._activity_elapsed_seconds:
-            self._activity_elapsed_seconds = elapsed
-            self._schedule_state_update()
+        return self._Activity_domain._tick_activity_clock()
 
     @Slot()
     def _flush_stream_step(self) -> None:
-        pending_messages = [(key, text) for key, text in self._message_pending_texts.items() if text]
-        if pending_messages:
-            for key, text in pending_messages:
-                batch_size = max(32, (len(text) + 3) // 4)
-                self._message_pending_texts[key] = text[batch_size:]
-                visible = self._message_displayed_texts.get(key, "") + text[:batch_size]
-                self._message_displayed_texts[key] = visible
-                self._messages.update_by_key(
-                    "messageKey", key, content=self._message_streaming_texts.get(key, ""),
-                    displayContent=markdown_for_display(visible), segments=segments_for_display(visible),
-                )
-            self._stream_pending_text = ""
-            return
-        if self._stream_pending_text:
-            backlog = len(self._stream_pending_text)
-            batch_size = max(32, (backlog + 3) // 4)
-            visible = self._stream_pending_text[:batch_size]
-            self._stream_pending_text = self._stream_pending_text[batch_size:]
-            self._displayed_streaming_text += visible
-            self._ensure_streaming_message()
-            update_kwargs = dict(
-                content=self._streaming_text,
-                displayContent=markdown_for_display(self._displayed_streaming_text),
-                segments=self._turn_display_segments(
-                    reveal_limit=len(self._displayed_streaming_text)
-                ),
-            )
-            if self._current_message_key:
-                self._messages.update_by_key(
-                    "messageKey", self._current_message_key, **update_kwargs
-                )
-            else:
-                self._messages.update_last(**update_kwargs)
-            return
-        self._stream_timer.stop()
-        if self._stream_terminal_kind:
-            terminal_kind = self._stream_terminal_kind
-            self._stream_terminal_kind = ""
-            self._finalize_terminal_state(terminal_kind)
+        return self._Activity_domain._flush_stream_step()
 
     def _queue_terminal_state(self, kind: str) -> None:
         if (
@@ -5048,173 +2507,25 @@ class ChatBridge(QObject):
 
     @staticmethod
     def _default_activity_steps() -> list[dict[str, str]]:
-        return [
-            {
-                "kind": "request_analysis",
-                "text": "Analisar a solicitação e o contexto disponível",
-                "state": "running",
-            },
-            {
-                "kind": "response_preparation",
-                "text": "Preparar e revisar a resposta",
-                "state": "pending",
-            },
-        ]
+        return ActivityDomain._default_activity_steps()
 
     def _advance_default_activity(self) -> None:
-        if not self._activity_steps:
-            self._activity_steps = self._default_activity_steps()
-        for step in self._activity_steps:
-            if step.get("state") == "running":
-                step["state"] = "completed"
-                break
-        for step in self._activity_steps:
-            if step.get("state") == "pending":
-                step["state"] = "running"
-                break
+        return self._Activity_domain._advance_default_activity()
 
     def _restore_activity_from_history(self, conversation_id: str) -> None:
-        self._activity_steps = []
-        self._activity_items = []
-        self._reset_trace_state()
-        self._turn_segments = []
-        self._turn_text = ""
-        self._segment_cursor = 0
-        self._restoring_turn_history = True
-        self._reasoning_text = ""
-        self._activity_elapsed_seconds = 0
-        rows = self._database.latest_turn_events(conversation_id)
-        if not rows:
-            self._restoring_turn_history = False
-            return
-        try:
-            started_at = datetime.fromisoformat(str(rows[0]["created_at"] or ""))
-            finished_at = datetime.fromisoformat(str(rows[-1]["created_at"] or ""))
-            self._activity_elapsed_seconds = max(
-                0, int((finished_at - started_at).total_seconds())
-            )
-        except (TypeError, ValueError):
-            pass
-        terminal = False
-        try:
-            for row in rows:
-                kind = str(row["kind"] or "")
-                text = str(row["text"] or "")
-                try:
-                    payload = json.loads(str(row["payload_json"] or "{}"))
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                if kind == "reasoning_delta":
-                    self._reasoning_text += text
-                    self._record_trace_text_delta(
-                        RuntimeEvent(conversation_id, kind, text, payload),
-                        item_type="reasoning",
-                    )
-                elif kind == "assistant_delta":
-                    if str(payload.get("phase") or "") == "commentary":
-                        self._record_trace_text_delta(
-                            RuntimeEvent(conversation_id, kind, text, payload),
-                            item_type="commentary",
-                        )
-                    else:
-                        self._turn_text += text
-                        self._streaming_text += text
-                        self._displayed_streaming_text += text
-                        self._advance_default_activity()
-                else:
-                    self._record_execution_event(
-                        RuntimeEvent(conversation_id, kind, text, payload),
-                        emit_state=False,
-                    )
-                if kind in {
-                    "turn_completed",
-                    "orchestration_completed",
-                    "orchestration_cancelled",
-                    "turn_recovered",
-                }:
-                    terminal = True
-        finally:
-            self._restoring_turn_history = False
-        if not self._activity_steps and any(
-            str(row["kind"] or "") in {"turn_started", "assistant_delta"}
-            for row in rows
-        ):
-            self._activity_steps = self._default_activity_steps()
-        if terminal:
-            for step in self._activity_steps:
-                if step.get("state") not in {"error", "cancelled"}:
-                    step["state"] = "completed"
-            for item in self._activity_items:
-                if item.get("state") == "running":
-                    item["state"] = "completed"
-            for item in self._trace_items:
-                if item.get("state") == "running":
-                    item["state"] = "completed"
+        return self._Activity_domain._restore_activity_from_history(conversation_id)
 
     def _next_trace_id(self, prefix: str) -> str:
-        self._trace_sequence += 1
-        return f"{prefix}-{self._trace_sequence}"
+        return self._Activity_domain._next_trace_id(prefix)
 
     @staticmethod
     def _trace_payload_item(payload: dict[str, Any]) -> dict[str, Any]:
-        item = payload.get("item") or payload.get("part") or {}
-        return item if isinstance(item, dict) else {}
+        return ActivityDomain._trace_payload_item(payload)
 
     def _record_trace_text_delta(
         self, event: RuntimeEvent, *, item_type: str
     ) -> None:
-        text = str(event.text or "")
-        if not text:
-            return
-        payload = dict(event.payload or {})
-        raw_item = self._trace_payload_item(payload)
-        method = str(payload.get("method") or "")
-        effective_type = "plan" if method == "item/plan/delta" else item_type
-        identifier = str(
-            payload.get("itemId")
-            or payload.get("item_id")
-            or raw_item.get("id")
-            or ""
-        )
-        summary_index = payload.get("summaryIndex")
-        identity = identifier
-        if effective_type == "reasoning" and summary_index is not None:
-            identity = f"{identifier}:{summary_index}"
-        candidate = next(
-            (
-                item
-                for item in reversed(self._trace_items)
-                if identity
-                and item.get("sourceId") == identity
-                and item.get("kind") == "commentary"
-            ),
-            None,
-        )
-        if candidate is None and not identity:
-            last = self._trace_items[-1] if self._trace_items else None
-            if (
-                last is not None
-                and last.get("kind") == "commentary"
-                and last.get("itemType") == effective_type
-                and last.get("state") == "running"
-            ):
-                candidate = last
-        if candidate is None:
-            candidate = {
-                "id": self._next_trace_id(effective_type),
-                "sourceId": identity,
-                "kind": "commentary",
-                "itemType": effective_type,
-                "text": "",
-                "detail": "",
-                "state": "running",
-            }
-            self._trace_items.append(candidate)
-        candidate["text"] = str(candidate.get("text") or "") + text
-        candidate["state"] = "running"
-        self._trace_items = self._trace_items[-80:]
+        return self._Activity_domain._record_trace_text_delta(event, item_type=item_type)
 
     @staticmethod
     def _diff_line_counts(diff: str) -> tuple[int, int]:
@@ -5230,31 +2541,11 @@ class ChatBridge(QObject):
         return additions, deletions
 
     def _trace_display_path(self, raw_path: str) -> str:
-        value = str(raw_path or "").strip()
-        if not value:
-            return ""
-        path = Path(value)
-        workspace = Path(str(self._selected.get("workspace") or ""))
-        if path.is_absolute() and str(workspace):
-            try:
-                return str(
-                    path.resolve(strict=False).relative_to(
-                        workspace.resolve(strict=False)
-                    )
-                ).replace("\\", "/")
-            except ValueError:
-                pass
-        return value.replace("\\", "/")
+        return self._Activity_domain._trace_display_path(raw_path)
 
     @staticmethod
     def _trace_folder_summary(files: list[dict[str, Any]]) -> str:
-        counts: dict[str, int] = {}
-        for item in files:
-            path = str(item.get("path") or "")
-            parts = [part for part in path.split("/") if part]
-            folder = parts[0] if len(parts) > 1 else "raiz"
-            counts[folder] = counts.get(folder, 0) + 1
-        return " · ".join(f"{name} {count}" for name, count in counts.items())
+        return ActivityDomain._trace_folder_summary(files)
 
     def _record_trace_file_changes(
         self,
@@ -5262,78 +2553,11 @@ class ChatBridge(QObject):
         identifier: str,
         state: str,
     ) -> None:
-        changes = item.get("changes") or []
-        if not isinstance(changes, list):
-            changes = []
-        card = next(
-            (entry for entry in self._trace_items if entry.get("kind") == "file_changes"),
-            None,
-        )
-        if card is None:
-            card = {
-                "id": self._next_trace_id("files"),
-                "sourceId": identifier,
-                "kind": "file_changes",
-                "itemType": "fileChange",
-                "text": "Arquivos alterados",
-                "detail": "",
-                "state": state,
-                "files": [],
-                "fileCount": 0,
-                "additions": 0,
-                "deletions": 0,
-                "folderSummary": "",
-                "hasDiff": False,
-            }
-            self._trace_items.append(card)
-        known = {
-            str(entry.get("path") or ""): dict(entry)
-            for entry in card.get("files") or []
-            if isinstance(entry, dict)
-        }
-        for raw_change in changes:
-            if not isinstance(raw_change, dict):
-                continue
-            path = self._trace_display_path(str(raw_change.get("path") or ""))
-            if not path:
-                continue
-            diff = str(raw_change.get("diff") or "")
-            additions, deletions = self._diff_line_counts(diff)
-            known[path] = {
-                "path": path,
-                "name": Path(path).name or path,
-                "kind": str(raw_change.get("kind") or "update"),
-                "diff": diff[:20000],
-                "additions": additions,
-                "deletions": deletions,
-            }
-        files = list(known.values())
-        card["files"] = files
-        card["fileCount"] = len(files)
-        card["additions"] = sum(int(entry.get("additions") or 0) for entry in files)
-        card["deletions"] = sum(int(entry.get("deletions") or 0) for entry in files)
-        card["folderSummary"] = self._trace_folder_summary(files)
-        card["hasDiff"] = any(str(entry.get("diff") or "") for entry in files)
-        card["detail"] = "\n\n".join(
-            f"{entry['path']}\n{entry['diff']}" for entry in files if entry.get("diff")
-        )[:40000]
-        card["text"] = (
-            f"{len(files)} arquivo" + ("s alterados" if len(files) != 1 else " alterado")
-            if files
-            else "Arquivos alterados"
-        )
-        card["state"] = state
+        return self._Activity_domain._record_trace_file_changes(item, identifier, state)
 
     @staticmethod
     def _trace_action_label(item_type: str, count: int) -> str:
-        plural = count != 1
-        if item_type == "commandExecution":
-            return f"Executou {count} comando" + ("s" if plural else "")
-        if item_type in {"webSearch", "web_search"}:
-            return "Pesquisou na web" if count == 1 else f"Fez {count} pesquisas na web"
-        if item_type == "mcpToolCall":
-            return f"Usou {count} ferramenta MCP" + ("s" if plural else "")
-        return f"Usou {count} ferramenta" + ("s" if plural else "")
+        return ActivityDomain._trace_action_label(item_type, count)
 
     def _record_trace_tool_item(
         self,
@@ -5343,137 +2567,10 @@ class ChatBridge(QObject):
         state: str,
         detail: str,
     ) -> None:
-        item_type = str(item.get("type") or "")
-        if item_type == "agentMessage":
-            phase = str(item.get("phase") or "")
-            authoritative = str(item.get("text") or "")
-            if phase == "commentary" and authoritative:
-                source = str(item.get("id") or identifier)
-                existing = next(
-                    (
-                        entry
-                        for entry in reversed(self._trace_items)
-                        if entry.get("kind") == "commentary"
-                        and entry.get("sourceId") == source
-                    ),
-                    None,
-                )
-                if existing is None:
-                    existing = {
-                        "id": self._next_trace_id("commentary"),
-                        "sourceId": source,
-                        "kind": "commentary",
-                        "itemType": "commentary",
-                        "text": authoritative,
-                        "detail": "",
-                        "state": state,
-                    }
-                    self._trace_items.append(existing)
-                elif lifecycle.endswith("completed"):
-                    existing["text"] = authoritative
-                    existing["state"] = state
-            return
-        if item_type == "reasoning":
-            if lifecycle.endswith("completed"):
-                for entry in reversed(self._trace_items):
-                    if entry.get("kind") != "commentary" or entry.get("itemType") not in {
-                        "reasoning",
-                        "plan",
-                    }:
-                        continue
-                    if identifier and not str(entry.get("sourceId") or "").startswith(
-                        identifier
-                    ):
-                        continue
-                    entry["state"] = state
-                    if identifier:
-                        break
-            return
-        if item_type == "fileChange":
-            self._record_trace_file_changes(item, identifier, state)
-            return
-        category = item_type or "tool"
-        target = next(
-            (
-                entry
-                for entry in reversed(self._trace_items)
-                if identifier
-                and identifier in list(entry.get("memberIds") or [])
-            ),
-            None,
-        )
-        if target is None:
-            last = self._trace_items[-1] if self._trace_items else None
-            if (
-                last is not None
-                and last.get("kind") == "action_group"
-                and last.get("itemType") == category
-                and (identifier or not lifecycle.endswith("completed"))
-            ):
-                target = last
-        if target is None:
-            target = {
-                "id": self._next_trace_id("actions"),
-                "sourceId": identifier,
-                "kind": "action_group",
-                "itemType": category,
-                "text": "",
-                "detail": "",
-                "state": state,
-                "memberIds": [],
-            }
-            self._trace_items.append(target)
-        members = list(target.get("memberIds") or [])
-        if identifier and identifier not in members:
-            members.append(identifier)
-        target["memberIds"] = members
-        count = len(members) or 1
-        target["text"] = self._trace_action_label(category, count)
-        if detail:
-            details = [part for part in str(target.get("detail") or "").split("\n\n") if part]
-            if detail not in details:
-                details.append(detail)
-            target["detail"] = "\n\n".join(details)[:12000]
-        target["state"] = state
-        self._trace_items = self._trace_items[-80:]
+        return self._Activity_domain._record_trace_tool_item(item, identifier, lifecycle, state, detail)
 
     def _record_trace_status_event(self, event: RuntimeEvent, message: str) -> None:
-        if not message:
-            return
-        base_kind = str(event.kind or "")
-        for suffix in ("_started", "_completed", "_failed"):
-            if base_kind.endswith(suffix):
-                base_kind = base_kind[: -len(suffix)]
-                break
-        source = str(
-            event.payload.get("agent_id")
-            or event.payload.get("id")
-            or event.payload.get("run_id")
-            or base_kind
-        )
-        existing = next(
-            (
-                item
-                for item in reversed(self._trace_items)
-                if item.get("kind") == "status" and item.get("sourceId") == source
-            ),
-            None,
-        )
-        if existing is None:
-            existing = {
-                "id": self._next_trace_id("status"),
-                "sourceId": source,
-                "kind": "status",
-                "itemType": base_kind,
-                "text": message,
-                "detail": "",
-                "state": self._event_state(event.kind),
-            }
-            self._trace_items.append(existing)
-        else:
-            existing["text"] = message
-            existing["state"] = self._event_state(event.kind)
-        self._trace_items = self._trace_items[-80:]
+        return self._Activity_domain._record_trace_status_event(event, message)
 
     def _record_execution_event(
         self, event: RuntimeEvent, *, emit_state: bool = True
@@ -5717,39 +2814,6 @@ class ChatBridge(QObject):
         if detail:
             existing["detail"] = detail
 
-    def _record_turn_tool_segment(self, item_type: str) -> None:
-        """Track per-turn tool usage so summaries can interleave with text."""
-        if item_type in {"reasoning", "userMessage", "agentMessage"}:
-            return
-        if not (self.turnRunning or self._restoring_turn_history):
-            return
-        cursor = len(self._turn_text)
-        if cursor > self._segment_cursor:
-            self._turn_segments.append(
-                {"kind": "text", "start": self._segment_cursor, "end": cursor}
-            )
-            self._segment_cursor = cursor
-        category = (
-            "commands"
-            if item_type == "commandExecution"
-            else "files"
-            if item_type == "fileChange"
-            else "tools"
-        )
-        last = self._turn_segments[-1] if self._turn_segments else None
-        if last is not None and last.get("kind") == "tools":
-            last[category] = int(last.get(category) or 0) + 1
-            return
-        segment: dict[str, Any] = {
-            "kind": "tools",
-            "offset": cursor,
-            "commands": 0,
-            "files": 0,
-            "tools": 0,
-        }
-        segment[category] = 1
-        self._turn_segments.append(segment)
-
     @staticmethod
     def _tool_summary_label(segment: dict[str, Any]) -> str:
         parts: list[str] = []
@@ -5845,69 +2909,7 @@ class ChatBridge(QObject):
         output: str = "",
         delta: str = "",
     ) -> None:
-        identifier = str(
-            payload.get("agent_id")
-            or payload.get("id")
-            or payload.get("assignment_id")
-            or ""
-        )
-        if not identifier:
-            return
-        item = next(
-            (candidate for candidate in self._agent_items if candidate["agentId"] == identifier),
-            None,
-        )
-        model = payload.get("model") or {}
-        if not isinstance(model, dict):
-            model = {}
-        if item is None:
-            label = str(
-                payload.get("label")
-                or payload.get("worker_name")
-                or payload.get("agent")
-                or "Agente VR"
-            )
-            if label.startswith("Mary "):
-                label = "VR " + label.removeprefix("Mary ")
-            item = {
-                "agentId": identifier,
-                "label": label,
-                "model": str(
-                    model.get("display_name")
-                    or model.get("model")
-                    or model.get("provider")
-                    or "Automático"
-                ),
-                "effort": str(payload.get("effort") or "medium"),
-                "status": status,
-                "statusLabel": status.title(),
-                "task": str(payload.get("task") or ""),
-                "reason": str(payload.get("reason") or ""),
-                "module": str(payload.get("module") or ""),
-                "source": str(payload.get("source") or "").upper(),
-                "parentId": str(payload.get("parent_id") or ""),
-                "final": bool(payload.get("final")),
-                "output": "",
-            }
-            self._agent_items.append(item)
-        else:
-            item["status"] = status
-            item["statusLabel"] = status.title()
-            for source_key, target_key in (
-                ("task", "task"),
-                ("reason", "reason"),
-                ("module", "module"),
-                ("parent_id", "parentId"),
-            ):
-                value = str(payload.get(source_key) or "")
-                if value:
-                    item[target_key] = value
-            if payload.get("source"):
-                item["source"] = str(payload["source"]).upper()
-        if output:
-            item["output"] = output
-        elif delta:
-            item["output"] = str(item.get("output") or "") + str(delta)
+        return self._Activity_domain._upsert_agent(payload, status, output=output, delta=delta)
 
     @staticmethod
     def _event_state(kind: str) -> str:
@@ -5923,21 +2925,7 @@ class ChatBridge(QObject):
 
     @staticmethod
     def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:
-        item = event.payload.get("item") or event.payload.get("part") or event.payload
-        item_type = str(item.get("type") or item.get("step_type") or "tool")
-        if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
-            return None
-        identity = str(item.get("id") or event.payload.get("itemId") or event.payload.get("runtime_event_id") or "tool")
-        key = f"activity:{event.payload.get('execution_id')}:{identity}"
-        lifecycle = str(event.payload.get("lifecycle") or "")
-        complete = lifecycle.endswith("completed") or item.get("status") in {"completed", "error", "failed"} or event.payload.get("success") is not None
-        state = "error" if event.payload.get("success") is False or item.get("status") in {"error", "failed"} else "completed" if complete else "running"
-        return {"messageId": -2, "role": "activity", "content": "", "displayContent": "",
-                "segments": [], "createdAt": event.created_at, "responseMode": "activity",
-                "messageKey": key, "isStreaming": state == "running",
-                "activityData": [{"id": identity, "kind": "tool", "itemType": item_type,
-                                  "text": short_event_text(event.text or item.get("name") or item_type),
-                                  "detail": "", "state": state}]}
+        return ActivityDomain._execution_activity(event)
 
     def _reload_execution_timeline(self, cid: str, rows: list[Any]) -> bool:
         """Replay semantic public events, retaining DB text and message identity.
@@ -6023,65 +3011,11 @@ class ChatBridge(QObject):
         return True
 
     def _reload_selected_messages(self) -> None:
-        conversation_id = str(self._selected.get("conversationId") or "")
-        if not conversation_id:
-            return
-        rows = self._database.messages(conversation_id)
-        if self._reload_execution_timeline(conversation_id, rows):
-            self.selectionChanged.emit()
-            return
-        items = [
-                {
-                    "messageId": int(row["id"]),
-                    "role": str(row["role"] or "assistant"),
-                    "content": str(row["content"] or ""),
-                    "displayContent": markdown_for_display(str(row["content"] or "")),
-                    "segments": segments_for_display(str(row["content"] or ""))
-                    if str(row["role"] or "") == "assistant"
-                    else [],
-                    "createdAt": str(row["created_at"] or ""),
-                    "responseMode": str(row["response_mode"] or ""),
-                    "messageKey": (f"{row['execution_id']}:{row['execution_ordinal']}" if row['execution_id'] else f"db:{row['id']}"),
-                    "isStreaming": False,
-                }
-                for row in rows
-                if str(row["role"] or "") != "system"
-            ]
-        if (
-            self._activity_steps
-            or self._activity_items
-            or self._trace_items
-            or self._reasoning_text
-        ):
-            assistant_index = next(
-                (
-                    index
-                    for index in range(len(items) - 1, -1, -1)
-                    if items[index]["role"] == "assistant"
-                ),
-                len(items),
-            )
-            items.insert(assistant_index, self._activity_timeline_item())
-        if self._turn_segments and items and items[-1].get("role") == "assistant":
-            merged_segments = self._turn_display_segments()
-            if merged_segments:
-                items[-1]["segments"] = merged_segments
-        self._messages.replace(items)
-        self.selectionChanged.emit()
+        return self._Conversations_domain._reload_selected_messages()
 
     @staticmethod
     def _activity_timeline_item() -> dict[str, Any]:
-        return {
-            "messageId": -2,
-            "role": "activity",
-            "content": "",
-            "displayContent": "",
-            "segments": [],
-            "createdAt": "",
-            "responseMode": "activity",
-            "messageKey": "",
-            "isStreaming": False,
-        }
+        return ActivityDomain._activity_timeline_item()
 
     def _apply_filter(self, selected_id: str = "") -> None:
         term = self._search.casefold()
@@ -6138,82 +3072,7 @@ class ChatBridge(QObject):
             self.selectionChanged.emit()
 
     def _refresh_projects(self) -> None:
-        saved_scope = str(
-            self._preferences.value("chat/current_project", "") or ""
-        ).strip()
-        candidates: list[Path] = []
-        custom_labels: dict[Path, str] = {}
-        custom_icons: dict[Path, str] = {}
-        hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
-
-        def include(value: object, label: object = "", icon: object = "") -> None:
-            raw = str(value or "").strip()
-            if not raw:
-                return
-            candidate = Path(raw).expanduser().resolve(strict=False)
-            if candidate in hidden_paths:
-                return
-            if candidate.is_dir() and candidate not in candidates:
-                candidates.append(candidate)
-            custom_label = " ".join(str(label or "").split())
-            if candidate.is_dir() and custom_label:
-                custom_labels[candidate] = custom_label
-            custom_icon = str(icon or "").strip()
-            if candidate.is_dir() and custom_icon:
-                custom_icons[candidate] = custom_icon
-
-        include(self._settings.root)
-
-        for key in ("chat/projects", "chat/recent_projects"):
-            raw_value = self._preferences.value(key, "[]")
-            try:
-                values = (
-                    json.loads(str(raw_value))
-                    if isinstance(raw_value, str)
-                    else list(raw_value or [])
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                values = []
-            for value in values:
-                if isinstance(value, dict):
-                    include(
-                        value.get("path", ""),
-                        value.get("label", "") if key == "chat/projects" else "",
-                        value.get("icon", "") if key == "chat/projects" else "",
-                    )
-                else:
-                    include(value)
-
-        for row in self._database.list_conversations(state="all"):
-            workspace = self._settings.resolve_path(row["workspace"])
-            if not is_managed_conversation_workspace(self._settings, workspace):
-                include(workspace)
-
-        self._projects = [{"label": "Todos os projetos", "path": "", "icon": ""}]
-        self._projects.extend(
-            {
-                "label": custom_labels.get(path) or path.name or str(path),
-                "path": str(path),
-                "icon": custom_icons.get(path, ""),
-            }
-            for path in candidates[:32]
-        )
-        self._current_project_index = next(
-            (
-                index
-                for index, item in enumerate(self._projects)
-                if saved_scope
-                and item["path"]
-                and Path(item["path"]).resolve(strict=False)
-                == Path(saved_scope).expanduser().resolve(strict=False)
-            ),
-            0,
-        )
-        selected_path = self._projects[self._current_project_index]["path"]
-        self._project_scope = (
-            Path(selected_path).resolve(strict=False) if selected_path else None
-        )
-        self.projectsChanged.emit()
+        return self._Conversations_domain._refresh_projects()
 
     @staticmethod
     def _stored_bool(value: object, default: bool = False) -> bool:

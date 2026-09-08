@@ -11,8 +11,11 @@ from PySide6.QtGui import QWheelEvent, QTextDocument
 from vrsoft_extractor.mary.frontend.text_rendering import apply_message_document_style
 
 
+pytestmark = pytest.mark.qml
+
+
 def test_long_message_formatting_commits_one_layout():
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     document = QTextDocument()
     document.setMarkdown('Texto **formatado** e normal.\n\n' * 500)
     document.setTextWidth(700)
@@ -25,7 +28,7 @@ def test_long_message_formatting_commits_one_layout():
 
 @pytest.mark.parametrize('history_size', [0, 30])
 def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history_size):
-    app = QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
     prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
     db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)

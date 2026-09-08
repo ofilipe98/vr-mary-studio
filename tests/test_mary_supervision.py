@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
-from pathlib import Path
-from typing import Any
 
-from vrsoft_extractor.mary.config import MarySettings
-from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.models import (
     EvidenceBundle,
     EvidenceCandidate,
-    KnowledgeDocument,
     QueryProfile,
     SourceSearchReport,
 )

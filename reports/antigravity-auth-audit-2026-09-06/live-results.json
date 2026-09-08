@@ -1,9 +1,0 @@
-{
-  "account": "authenticated",
-  "validation_finished": true,
-  "model_count_excluding_fallback": 7,
-  "turn_completed": true,
-  "native_session": true,
-  "nonempty_response": true,
-  "error_events": 0
-}

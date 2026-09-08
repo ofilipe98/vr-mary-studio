@@ -43,6 +43,7 @@ Item {
     function status(p) {
         if (p.runtimeState === "updating") return {text: "Atualizando runtime…", tone: "muted", busy: true}
         if (p.runtimeState === "installing") return {text: "Instalando runtime…", tone: "muted", busy: true}
+        if (p.runtimeState === "error") return {text: "Falha na instalação", tone: "danger"}
         if (!p.enabled) return {text: "Desativado", tone: "muted"}
         if (!p.available) return {text: "Não instalado", tone: "warning"}
         if (p.id !== "antigravity") return {text: "CLI instalado", tone: "success"}
@@ -100,7 +101,7 @@ Item {
             }
             Accessible.name: "Provedor selecionado"
             onActivated: root.selectProvider(studio.providerItems[currentIndex].id)
-            background: Rectangle { radius: Theme.radiusSmall; color: frontend.palette.codeSurface; border.width: providerCombo.activeFocus ? 2 : 1; border.color: providerCombo.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder }
+            background: Rectangle { radius: Theme.radiusSmall; color: Theme.palette.codeSurface; border.width: providerCombo.activeFocus ? 2 : 1; border.color: providerCombo.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
@@ -110,8 +111,8 @@ Item {
                 Layout.rightMargin: 12; spacing: 8
                 RowLayout {
                     Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.topMargin: 12
-                    Text { Layout.fillWidth: true; text: "Provedores"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
-                    Text { text: studio.providerItems.length; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                    Text { Layout.fillWidth: true; text: "Provedores"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                    Text { text: studio.providerItems.length; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                 }
                 ListView {
                     id: providerList; objectName: "providerSidebar"
@@ -136,13 +137,13 @@ Item {
                         Keys.onUpPressed: root.moveProvider(-1)
                         background: Rectangle {
                             radius: Theme.radiusSmall
-                            color: root.selected.id === providerRow.modelData.id ? frontend.palette.codeHeader
-                                : providerRow.hovered ? frontend.palette.codeSurface : "transparent"
-                            border.width: providerRow.activeFocus ? 1 : 0; border.color: frontend.palette.focus
+                            color: root.selected.id === providerRow.modelData.id ? Theme.palette.codeHeader
+                                : providerRow.hovered ? Theme.palette.codeSurface : "transparent"
+                            border.width: providerRow.activeFocus ? 1 : 0; border.color: Theme.palette.focus
                             Rectangle {
                                 visible: root.selected.id === providerRow.modelData.id
                                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                                width: 2; height: 24; radius: 1; color: frontend.palette.subtleText
+                                width: 2; height: 24; radius: 1; color: Theme.palette.subtleText
                             }
                             Behavior on color { enabled: !frontend.reduceMotion; ColorAnimation { duration: Theme.fastDuration } }
                         }
@@ -153,14 +154,14 @@ Item {
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 4
-                                Text { Layout.fillWidth: true; text: providerRow.modelData.name; elide: Text.ElideRight; color: frontend.palette.headingText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: root.selected.id === providerRow.modelData.id ? Font.DemiBold : Font.Medium }
+                                Text { Layout.fillWidth: true; text: providerRow.modelData.name; elide: Text.ElideRight; color: Theme.palette.headingText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: root.selected.id === providerRow.modelData.id ? Font.DemiBold : Font.Medium }
                                 VrProviderStatus { Layout.fillWidth: true; text: providerRow.stateInfo.text; tone: providerRow.stateInfo.tone; busy: !!providerRow.stateInfo.busy }
                             }
                         }
                     }
                 }
             }
-            Rectangle { visible: !root.narrow; Layout.fillHeight: true; Layout.preferredWidth: 1; color: frontend.palette.chatDivider }
+            Rectangle { visible: !root.narrow; Layout.fillHeight: true; Layout.preferredWidth: 1; color: Theme.palette.chatDivider }
             ScrollView {
                 id: detailsScroll; objectName: "providerDetailsScroll"
                 Layout.fillWidth: true; Layout.fillHeight: true
@@ -184,15 +185,15 @@ Item {
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 4
-                                Text { Layout.fillWidth: true; text: root.selected.name || "Selecione um provedor"; elide: Text.ElideRight; color: frontend.palette.headingText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(18); font.weight: Font.DemiBold }
-                                Text { Layout.fillWidth: true; text: root.providerLabel(root.selected); elide: Text.ElideRight; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                                Text { Layout.fillWidth: true; text: root.selected.name || "Selecione um provedor"; elide: Text.ElideRight; color: Theme.palette.headingText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(18); font.weight: Font.DemiBold }
+                                Text { Layout.fillWidth: true; text: root.providerLabel(root.selected); elide: Text.ElideRight; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                                 VrProviderStatus { objectName: "providerHeaderStatus"; announceChanges: true; Layout.fillWidth: true; Layout.topMargin: 4; text: root.status(root.selected).text; tone: root.status(root.selected).tone; busy: !!root.status(root.selected).busy }
                             }
                             ColumnLayout {
                                 Layout.alignment: root.width < 500 ? Qt.AlignLeft : Qt.AlignTop | Qt.AlignRight; spacing: 8
                                 RowLayout {
                                     Layout.alignment: root.width < 500 ? Qt.AlignLeft : Qt.AlignRight; spacing: 8
-                                    Text { text: root.selected.enabled ? "Ativado" : "Desativado"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                                    Text { text: root.selected.enabled ? "Ativado" : "Desativado"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                                     VrSwitch {
                                         objectName: "providerEnabledSwitch"; subdued: true
                                         checked: !!root.selected.enabled
@@ -211,10 +212,10 @@ Item {
                                 }
                             }
                         }
-                        Text { visible: root.refreshFeedback.length > 0; Layout.fillWidth: true; text: root.refreshFeedback; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); Accessible.name: text }
+                        Text { visible: root.refreshFeedback.length > 0; Layout.fillWidth: true; text: root.refreshFeedback; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); Accessible.name: text }
                         GridLayout {
                             Layout.fillWidth: true; columns: root.width < 500 ? 1 : 2; columnSpacing: 24; rowSpacing: 8
-                            Text { text: "Nome de exibição"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
+                            Text { text: "Nome de exibição"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
                             VrTextField {
                                 objectName: "providerDisplayName"; Layout.fillWidth: true; Layout.minimumWidth: 40; implicitHeight: 38
                                 text: root.selected.name || ""; maximumLength: 80
@@ -224,19 +225,26 @@ Item {
                                         studio.setProviderDisplayName(root.selected.id, text)
                                     text = Qt.binding(function() { return root.selected.name || "" })
                                 }
-                                background: Rectangle { radius: Theme.radiusSmall; color: frontend.palette.codeSurface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder }
+                                background: Rectangle { radius: Theme.radiusSmall; color: Theme.palette.codeSurface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder }
                             }
                         }
                         VrProviderSection {
                             Layout.fillWidth: true; title: "Runtime"
-                            VrProviderStatus { Layout.fillWidth: true; text: root.runtimeBusy ? root.status(root.selected).text : root.selected.available ? "Instalado nesta máquina" : "CLI não encontrado"; tone: root.selected.available ? "success" : "warning"; busy: root.runtimeBusy }
+                            VrProviderStatus { Layout.fillWidth: true; text: root.selected.runtimeState === "error" ? "Falha na instalação" : root.runtimeBusy ? root.status(root.selected).text : root.selected.available ? "Instalado nesta máquina" : "CLI não encontrado"; tone: root.selected.runtimeState === "error" ? "danger" : root.selected.available ? "success" : "warning"; busy: root.runtimeBusy }
+                            Text {
+                                visible: !!root.selected.installVersion
+                                Layout.fillWidth: true
+                                text: root.selected.installVersion || ""
+                                color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
+                                wrapMode: Text.Wrap; textFormat: Text.PlainText
+                            }
                             RowLayout {
                                 id: pathRow; Layout.fillWidth: true; visible: !!root.selected.command; spacing: 8
                                 HoverHandler { id: pathHover }
                                 Text {
                                     Layout.fillWidth: true; Layout.minimumWidth: 0
                                     text: root.selected.command || ""; elide: Text.ElideMiddle
-                                    color: frontend.palette.subtleText; font.family: Theme.monospaceFontFamily; font.pixelSize: Theme.monospaceFontSize(12)
+                                    color: Theme.palette.subtleText; font.family: Theme.monospaceFontFamily; font.pixelSize: Theme.monospaceFontSize(12)
                                     Accessible.name: "Caminho do executável: " + text
                                     ToolTip.text: text; ToolTip.visible: truncated && (pathHover.hovered || copyPath.activeFocus); ToolTip.delay: 500
                                 }
@@ -250,19 +258,57 @@ Item {
                                     onClicked: { studio.copyText(root.selected.command); root.copied = true; copyTimer.restart() }
                                 }
                             }
-                            Text { visible: !root.selected.available && !root.runtimeBusy; Layout.fillWidth: true; text: "Instale o runtime para utilizar este provedor."; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.WordWrap }
+                            Text { visible: !root.selected.available && !root.runtimeBusy; Layout.fillWidth: true; text: "Instale o runtime para utilizar este provedor."; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.WordWrap }
+                            Text {
+                                objectName: "providerInstallMessage"
+                                visible: !!root.selected.installMessage
+                                Layout.fillWidth: true
+                                text: root.selected.installMessage || ""
+                                textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere
+                                color: root.selected.runtimeState === "error" ? Theme.palette.danger : Theme.palette.mutedText
+                                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
+                                Accessible.name: text
+                            }
+                            Flow {
+                                Layout.fillWidth: true; spacing: 8
+                                VrProviderAction {
+                                    objectName: "installProviderCli"
+                                    visible: !!root.selected.installSupported
+                                    enabled: !root.runtimeBusy && (!root.selected.available || root.selected.runtimeState === "error" || root.selected.runtimeState === "cancelled")
+                                    text: root.runtimeBusy ? "Instalando CLI…" : root.selected.available && (root.selected.runtimeState === "error" || root.selected.runtimeState === "cancelled") ? "Verificar CLI" : root.selected.available ? "CLI instalado" : root.selected.runtimeState === "error" ? "Tentar instalar novamente" : "Baixar e instalar CLI"
+                                    variant: root.selected.available ? "secondary" : "primary"
+                                    onClicked: studio.installProviderCli(root.selected.id)
+                                }
+                                VrProviderAction {
+                                    objectName: "cancelProviderInstall"
+                                    visible: root.runtimeBusy && !!root.selected.installSupported
+                                    text: "Cancelar"; variant: "secondary"
+                                    onClicked: studio.cancelProviderInstall(root.selected.id)
+                                }
+                                VrProviderAction {
+                                    visible: !!root.selected.installDocs
+                                    text: "Instalação oficial ↗"; variant: "ghost"
+                                    onClicked: Qt.openUrlExternally(root.selected.installDocs)
+                                }
+                            }
+                            Text { visible: !!root.selected.installSupported; Layout.fillWidth: true; text: "Instalação oficial para seu usuário. Após instalar, entre na sua conta para usar o provedor."; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                        }
+                        VrProviderSection {
+                            visible: root.selected.id === "codex" || root.selected.id === "claude"
+                            Layout.fillWidth: true; title: "Conta"
+                            Text { Layout.fillWidth: true; text: "Entre na conta pelo CLI oficial. O login abre em um terminal e as credenciais ficam sob controle do provedor."; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.WordWrap }
                             VrProviderAction {
-                                visible: root.google; enabled: !root.runtimeBusy
-                                text: root.selected.available ? "Instalação oficial ↗" : "Abrir instalação oficial ↗"
-                                variant: root.selected.available ? "secondary" : "primary"
-                                onClicked: Qt.openUrlExternally("https://antigravity.google/docs/cli/install/")
+                                objectName: "providerCliLogin"
+                                text: "Entrar na conta"
+                                enabled: !!root.selected.available && !root.runtimeBusy
+                                onClicked: studio.openProviderLogin(root.selected.id)
                             }
                         }
                         VrProviderSection {
                             visible: root.google; Layout.fillWidth: true; title: "Conta Google"
                             VrProviderStatus {
                                 objectName: "providerAccountStatus"; Layout.fillWidth: true
-                                text: root.validating ? "Validando conta…" : root.isWaiting ? "Aguardando autorização no navegador…" : root.authenticated ? "Conta validada" : root.authError ? "Falha na validação" : root.loginPending ? "Conclua o login no CLI" : "Conta não verificada"
+                                text: root.validating ? "Validando conta…" : root.isWaiting ? "Aguardando autorização no navegador…" : root.authenticated ? "Conta autenticada" : root.authError ? "Falha na validação" : root.isStarting ? "Preparando login Google…" : "Conta não verificada"
                                 tone: root.authenticated ? "success" : root.authError ? "danger" : (root.validating || root.isWaiting) ? "warning" : "muted"
                                 busy: root.validating || root.isStarting
                             }
@@ -272,15 +318,15 @@ Item {
                                     : root.isWaiting && root.expiresAt ? ("Aguardando autorização no navegador. " + root.expiresAt + ". Abra o link para continuar.")
                                     : root.authError ? (root.selected.errorDetail || root.account)
                                     : root.authenticated ? root.account
-                                    : root.loginPending ? "Conclua a autenticação no navegador e valide a conta para confirmar a conexão."
-                                    : "Entre com sua conta Google pelo CLI ou valide uma sessão existente. O login é gerenciado pelo Antigravity."
-                                color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.Wrap
+                                    : root.loginPending ? "Aguarde a abertura do navegador para autorizar sua conta Google."
+                                    : "Entre com sua conta Google no navegador. A mesma conta será usada nos modelos e nas conversas do Studio."
+                                color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); wrapMode: Text.Wrap
                             }
                             Flow {
                                 Layout.fillWidth: true; spacing: 8
                                 VrProviderAction {
                                     objectName: "providerGoogleLogin"
-                                    text: root.openingLogin || root.isStarting ? "Abrindo login…" : root.hasCallback ? "Abrir no navegador" : root.isWaiting ? "Login aberto no CLI" : root.authenticated ? "Abrir login" : "Entrar com Google"
+                                    text: root.openingLogin || root.isStarting ? "Abrindo login…" : root.hasCallback ? "Abrir no navegador" : root.authenticated ? "Verificar login" : "Entrar com Google"
                                     variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
                                     enabled: !!root.selected.available && !root.validating && !root.isStarting && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
                                     onClicked: {
@@ -305,7 +351,7 @@ Item {
                                     objectName: "validateGoogleAccount"
                                     text: root.validating ? "Validando…" : root.authError ? "Tentar novamente" : root.authenticated ? "Validar conexão" : "Validar conta"
                                     variant: root.authError || root.loginPending ? "primary" : "secondary"
-                                    enabled: !!root.selected.available && !root.validating && !root.openingLogin && !root.runtimeBusy
+                                    enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                     onClicked: studio.validateAntigravityAccount()
                                 }
                             }
@@ -316,7 +362,7 @@ Item {
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Retorno manual (se o redirecionamento local não concluir):"
-                                    color: frontend.palette.subtleText
+                                    color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     wrapMode: Text.WordWrap
@@ -329,7 +375,7 @@ Item {
                                         Layout.fillWidth: true
                                         implicitHeight: 36
                                         placeholderText: "Cole a URL final (ex.: http://127.0.0.1:port/?code=...&state=...)"
-                                        background: Rectangle { radius: Theme.radiusSmall; color: frontend.palette.codeSurface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? frontend.palette.focus : frontend.palette.chatBorder }
+                                        background: Rectangle { radius: Theme.radiusSmall; color: Theme.palette.codeSurface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder }
                                         onAccepted: {
                                             if (text.trim().length > 0) {
                                                 studio.submitAntigravityCallback(text.trim())
@@ -348,20 +394,20 @@ Item {
                                     }
                                 }
                             }
-                            Text { Layout.fillWidth: true; text: "A validação envia uma mensagem curta e utiliza a cota da conta."; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                            Text { Layout.fillWidth: true; text: "A validação confirma a conta e carrega os modelos, sem enviar uma mensagem."; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                         }
                         VrProviderSection {
                             Layout.fillWidth: true; title: "Método de acesso"
                             GridLayout {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 24; rowSpacing: 8
-                                Text { text: "Método"; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                                Text { Layout.fillWidth: true; text: root.google ? "Conta Google · Antigravity CLI" : root.selected.description || ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
-                                Text { text: "Autenticação"; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                                Text { Layout.fillWidth: true; text: root.google ? "Navegador · sessão no cofre do sistema" : root.account; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
-                                Text { visible: root.google; text: "Permissões"; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                                Text { visible: root.google; Layout.fillWidth: true; text: "Herdadas da conversa"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                                Text { text: "Método"; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                                Text { Layout.fillWidth: true; text: root.google ? "Conta Google · Antigravity" : root.selected.description || ""; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                                Text { text: "Autenticação"; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                                Text { Layout.fillWidth: true; text: root.google ? "Navegador · perfil exclusivo do Studio" : root.account; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                                Text { visible: root.google; text: "Permissões"; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                                Text { visible: root.google; Layout.fillWidth: true; text: "Herdadas da conversa"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                             }
-                            Text { visible: root.google; Layout.fillWidth: true; text: "Sem chave de API no Studio. Ações que exigem confirmação no CLI podem ser recusadas no modo integrado."; color: frontend.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
+                            Text { visible: root.google; Layout.fillWidth: true; text: "Sem chave de API. As solicitações de permissão aparecem na conversa."; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
                         }
                     }
                 }

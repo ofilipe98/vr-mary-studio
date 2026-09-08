@@ -15,23 +15,23 @@ from collections import deque
 from pathlib import Path
 
 from .antigravity_auth import (
-    AUTH_MARKER_T3,
-    AUTH_PREFIX_ACP,
-    AUTH_PREFIX_BROWSER,
-    INIT_TIMEOUT_SECONDS,
-    MAX_AUTH_LINE_BYTES,
-    OAUTH_TIMEOUT_SECONDS,
-    AccountState,
-    AntigravityAuthManager,
-    AttemptState,
-    AuthStreamParser,
-    LoginAttempt,
-    OAuthCallbackError,
-    OAuthValidationError,
-    ValidatedAuthUrl,
-    forward_callback_to_listener,
-    validate_authorization_url,
-    validate_callback_url,
+    AUTH_MARKER_T3 as AUTH_MARKER_T3,
+    AUTH_PREFIX_ACP as AUTH_PREFIX_ACP,
+    AUTH_PREFIX_BROWSER as AUTH_PREFIX_BROWSER,
+    INIT_TIMEOUT_SECONDS as INIT_TIMEOUT_SECONDS,
+    MAX_AUTH_LINE_BYTES as MAX_AUTH_LINE_BYTES,
+    OAUTH_TIMEOUT_SECONDS as OAUTH_TIMEOUT_SECONDS,
+    AccountState as AccountState,
+    AntigravityAuthManager as AntigravityAuthManager,
+    AttemptState as AttemptState,
+    AuthStreamParser as AuthStreamParser,
+    LoginAttempt as LoginAttempt,
+    OAuthCallbackError as OAuthCallbackError,
+    OAuthValidationError as OAuthValidationError,
+    ValidatedAuthUrl as ValidatedAuthUrl,
+    forward_callback_to_listener as forward_callback_to_listener,
+    validate_authorization_url as validate_authorization_url,
+    validate_callback_url as validate_callback_url,
 )
 from .models import ConversationOptions, RuntimeEvent, approval_preset
 from .providers import AgentProvider, ProviderError, _token_breakdown
@@ -60,7 +60,7 @@ def google_account_environment() -> dict[str, str]:
     return env
 
 
-class AntigravityProvider(AgentProvider):
+class LegacyAntigravityProvider(AgentProvider):
     name = "antigravity"
 
     def __init__(self, knowledge_root=None):
@@ -261,3 +261,8 @@ class AntigravityProvider(AgentProvider):
         with self._lock:
             for cid in list(self._active):
                 self.interrupt(cid)
+
+
+# Public provider now uses one ACP profile for browser login and conversations.
+# Keep the legacy decoder available for historical fixtures, not provider routing.
+from .antigravity_provider import AntigravityProvider as AntigravityProvider

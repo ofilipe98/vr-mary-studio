@@ -40,7 +40,9 @@ from ..config import MarySettings, save_vr_env
 from ..db import MaryDatabase
 from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
-from ..antigravity import resolve_agy, google_account_environment, AntigravityAuthManager
+from ..provider_cli import INSTALLERS, INSTALL_DOCS, InstallCancelled, install_cli, resolve_cli, verify_cli
+from ..antigravity import AntigravityAuthManager
+from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -188,6 +190,7 @@ class StudioBridge(QObject):
     syncChanged = Signal()
     settingsChanged = Signal()
     providersChanged = Signal()
+    providerRuntimeInstalled = Signal(str)
     _antigravityAuthChanged = Signal()
     archivedChanged = Signal()
     logsChanged = Signal()
@@ -283,6 +286,8 @@ class StudioBridge(QObject):
         self._schema_path = self._default_schema_path()
         self._settings_values: dict[str, Any] = {}
         self._providers: list[dict[str, Any]] = []
+        self._provider_installs: dict[str, tuple[_Task, threading.Event]] = {}
+        self._provider_install_status: dict[str, dict[str, str]] = {}
         self._archived = MappingListModel(
             ("conversationId", "title", "project", "provider", "updatedAt"), self
         )
@@ -305,12 +310,14 @@ class StudioBridge(QObject):
         self._syncProgressReceived.connect(self._apply_sync_progress)
         self._antigravityAuthChanged.connect(self._refresh_antigravity_auth, Qt.QueuedConnection)
         self._antigravity_auth = AntigravityAuthManager(
-            command_resolver=resolve_agy,
-            env_factory=google_account_environment,
+            command_resolver=resolve_acp,
+            env_factory=acp_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
         )
         self._agy_check_cancel = threading.Event()
         self._agy_check_process = None
+        self._agy_check_client = None
+        self._agy_opened_attempt = None
 
     def _on_antigravity_auth_state_changed(self) -> None:
         if not getattr(self, "_closed", False):
@@ -320,6 +327,17 @@ class StudioBridge(QObject):
     def _refresh_antigravity_auth(self) -> None:
         if not self._closed:
             self.refreshProviders()
+            attempt = self._antigravity_auth.active_attempt
+            if (attempt and attempt.state == "waiting" and attempt.validated_auth
+                    and self._agy_opened_attempt != attempt.attempt_id):
+                self._agy_opened_attempt = attempt.attempt_id
+                if not QDesktopServices.openUrl(QUrl(attempt.validated_auth.authorization_url)):
+                    self.toastRequested.emit("Não foi possível abrir o navegador. Use Abrir no navegador ou Copiar link.", "warning")
+
+    @Slot()
+    def restoreAntigravityAccount(self) -> None:
+        if has_saved_account():
+            self.validateAntigravityAccount()
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1727,7 +1745,7 @@ class StudioBridge(QObject):
         self._providers = []
         for provider in labels:
             enabled = self._stored_bool(self._preferences.value(f"providers/{provider}/enabled", True), True)
-            command = resolve_agy() if provider == "antigravity" else shutil.which(provider)
+            command = resolve_acp() if provider == "antigravity" else resolve_cli(provider)
             available = command is not None
             auth_info = self._antigravity_auth.get_ui_snapshot() if (provider == "antigravity" and hasattr(self, "_antigravity_auth")) else {}
             account_status = auth_info.get("accountStatus", getattr(self, "_agy_account_status", "Conta Google ainda não verificada")) if provider == "antigravity" else "Autenticação gerenciada pelo CLI"
@@ -1750,9 +1768,111 @@ class StudioBridge(QObject):
                 "description": descriptions[provider],
                 "enabled": enabled,
                 "available": available,
+                "installSupported": provider in INSTALLERS,
+                "installDocs": INSTALL_DOCS.get(provider, ""),
+                **self._provider_install_status.get(provider, {}),
                 "status": "● Desativado para novas conversas" if not enabled else "● Disponível localmente" if available else "● Não encontrado no PATH",
             })
         self.providersChanged.emit()
+
+    @Slot(str)
+    def installProviderCli(self, provider: str) -> None:  # noqa: N802
+        if self._closed or provider in self._provider_installs:
+            return
+        if provider not in INSTALLERS:
+            self.toastRequested.emit("Este provedor não possui instalação integrada.", "warning")
+            return
+        # Fresh installs only; do not replace a binary serving live conversations.
+        command = resolve_acp() if provider == "antigravity" else resolve_cli(provider)
+        verify_only = bool(command)
+        if command and self._provider_install_status.get(provider, {}).get("runtimeState") not in {"error", "cancelled"}:
+            self.refreshProviders()
+            self.toastRequested.emit("O CLI já está instalado nesta máquina.", "info")
+            return
+        cancel = threading.Event()
+        self._provider_install_status[provider] = {"runtimeState": "installing", "installMessage": "Preparando instalação…"}
+
+        def operation():
+            try:
+                if verify_only:
+                    task.signals.progress.emit("Verificando o CLI já instalado…")
+                    return verify_cli(provider, cancel)
+                return install_cli(provider, cancel, task.signals.progress.emit)
+            except InstallCancelled:
+                return {"cancelled": True}
+
+        task = _Task(operation)
+        self._provider_installs[provider] = (task, cancel)
+        self._tasks.add(task)
+
+        def progress(message):
+            if self._closed or self._provider_installs.get(provider, (None,))[0] is not task or cancel.is_set():
+                return
+            self._provider_install_status[provider]["installMessage"] = str(message)
+            self.refreshProviders()
+
+        def finish(result=None, error=""):
+            self._tasks.discard(task)
+            if self._provider_installs.get(provider, (None,))[0] is not task:
+                return
+            self._provider_installs.pop(provider)
+            if self._closed:
+                return
+            if cancel.is_set() or (result or {}).get("cancelled"):
+                status = {"runtimeState": "cancelled", "installMessage": "Instalação cancelada. Arquivos já instalados foram preservados."}
+            elif error:
+                status = {"runtimeState": "error", "installMessage": redact_sensitive_text(str(error))[:12000]}
+            else:
+                status = {"runtimeState": "installed", "installVersion": result["version"],
+                          "installMessage": "CLI instalado e verificado. Entre na sua conta para usar nas conversas."}
+                orchestrator = self._conversation_orchestrator
+                runtime = orchestrator.providers.get(provider) if orchestrator else None
+                if runtime is not None and hasattr(runtime, "command"):
+                    runtime.command = result["command"]
+            self._provider_install_status[provider] = status
+            self.refreshProviders()
+            if status["runtimeState"] == "installed":
+                self.providerRuntimeInstalled.emit(provider)
+            self.toastRequested.emit(status["installMessage"].splitlines()[0], "error" if error else "info")
+
+        task.signals.progress.connect(progress)
+        task.signals.finished.connect(finish)
+        task.signals.failed.connect(lambda error: finish(error=error))
+        self.refreshProviders()
+        self._pool.start(task)
+
+    @Slot(str)
+    def cancelProviderInstall(self, provider: str) -> None:  # noqa: N802
+        active = self._provider_installs.get(provider)
+        if active:
+            active[1].set()
+            self._provider_install_status[provider]["installMessage"] = "Cancelando instalação…"
+            self.refreshProviders()
+
+    @Slot(str)
+    def openProviderLogin(self, provider: str) -> None:  # noqa: N802
+        if self._closed or provider in self._provider_installs or provider not in {"codex", "claude"}:
+            return
+        command = resolve_cli(provider)
+        if not command:
+            self.toastRequested.emit("Instale o CLI primeiro.", "warning")
+            return
+        if os.name != "nt":
+            self.copyText("codex login" if provider == "codex" else "claude auth login")
+            self.toastRequested.emit("Comando de login copiado. Execute-o no seu terminal.", "info")
+            return
+        # Interactive login needs a visible terminal; the executable path remains
+        # data in an environment variable, never interpolated into shell code.
+        env = dict(os.environ)
+        env["VRSTUDIO_LOGIN_CLI"] = command
+        args = "login" if provider == "codex" else "auth login"
+        host = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        try:
+            subprocess.Popen([str(host), "-NoLogo", "-NoProfile", "-NoExit", "-Command",
+                              "& $env:VRSTUDIO_LOGIN_CLI " + args],
+                             env=env, cwd=Path.home(), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        except OSError:
+            self.toastRequested.emit("Não foi possível abrir o terminal de login.", "error")
 
     @Slot(str, str)
     def setProviderDisplayName(self, provider: str, name: str) -> None:
@@ -1767,12 +1887,13 @@ class StudioBridge(QObject):
         if getattr(self, "_agy_check_running", False) or self._closed:
             return
         try:
-            command = resolve_agy()
+            command = resolve_acp()
             if not command:
                 QDesktopServices.openUrl(QUrl("https://antigravity.google/docs/cli/install/"))
                 return
             attempt = self._antigravity_auth.start_login()
             if attempt.state == "waiting" and attempt.validated_auth:
+                self._agy_opened_attempt = attempt.attempt_id
                 QDesktopServices.openUrl(QUrl(attempt.validated_auth.authorization_url))
             self.refreshProviders()
         except Exception as exc:
@@ -1813,36 +1934,38 @@ class StudioBridge(QObject):
 
     def _cancel_antigravity_check(self) -> None:
         self._agy_check_cancel.set()
-        AntigravityAuthManager._stop_process(self._agy_check_process)
+        if self._agy_check_client:
+            self._agy_check_client.close()
 
     def _run_antigravity_check(self, command: str):
-        args = [command, "-p", "Responda apenas OK. Não use ferramentas.",
-                "--mode", "plan", "--output-format", "json", "--print-timeout", "45s"]
-        env = google_account_environment()
+        if not has_saved_account():
+            raise RuntimeError("Entre com Google primeiro.")
         if self._agy_check_cancel.is_set():
             raise RuntimeError("Validação cancelada.")
-        process = subprocess.Popen(args, cwd=str(Path.home()), env=env,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, encoding="utf-8", errors="replace",
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        self._agy_check_process = process
+        client = AcpClient(command=command)
+        self._agy_check_client = client
         try:
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
-            stdout, stderr = process.communicate(timeout=90)
-            return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+            client.start()
+            client.request("authenticate", {"methodId": "oauth-personal"})
+            if self._agy_check_cancel.is_set():
+                raise RuntimeError("Validação cancelada.")
+            # Authentication is already confirmed even if session/new fails.
+            self._antigravity_auth.mark_authenticated_from_validation("Conta Google autenticada pelo Antigravity.")
+            return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []})
         finally:
-            AntigravityAuthManager._stop_process(process)
-            for stream in (process.stdout, process.stderr):
-                if stream:
-                    stream.close()
-            self._agy_check_process = None
+            client.close()
+            self._agy_check_client = None
 
     @Slot()
     def validateAntigravityAccount(self) -> None:
         if getattr(self, "_agy_check_running", False) or self._closed:
             return
-        command = resolve_agy()
+        attempt = self._antigravity_auth.active_attempt
+        if attempt and attempt.state in ("starting", "waiting", "verifying"):
+            return
+        command = resolve_acp()
         if not command:
             self.toastRequested.emit("Instale o Antigravity CLI primeiro.", "warning")
             return
@@ -1854,15 +1977,10 @@ class StudioBridge(QObject):
         self.refreshProviders()
         def check():
             result = self._run_antigravity_check(command)
-            try:
-                payload = json.loads(result.stdout)
-            except Exception:
-                payload = {}
-            if (result.returncode or not isinstance(payload, dict)
-                    or payload.get("status") != "SUCCESS"
-                    or not isinstance(payload.get("response"), str) or not payload["response"].strip()):
-                raise RuntimeError("Não foi possível verificar a conta. Confira o login no CLI e a disponibilidade do serviço.")
-            return "Conta Google validada com uma resposta real"
+            models = (result.get("models") or {}).get("availableModels", [])
+            if not result.get("sessionId") or not models:
+                raise RuntimeError("Não foi possível carregar os modelos da conta.")
+            return f"Conta Google autenticada. Conexão validada e {len(models)} modelos disponíveis."
         task = _Task(check)
         self._tasks.add(task)
         def finish_success(message):
@@ -1892,7 +2010,7 @@ class StudioBridge(QObject):
             # Exceptions may contain captured CLI output/URLs. Publish only a
             # fixed diagnostic, preserving any previously confirmed account.
             self._antigravity_auth.mark_session_or_model_error(
-                "Não foi possível verificar a conta. Confira o login no CLI e a disponibilidade do serviço."
+                "Não foi possível verificar a conta. Entre com Google ou tente validar novamente."
             )
             self.refreshProviders()
         task.signals.finished.connect(finish_success)
@@ -2071,6 +2189,8 @@ class StudioBridge(QObject):
         if self._closed:
             return
         self._closed = True
+        for _task, cancel in self._provider_installs.values():
+            cancel.set()
         self._cancel_antigravity_check()
         if hasattr(self, "_antigravity_auth"):
             self._antigravity_auth.cancel_login()

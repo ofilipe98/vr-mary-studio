@@ -7,8 +7,8 @@ Item {
     id: root
 
     property bool showToggle: false
-    property color primaryColor: frontend.palette.text
-    property color toggleColor: frontend.palette.mutedText
+    property color primaryColor: Theme.palette.text
+    property color toggleColor: Theme.palette.mutedText
     signal toggleRequested()
     signal brandActivated()
 
@@ -47,7 +47,7 @@ Item {
             }
             Text {
                 text: "STUDIO"
-                color: frontend.palette.brandYellow
+                color: Theme.palette.brandYellow
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(9)
                 font.weight: Font.DemiBold

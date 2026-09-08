@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.5.7"
+version = "0.5.8"
 description = "VR Norte Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,9 +23,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+semantic = [
+  "onnxruntime==1.29.0",
+  "tokenizers==0.23.2",
+  "numpy==2.5.3",
+]
 dev = [
   "pyinstaller>=6.11.0",
-  "pytest>=8.0.0"
+  "pytest>=8.0.0",
+  "ruff>=0.16.6,<0.17"
 ]
 
 [project.scripts]
@@ -54,3 +60,16 @@ include = ["vrsoft_extractor*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers --strict-config -ra"
+faulthandler_timeout = 60
+markers = [
+  "qml: Qt/QML rendering and interaction checks (offscreen by default)",
+  "research_timing: preserve production research pacing and retry delays",
+]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [".test-tmp", "reports", "VRProject"]
+
+[tool.ruff.lint]
+select = ["F", "E9"]

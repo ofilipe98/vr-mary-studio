@@ -17,7 +17,6 @@ from typing import Any, Callable, Iterable, Iterator, Sequence
 
 from .erp_releases import (
     ErpReleaseCatalog,
-    ErpReleaseError,
     normalize_class_entry,
     sha256_file,
 )
