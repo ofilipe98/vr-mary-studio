@@ -80,6 +80,17 @@ Os transportes concretos ficam em `mary/provider_adapters/`; `mary/providers.py`
 preserva imports existentes. O fan-out e seus checkpoints ficam em
 `mary/execution/`; busca e ranking ficam em `mary/retrieval/`.
 
+O output do chat usa `frontend/text_rendering.py` para reconhecer cercas de
+código, tabelas e fontes; a normalização em `bridges/presentation.py` compartilha
+as mesmas cercas para preservar o conteúdo do código durante streaming.
+`VrAssistantMessage.qml` atualiza os blocos existentes, preservando os controles
+de quebra de linha e ampliação. `VrTableBlock.qml` mantém seleção nativa, rolagem
+horizontal e cópia em Markdown, CSV ou TSV; as divisórias seguem as posições
+reais das linhas no documento Qt. Os testes `test_chat_output_rendering.py` e
+`test_chat_presentation.py` cobrem conteúdo, clipboard, tema e posição de leitura.
+O script `visual_chat_review.py` também captura tabelas e prompts longos nos
+temas claro/escuro, janela estreita e escala de 150%.
+
 A cobertura das releases é consultada por um worker em `bridges/codeadmin.py`.
 O worker devolve dados pelo sinal Qt; somente a thread da interface altera o
 cache e as preferências. Ao invalidar resultados após processamento ou snapshots,

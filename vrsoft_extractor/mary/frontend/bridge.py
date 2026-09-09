@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QObject, Property, QSettings, QUrl, Signal, Slot
 
@@ -12,9 +13,15 @@ from ..brand import (
     ASSET_DIR,
     ORGANIZATION_NAME,
     SETTINGS_APP_NAME,
-    brand_palette,
 )
-from .text_rendering import CodeSyntaxHighlighter, apply_message_document_style, presentation_blocks
+from ..theme_manager import ThemeManager
+from .text_rendering import (
+    CodeSyntaxHighlighter,
+    apply_message_document_style,
+    presentation_blocks,
+    table_clipboard_text,
+    table_row_edges,
+)
 from ..config import MarySettings
 
 
@@ -79,6 +86,15 @@ class FrontendBridge(QObject):
     typographyChanged = Signal()
     browserPreferencesChanged = Signal()
 
+    # T3 Code Appearance Parity Signals
+    appearanceModeChanged = Signal()
+    resolvedAppearanceChanged = Signal()
+    themesListChanged = Signal()
+    contrastChanged = Signal()
+    glassOpacityChanged = Signal()
+    motionChanged = Signal()
+    themeImportStatus = Signal(bool, str)
+
     def __init__(
         self,
         settings: MarySettings,
@@ -93,20 +109,27 @@ class FrontendBridge(QObject):
         self._preferences = preferences or QSettings(
             ORGANIZATION_NAME, SETTINGS_APP_NAME
         )
-        saved_theme = str(
-            self._preferences.value("appearance/theme", "dark_orange") or "dark_orange"
-        )
-        selected_theme = theme_override or saved_theme
-        self._theme_id = (
-            "dark_orange" if selected_theme == "dark_orange" else "light"
-        )
+
+        # Initialize ThemeManager
+        self._theme_manager = ThemeManager(self._preferences, self)
+        if theme_override:
+            self._theme_manager.setTheme(theme_override)
+
+        self._theme_manager.themeChanged.connect(self.themeChanged)
+        self._theme_manager.appearanceModeChanged.connect(self.appearanceModeChanged)
+        self._theme_manager.resolvedAppearanceChanged.connect(self.resolvedAppearanceChanged)
+        self._theme_manager.themesListChanged.connect(self.themesListChanged)
+        self._theme_manager.contrastChanged.connect(self.contrastChanged)
+        self._theme_manager.glassOpacityChanged.connect(self.glassOpacityChanged)
+        self._theme_manager.motionChanged.connect(self.motionChanged)
+        self._theme_manager.motionChanged.connect(self.reduceMotionChanged)
+        self._theme_manager.typographyChanged.connect(self.typographyChanged)
+        self._theme_manager.themeImportStatus.connect(self.themeImportStatus)
+
         self._navigation_collapsed = (
             _stored_bool(self._preferences.value("appearance/nav_collapsed", False))
             if navigation_override is None
             else bool(navigation_override)
-        )
-        self._reduce_motion = _stored_bool(
-            self._preferences.value("appearance/reduce_motion", False)
         )
         scale_version = int(
             self._preferences.value("appearance/ui_scale_version", 0) or 0
@@ -122,21 +145,7 @@ class FrontendBridge(QObject):
             self._ui_scale = normalized_ui_scale(
                 self._preferences.value("appearance/ui_scale", "auto")
             )
-        self._interface_font_family = self._stored_choice(
-            "appearance/interface_font_family", "Segoe UI", INTERFACE_FONT_OPTIONS
-        )
-        self._interface_font_size = self._stored_int(
-            "appearance/interface_font_size", 14, 11, 22
-        )
-        self._monospace_font_family = self._stored_choice(
-            "appearance/monospace_font_family", "Consolas", MONOSPACE_FONT_OPTIONS
-        )
-        self._monospace_font_size = self._stored_int(
-            "appearance/monospace_font_size", 12, 10, 20
-        )
-        self._word_wrap = _stored_bool(
-            self._preferences.value("appearance/word_wrap", True), True
-        )
+
         self._browser_agent_access = _stored_bool(
             self._preferences.value("browser/agent_access", True), True
         )
@@ -152,7 +161,7 @@ class FrontendBridge(QObject):
         self._browser_auto_show = _stored_bool(
             self._preferences.value("browser/auto_show_preview", True), True
         )
-        self._palette_cache: dict[str, str] | None = None
+
         page_names = [title for title, _icon in NAVIGATION_ITEMS]
         try:
             self._current_page = page_names.index(initial_page)
@@ -178,6 +187,10 @@ class FrontendBridge(QObject):
         return APP_TITLE
 
     @Property(str, constant=True)
+    def appVersion(self) -> str:  # noqa: N802 - QML property naming
+        return f"v{__version__}"
+
+    @Property(str, constant=True)
     def version(self) -> str:
         return __version__
 
@@ -193,6 +206,10 @@ class FrontendBridge(QObject):
     def brandSymbolUrl(self) -> str:  # noqa: N802 - QML property naming
         return _file_url(ASSET_DIR / "vrnorte-symbol.png")
 
+    @Property(str, constant=True)
+    def appIcon(self) -> str:  # noqa: N802 - QML property naming
+        return _file_url(ASSET_DIR / "vr-brand-mark.svg")
+
     @Property("QVariantList", constant=True)
     def navigationItems(self) -> list[dict[str, object]]:  # noqa: N802
         return [
@@ -204,18 +221,133 @@ class FrontendBridge(QObject):
             for title, icon in NAVIGATION_ITEMS
         ]
 
+    # ------------------------------------------------------------------------
+    # Theme & Palette Properties
+    # ------------------------------------------------------------------------
+
     @Property(str, notify=themeChanged)
     def themeId(self) -> str:  # noqa: N802 - QML property naming
-        return self._theme_id
+        return self._theme_manager.activeThemeId
 
     @Property("QVariantMap", notify=themeChanged)
     def palette(self) -> dict[str, str]:
-        # Rebuilt on demand and cached: QML evaluates this property for every
-        # color binding, so rebuilding the dict per read shows up as tab-switch
-        # latency on page creation.
-        if self._palette_cache is None:
-            self._palette_cache = brand_palette(self._theme_id)
-        return self._palette_cache
+        return self._theme_manager.palette
+
+    @Property(str, notify=appearanceModeChanged)
+    def appearanceMode(self) -> str:  # noqa: N802
+        return self._theme_manager.appearanceMode
+
+    @Property(str, notify=resolvedAppearanceChanged)
+    def resolvedAppearance(self) -> str:  # noqa: N802
+        return self._theme_manager.resolvedAppearance
+
+    @Property(str, notify=themeChanged)
+    def themeLight(self) -> str:  # noqa: N802
+        return self._theme_manager.themeLight
+
+    @Property(str, notify=themeChanged)
+    def themeDark(self) -> str:  # noqa: N802
+        return self._theme_manager.themeDark
+
+    @Property("QVariantList", notify=themesListChanged)
+    def availableThemes(self) -> list[dict[str, Any]]:  # noqa: N802
+        return self._theme_manager.availableThemes
+
+    # ------------------------------------------------------------------------
+    # Appearance Sliders (Contrast, Glass, Motion)
+    # ------------------------------------------------------------------------
+
+    @Property(int, notify=contrastChanged)
+    def appearanceContrast(self) -> int:  # noqa: N802
+        return self._theme_manager.appearanceContrast
+
+    @Property(int, notify=glassOpacityChanged)
+    def glassOpacity(self) -> int:  # noqa: N802
+        return self._theme_manager.glassOpacity
+
+    @Property(int, notify=motionChanged)
+    def panelAnimationDurationMs(self) -> int:  # noqa: N802
+        return self._theme_manager.panelAnimationDurationMs
+
+    @Property(int, notify=motionChanged)
+    def rawPanelAnimationDurationMs(self) -> int:  # noqa: N802
+        return self._theme_manager.rawPanelAnimationDurationMs
+
+    @Property(bool, notify=reduceMotionChanged)
+    def reduceMotion(self) -> bool:  # noqa: N802
+        return self._theme_manager.reduceMotion
+
+    # ------------------------------------------------------------------------
+    # Typography Properties (Simple + Advanced)
+    # ------------------------------------------------------------------------
+
+    @Property(bool, notify=typographyChanged)
+    def typographyAdvanced(self) -> bool:  # noqa: N802
+        return self._theme_manager.typographyAdvanced
+
+    @Property(str, notify=typographyChanged)
+    def interfaceFontFamily(self) -> str:  # noqa: N802
+        return self._theme_manager.interfaceFontFamily
+
+    @Property(int, notify=typographyChanged)
+    def interfaceFontSize(self) -> int:  # noqa: N802
+        return self._theme_manager.interfaceFontSize
+
+    @Property(str, notify=typographyChanged)
+    def promptFontFamily(self) -> str:  # noqa: N802
+        return self._theme_manager.promptFontFamily
+
+    @Property(int, notify=typographyChanged)
+    def promptFontSize(self) -> int:  # noqa: N802
+        return self._theme_manager.promptFontSize
+
+    @Property(str, notify=typographyChanged)
+    def monospaceFontFamily(self) -> str:  # noqa: N802
+        return self._theme_manager.monospaceFontFamily
+
+    @Property(int, notify=typographyChanged)
+    def monospaceFontSize(self) -> int:  # noqa: N802
+        return self._theme_manager.monospaceFontSize
+
+    @Property(str, notify=typographyChanged)
+    def codeFontFamily(self) -> str:  # noqa: N802
+        return self._theme_manager.codeFontFamily
+
+    @Property(int, notify=typographyChanged)
+    def codeFontSize(self) -> int:  # noqa: N802
+        return self._theme_manager.codeFontSize
+
+    @Property(str, notify=typographyChanged)
+    def terminalFontFamily(self) -> str:  # noqa: N802
+        return self._theme_manager.terminalFontFamily
+
+    @Property(int, notify=typographyChanged)
+    def terminalFontSize(self) -> int:  # noqa: N802
+        return self._theme_manager.terminalFontSize
+
+    @Property(bool, notify=typographyChanged)
+    def fontSmoothing(self) -> bool:  # noqa: N802
+        return self._theme_manager.fontSmoothing
+
+    @Property(bool, notify=typographyChanged)
+    def isMacOS(self) -> bool:  # noqa: N802
+        return self._theme_manager.isMacOS
+
+    @Property(bool, notify=typographyChanged)
+    def wordWrap(self) -> bool:  # noqa: N802
+        return self._theme_manager.wordWrap
+
+    @Property("QVariantList", constant=True)
+    def systemFontFamilies(self) -> list[str]:  # noqa: N802
+        return self._theme_manager.systemFontFamilies
+
+    @Property("QVariantList", constant=True)
+    def monospaceFontFamilies(self) -> list[str]:  # noqa: N802
+        return self._theme_manager.monospaceFontFamilies
+
+    # ------------------------------------------------------------------------
+    # Navigation & Scale Properties
+    # ------------------------------------------------------------------------
 
     @Property(int, notify=currentPageChanged)
     def currentPage(self) -> int:  # noqa: N802 - QML property naming
@@ -229,10 +361,6 @@ class FrontendBridge(QObject):
     def navigationCollapsed(self) -> bool:  # noqa: N802
         return self._navigation_collapsed
 
-    @Property(bool, notify=reduceMotionChanged)
-    def reduceMotion(self) -> bool:  # noqa: N802
-        return self._reduce_motion
-
     @Property(str, notify=uiScaleChanged)
     def uiScale(self) -> str:  # noqa: N802 - QML property naming
         return self._ui_scale
@@ -241,25 +369,9 @@ class FrontendBridge(QObject):
     def uiScaleFactor(self) -> float:  # noqa: N802 - QML property naming
         return 1.0 if self._ui_scale == "auto" else int(self._ui_scale) / 100.0
 
-    @Property(str, notify=typographyChanged)
-    def interfaceFontFamily(self) -> str:  # noqa: N802
-        return self._interface_font_family
-
-    @Property(int, notify=typographyChanged)
-    def interfaceFontSize(self) -> int:  # noqa: N802
-        return self._interface_font_size
-
-    @Property(str, notify=typographyChanged)
-    def monospaceFontFamily(self) -> str:  # noqa: N802
-        return self._monospace_font_family
-
-    @Property(int, notify=typographyChanged)
-    def monospaceFontSize(self) -> int:  # noqa: N802
-        return self._monospace_font_size
-
-    @Property(bool, notify=typographyChanged)
-    def wordWrap(self) -> bool:  # noqa: N802
-        return self._word_wrap
+    # ------------------------------------------------------------------------
+    # Browser Properties
+    # ------------------------------------------------------------------------
 
     @Property(bool, notify=browserPreferencesChanged)
     def browserAgentAccess(self) -> bool:  # noqa: N802
@@ -285,24 +397,139 @@ class FrontendBridge(QObject):
     def browserAutoShowPreview(self) -> bool:  # noqa: N802
         return self._browser_auto_show
 
+    # ------------------------------------------------------------------------
+    # Slots: Theme & Appearance
+    # ------------------------------------------------------------------------
+
     @Slot(str)
     def setTheme(self, theme_id: str) -> None:  # noqa: N802
-        selected = "dark_orange" if theme_id == "dark_orange" else "light"
-        if selected == self._theme_id:
-            return
-        self._theme_id = selected
-        self._palette_cache = None
-        self._preferences.setValue("appearance/theme", selected)
+        self._preferences.setValue("appearance/theme", theme_id)
         self._preferences.sync()
-        self.themeChanged.emit()
+        self._theme_manager.setTheme(theme_id)
 
     @Slot()
     def toggleTheme(self) -> None:  # noqa: N802
-        self.setTheme("light" if self._theme_id == "dark_orange" else "dark_orange")
+        new_mode = "light" if self._theme_manager.resolvedAppearance == "dark" else "dark"
+        self._theme_manager.setAppearanceMode(new_mode)
+
+    @Slot(str)
+    def setAppearanceMode(self, mode: str) -> None:  # noqa: N802
+        self._theme_manager.setAppearanceMode(mode)
+
+    @Slot(str, str)
+    def setThemeForAppearance(self, appearance: str, theme_id: str) -> None:  # noqa: N802
+        self._theme_manager.setThemeForAppearance(appearance, theme_id)
+
+    @Slot(int)
+    def setAppearanceContrast(self, contrast: int) -> None:  # noqa: N802
+        self._theme_manager.setAppearanceContrast(contrast)
+
+    @Slot(int)
+    def setGlassOpacity(self, opacity: int) -> None:  # noqa: N802
+        self._theme_manager.setGlassOpacity(opacity)
+
+    @Slot(int)
+    def setPanelAnimationDurationMs(self, duration_ms: int) -> None:  # noqa: N802
+        self._theme_manager.setPanelAnimationDurationMs(duration_ms)
+
+    @Slot(bool)
+    def setReduceMotion(self, enabled: bool) -> None:  # noqa: N802
+        self._theme_manager.setReduceMotion(enabled)
+
+    @Slot(bool)
+    def setTypographyAdvanced(self, advanced: bool) -> None:  # noqa: N802
+        self._theme_manager.setTypographyAdvanced(advanced)
+
+    @Slot(str, int)
+    def setInterfaceTypography(self, family: str, size: int) -> None:  # noqa: N802
+        self._theme_manager.setInterfaceTypography(family, size)
+
+    @Slot(str, int)
+    def setPromptTypography(self, family: str, size: int) -> None:  # noqa: N802
+        self._theme_manager.setPromptTypography(family, size)
+
+    @Slot(str, int)
+    def setCodeTypography(self, family: str, size: int) -> None:  # noqa: N802
+        self._theme_manager.setCodeTypography(family, size)
+
+    @Slot(str, int)
+    def setTerminalTypography(self, family: str, size: int) -> None:  # noqa: N802
+        self._theme_manager.setTerminalTypography(family, size)
+
+    @Slot(bool)
+    def setFontSmoothing(self, enabled: bool) -> None:  # noqa: N802
+        self._theme_manager.setFontSmoothing(enabled)
+
+    @Slot(bool)
+    def setWordWrap(self, enabled: bool) -> None:  # noqa: N802
+        self._theme_manager.setWordWrap(enabled)
+
+    @Slot(str)
+    def resetAppearanceSetting(self, setting_name: str) -> None:  # noqa: N802
+        self._theme_manager.resetSetting(setting_name)
+
+    @Slot(str, str, str, result=str)
+    def createCustomTheme(self, name: str, appearance: str, seed_theme_id: str) -> str:  # noqa: N802
+        return self._theme_manager.createCustomTheme(name, appearance, seed_theme_id)
+
+    @Slot(str, str, str, "QVariantMap", result=bool)
+    def updateCustomTheme(self, theme_id: str, name: str, appearance: str, palette_map: dict[str, Any]) -> bool:  # noqa: N802
+        return self._theme_manager.updateCustomTheme(theme_id, name, appearance, palette_map)
+
+    @Slot(str, str, result=str)
+    def duplicateTheme(self, theme_id: str, new_name: str) -> str:  # noqa: N802
+        return self._theme_manager.duplicateTheme(theme_id, new_name)
+
+    @Slot(str, result=bool)
+    def deleteCustomTheme(self, theme_id: str) -> bool:  # noqa: N802
+        return self._theme_manager.deleteCustomTheme(theme_id)
+
+    @Slot(str, result=str)
+    def exportThemeJson(self, theme_id: str) -> str:  # noqa: N802
+        return self._theme_manager.exportThemeJson(theme_id)
+
+    @Slot(str, result="QVariantMap")
+    def importThemeJson(self, json_string: str) -> dict[str, Any]:  # noqa: N802
+        return self._theme_manager.importThemeJson(json_string)
+
+    @Slot(str, result=bool)
+    def isMonospaceFont(self, family_name: str) -> bool:  # noqa: N802
+        return self._theme_manager.isMonospace(family_name)
+
+    @Slot(str, result=bool)
+    def isFontAvailable(self, family_name: str) -> bool:  # noqa: N802
+        return self._theme_manager.isFontAvailable(family_name)
+
+    @Slot(str, int, str, int, bool)
+    def setTypography(
+        self,
+        interface_family: str,
+        interface_size: int,
+        monospace_family: str,
+        monospace_size: int,
+        word_wrap: bool,
+    ) -> None:  # noqa: N802
+        self._theme_manager.setInterfaceTypography(interface_family, interface_size)
+        self._theme_manager.setCodeTypography(monospace_family, monospace_size)
+        self._theme_manager.setWordWrap(word_wrap)
+
+    # ------------------------------------------------------------------------
+    # Slots: Text & Highlighting
+    # ------------------------------------------------------------------------
 
     @Slot(str, result="QVariantList")
     def messageBlocks(self, markdown: str):
         return presentation_blocks(markdown)
+
+    @Slot(str, str, result=str)
+    def tableClipboardText(self, markdown: str, format_name: str) -> str:
+        return table_clipboard_text(markdown, format_name)
+
+    @Slot(QObject, result="QVariantList")
+    def tableRowEdges(self, quick_document):
+        if quick_document is None:
+            return []
+        return table_row_edges(quick_document.textDocument())
 
     @Slot(QObject, str)
     def styleMessageDocument(self, quick_document, markdown: str) -> None:
@@ -320,7 +547,7 @@ class FrontendBridge(QObject):
             apply_message_document_style(
                 document,
                 str(markdown or ""),
-                dark=self._theme_id == "dark_orange",
+                dark=self.themeId == "dark_orange" or self.resolvedAppearance == "dark",
                 monospace_family=self.monospaceFontFamily,
             )
         finally:
@@ -342,7 +569,11 @@ class FrontendBridge(QObject):
             highlighter = CodeSyntaxHighlighter(document, str(language or ""))
             highlighter.setParent(document)
         highlighter.language = str(language or "").strip().casefold()
-        highlighter.set_theme(self._theme_id == "dark_orange")
+        highlighter.set_theme(self.themeId == "dark_orange" or self.resolvedAppearance == "dark")
+
+    # ------------------------------------------------------------------------
+    # Slots: General Navigation & Scale
+    # ------------------------------------------------------------------------
 
     @Slot(int)
     def setCurrentPage(self, index: int) -> None:  # noqa: N802
@@ -362,16 +593,6 @@ class FrontendBridge(QObject):
         self._preferences.sync()
         self.navigationCollapsedChanged.emit()
 
-    @Slot(bool)
-    def setReduceMotion(self, enabled: bool) -> None:  # noqa: N802
-        selected = bool(enabled)
-        if selected == self._reduce_motion:
-            return
-        self._reduce_motion = selected
-        self._preferences.setValue("appearance/reduce_motion", selected)
-        self._preferences.sync()
-        self.reduceMotionChanged.emit()
-
     @Slot(str)
     def setUiScale(self, value: str) -> None:  # noqa: N802
         selected = normalized_ui_scale(value, default=self._ui_scale)
@@ -385,58 +606,9 @@ class FrontendBridge(QObject):
         self._preferences.sync()
         self.uiScaleChanged.emit()
 
-    @Slot(str, int, str, int, bool)
-    def setTypography(
-        self,
-        interface_family: str,
-        interface_size: int,
-        monospace_family: str,
-        monospace_size: int,
-        word_wrap: bool,
-    ) -> None:  # noqa: N802
-        interface = (
-            interface_family
-            if interface_family in INTERFACE_FONT_OPTIONS
-            else "Segoe UI"
-        )
-        monospace = (
-            monospace_family
-            if monospace_family in MONOSPACE_FONT_OPTIONS
-            else "Consolas"
-        )
-        values = (
-            interface,
-            max(11, min(22, int(interface_size))),
-            monospace,
-            max(10, min(20, int(monospace_size))),
-            bool(word_wrap),
-        )
-        current = (
-            self._interface_font_family,
-            self._interface_font_size,
-            self._monospace_font_family,
-            self._monospace_font_size,
-            self._word_wrap,
-        )
-        if values == current:
-            return
-        (
-            self._interface_font_family,
-            self._interface_font_size,
-            self._monospace_font_family,
-            self._monospace_font_size,
-            self._word_wrap,
-        ) = values
-        for key, value in (
-            ("appearance/interface_font_family", interface),
-            ("appearance/interface_font_size", values[1]),
-            ("appearance/monospace_font_family", monospace),
-            ("appearance/monospace_font_size", values[3]),
-            ("appearance/word_wrap", values[4]),
-        ):
-            self._preferences.setValue(key, value)
-        self._preferences.sync()
-        self.typographyChanged.emit()
+    # ------------------------------------------------------------------------
+    # Slots: Browser
+    # ------------------------------------------------------------------------
 
     @Slot(bool)
     def setBrowserAgentAccess(self, enabled: bool) -> None:  # noqa: N802

@@ -118,6 +118,9 @@ class ChatBridge(QObject):
     browserNavigationRequested = Signal(str)
     _conversationTrashFinished = Signal(object)
     _codeAnalysisCoverageWarmed = Signal(object)
+    _applicationsLoaded = Signal(object)
+    _appComparisonLoaded = Signal(object)
+    _appSourcesLoaded = Signal(object)
     activeSkillsChanged = Signal()
     showSkillsInSlashMenuChanged = Signal()
     showUsageLimitsRequested = Signal()
@@ -234,6 +237,9 @@ class ChatBridge(QObject):
         self._code_analysis_jar_source_items: list[dict[str, Any]] = []
         self._code_analysis_snapshot_scope = ERP_JAR_SCOPE_FULL_RELEASE
         self._code_analysis_single_jar_path = ""
+        self._application_import_preview = {}
+        self._application_preview_generation = 0
+        self._application_preview_thread = None
         self._release_snapshot_running = False
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
@@ -248,6 +254,29 @@ class ChatBridge(QObject):
         self._code_processing_covered_jars = 0
         self._code_processing_total_jars = 0
         self._code_processing_can_retry = False
+        self._ultra_application_contexts: list[dict[str, Any]] = []
+        self._applications_catalog: list[dict[str, Any]] = []
+        self._selected_app_id: str = ""
+        self._app_versions: list[dict[str, Any]] = []
+        self._selected_app_version: str = ""
+        self._selected_app_variant_id: str = ""
+        self._selected_version_details: dict[str, Any] = {}
+        self._version_comparison_result: dict[str, Any] = {}
+        self._packages_catalog: list[dict[str, Any]] = []
+        self._apps_catalog_data: dict[str, Any] = {}
+        self._apps_catalog_error = ""
+        self._apps_catalog_thread: threading.Thread | None = None
+        self._apps_catalog_dirty = False
+        self._app_variants: list[dict[str, Any]] = []
+        self._selected_app_origin_id = ""
+        self._code_processing_relative_jars: tuple[str, ...] = ()
+        self._applicationsLoaded.connect(self._on_applications_loaded, Qt.ConnectionType.QueuedConnection)
+        self._app_comparison_thread: threading.Thread | None = None
+        self._app_sources = {}
+        self._app_sources_thread = None
+        self._appSourcesLoaded.connect(self._on_app_sources_loaded, Qt.ConnectionType.QueuedConnection)
+        self._app_comparison_generation = 0
+        self._appComparisonLoaded.connect(self._on_app_comparison_loaded, Qt.ConnectionType.QueuedConnection)
         self._code_processing_release = ""
         self._code_processing_manifest_hash = ""
         self._code_processing_run_id = ""
@@ -505,6 +534,137 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def researchMaxParallel(self) -> int:  # noqa: N802
         return self._research_max_parallel
+
+
+    @Property("QVariantList", notify=stateChanged)
+    def applicationsCatalog(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._applications_catalog]
+
+    @Property(str, notify=stateChanged)
+    def applicationsCatalogError(self) -> str:  # noqa: N802
+        return self._apps_catalog_error
+
+    @Property("QVariantList", notify=stateChanged)
+    def appVariants(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._app_variants]
+
+    @Property(str, notify=stateChanged)
+    def selectedAppOriginId(self) -> str:  # noqa: N802
+        return self._selected_app_origin_id
+
+    @Slot(str)
+    def selectAppOrigin(self, package_id: str) -> None:  # noqa: N802
+        self._app_comparison_generation += 1
+        self._app_sources = {}
+        origins = self._selected_version_details.get("origin_packages", [])
+        self._selected_app_origin_id = package_id if any(o["package_id"] == package_id for o in origins) else ""
+        self._CodeAdmin_domain._activate_selected_processing_scope()
+        self.stateChanged.emit()
+
+    @Slot(object)
+    def _on_applications_loaded(self, result: object) -> None:
+        self._CodeAdmin_domain._on_applications_loaded(result)
+
+    @Slot(object)
+    def _on_app_comparison_loaded(self, result: object) -> None:
+        self._CodeAdmin_domain._on_app_comparison_loaded(result)
+
+    @Slot(str, result="QVariantList")
+    def variantsForVersion(self, version: str) -> list[dict[str, Any]]:  # noqa: N802
+        return list(self._apps_catalog_data.get("data", {}).get("applications", {}).get(
+            self._selected_app_id, {}).get("versions", {}).get(version, {}).get("variants", {}).values())
+
+    @Property(str, notify=stateChanged)
+    def selectedAppId(self) -> str:  # noqa: N802
+        return self._selected_app_id
+
+    @Property("QVariantList", notify=stateChanged)
+    def appVersions(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._app_versions]
+
+    @Property(str, notify=stateChanged)
+    def selectedAppVersion(self) -> str:  # noqa: N802
+        return self._selected_app_version
+
+    @Property(str, notify=stateChanged)
+    def selectedAppVariantId(self) -> str:  # noqa: N802
+        return self._selected_app_variant_id
+
+    @Property("QVariantMap", notify=stateChanged)
+    def applicationSources(self) -> dict[str, Any]:  # noqa: N802
+        return self._app_sources
+
+    @Slot(str, int, str, result=bool)
+    def loadApplicationSources(self, query: str, offset: int, source_key: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.loadApplicationSources(query, offset, source_key)
+
+    @Slot(object)
+    def _on_app_sources_loaded(self, payload: object) -> None:
+        self._app_sources_thread = None
+        generation, workspace, result = payload
+        if not self._closed and workspace == self._settings.root and generation == self._app_comparison_generation:
+            if "body" in result:
+                self._app_sources.update(result)
+            else:
+                self._app_sources = result
+            self.stateChanged.emit()
+
+    @Property("QVariantMap", notify=stateChanged)
+    def applicationImportPreview(self) -> dict[str, Any]:  # noqa: N802
+        return self._application_import_preview
+
+    @Slot(str, bool, str, result=bool)
+    def previewApplicationImport(self, source: str, single: bool, release_id: str = "") -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.previewApplicationImport(source, single, release_id)
+
+    @Slot(str, result=bool)
+    def previewConfiguredImport(self, release_id: str) -> bool:  # noqa: N802
+        single = self._code_analysis_snapshot_scope == ERP_JAR_SCOPE_SINGLE
+        source = self._code_analysis_single_jar_path if single else self.codeAnalysisJarSourcePath
+        return self.previewApplicationImport(source, single, release_id)
+
+    @Slot(result=bool)
+    def confirmApplicationImport(self) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.confirmApplicationImport()
+
+    @Slot()
+    def cancelApplicationImport(self) -> None:  # noqa: N802
+        self._application_preview_generation += 1
+        self._application_import_preview = {}
+        self.stateChanged.emit()
+
+    @Slot(str, str, str, str, result=bool)
+    def overrideVariantVersion(self, app_id: str, version: str, variant_id: str, manual_version: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.overrideVersion(app_id, version, manual_version, variant_id=variant_id)
+
+    @Property("QVariantList", notify=stateChanged)
+    def ultraApplicationContexts(self) -> list[dict[str, Any]]:  # noqa: N802
+        return self._CodeAdmin_domain.application_context_items()
+
+    @Property(bool, notify=stateChanged)
+    def ultraApplicationContextsReady(self) -> bool:  # noqa: N802
+        items = self.ultraApplicationContexts
+        return bool(items) and all(item["ready"] for item in items)
+
+    @Slot(result=bool)
+    def addSelectedApplicationContext(self) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.addSelectedApplicationContext()
+
+    @Slot(str)
+    def removeApplicationContext(self, app_id: str) -> None:  # noqa: N802
+        self._CodeAdmin_domain.removeApplicationContext(app_id)
+
+    @Property("QVariantMap", notify=stateChanged)
+    def selectedVersionDetails(self) -> dict[str, Any]:  # noqa: N802
+        return dict(self._selected_version_details)
+
+    @Property("QVariantMap", notify=stateChanged)
+    def versionComparisonResult(self) -> dict[str, Any]:  # noqa: N802
+        return dict(self._version_comparison_result)
+
+    @Property("QVariantList", notify=stateChanged)
+    def packagesCatalog(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._packages_catalog]
 
     @Property(bool, notify=stateChanged)
     def codeAnalysisEnabled(self) -> bool:  # noqa: N802
@@ -1073,6 +1233,14 @@ class ChatBridge(QObject):
             thread.join(timeout=1.0)
         if self._release_coverage_thread is not None:
             self._release_coverage_thread.join(timeout=1.0)
+        if self._apps_catalog_thread is not None:
+            self._apps_catalog_thread.join(timeout=1.0)
+        if self._app_comparison_thread is not None:
+            self._app_comparison_thread.join(timeout=1.0)
+        if self._app_sources_thread is not None:
+            self._app_sources_thread.join(timeout=1.0)
+        if self._application_preview_thread is not None:
+            self._application_preview_thread.join(timeout=1.0)
         self._orchestrator.close()
         self._active_turns.clear()
         self._sync_selected_turn_state()
@@ -1634,6 +1802,13 @@ class ChatBridge(QObject):
             )
             else "off"
         )
+        self._application_preview_generation += 1
+        self._application_import_preview = {}
+        self._apps_catalog_data = {}
+        self._applications_catalog = []
+        self._packages_catalog = []
+        self._app_sources = {}
+        self._app_comparison_generation += 1
         self._research_model_keys: list[str] = []
         self._research_max_parallel = 3
         self._code_analysis_enabled = False
@@ -1930,6 +2105,55 @@ class ChatBridge(QObject):
     @Slot()
     def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
         return self._CodeAdmin_domain.refreshCodeAnalysisReleases()
+
+    @Slot(str)
+    def selectApplication(self, app_id: str) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.selectApplication(app_id)
+
+    @Slot(str)
+    def selectAppVersion(self, version: str) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.selectAppVersion(version)
+
+    @Slot(str)
+    def selectAppVariant(self, variant_id: str) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.selectAppVariant(variant_id)
+
+    @Slot(str, result=bool)
+    def importPackage(self, source_path: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.importPackage(source_path)
+
+    @Slot(str, result=bool)
+    def importSingleJar(self, jar_path: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.importSingleJar(jar_path)
+
+    @Slot(result=str)
+    def selectAndImportPackage(self) -> str:  # noqa: N802
+        return self._CodeAdmin_domain.selectAndImportPackage()
+
+    @Slot(result=str)
+    def selectAndImportSingleJar(self) -> str:  # noqa: N802
+        return self._CodeAdmin_domain.selectAndImportSingleJar()
+
+    @Slot(str, result=bool)
+    def unlinkPackage(self, package_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.unlinkPackage(package_id)
+
+    @Slot(str, str, str, result=bool)
+    def overrideVersion(self, app_id: str, current_version: str, manual_version: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.overrideVersion(app_id, current_version, manual_version)
+
+    @Slot(str, str, str, result="QVariantMap")
+    @Slot(str, str, str, str, str, result="QVariantMap")
+    def compareAppVersions(self, app_id: str, base_version: str, target_version: str, base_variant_id: str = "", target_variant_id: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.compareAppVersions(app_id, base_version, target_version, base_variant_id, target_variant_id)
+
+    @Slot()
+    def refreshApplicationsCatalog(self) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.refreshApplicationsCatalog()
+
+    @Slot(str, str, str, result=bool)
+    def startVariantProcessing(self, app_id: str, version: str, variant_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.startVariantProcessing(app_id, version, variant_id)
 
     @staticmethod
     def _normalize_response_mode(value: object) -> str:
@@ -2313,8 +2537,9 @@ class ChatBridge(QObject):
                 force_research=force_research,
                 code_analysis_enabled=(
                     self._code_analysis_enabled
-                    and bool(self._code_analysis_release)
+                    and bool(self._ultra_application_contexts)
                 ),
+                application_contexts=json.loads(json.dumps(self._ultra_application_contexts)),
                 code_analysis_release=self._code_analysis_release,
                 code_analysis_manifest_sha256=(
                     str(selected_code_release.get("manifestSha256") or "")

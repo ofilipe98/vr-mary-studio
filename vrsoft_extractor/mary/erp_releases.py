@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from .apps_catalog import AppsCatalogStore
+
 
 MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_EXPECTED_JAR_COUNT = 46
-DEFAULT_MAX_RELEASES = 3
+DEFAULT_MAX_RELEASES = 0  # App versions are independent of the number of package origins.
 DEFAULT_STORAGE_BUDGET_MULTIPLIER = 10
 _RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -59,6 +61,10 @@ class ErpReleasePaths:
         return self.code_index / "releases"
 
     @property
+    def apps_catalog(self) -> Path:
+        return self.code_index / "apps_catalog.json"
+
+    @property
     def artifacts(self) -> Path:
         return self.code_index / "artifacts"
 
@@ -84,8 +90,9 @@ class ErpReleaseCatalog:
     ) -> None:
         self.paths = ErpReleasePaths(Path(root).resolve())
         self.expected_jar_count = max(1, int(expected_jar_count))
-        self.max_releases = max(1, int(max_releases))
+        self.max_releases = max(0, int(max_releases))
         self.storage_budget_multiplier = max(1, int(storage_budget_multiplier))
+        self.apps_store = AppsCatalogStore(self.paths.root, self.paths.apps_catalog)
 
     def ensure_dirs(self) -> None:
         for path in (
@@ -215,7 +222,7 @@ class ErpReleaseCatalog:
             for path in self.paths.indexed_releases.iterdir()
             if path.is_dir() and (path / "manifest.json").is_file()
         }
-        if release_id not in indexed and len(indexed) >= self.max_releases:
+        if self.max_releases and release_id not in indexed and len(indexed) >= self.max_releases:
             raise ErpReleaseError(
                 f"O limite de {self.max_releases} releases indexadas foi atingido; "
                 "remova uma delas com aprovação antes de importar outra."
@@ -312,6 +319,7 @@ class ErpReleaseCatalog:
         }
         _atomic_write_json(self.paths.manifest_for(release_id), manifest)
         self._write_catalog_metadata(manifest["source_size_bytes"])
+        self.apps_store.register_package(manifest, package_id=release_id)
         return manifest
 
     def snapshot_release(
@@ -368,7 +376,7 @@ class ErpReleaseCatalog:
             for path in self.paths.indexed_releases.iterdir()
             if path.is_dir() and (path / "manifest.json").is_file()
         }
-        if release_id not in indexed and len(indexed) >= self.max_releases:
+        if self.max_releases and release_id not in indexed and len(indexed) >= self.max_releases:
             raise ErpReleaseError(
                 f"O limite de {self.max_releases} releases indexadas foi atingido; "
                 "remova uma delas com aprovação antes de importar outra."
@@ -602,7 +610,7 @@ class ErpReleaseCatalog:
             for path in self.paths.indexed_releases.iterdir()
             if path.is_dir() and (path / "manifest.json").is_file()
         }
-        if selected_release_id not in indexed and len(indexed) >= self.max_releases:
+        if self.max_releases and selected_release_id not in indexed and len(indexed) >= self.max_releases:
             raise ErpReleaseError(
                 f"O limite de {self.max_releases} releases indexadas foi atingido; "
                 "remova uma delas com aprovação antes de importar outra."
@@ -742,6 +750,7 @@ class ErpReleaseCatalog:
             }
         )
         _atomic_write_json(self.paths.manifest_for(selected_release_id), manifest)
+        self.apps_store.register_package(manifest, package_id=selected_release_id)
         return manifest
 
     def _complete_base_manifest(self, release_id: str = "") -> dict[str, Any]:
@@ -777,6 +786,71 @@ class ErpReleaseCatalog:
             "Nenhuma release-base completa"
             + requested
             + " está disponível. Importe primeiro o pacote com todos os JARs."
+        )
+
+    @property
+    def apps_catalog_store(self) -> AppsCatalogStore:
+        return self.apps_store
+
+    def ensure_apps_catalog_synced(self) -> None:
+        if any(self.paths.indexed_releases.glob("*/manifest.json")):
+            self.apps_store.sync_legacy_releases()
+
+    def list_applications(self) -> list[dict[str, Any]]:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.list_applications()
+
+    def get_application(self, app_id: str) -> dict[str, Any] | None:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.get_application(app_id)
+
+    def list_versions(self, app_id: str) -> list[dict[str, Any]]:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.list_versions(app_id)
+
+    def get_version(self, app_id: str, version: str) -> dict[str, Any] | None:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.get_version(app_id, version)
+
+    def list_variants(self, app_id: str, version: str) -> list[dict[str, Any]]:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.list_variants(app_id, version)
+
+    def get_variant(self, app_id: str, version: str, variant_id: str) -> dict[str, Any] | None:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.get_variant(app_id, version, variant_id)
+
+    def list_packages(self) -> list[dict[str, Any]]:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.list_packages()
+
+    def get_package(self, package_id: str) -> dict[str, Any] | None:
+        self.ensure_apps_catalog_synced()
+        return self.apps_store.get_package(package_id)
+
+    def unlink_package(self, package_id: str) -> dict[str, Any]:
+        return self.apps_store.unlink_package(package_id)
+
+    def override_version(
+        self, app_id: str, current_version: str, manual_version: str, *, variant_id: str = ""
+    ) -> dict[str, Any]:
+        return self.apps_store.override_version(app_id, current_version, manual_version, variant_id=variant_id)
+
+    def compare_versions(
+        self,
+        app_id: str,
+        base_version: str,
+        target_version: str,
+        *,
+        base_variant_id: str = "",
+        target_variant_id: str = "",
+    ) -> dict[str, Any]:
+        return self.apps_store.compare_versions(
+            app_id,
+            base_version,
+            target_version,
+            base_variant_id=base_variant_id,
+            target_variant_id=target_variant_id,
         )
 
     def status(self, release_id: str, *, full_hash: bool = False) -> dict[str, Any]:
@@ -1251,6 +1325,8 @@ class ErpReleaseCatalog:
                 shutil.rmtree(artifact_dir)
                 removed_artifacts += 1
         self._write_catalog_metadata(0)
+        if self.apps_store.get_package(release_id):
+            self.apps_store.unlink_package(release_id)
         return {
             "release_id": release_id,
             "removed": True,

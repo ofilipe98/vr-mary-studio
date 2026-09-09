@@ -661,6 +661,8 @@ class JavaCodeIndex:
         release_id: str = "",
         classpath_profile: str = "",
         limit: int = 10,
+        artifacts: list[dict[str, Any]] | None = None,
+        manifest_hash: str = "",
     ) -> list[dict[str, Any]]:
         self.initialize()
         tokens = _search_tokens(query)
@@ -669,6 +671,10 @@ class JavaCodeIndex:
         selected: dict[int, dict[str, Any]] = {}
         release_filter = " AND s.release_id = ?" if release_id else ""
         release_params: list[Any] = [release_id] if release_id else []
+        from .code_context import artifact_sql_filter
+        scope_sql, scope_params = artifact_sql_filter(artifacts, manifest_hash)
+        release_filter += scope_sql
+        release_params.extend(scope_params)
         with self.store.connect() as connection:
             exact_rows = connection.execute(
                 f"""SELECT s.*, y.kind AS matched_kind, y.simple_name AS matched_symbol,
@@ -751,6 +757,35 @@ class JavaCodeIndex:
                 )
             )
         return results[: max(1, int(limit))]
+
+    def browse_application_sources(self, context: dict[str, Any], *, query: str = "", offset: int = 0,
+                                   source_key: str = "") -> dict[str, Any]:
+        """Browse an exact application artifact; paths and bodies come only from the index."""
+        from .code_context import artifact_sql_filter
+        self.initialize()
+        artifacts = [a for a in context["artifacts"] if a["role"] == "application"]
+        scope, params = artifact_sql_filter(artifacts, context["manifest_sha256"])
+        predicate = "s.release_id=?" + scope
+        params.insert(0, context["package_id"])
+        with self.store.connect() as connection:
+            if source_key:
+                row = connection.execute(
+                    f"SELECT s.qualified_name, s.body FROM code_sources s WHERE {predicate} AND s.source_key=?",
+                    [*params, source_key]).fetchone()
+                if row is None:
+                    raise DecompilationBatchError("A classe não pertence ao aplicativo e origem selecionados.")
+                body = str(row["body"])
+                return {"state": "ready", "title": row["qualified_name"], "source_key": source_key, "body": body[:200000],
+                        "truncated": len(body) > 200000, "context_label": context["label"]}
+            if query.strip():
+                predicate += " AND instr(lower(s.qualified_name), lower(?)) > 0"
+                params.append(query.strip())
+            rows = connection.execute(
+                f"SELECT s.source_key, s.qualified_name FROM code_sources s WHERE {predicate} "
+                "ORDER BY s.qualified_name COLLATE NOCASE, s.source_key LIMIT 101 OFFSET ?",
+                [*params, max(0, offset)]).fetchall()
+        return {"state": "ready", "sources": [dict(row) for row in rows[:100]],
+                "offset": max(0, offset), "has_more": len(rows) > 100, "context_label": context["label"]}
 
     def expanded_excerpt(self, result: dict[str, Any], *, max_chars: int = 24000) -> dict[str, Any]:
         """Expand an exact indexed identity without trusting a model's path."""
@@ -943,6 +978,8 @@ class JavaCodeIndex:
         release_id: str = "",
         classpath_profile: str = "",
         limit: int = 50,
+        artifacts: list[dict[str, Any]] | None = None,
+        manifest_hash: str = "",
     ) -> list[dict[str, Any]]:
         """Return grounded syntactic callers without claiming classpath resolution."""
 
@@ -954,6 +991,10 @@ class JavaCodeIndex:
         params: list[Any] = [normalized, f"%.{normalized}"]
         if release_id:
             params.append(release_id)
+        from .code_context import artifact_sql_filter
+        scope_sql, scope_params = artifact_sql_filter(artifacts, manifest_hash)
+        release_filter += scope_sql
+        params.extend(scope_params)
         params.append(max(1, int(limit)))
         with self.store.connect() as connection:
             rows = connection.execute(

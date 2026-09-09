@@ -30,11 +30,50 @@ class CodeAdminDomain:
     def __setattr__(self, name, value):
         setattr(self._owner, name, value)
 
+    def application_context_items(self) -> list[dict[str, Any]]:
+        data = self._apps_catalog_data.get("data", {})
+        result = []
+        for context in self._ultra_application_contexts:
+            app = data.get("applications", {}).get(context["app_id"], {})
+            variant = app.get("versions", {}).get(context["version"], {}).get("variants", {}).get(context["variant_id"], {})
+            origin = next((o for o in variant.get("origin_packages", []) if o["package_id"] == context["package_id"]), {})
+            ready = origin.get("index_state") == "ready" and not self._apps_catalog_error
+            label = f"{app.get('name', context['app_id'])} {context['version']} · {context['variant_id'][:12]} · {context['package_id']}"
+            result.append({**context, "label": label, "ready": ready,
+                           "warning": "" if ready else "Origem indisponível ou índice pendente. Verifique em Aplicativos e versões."})
+        return result
+
+    def _save_application_contexts(self) -> None:
+        self._preferences.setValue(self._workspace_research_preference("application_contexts"),
+                                   json.dumps(self._ultra_application_contexts, ensure_ascii=False))
+        self._preferences.sync()
+        if not self._ultra_application_contexts:
+            self._code_analysis_enabled = False
+            self._preferences.setValue("research/code_analysis_enabled", False)
+            self._preferences.sync()
+        self.stateChanged.emit()
+
+    def addSelectedApplicationContext(self) -> bool:  # noqa: N802
+        if not (self._selected_app_id and self._selected_app_version and self._selected_app_variant_id
+                and self._selected_app_origin_id):
+            self._apps_catalog_error = "Selecione aplicativo, versão, variante e origem para usar no Ultra."
+            self.stateChanged.emit()
+            return False
+        selection = {"app_id": self._selected_app_id, "version": self._selected_app_version,
+                     "variant_id": self._selected_app_variant_id, "package_id": self._selected_app_origin_id}
+        self._ultra_application_contexts = [item for item in self._ultra_application_contexts
+                                             if item["app_id"] != selection["app_id"]] + [selection]
+        self._save_application_contexts()
+        return True
+
+    def removeApplicationContext(self, app_id: str) -> None:  # noqa: N802
+        self._ultra_application_contexts = [item for item in self._ultra_application_contexts if item["app_id"] != app_id]
+        self._save_application_contexts()
+
     def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
         self._code_analysis_enabled = bool(
             enabled
-            and self._code_analysis_release_items
-            and self.codeAnalysisReleaseFresh
+            and self.ultraApplicationContextsReady
         )
         self._preferences.setValue(
             "research/code_analysis_enabled", self._code_analysis_enabled
@@ -59,6 +98,7 @@ class CodeAdminDomain:
             return
         self._cancel_code_processing_status_refresh()
         self._code_analysis_release = selected
+        self._code_processing_relative_jars = ()
         self._preferences.setValue(
             self._workspace_research_preference("code_analysis_release"),
             selected,
@@ -66,6 +106,7 @@ class CodeAdminDomain:
         self._preferences.sync()
         self._refresh_code_analysis_jar_sources()
         self.refreshCodeProcessingStatus()
+        self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
 
@@ -213,6 +254,7 @@ class CodeAdminDomain:
         )
         self._preferences.sync()
         self.refreshCodeProcessingStatus()
+        self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
 
@@ -281,6 +323,7 @@ class CodeAdminDomain:
         self._code_processing_status_generation += 1
         generation = self._code_processing_status_generation
         workspace = self._settings.root
+        relative_jars = self._code_processing_relative_jars
         results = self._code_processing_status_results
         self._code_processing_status = "Consultando cobertura local..."
         self.stateChanged.emit()
@@ -289,12 +332,16 @@ class CodeAdminDomain:
             try:
                 try:
                     coverage = ErpCodeCoverage(workspace).status(release_id)
+                    if relative_jars:
+                        coverage = CodeAdminDomain._scope_processing_coverage(coverage, relative_jars)
                 except Exception as exc:
                     results.put((generation, release_id, None, None, str(exc)))
                     return
                 latest_audit = CodeProcessingAudit(workspace).latest(
                     release_id=release_id
                 )
+                if relative_jars and latest_audit and tuple(latest_audit.get("details", {}).get("relative_jars", ())) != relative_jars:
+                    latest_audit = None
                 results.put((generation, release_id, coverage, latest_audit, ""))
             finally:
                 with self._code_processing_status_threads_lock:
@@ -472,6 +519,8 @@ class CodeAdminDomain:
         self._code_processing_run_id = str(audit_event.get("run_id") or "")
         event = str(audit_event.get("event") or "")
         details = dict(audit_event.get("details") or {})
+        if "relative_jars" in details:
+            self._code_processing_relative_jars = tuple(str(jar) for jar in details["relative_jars"])
         restored_telemetry = details.get("telemetry")
         if isinstance(restored_telemetry, dict):
             self._code_processing_telemetry = dict(restored_telemetry)
@@ -493,6 +542,9 @@ class CodeAdminDomain:
 
 
     def startCodeProcessing(self) -> bool:  # noqa: N802
+        if self._code_processing_running or self._release_snapshot_running:
+            return False
+        self._code_processing_relative_jars = ()
         return self._start_code_processing(retry_batch_id="")
 
 
@@ -578,6 +630,7 @@ class CodeAdminDomain:
                     "global_java_concurrency": parallel_workers,
                     "covered_jar_count": self._code_processing_covered_jars,
                     "expected_jar_count": self._code_processing_total_jars,
+                    "relative_jars": list(self._code_processing_relative_jars),
                 },
             )
         except OSError as exc:
@@ -640,6 +693,10 @@ class CodeAdminDomain:
         processing_window: str,
     ) -> None:
         results = self._code_processing_results
+        relative_jars = tuple(self._code_processing_relative_jars)
+
+        def scoped(value):
+            return CodeAdminDomain._scope_processing_coverage(value, relative_jars)
 
         def publish(event: dict[str, Any]) -> None:
             results.put(event)
@@ -712,7 +769,7 @@ class CodeAdminDomain:
                     else None
                 ),
             )
-            coverage = manager.status(release_id)
+            coverage = scoped(manager.status(release_id))
             self._require_frozen_code_manifest(coverage, manifest_hash)
             if retry_batch_id:
                 attention = [
@@ -740,7 +797,7 @@ class CodeAdminDomain:
                     manifest_sha256=manifest_hash,
                     details={"batch_id": retry_batch_id},
                 )
-                coverage = manager.status(release_id)
+                coverage = scoped(manager.status(release_id))
                 self._require_frozen_code_manifest(coverage, manifest_hash)
             publish({"kind": "progress", "coverage": coverage})
 
@@ -835,6 +892,8 @@ class CodeAdminDomain:
                 advanced = manager.advance(
                     release_id,
                     approved=True,
+                    **({"relative_jars": coverage["remaining_jars"]}
+                       if relative_jars and not coverage.get("active_plans") else {}),
                     jars_per_plan=1,
                     batch_limit=parallel_workers,
                     max_heap_mb=max_heap_mb,
@@ -847,7 +906,7 @@ class CodeAdminDomain:
                         {"kind": "phase_progress", **dict(item)}
                     ),
                 )
-                coverage = dict(advanced.get("coverage") or {})
+                coverage = scoped(dict(advanced.get("coverage") or {}))
                 self._require_frozen_code_manifest(coverage, manifest_hash)
                 executed = [
                     item
@@ -915,6 +974,24 @@ class CodeAdminDomain:
 
 
     @staticmethod
+    def _scope_processing_coverage(coverage: dict[str, Any], relative_jars: tuple[str, ...]) -> dict[str, Any]:
+        if not relative_jars:
+            return coverage
+        selected = set(relative_jars)
+        for plan in coverage.get("active_plans", []) + coverage.get("blocked_plans", []):
+            if not set(plan.get("selected_jars", [])).issubset(selected):
+                raise CodeCoverageError("Existe plano de outro aplicativo neste pacote; conclua-o antes de processar a variante.")
+        value = dict(coverage)
+        covered = selected.intersection(coverage.get("covered_jars", []))
+        remaining = selected - covered
+        value.update(expected_jar_count=len(selected), covered_jar_count=len(covered),
+                     covered_jars=sorted(covered), remaining_jar_count=len(remaining),
+                     remaining_jars=sorted(remaining), coverage_ratio=len(covered) / len(selected),
+                     progress_percent=round(100 * len(covered) / len(selected), 1))
+        value["relative_jars"] = sorted(selected)
+        return value
+
+    @staticmethod
     def _record_code_processing_coverage(
         audit: CodeProcessingAudit,
         event: str,
@@ -928,6 +1005,7 @@ class CodeAdminDomain:
             "covered_jar_count": int(coverage.get("covered_jar_count") or 0),
             "expected_jar_count": int(coverage.get("expected_jar_count") or 0),
             "remaining_jar_count": int(coverage.get("remaining_jar_count") or 0),
+            "relative_jars": list(coverage.get("relative_jars") or []),
         }
         if telemetry:
             details["telemetry"] = dict(telemetry)
@@ -1075,19 +1153,23 @@ class CodeAdminDomain:
             self._code_processing_poll_timer.stop()
             self._invalidate_release_coverage()
             self._refresh_code_analysis_releases()
+            self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
 
-    def snapshotCodeAnalysisRelease(self, release_id: str) -> bool:  # noqa: N802
+    def snapshotCodeAnalysisRelease(self, release_id: str, *, source_override: str = "", single_override: bool | None = None, preview_fingerprint: list[dict[str, Any]] | None = None) -> bool:  # noqa: N802
         """Detect, categorize and inventory local JARs off the UI thread."""
 
         selected_release = str(release_id or "").strip()
         single_jar = self._code_analysis_snapshot_scope == ERP_JAR_SCOPE_SINGLE
+        if single_override is not None:
+            single_jar = single_override
         source = (
             self._code_analysis_single_jar_path
             if single_jar
             else self.codeAnalysisJarSourcePath
         )
+        source = source_override or source
         if self._release_snapshot_running or self._code_processing_running:
             return False
         if not source:
@@ -1119,6 +1201,11 @@ class CodeAdminDomain:
 
         def snapshot() -> None:
             try:
+                if preview_fingerprint is not None:
+                    from ...application_import import preview_application_import
+                    current = preview_application_import(workspace, source, single=single_jar)
+                    if current["fingerprint"] != preview_fingerprint:
+                        raise ErpReleaseError("Os JARs mudaram após a prévia. Confira uma nova prévia antes de importar.")
                 manifest = ErpReleaseCatalog(
                     workspace,
                     expected_jar_count=(1 if single_jar else EXPECTED_ERP_JAR_COUNT),
@@ -1197,6 +1284,13 @@ class CodeAdminDomain:
 
         def remove() -> None:
             try:
+                # Catalog/index readers may be initializing SQLite or reading files
+                # being removed. Drain them in this worker, never on the Qt thread.
+                for reader in (self._apps_catalog_thread, self._release_coverage_thread):
+                    if reader is not None and reader is not threading.current_thread():
+                        reader.join(timeout=5)
+                        if reader.is_alive():
+                            raise ErpReleaseError("A consulta do índice ainda está ativa; tente remover novamente.")
                 result = ErpReleaseCatalog(workspace).remove_index(
                     selected_release,
                     approved=True,
@@ -1276,6 +1370,14 @@ class CodeAdminDomain:
 
         self._release_snapshot_running = False
         self._release_snapshot_poll_timer.stop()
+        if latest.get("operation") == "preview":
+            self._application_preview_thread = None
+            if latest["root"] == self._settings.root and latest["generation"] == self._application_preview_generation:
+                self._application_import_preview = latest["preview"]
+                self._release_snapshot_status = latest["preview"].get("error", "Confira a prévia e confirme a importação.")
+            self.refreshApplicationsCatalog()
+            self.stateChanged.emit()
+            return
         release_id = str(latest.get("release_id") or "")
         if str(latest.get("operation") or "") == "clean_orphans":
             if bool(latest.get("ok")):
@@ -1296,6 +1398,7 @@ class CodeAdminDomain:
             return
         if str(latest.get("operation") or "") == "remove":
             if bool(latest.get("ok")):
+                self.refreshApplicationsCatalog()
                 self._invalidate_release_coverage()
                 self._refresh_code_analysis_releases()
                 self._preferences.setValue(
@@ -1323,6 +1426,7 @@ class CodeAdminDomain:
             self.stateChanged.emit()
             return
         if bool(latest.get("ok")):
+            self.refreshApplicationsCatalog()
             self._invalidate_release_coverage()
             self._refresh_code_analysis_releases()
             available = {
@@ -1466,7 +1570,7 @@ class CodeAdminDomain:
 
 
     def _warm_release_coverage(self) -> None:
-        if self._closed or self._release_coverage_thread is not None:
+        if self._closed or self._release_snapshot_running or self._release_coverage_thread is not None:
             return
         requests = tuple(
             (item["releaseId"], item["manifestSha256"])
@@ -1514,7 +1618,7 @@ class CodeAdminDomain:
         except (OSError, ValueError):
             statuses = []
         items: list[dict[str, Any]] = []
-        for status in statuses[:3]:
+        for status in statuses:
             release_id = str(status.get("release_id") or "").strip()
             if not release_id or status.get("state") == "failed":
                 continue
@@ -1591,6 +1695,7 @@ class CodeAdminDomain:
         selected = self._selected_code_analysis_release_item()
         if (
             self._code_analysis_enabled
+            and not self._ultra_application_contexts
             and (not selected or selected.get("freshness") != "fresh")
         ):
             self._code_analysis_enabled = False
@@ -1621,4 +1726,346 @@ class CodeAdminDomain:
         if preferences_changed:
             self._preferences.sync()
         self.refreshCodeProcessingStatus()
+        self.refreshApplicationsCatalog()
         self.stateChanged.emit()
+
+    def refreshApplicationsCatalog(self) -> None:  # noqa: N802
+        if self._closed:
+            return
+        if self._release_snapshot_running:
+            self._apps_catalog_dirty = True
+            return
+        if self._apps_catalog_thread is not None:
+            self._apps_catalog_dirty = True
+            return
+        workspace = self._settings.root
+        signal = self._applicationsLoaded
+        stop = self._release_coverage_stop
+        self._apps_catalog_dirty = False
+
+        def load():
+            try:
+                catalog = ErpReleaseCatalog(workspace)
+                catalog.ensure_apps_catalog_synced()
+                data = catalog.apps_store.load_catalog()
+                index = JavaCodeIndex(workspace)
+                coverage = {}
+                for package_id in data["packages"]:
+                    if stop.is_set():
+                        return
+                    if (catalog.paths.manifest_for(package_id).is_file()
+                            and catalog.status(package_id).get("freshness") == "fresh"):
+                        coverage[package_id] = index.coverage(package_id)
+                plans = index.store.status() if coverage else []
+                for application in data["applications"].values():
+                    for version in application["versions"].values():
+                        for variant in version["variants"].values():
+                            states = []
+                            for origin in variant.get("origin_packages", []):
+                                cov = coverage.get(origin["package_id"], {})
+                                jar = origin.get("relative_path") or variant["relative_path"]
+                                ready = jar in cov.get("covered_jars", [])
+                                partial = jar in cov.get("indexed_source_jars", [])
+                                failed = any(
+                                    p.get("release_id") == origin["package_id"]
+                                    and p.get("release_manifest_sha256") == cov.get("release_manifest_sha256")
+                                    and any(b.get("jar_relative_path") == jar for b in p.get("attention_batches", []))
+                                    for p in plans)
+                                origin["index_state"] = "ready" if ready else "failed" if failed else "partial" if partial else "pending"
+                                states.append(origin["index_state"])
+                            variant["index_state"] = "ready" if "ready" in states else "failed" if "failed" in states else "partial" if "partial" in states else "pending"
+                            # Index coverage proves decompilation only for completed artifacts.
+                            variant["decompilation_state"] = "ready" if "ready" in states else "failed" if "failed" in states else "partial" if "partial" in states else "pending"
+                            count = int(variant.get("class_count") or 0) if "ready" in states else 0
+                            variant["indexed_classes"] = count
+                            variant["decompiled_classes"] = count
+                # Read-only projection: processing truth remains in the existing index.
+                catalog.apps_store = catalog.apps_store.read_view(data)
+                result = {"root": workspace, "data": data,
+                          "applications": catalog.apps_store.list_applications(),
+                          "packages": catalog.apps_store.list_packages(),
+                          "versions": {key: catalog.apps_store.list_versions(key) for key in data["applications"]}}
+            except Exception as exc:
+                result = {"root": workspace, "error": str(exc)}
+            if not stop.is_set():
+                try:
+                    signal.emit(result)
+                except RuntimeError:
+                    pass
+
+        self._apps_catalog_thread = threading.Thread(target=load, daemon=True)
+        self._apps_catalog_thread.start()
+
+    def _on_applications_loaded(self, result: object) -> None:
+        self._apps_catalog_thread = None
+        if self._closed:
+            return
+        if result["root"] != self._settings.root or self._apps_catalog_dirty:
+            self.refreshApplicationsCatalog()
+            return
+        self._apps_catalog_error = result.get("error", "")
+        if not self._apps_catalog_error:
+            self._apps_catalog_data = result
+            self._applications_catalog = result["applications"]
+            self._packages_catalog = result["packages"]
+            self.selectApplication(self._selected_app_id)
+        self.stateChanged.emit()
+
+    def selectApplication(self, app_id: str) -> None:  # noqa: N802
+        selected = str(app_id or "").strip()
+        previous = self._selected_app_version if selected == self._selected_app_id else ""
+        self._selected_app_id = selected if selected in self._apps_catalog_data.get("versions", {}) else ""
+        self._app_versions = self._apps_catalog_data.get("versions", {}).get(self._selected_app_id, [])
+        self.selectAppVersion(previous)
+        self.stateChanged.emit()
+
+    def selectAppVersion(self, version: str) -> None:  # noqa: N802
+        versions = self._apps_catalog_data.get("data", {}).get("applications", {}).get(self._selected_app_id, {}).get("versions", {})
+        selected = str(version or "").strip()
+        previous = self._selected_app_variant_id if selected == self._selected_app_version else ""
+        self._selected_app_version = selected if selected in versions else ""
+        self._app_variants = list(versions.get(self._selected_app_version, {}).get("variants", {}).values())
+        self._version_comparison_result = {}
+        self._app_comparison_generation += 1
+        if not previous and len(self._app_variants) == 1:
+            previous = self._app_variants[0]["variant_id"]
+        self.selectAppVariant(previous)
+        self.stateChanged.emit()
+
+    def selectAppVariant(self, variant_id: str) -> None:  # noqa: N802
+        self._app_sources = {}
+        self._app_comparison_generation += 1
+        selected = str(variant_id or "").strip()
+        self._selected_version_details = dict(next((v for v in self._app_variants if v["variant_id"] == selected), {}))
+        self._selected_app_variant_id = self._selected_version_details.get("variant_id", "")
+        origins = self._selected_version_details.get("origin_packages", [])
+        if not any(o["package_id"] == self._selected_app_origin_id for o in origins):
+            self._selected_app_origin_id = origins[0]["package_id"] if len(origins) == 1 else ""
+        self._activate_selected_processing_scope()
+        self._version_comparison_result = {}
+        self.stateChanged.emit()
+
+    def _activate_selected_processing_scope(self) -> None:
+        origin = next((o for o in self._selected_version_details.get("origin_packages", [])
+                       if o["package_id"] == self._selected_app_origin_id), {})
+        if not origin:
+            return
+        state = origin.get("index_state", "pending")
+        self._selected_version_details.update(index_state=state, decompilation_state=state,
+            indexed_classes=self._selected_version_details.get("class_count", 0) if state == "ready" else 0)
+        jar = str(origin.get("relative_path") or self._selected_version_details.get("relative_path") or "")
+        if (self._code_processing_running or self._release_snapshot_running or not jar
+                or not any(item["releaseId"] == self._selected_app_origin_id for item in self._code_analysis_release_items)):
+            return
+        if self._code_analysis_release == self._selected_app_origin_id and self._code_processing_relative_jars == (jar,):
+            return
+        self.setCodeAnalysisRelease(self._selected_app_origin_id)
+        self._cancel_code_processing_status_refresh()
+        self._code_processing_relative_jars = (jar,)
+        self._reset_code_processing_status("Consultando a variante selecionada…")
+        self.refreshCodeProcessingStatus()
+
+    def previewApplicationImport(self, source: str, single: bool, release_id: str = "") -> bool:  # noqa: N802
+        if self._release_snapshot_running or self._code_processing_running or not source or self._closed:
+            return False
+        self._application_preview_generation += 1
+        generation = self._application_preview_generation
+        workspace = self._settings.root
+        results = self._release_snapshot_results
+        signal = self._releaseSnapshotReady
+        stop = self._release_coverage_stop
+        self._application_import_preview = {"state": "running"}
+        self._release_snapshot_running = True
+        self._release_snapshot_status = "Lendo aplicativos e verificando os hashes para a prévia…"
+        def preview():
+            from ...application_import import preview_application_import
+            try:
+                result = {**preview_application_import(workspace, source, single=single),
+                          "state": "ready", "release_id": release_id}
+            except Exception as exc:
+                result = {"state": "error", "error": str(exc)}
+            if not stop.is_set():
+                results.put({"operation": "preview", "generation": generation, "root": workspace, "preview": result})
+                try:
+                    signal.emit()
+                except RuntimeError:
+                    pass
+        self._release_snapshot_poll_timer.start()
+        self._application_preview_thread = threading.Thread(target=preview, daemon=True)
+        self._application_preview_thread.start()
+        self.stateChanged.emit()
+        return True
+
+    def confirmApplicationImport(self) -> bool:  # noqa: N802
+        preview = self._application_import_preview
+        if preview.get("state") != "ready":
+            return False
+        started = CodeAdminDomain.snapshotCodeAnalysisRelease(self, preview["release_id"],
+            source_override=preview["source"], single_override=preview["single"],
+            preview_fingerprint=preview["fingerprint"])
+        if started:
+            self._application_import_preview = {}
+            self.stateChanged.emit()
+        return started
+
+    def importPackage(self, source_path: str) -> bool:  # noqa: N802
+        if not str(source_path or "").strip():
+            return False
+        candidate = Path(source_path).resolve()
+        if not candidate.is_dir():
+            return False
+        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=False)
+
+    def importSingleJar(self, jar_path: str) -> bool:  # noqa: N802
+        candidate = Path(str(jar_path or "").strip()).resolve()
+        if not candidate.is_file() or candidate.suffix.casefold() != ".jar":
+            return False
+        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=True)
+
+    def selectAndImportPackage(self) -> str:  # noqa: N802
+        initial = self.codeAnalysisJarSourcePath or str(self._settings.root)
+        selected = QFileDialog.getExistingDirectory(
+            None,
+            "Selecionar pasta de pacote VR",
+            initial,
+        )
+        if selected and self.previewApplicationImport(selected, False, ""):
+            return selected
+        return ""
+
+    def selectAndImportSingleJar(self) -> str:  # noqa: N802
+        initial = self.codeAnalysisJarSourcePath or str(self._settings.root)
+        selected, _filter = QFileDialog.getOpenFileName(
+            None,
+            "Selecionar JAR de aplicativo VR",
+            initial,
+            "Arquivos JAR (*.jar)",
+        )
+        if selected and self.previewApplicationImport(selected, True, ""):
+            return selected
+        return ""
+
+    def unlinkPackage(self, package_id: str) -> bool:  # noqa: N802
+        try:
+            catalog = ErpReleaseCatalog(self._settings.root)
+            catalog.unlink_package(package_id)
+            self.refreshApplicationsCatalog()
+            return True
+        except Exception as exc:
+            self._apps_catalog_error = str(exc)
+            self.stateChanged.emit()
+            return False
+
+    def overrideVersion(self, app_id: str, current_version: str, manual_version: str, *, variant_id: str = "") -> bool:  # noqa: N802
+        try:
+            catalog = ErpReleaseCatalog(self._settings.root)
+            catalog.override_version(app_id, current_version, manual_version, variant_id=variant_id)
+            self._selected_app_id = app_id
+            self._selected_app_version = manual_version
+            for context in self._ultra_application_contexts:
+                if context["app_id"] == app_id and context["version"] == current_version and (not variant_id or context["variant_id"] == variant_id):
+                    context["version"] = manual_version
+            self._save_application_contexts()
+            self.refreshApplicationsCatalog()
+            return True
+        except Exception as exc:
+            self._apps_catalog_error = str(exc)
+            self.stateChanged.emit()
+            return False
+
+    def loadApplicationSources(self, query: str, offset: int, source_key: str) -> bool:  # noqa: N802
+        if self._closed or self._app_sources_thread is not None:
+            return False
+        selection = {"app_id": self._selected_app_id, "version": self._selected_app_version,
+                     "variant_id": self._selected_app_variant_id, "package_id": self._selected_app_origin_id}
+        generation = self._app_comparison_generation
+        workspace = self._settings.root
+        signal = self._appSourcesLoaded
+        stop = self._release_coverage_stop
+        def browse():
+            from ...code_context import freeze_application_contexts, validate_application_contexts
+            try:
+                contexts = freeze_application_contexts(workspace, [selection])
+                result = JavaCodeIndex(workspace).browse_application_sources(contexts[0], query=query, offset=offset, source_key=source_key)
+                validate_application_contexts(workspace, contexts)
+            except Exception as exc:
+                result = {"state": "error", "error": str(exc)}
+            if not stop.is_set():
+                try:
+                    signal.emit((generation, workspace, result))
+                except RuntimeError:
+                    pass
+        self._app_sources = {**self._app_sources, "state": "running", "body": "", "error": ""}
+        self._app_sources_thread = threading.Thread(target=browse, daemon=True)
+        self._app_sources_thread.start()
+        self.stateChanged.emit()
+        return True
+
+    def compareAppVersions(self, app_id: str, base_version: str, target_version: str, base_variant_id: str = "", target_variant_id: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._app_comparison_thread is not None or self._closed:
+            return {"state": "busy"}
+        self._app_comparison_generation += 1
+        generation = self._app_comparison_generation
+        workspace = self._settings.root
+        data = json.loads(json.dumps(self._apps_catalog_data.get("data", {})))
+        signal = self._appComparisonLoaded
+        stop = self._release_coverage_stop
+
+        def compare():
+            try:
+                catalog = ErpReleaseCatalog(workspace)
+                if data:
+                    catalog.apps_store = catalog.apps_store.read_view(data)
+                result = catalog.apps_store.compare_versions(app_id, base_version, target_version,
+                    base_variant_id=base_variant_id, target_variant_id=target_variant_id)
+            except Exception as exc:
+                result = {"state": "error", "error": str(exc)}
+            if not stop.is_set():
+                try:
+                    signal.emit((generation, workspace, result))
+                except RuntimeError:
+                    pass
+
+        self._version_comparison_result = {"state": "running"}
+        self._app_comparison_thread = threading.Thread(target=compare, daemon=True)
+        self._app_comparison_thread.start()
+        self.stateChanged.emit()
+        return {"state": "running"}
+
+    def _on_app_comparison_loaded(self, payload: object) -> None:
+        self._app_comparison_thread = None
+        generation, workspace, result = payload
+        if not self._closed and generation == self._app_comparison_generation and workspace == self._settings.root:
+            self._version_comparison_result = result
+            self.stateChanged.emit()
+
+    def startVariantProcessing(self, app_id: str, version: str, variant_id: str) -> bool:  # noqa: N802
+        if self._code_processing_running or self._release_snapshot_running:
+            return False
+        try:
+            catalog = ErpReleaseCatalog(self._settings.root)
+            var = catalog.get_variant(app_id, version, variant_id)
+            if not var:
+                return False
+            origins = var.get("origin_packages", [])
+            target_release = self._selected_app_origin_id
+            origin = next((o for o in origins if o["package_id"] == target_release), None)
+            if not origin:
+                raise ValueError("Selecione o pacote de origem para definir as dependências da análise.")
+            if not target_release:
+                return False
+            self.setCodeAnalysisRelease(target_release)
+            if self._code_analysis_release != target_release:
+                raise ValueError("O pacote selecionado não está disponível para processamento.")
+            manifest = catalog.load_manifest(target_release)
+            jar = str(origin.get("relative_path") or var["relative_path"])
+            if not any(a.get("relative_path") == jar and a.get("sha256") == var["sha256"] for a in manifest["artifacts"]):
+                raise ValueError("O pacote não contém mais a variante selecionada; atualize o catálogo.")
+            self._code_processing_relative_jars = (jar,)
+            self._code_processing_covered_jars = 0
+            self._code_processing_total_jars = 1
+            return self._start_code_processing(retry_batch_id="")
+        except Exception as exc:
+            self._code_processing_status = str(exc)
+            self.stateChanged.emit()
+            return False

@@ -151,8 +151,8 @@ def test_additional_indexed_read_stays_in_selected_release(tmp_path):
     normalized = path.read_text(encoding='utf8')
     digest = hashlib.sha256(normalized.encode()).hexdigest()
     with sqlite3.connect(database) as con:
-        con.execute('CREATE TABLE code_sources (source_key TEXT, release_id TEXT, qualified_name TEXT, output_reference TEXT, source_relative_path TEXT, source_sha256 TEXT)')
-        con.executemany('INSERT INTO code_sources VALUES (?,?,?,?,?,?)', [
+        con.execute("CREATE TABLE code_sources (source_key TEXT, release_id TEXT, qualified_name TEXT, output_reference TEXT, source_relative_path TEXT, source_sha256 TEXT, release_hash TEXT DEFAULT 'manifest', artifact_sha256 TEXT DEFAULT 'artifact', jar_relative_path TEXT DEFAULT 'App.jar')")
+        con.executemany('INSERT INTO code_sources (source_key, release_id, qualified_name, output_reference, source_relative_path, source_sha256) VALUES (?,?,?,?,?,?)', [
             ('seed','r1','Parent','decompiled','Parent.java',''),
             ('child','r1','Child','decompiled','Child.java',digest),
         ])

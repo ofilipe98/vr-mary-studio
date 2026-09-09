@@ -138,6 +138,91 @@ Fontes consultadas:
                 QTest.qWait(150)
                 name = "working" if running else "expanded" if expanded else "error" if state == "Erro" else "cancelled"
                 window.grabWindow().save(str(output / f"activity-{name}.png"))
+            # Exercise the reference's two central output shapes: comparative
+            # tables and a long, copyable plain-text implementation prompt.
+            reference_markdown = """Recomendo separar **VR Ultra** e **Aplicativos e versões**, deixando o processamento de código dentro de cada versão.
+
+Este conteúdo é uma demonstração visual; não representa uma análise do catálogo real.
+
+| Área | Responsabilidade |
+| --- | --- |
+| **VR Ultra** | Agentes, modelos e preferências de análise. |
+| **Aplicativos e versões** | Importação de pacotes, histórico por aplicativo e consulta do código. |
+| **Processamento** | Acompanhar andamento, consultar erros e reprocessar uma versão. |
+
+O aplicativo é a identidade principal; o pacote registra **de onde ele veio**.
+
+| Pacote importado | Aplicativo | Versão |
+| --- | --- | --- |
+| Pacote A | VRPdv | 4.5.0 |
+| Pacote A | VRGestao | 4.6.0 |
+| Pacote B | VRPdv | 4.5.0 |
+| Pacote B | VRGestao | 4.6.1 |
+
+Algumas particularidades:
+
+- **Mesma versão, conteúdo diferente:** comparar o hash e preservar variantes.
+- **Mesmo conteúdo em pacotes diferentes:** reutilizar o processamento e manter as origens.
+- **Versão não identificada:** apresentar o dado como desconhecido.
+- **Contexto da análise:** selecionar aplicativo e versão explicitamente.
+
+Segue o prompt de implementação:
+
+````text
+Implemente a organização do catálogo por aplicativo e versão.
+
+OBJETIVO
+Um pacote pode conter vários aplicativos e repetir versões já importadas.
+A importação deve preservar as origens e reutilizar o conteúdo idêntico.
+
+ANTES DE EDITAR
+1. Leia AGENTS.md e docs/DEVELOPMENT.md.
+2. Inspecione o estado do Git e preserve alterações locais.
+3. Rastreie importação, persistência, processamento e consulta de código.
+
+INTERFACE
+Aplicativos → Aplicativo → Versões → Versão → Detalhes / Código / Origens.
+
+EXEMPLO DE DOCUMENTAÇÃO A PRESERVAR
+```markdown
+| Aplicativo | Versão |
+| --- | --- |
+| VRPdv | 4.5.0 |
+```
+
+VERIFICAÇÃO
+Confirme importação repetida, versões desconhecidas e conteúdo diferente.
+Valide janelas amplas e estreitas, tema claro e escuro e escala de 150%.
+Entregue o resultado e as evidências de validação.
+````
+"""
+            activity.setProperty("expanded", False)
+            activity.setProperty("statusText", "Pronto")
+            chat.messages.update_last(content=reference_markdown, displayContent=reference_markdown)
+            for theme, width, height, scale in [
+                ("dark_orange", 1920, 1080, "100"),
+                ("dark_orange", 390, 844, "100"),
+                ("light", 1366, 900, "100"),
+                ("dark_orange", 1366, 900, "150"),
+            ]:
+                frontend.setTheme(theme)
+                frontend.setUiScale(scale)
+                window.setWidth(width)
+                window.setHeight(height)
+                QTest.qWait(250)
+                timeline.setProperty("contentY", 0)
+                QTest.qWait(100)
+                prefix = f"output-{theme}-{width}-{scale}"
+                window.grabWindow().save(str(output / f"{prefix}-tables.png"))
+                table = find_items(window.contentItem(), "tableBlock")[0]
+                table.setProperty("expanded", True)
+                QTest.qWait(100)
+                window.grabWindow().save(str(output / f"{prefix}-expanded.png"))
+                table.setProperty("expanded", False)
+                timeline.positionViewAtEnd()
+                QTest.qWait(150)
+                window.grabWindow().save(str(output / f"{prefix}-code.png"))
+            frontend.setUiScale("100")
             chat.startNewChat()
             QTest.qWait(150)
             window.grabWindow().save(str(output / "chat-empty.png"))

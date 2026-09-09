@@ -8,7 +8,7 @@ from PySide6.QtCore import (
     QObject,
     Qt,
 )
-from ..text_rendering import FENCE_RE, code_language_badge
+from ..text_rendering import fenced_blocks, code_language_badge
 from ...code_processing_hardware import detect_code_processing_hardware
 
 """Read-only presentation models for the first QML Chat VR migration slice."""
@@ -116,11 +116,17 @@ CODE_PROCESSING_HARDWARE_PROFILE_VERSION = 2
 def markdown_for_display(markdown: str) -> str:
     """Repair provider spacing without changing inline code or URLs."""
 
-    parts = _CODE_OR_URL_RE.split(str(markdown or ""))
-    return "".join(
-        part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
-        for index, part in enumerate(parts)
-    )
+    result = []
+    for block in fenced_blocks(str(markdown or "")):
+        if block["kind"] == "code":
+            result.append(block["raw"])
+        else:
+            parts = _CODE_OR_URL_RE.split(block["content"])
+            result.append("".join(
+                part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
+                for index, part in enumerate(parts)
+            ))
+    return "".join(result)
 
 
 def short_event_text(value: object, limit: int = 140) -> str:
@@ -231,8 +237,8 @@ class MessageListModel(_MappingListModel):
 def segments_for_display(markdown: str) -> list[dict[str, str]]:
     """Split a markdown answer into text and fenced-code card segments."""
     text = str(markdown or "")
-    matches = list(FENCE_RE.finditer(text))
-    if not matches:
+    blocks = fenced_blocks(text)
+    if not any(block["kind"] == "code" for block in blocks):
         return []
     segments: list[dict[str, str]] = []
 
@@ -242,20 +248,17 @@ def segments_for_display(markdown: str) -> list[dict[str, str]]:
                 {"kind": "text", "content": markdown_for_display(part)}
             )
 
-    cursor = 0
-    for match in matches:
-        if match.start() > cursor:
-            append_text(text[cursor:match.start()])
-        language = str(match.group(1) or "").strip().casefold() or "text"
+    for block in blocks:
+        if block["kind"] == "text":
+            append_text(block["content"])
+            continue
+        language = block["language"]
         segments.append(
             {
                 "kind": "code",
-                "content": str(match.group(2) or ""),
+                "content": block["content"],
                 "language": language,
                 "badge": code_language_badge(language),
             }
         )
-        cursor = match.end()
-    if cursor < len(text):
-        append_text(text[cursor:])
     return segments

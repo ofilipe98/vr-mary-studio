@@ -7,6 +7,9 @@ QtObject {
     readonly property var palette: frontend.palette
     readonly property string fontFamily: frontend.interfaceFontFamily
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
+    readonly property string promptFontFamily: frontend.promptFontFamily
+    readonly property string terminalFontFamily: frontend.terminalFontFamily
+
     readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120
     property real viewportHeight: 700
@@ -32,6 +35,23 @@ QtObject {
         return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
             * selectedScale * (frontend.monospaceFontSize / 12.0)))
     }
+
+    function promptFontSize(pixelSize) {
+        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
+            * selectedScale * (frontend.promptFontSize / 14.0)))
+    }
+
+    function terminalFontSize(pixelSize) {
+        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
+            * selectedScale * (frontend.terminalFontSize / 12.0)))
+    }
+
+    // Contrast and Glass Opacity tokens
+    readonly property int contrast: frontend.appearanceContrast
+    readonly property real contrastMultiplier: frontend.appearanceContrast / 100.0
+    readonly property real glassOpacity: Math.max(0.4, Math.min(1.0, frontend.glassOpacity / 100.0))
+    readonly property int rawPanelAnimationDuration: frontend.rawPanelAnimationDurationMs
+    readonly property int panelAnimationDuration: frontend.panelAnimationDurationMs
 
     readonly property int spaceXs: 4
     readonly property int spaceSm: 8
@@ -69,9 +89,13 @@ QtObject {
 
     // Motion tokens keep interactions consistent and make it easy to honor
     // the reduce-motion preference at each animation site.
-    readonly property int pressDuration: 90
-    readonly property int fastDuration: 140
-    readonly property int motionDuration: 180
-    readonly property int pageDuration: 220
-    readonly property int motionDistance: 10
+    readonly property int pressDuration: frontend.reduceMotion ? 0 : 90
+    readonly property int fastDuration: frontend.reduceMotion ? 0 : 140
+    readonly property int motionDuration: frontend.reduceMotion
+        ? 0
+        : (frontend.panelAnimationDurationMs > 0 ? frontend.panelAnimationDurationMs : 180)
+    readonly property int pageDuration: frontend.reduceMotion
+        ? 0
+        : (frontend.panelAnimationDurationMs > 0 ? Math.round(frontend.panelAnimationDurationMs * 1.2) : 220)
+    readonly property int motionDistance: frontend.reduceMotion ? 0 : 10
 }

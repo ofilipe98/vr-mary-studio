@@ -641,6 +641,16 @@ class ProviderSettingsDomain:
             self._preferences.value("research/code_analysis_enabled", False),
             False,
         )
+        try:
+            contexts = json.loads(str(self._preferences.value(
+                self._workspace_research_preference("application_contexts"), "[]")))
+            self._ultra_application_contexts = [dict(item) for item in contexts
+                if isinstance(item, dict) and all(item.get(key) for key in
+                    ("app_id", "version", "variant_id", "package_id"))] if isinstance(contexts, list) else []
+        except (TypeError, ValueError):
+            self._ultra_application_contexts = []
+        if not self._ultra_application_contexts:
+            self._code_analysis_enabled = False
         release_preference = self._workspace_research_preference(
             "code_analysis_release"
         )

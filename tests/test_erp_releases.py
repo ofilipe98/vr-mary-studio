@@ -262,7 +262,7 @@ def test_import_release_builds_deterministic_manifest_and_artifact_cache(
         )
         assert metadata.is_file()
     storage = catalog.storage_status()
-    assert storage["max_releases"] == 3
+    assert storage["max_releases"] == 0
     assert storage["budget_bytes"] == first["source_size_bytes"] * 10
 
 

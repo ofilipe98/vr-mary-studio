@@ -24,13 +24,26 @@ Item {
         { title: "Diagnóstico", category: "Geral", tab: 0, icon: "context" },
         { title: "Provedores e modelos", category: "Provedores", tab: 1, icon: "models" },
         { title: "Agentes VR Ultra", category: "VR Ultra", tab: 2, icon: "agents" },
-        { title: "Análise de código e JARs", category: "VR Ultra", tab: 2, icon: "files" },
-        { title: "Diretório dos JARs", category: "VR Ultra", tab: 2, icon: "folder" },
-        { title: "Processamento local do índice", category: "VR Ultra", tab: 2, icon: "task" },
-        { title: "Tema", category: "Aparência", tab: 3, icon: "settings" },
-        { title: "Fonte e escala da interface", category: "Aparência", tab: 3, icon: "edit" },
-        { title: "Browser e acesso do agente", category: "Browser", tab: 4, icon: "browser" },
-        { title: "Projetos arquivados", category: "Projetos arquivados", tab: 5, icon: "archive" }
+        { title: "Modelos dos pesquisadores", category: "VR Ultra", tab: 2, icon: "models" },
+        { title: "Perfil especialista sênior", category: "VR Ultra", tab: 2, icon: "settings" },
+        { title: "Contexto de código no VR Ultra", category: "VR Ultra", tab: 2, icon: "files" },
+        { title: "Catálogo de aplicativos e versões", category: "Aplicativos e versões", tab: 3, icon: "package" },
+        { title: "Importação de pacotes e JARs", category: "Aplicativos e versões", tab: 3, icon: "folder" },
+        { title: "Descompilação e indexação local de JARs", category: "Aplicativos e versões", tab: 3, icon: "task" },
+        { title: "Comparação entre versões", category: "Aplicativos e versões", tab: 3, icon: "edit" },
+        { title: "Tema", category: "Aparência", tab: 4, icon: "settings" },
+        { title: "Esquema de cores e modo escuro", category: "Aparência", tab: 4, icon: "settings" },
+        { title: "Biblioteca de temas e temas customizados", category: "Aparência", tab: 4, icon: "settings" },
+        { title: "Importar e exportar temas (JSON)", category: "Aparência", tab: 4, icon: "folder" },
+        { title: "Contraste e nitidez visual", category: "Aparência", tab: 4, icon: "edit" },
+        { title: "Opacidade de vidro e superfícies translúcidas", category: "Aparência", tab: 4, icon: "settings" },
+        { title: "Animações de painéis e movimento", category: "Aparência", tab: 4, icon: "settings" },
+        { title: "Fonte e escala da interface", category: "Aparência", tab: 4, icon: "edit" },
+        { title: "Tipografia avançada (Interface, Prompt, Código, Terminal)", category: "Aparência", tab: 4, icon: "edit" },
+        { title: "Suavização de fontes e quebra de linha (Word wrap)", category: "Aparência", tab: 4, icon: "edit" },
+        { title: "Browser e acesso do agente", category: "Browser", tab: 5, icon: "browser" },
+        { title: "Projetos arquivados", category: "Projetos arquivados", tab: 6, icon: "archive" },
+        { title: "Skills e ferramentas", category: "Skills", tab: 7, icon: "settings" }
     ]
     readonly property var filteredSettings: settingsSearchItems.filter(function(item) {
         var query = root.settingsSearch.trim().toLocaleLowerCase()

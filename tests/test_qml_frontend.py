@@ -526,6 +526,18 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsScroll"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraSeniorProfileCard"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeAnalysisCard"))
+
+            settings_page.setProperty("tabIndex", 3)
+            for _attempt in range(40):
+                self.application.processEvents()
+                if window.findChild(QObject, "appsSettingsPage") is not None:
+                    break
+                QTest.qWait(10)
+            self.assertIsNotNone(window.findChild(QObject, "appsSettingsPage"))
+            self.assertIsNotNone(window.findChild(QObject, "appsCatalogView"))
+            self.assertIsNotNone(window.findChild(QObject, "appsImportCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryPicker"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarScopePicker"))
@@ -685,8 +697,13 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIsNotNone(quick_document)
                 document = quick_document.textDocument()
 
+                table_body = find_qml_item(content_item, "tableBody")
+                self.assertIsNotNone(table_body)
+                self.assertTrue(table_body.property("selectByMouse"))
                 tables = []
-                stack = [document.rootFrame()]
+                table_quick_document = table_body.property("textDocument")
+                table_document = table_quick_document.textDocument()
+                stack = [table_document.rootFrame()]
                 while stack:
                     frame = stack.pop()
                     for child in frame.childFrames():
@@ -695,7 +712,7 @@ class QmlFrontendTest(unittest.TestCase):
                         stack.append(child)
                 self.assertEqual(len(tables), 1)
                 table_format = tables[0].format()
-                self.assertEqual(table_format.border(), 1)
+                self.assertEqual(table_format.border(), 0)
                 self.assertEqual(
                     table_format.borderBrush().color().name(), "#2c2c30"
                 )
@@ -707,7 +724,9 @@ class QmlFrontendTest(unittest.TestCase):
                     table_format.width().type(), QTextLength.PercentageLength
                 )
                 header_cell = tables[0].cellAt(0, 0).format().toTableCellFormat()
-                self.assertEqual(header_cell.background().color().name(), "#26262b")
+                self.assertFalse(header_cell.hasProperty(int(QTextFormat.BackgroundBrush)))
+                self.assertEqual(header_cell.bottomBorder(), 1)
+                self.assertEqual(header_cell.leftBorder(), 0)
 
                 quote_blocks = []
                 rule_blocks = []
@@ -1125,17 +1144,18 @@ class QmlFrontendTest(unittest.TestCase):
                 "resultados conflitantes",
                 bridge.codeAnalysisReleaseItems[0]["warning"],
             )
+            # A processing package alone is no longer an Ultra application context.
             bridge.setCodeAnalysisEnabled(True)
             bridge.setCodeAnalysisRelease("2026.08.29")
 
-            self.assertTrue(bridge.codeAnalysisEnabled)
+            self.assertFalse(bridge.codeAnalysisEnabled)
             self.assertEqual(bridge.codeAnalysisRelease, "2026.08.29")
             self.assertEqual(
                 str(preferences.value("research/code_analysis_enabled")).casefold(),
-                "true",
+                "false",
             )
             reopened = ChatBridge(settings, database, preferences)
-            self.assertTrue(reopened.codeAnalysisEnabled)
+            self.assertFalse(reopened.codeAnalysisEnabled)
             self.assertEqual(reopened.codeAnalysisRelease, "2026.08.29")
             self.assertEqual(
                 [item["releaseId"] for item in reopened.codeAnalysisReleaseItems],
@@ -1497,7 +1517,7 @@ class QmlFrontendTest(unittest.TestCase):
 
     def test_vr_ultra_release_import_explains_auto_detection_and_partial_packages(self):
         qml = (
-            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
         ).read_text(encoding="utf-8")
 
         self.assertIn("Automático: aplicação e versão do vr*.properties", qml)
@@ -1505,12 +1525,13 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("quantidades menores serão indexadas como release parcial", qml)
         self.assertIn("vrUltraCodeProcessingHardwareSummary", qml)
         self.assertIn("Modo paralelo automático", qml)
-        self.assertIn("Detectar e adicionar", qml)
+        self.assertIn("Preparar prévia", qml)
+        self.assertIn("chat.confirmApplicationImport()", qml)
         self.assertNotIn("releaseIdField.text.trim().length > 0", qml)
 
     def test_vr_ultra_release_removal_requires_confirmation(self):
         qml = (
-            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
         ).read_text(encoding="utf-8")
 
         self.assertIn('objectName: "vrUltraRemoveReleaseButton"', qml)
@@ -1520,7 +1541,7 @@ class QmlFrontendTest(unittest.TestCase):
 
     def test_vr_ultra_orphan_cleanup_requires_confirmation(self):
         qml = (
-            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
         ).read_text(encoding="utf-8")
 
         self.assertIn('objectName: "vrUltraCodeProcessingCapacity"', qml)
@@ -1534,18 +1555,18 @@ class QmlFrontendTest(unittest.TestCase):
         settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
             encoding="utf-8"
         )
-        ultra_qml = (
-            qml_root / "pages" / "VRUltraSettingsPage.qml"
+        apps_qml = (
+            qml_root / "pages" / "ApplicationsSettingsPage.qml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('objectName: "vrUltraSettingsLoader"', settings_qml)
-        self.assertIn("active: root.tabIndex === 2", settings_qml)
-        self.assertIn("root.vrUltraVisited", settings_qml)
+        self.assertIn('objectName: "appsSettingsLoader"', settings_qml)
+        self.assertIn("active: root.tabIndex === 3", settings_qml)
+        self.assertIn("root.appsVisited", settings_qml)
         self.assertIn("asynchronous: true", settings_qml)
-        self.assertIn("ProgressBar {", ultra_qml)
-        self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', ultra_qml)
-        self.assertIn("chat.codeProcessingCoveredJars", ultra_qml)
-        self.assertIn("running: chat.codeProcessingRunning", ultra_qml)
+        self.assertIn("ProgressBar {", apps_qml)
+        self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', apps_qml)
+        self.assertIn("chat.codeProcessingCoveredJars", apps_qml)
+        self.assertIn("enabled: chat.codeProcessingRunning", apps_qml)
 
     def test_background_state_properties_do_not_block_or_poll_the_ui_thread(self):
         with TemporaryDirectory() as temporary:
@@ -1657,7 +1678,7 @@ class QmlFrontendTest(unittest.TestCase):
                     break
 
             self.assertFalse(bridge.releaseSnapshotRunning)
-            self.assertEqual(bridge.codeAnalysisRelease, "r2")
+            self.assertEqual(bridge.codeAnalysisRelease, "r2", bridge.releaseSnapshotStatus)
             self.assertEqual(
                 [item["releaseId"] for item in bridge.codeAnalysisReleaseItems],
                 ["r2"],
@@ -3927,11 +3948,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(settings_results.property("visible"))
             self.assertGreater(settings_results.property("count"), 0)
             self.assertEqual(chat_bridge.search, "")
-            self.assertEqual(tab_bar.property("count"), 7)
+            self.assertEqual(tab_bar.property("count"), 8)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             self.assertTrue(settings_hub.activateSettingSearchResult(0))
             self.application.processEvents()
-            self.assertEqual(tab_bar.property("currentIndex"), 2)
+            self.assertEqual(tab_bar.property("currentIndex"), 3)
             settings_search.clear()
             self.application.processEvents()
             tab_bar.activate(0)

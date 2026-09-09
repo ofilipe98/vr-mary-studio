@@ -69,7 +69,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.leftMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
-                width: badgeLabel.implicitWidth + 14
+                width: Math.min(badgeLabel.implicitWidth + 14, Math.max(0, wrapButton.x - x - 8))
                 height: 18
                 radius: 4
                 color: "transparent"
@@ -77,6 +77,8 @@ Rectangle {
                 Text {
                     id: badgeLabel
                     anchors.centerIn: parent
+                    width: Math.max(0, parent.width - 14)
+                    elide: Text.ElideRight
                     text: root.language
                     color: frontend.themeId === "dark_orange" ? "#C9C9D3" : "#3F3F46"
                     font.family: Theme.fontFamily
@@ -99,7 +101,7 @@ Rectangle {
                 symbol: "↵"
                 foreground: checked
                     ? Theme.palette.text : Theme.palette.mutedText
-                ToolTip.visible: hovered
+                ToolTip.visible: hovered || activeFocus
                 ToolTip.text: checked ? "Não quebrar linhas" : "Quebrar linhas"
             }
 
@@ -116,7 +118,7 @@ Rectangle {
                 symbol: root.copied ? "✓" : ""
                 foreground: root.copied
                     ? Theme.palette.success : Theme.palette.mutedText
-                ToolTip.visible: hovered
+                ToolTip.visible: hovered || activeFocus
                 ToolTip.text: root.copied ? "Copiado" : "Copiar código"
                 onClicked: root.copyCode()
             }
@@ -146,8 +148,10 @@ Rectangle {
                 activeFocusOnPress: true
                 wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
                 color: Theme.palette.text
+                selectionColor: Theme.palette.selection
+                selectedTextColor: Theme.palette.text
                 font.family: Theme.monospaceFontFamily
-                font.pixelSize: Theme.monospaceFontSize(12)
+                font.pixelSize: Theme.monospaceFontSize(13)
             }
         }
     }

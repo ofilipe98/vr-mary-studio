@@ -60,7 +60,7 @@ def capture_read(event, root: Path, candidates, *, max_chars=24000):
 
 
 def _indexed_source(path, root, candidates):
-    """Allow additional indexed files only from the already selected releases."""
+    """Expand only artifacts already represented by trusted evidence."""
     seeds = [c for c in candidates if c.source == "code" and c.source_id]
     database = root / "indice" / "codigo" / "processing.sqlite"
     if not seeds or not database.is_file():
@@ -71,18 +71,22 @@ def _indexed_source(path, root, candidates):
         try:
             keys = [c.source_id for c in seeds]
             rows = connection.execute(
-                "SELECT source_key, qualified_name, output_reference, source_relative_path, source_sha256 "
-                "FROM code_sources WHERE release_id IN (SELECT release_id FROM code_sources WHERE source_key IN ("
-                + ",".join("?" for _ in keys) + ")) AND source_relative_path LIKE ?",
+                "SELECT s.source_key, s.qualified_name, s.output_reference, s.source_relative_path, "
+                "s.source_sha256, seed.source_key AS seed_key FROM code_sources s JOIN code_sources seed "
+                "ON s.release_id=seed.release_id AND s.release_hash=seed.release_hash "
+                "AND s.artifact_sha256=seed.artifact_sha256 AND s.jar_relative_path=seed.jar_relative_path "
+                "WHERE seed.source_key IN (" + ",".join("?" for _ in keys) + ") AND s.source_relative_path LIKE ?",
                 [*keys, "%" + path.name],
             ).fetchall()
             for row in rows:
                 candidate_path = (root / row["output_reference"] / row["source_relative_path"]).resolve()
                 if candidate_path == path:
-                    return replace(seeds[0], evidence_id="code:" + row["source_key"],
-                                   source_id=row["source_key"], title=row["qualified_name"],
+                    seed = next(c for c in seeds if c.source_id == row["seed_key"])
+                    context = seed.entities.get("application_context", ("",))[0]
+                    return replace(seed, evidence_id="code:" + context + ":" + row["source_key"],
+                                   source_id=row["source_key"], title=seed.title + " · " + row["qualified_name"],
                                    heading=row["qualified_name"], local_path=path.relative_to(root).as_posix(),
-                                   entities={"source_sha256": (row["source_sha256"],)}, excerpt="")
+                                   entities={**seed.entities, "source_sha256": (row["source_sha256"],)}, excerpt="")
         finally:
             connection.close()
     except (sqlite3.Error, OSError):

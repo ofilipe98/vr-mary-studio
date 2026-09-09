@@ -149,6 +149,7 @@ class ExecutionRunner:
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
+        application_contexts: list[dict[str, Any]] | None = None,
     ) -> ResearchFanoutPlan:
         """Construct the stage plans for researcher workers and synthesis."""
         available_providers = {
@@ -213,6 +214,7 @@ class ExecutionRunner:
                         "run_id": run_id,
                         "release_id": code_analysis_release,
                         "release_manifest_sha256": code_analysis_manifest_sha256,
+                        "application_contexts": application_contexts,
                     },
                 ).to_dict()
             )
@@ -284,6 +286,7 @@ class ExecutionRunner:
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
+        application_contexts: list[dict[str, Any]] | None = None,
         search_scope: str = "",
         request: str = "",
     ) -> ResearchFanoutResult:
@@ -330,6 +333,7 @@ class ExecutionRunner:
             code_analysis_enabled=code_analysis_enabled,
             code_analysis_release=code_analysis_release,
             code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+            application_contexts=application_contexts,
         )
 
         emit_event(
@@ -420,6 +424,7 @@ class ExecutionRunner:
                 "workspace": str(context.workspace.resolve()),
                 "release": code_analysis_release,
                 "manifest": code_analysis_manifest_sha256,
+                "application_contexts": application_contexts,
                 "scope": search_scope,
                 "permissions_and_sources": context.metadata.get("scope_signature", ""),
                 "permissions": context.metadata.get("permissions", {}),
@@ -653,6 +658,9 @@ class ExecutionRunner:
                 expected_release_hash = str(code_analysis_manifest_sha256 or "").strip()
                 if context.metadata.get("code_scope_error"):
                     raise ProviderError(context.metadata["code_scope_error"])
+                if application_contexts is not None:
+                    from ..code_context import validate_application_contexts
+                    validate_application_contexts(self.settings.root, application_contexts)
                 if expected_release_hash:
                     release_status = ErpReleaseCatalog(self.settings.root).status(code_analysis_release)
                     current_release_hash = str(release_status.get("release_manifest_sha256") or "")
@@ -668,25 +676,29 @@ class ExecutionRunner:
                         )
                 code_results: list[dict[str, Any]] = []
                 seen_code: set[str] = set()
-                for code_query in _code_scope_queries(scoped_text):
-                    for res in JavaCodeIndex(self.settings.root).search(
-                        code_query,
-                        release_id=code_analysis_release,
-                        limit=3,
-                    ):
-                        if (
-                            expected_release_hash
-                            and str(res.get("release_hash") or "") != expected_release_hash
+                scopes = application_contexts if application_contexts is not None else [None]
+                for app_context in scopes:
+                    scope_release = app_context["package_id"] if app_context else code_analysis_release
+                    scope_hash = app_context["manifest_sha256"] if app_context else expected_release_hash
+                    scoped_count = 0
+                    for code_query in _code_scope_queries(scoped_text):
+                        for res in JavaCodeIndex(self.settings.root).search(
+                            code_query, release_id=scope_release, limit=3,
+                            **({"artifacts": app_context["artifacts"], "manifest_hash": scope_hash} if app_context else {}),
                         ):
-                            continue
-                        key = str(res.get("source_key") or "")
-                        if key and key not in seen_code:
-                            seen_code.add(key)
-                            code_results.append(res)
-                        if len(code_results) >= 8:
+                            if scope_hash and str(res.get("release_hash") or "") != scope_hash:
+                                continue
+                            key = str(res.get("source_key") or "")
+                            identity = (app_context["context_id"] if app_context else "") + key
+                            if key and identity not in seen_code:
+                                seen_code.add(identity)
+                                res["application_context"] = app_context or {}
+                                code_results.append(res)
+                                scoped_count += 1
+                            if scoped_count >= 8:
+                                break
+                        if scoped_count >= 8:
                             break
-                    if len(code_results) >= 8:
-                        break
 
                 code_candidates: list[EvidenceCandidate] = []
                 code_claims: list[EvidenceClaim] = []
@@ -698,9 +710,11 @@ class ExecutionRunner:
                         and result.get("classpath_resolution") in {"unique", "resolved"}
                         else 0.45
                     )
-                    evidence_id = f"code:{str(result['source_key'])[:20]}"
+                    app_context = result.get("application_context", {})
+                    context_prefix = app_context.get("context_id", "")[:16]
+                    evidence_id = f"code:{context_prefix + ':' if context_prefix else ''}{str(result['source_key'])[:20]}"
                     title = (
-                        f"Código {result['release_id']} · {result['jar_relative_path']} · "
+                        f"{app_context.get('label', 'Código')} · {result['release_id']} · {result['jar_relative_path']} · "
                         f"{result['qualified_name']} · linhas {result['line_start']}-{result['line_end']}"
                     )
                     code_candidates.append(
@@ -720,8 +734,9 @@ class ExecutionRunner:
                             updated_at=str(result["indexed_at"]),
                             score=float(result["score"]),
                             confidence=code_confidence,
-                            entities={"source_sha256": (str(result.get("source_sha256") or ""),)}
-                            if result.get("source_sha256") else {},
+                            entities={"source_sha256": (str(result.get("source_sha256") or ""),),
+                                      "application_context": (app_context.get("context_id", ""),),
+                                      "application": (app_context.get("label", ""),)},
                         )
                     )
                     code_claims.append(
@@ -735,9 +750,13 @@ class ExecutionRunner:
                     )
 
                 from ..retrieval.code_relations import caller_evidence
-                related = caller_evidence(self.settings.root, _code_scope_queries(scoped_text),
-                    release_id=code_analysis_release, manifest_hash=expected_release_hash,
-                    max_seconds=min(.3, context.budget.time_remaining()))
+                related = []
+                for app_context in scopes:
+                    related.extend(caller_evidence(self.settings.root, _code_scope_queries(scoped_text),
+                        release_id=app_context["package_id"] if app_context else code_analysis_release,
+                        manifest_hash=app_context["manifest_sha256"] if app_context else expected_release_hash,
+                        **({"application_context": app_context} if app_context else {}),
+                        max_seconds=min(.3, context.budget.time_remaining())))
                 for related_candidate in related:
                     code_candidates.append(related_candidate)
                     code_claims.append(EvidenceClaim(
@@ -778,6 +797,9 @@ Schema/KB/Wiki e apontar comportamento relevante à solicitação.
 Fonte permitida: apenas as evidências de código abaixo, da release
 {code_analysis_release}, manifesto {expected_release_hash or "não informado"},
 execução {run_id}. Não pesquise arquivos nem amplie o escopo.
+Contextos exatos: {json.dumps(application_contexts, ensure_ascii=False) if application_contexts is not None else code_analysis_release}.
+Cada evidência pertence ao aplicativo, versão, variante e origem indicados.
+Não misture comportamentos entre contextos. Bibliotecas são dependências daquela origem.
 Limites: não presuma ordem de classpath; diferencie fato, inferência e hipótese;
 sinalize lacunas ou contradições. Cite somente evidence_ids fornecidos.
 
@@ -844,6 +866,8 @@ Retorne somente JSON:
                             + ("Análise do modelo indisponível; usando trechos recuperados.",),
                         )
 
+                if application_contexts is not None:
+                    validate_application_contexts(self.settings.root, application_contexts)
                 ordered.append(ModuleResearch(module="Código", report=code_report))
                 synthesis_bundle = replace(
                     bundle,

@@ -20,14 +20,14 @@ Column {
         for (var i = 0; i < incoming.length; ++i) {
             if (incoming[i].kind === "source") citations.push(incoming[i])
             else prose.push({kind: incoming[i].kind, body: incoming[i].content,
-                language: incoming[i].language || "text"})
+                language: incoming[i].language || "text", columns: Number(incoming[i].columns || 0)})
         }
         while (blocks.count > prose.length) blocks.remove(blocks.count - 1)
         for (var j = 0; j < prose.length; ++j) {
             if (j >= blocks.count) blocks.append(prose[j])
             else {
                 var old = blocks.get(j), next = prose[j]
-                if (old.kind !== next.kind || old.body !== next.body || old.language !== next.language)
+                if (old.kind !== next.kind || old.body !== next.body || old.language !== next.language || old.columns !== next.columns)
                     blocks.set(j, next)
             }
         }
@@ -43,10 +43,19 @@ Column {
             required property string kind
             required property string body
             required property string language
+            required property int columns
             width: root.width
-            sourceComponent: kind === "code" ? codeComponent : proseComponent
+            sourceComponent: kind === "code" ? codeComponent : kind === "table" ? tableComponent : proseComponent
             Component { id: proseComponent; VrMarkdownContent { markdown: block.body } }
             Component { id: codeComponent; VrCodeBlock { code: block.body; language: block.language } }
+            Component {
+                id: tableComponent
+                VrTableBlock {
+                    markdown: block.body
+                    columns: block.columns
+                    onLayoutChanging: root.layoutChanging()
+                }
+            }
         }
     }
     VrSources { width: root.width; sources: root.sources }

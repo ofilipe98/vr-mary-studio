@@ -123,7 +123,9 @@ def test_settings_lazy_tabs_and_archived_rows_follow_theme(tmp_path):
                 app.processEvents()
                 assert loader.property('item') is item
             studio.refreshArchived('')
-            page.setProperty('tabIndex', 5)
+            tabs = window.findChild(QObject, 'settingsTabBar').property('model')
+            labels = tabs.toVariant() if hasattr(tabs, 'toVariant') else tabs
+            page.setProperty('tabIndex', labels.index('Projetos arquivados'))
             QTest.qWait(100)
             rows = find_items(window.contentItem(), 'archivedConversationRow')
             assert len(rows) == 2

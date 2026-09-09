@@ -408,10 +408,13 @@ class ChatOrchestrator:
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
+        application_contexts: list[dict[str, Any]] | None = None,
         response_mode: str = "auto",
         resume_run_id: str = "",
         grant_budget: bool = False,
     ) -> None:
+        if application_contexts is not None:
+            application_contexts = json.loads(json.dumps(application_contexts))
         conversation = self.database.get_conversation(conversation_id)
         if not conversation:
             raise KeyError(conversation_id)
@@ -728,6 +731,7 @@ class ChatOrchestrator:
                             fanout_modules,
                             code_analysis_enabled=explicit_code_analysis,
                             code_analysis_release=code_analysis_release,
+                            application_contexts=application_contexts,
                             code_analysis_manifest_sha256=(
                                 code_analysis_manifest_sha256
                             ),
@@ -984,6 +988,7 @@ class ChatOrchestrator:
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
+        application_contexts: list[dict[str, Any]] | None = None,
         search_scope: str = "",
         resume_run_id: str = "",
         grant_budget: bool = False,
@@ -994,7 +999,13 @@ class ChatOrchestrator:
         code_scope_error = ""
         if code_analysis_enabled:
             try:
-                release_status = ErpReleaseCatalog(self.settings.root).status(code_analysis_release, full_hash=True)
+                if application_contexts is not None:
+                    from .code_context import freeze_application_contexts
+                    application_contexts = freeze_application_contexts(self.settings.root, application_contexts)
+                    code_analysis_release = ""
+                    code_analysis_manifest_sha256 = ""
+                release_status = (ErpReleaseCatalog(self.settings.root).status(code_analysis_release, full_hash=True)
+                                  if application_contexts is None else {"release_id": "", "release_manifest_sha256": ""})
                 code_analysis_release = str(release_status["release_id"])
                 actual_manifest = str(release_status["release_manifest_sha256"])
                 if code_analysis_manifest_sha256 and actual_manifest != code_analysis_manifest_sha256:
@@ -1018,6 +1029,7 @@ class ChatOrchestrator:
             permissions={"approval_profile": options.approval_profile, "tools": list(options.mcp_tools)},
             code_analysis_enabled=code_analysis_enabled, code_analysis_release=code_analysis_release,
             code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+            application_contexts=application_contexts,
             code_scope_error=code_scope_error,
             model={"provider": conversation["provider"], "model": conversation["model"]},
         )
@@ -1037,7 +1049,7 @@ class ChatOrchestrator:
                 saved = json.loads(previous_run["result_json"] or "{}")
                 old_context = json.loads(previous_run["context_json"])
                 compatible = all(old_context.get(k) == context.metadata.get(k) for k in (
-                    "scope_signature", "permissions", "model", "code_analysis_release", "code_analysis_manifest_sha256"))
+                    "scope_signature", "permissions", "model", "code_analysis_release", "code_analysis_manifest_sha256", "application_contexts", "code_scope_error"))
                 if saved.get("publication_text") and compatible:
                     self.research_repository.claim_resume(run_id, conversation_id, execution_id=context.owner_message_id or 0)
                     self.research_repository.set_context(run_id, context.metadata, context.owner_message_id or 0)
@@ -1054,9 +1066,13 @@ class ChatOrchestrator:
                 code_analysis_enabled=code_analysis_enabled,
                 code_analysis_release=code_analysis_release,
                 code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                application_contexts=application_contexts,
                 search_scope=search_scope,
             )
             self._raise_if_cancelled(conversation_id)
+            if code_analysis_enabled and application_contexts is not None and not code_scope_error:
+                from .code_context import validate_application_contexts
+                validate_application_contexts(self.settings.root, application_contexts)
             if self._pending_user_messages.get(conversation_id) != context.owner_message_id:
                 raise OrchestrationCancelled("O turno foi substituído.")
             self._pending_evidence_bundles[conversation_id] = result.synthesis_bundle
@@ -1360,7 +1376,7 @@ class ChatOrchestrator:
             nonlocal latest_token_usage
             if done.is_set() or self._pending_user_messages.get(conversation_id) != execution_owner:
                 return
-            if event.kind == "tool_event":
+            if event.kind == "tool_event" and agent_id != "vr_fanout_codigo":
                 from .evidence_reads import capture_read
                 with self._agent_run_lock:
                     registry = self._research_evidence.get(run_id)

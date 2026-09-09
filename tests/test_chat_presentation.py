@@ -118,6 +118,41 @@ def test_streaming_preserves_blocks_scroll_copy_and_theme(tmp_path):
             wrap_button.setProperty("checked", True)
             QTest.qWait(100)
             assert viewport.property("contentWidth") == viewport.width()
+            table_markdown = "| Área | Responsabilidade |\n| --- | --- |\n| VR Ultra | **Análise**, fontes e código |"
+            markdown += "\n\n" + table_markdown
+            chat.messages.update_last(content=markdown, displayContent=markdown)
+            window.setWidth(390)
+            QTest.qWait(180)
+            table = find_items(window.contentItem(), "tableBlock")[0]
+            table_body = find_items(window.contentItem(), "tableBody")[0]
+            table_body.selectAll()
+            assert "Análise" in table_body.property("selectedText")
+            table.copyTable("markdown")
+            assert app.clipboard().text() == table_markdown
+            table.copyTable("csv")
+            assert '"Análise, fontes e código"' in app.clipboard().text()
+            table.copyTable("tsv")
+            assert "VR Ultra\tAnálise, fontes e código" in app.clipboard().text()
+            find_items(window.contentItem(), "tableExpandButton")[0].click()
+            QTest.qWait(100)
+            table_viewport = find_items(window.contentItem(), "tableViewport")[0]
+            assert table_viewport.property("contentWidth") > table_viewport.width()
+            timeline.setProperty("followTail", False)
+            timeline.setProperty("contentY", 0)
+            markdown += "\n| Aplicativos | Catálogo e versões |"
+            chat.messages.update_last(content=markdown, displayContent=markdown)
+            QTest.qWait(180)
+            assert find_items(window.contentItem(), "tableBlock")[0] is table
+            assert table.property("expanded")
+            assert abs(timeline.property("contentY")) < 1
+            assert len(find_items(window.contentItem(), "tableRowRule")) == 3
+            find_items(window.contentItem(), "tableExpandButton")[0].click()
+            frontend.setUiScale("150")
+            QTest.qWait(150)
+            assert table_viewport.width() <= timeline.width()
+            edges = [item.y() for item in find_items(window.contentItem(), "tableRowRule")]
+            assert edges == sorted(edges)
+            assert edges[-1] <= table_viewport.height()
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:

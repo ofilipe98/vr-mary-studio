@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 from urllib.parse import urlparse
 
@@ -67,35 +69,172 @@ class CodeSyntaxHighlighter(QSyntaxHighlighter):
         self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:  # noqa: N802 - Qt API
+        # Plain-text prompts and unknown languages should stay neutral.
+        if self.language not in {
+            "python", "py", "sql", "postgres", "postgresql", "plsql", "json",
+            "javascript", "js", "typescript", "ts", "jsx", "tsx", "java",
+            "c", "cpp", "c++", "csharp", "cs", "go", "rust", "rs", "qml",
+            "bash", "sh", "shell", "powershell", "ps1", "yaml", "yml",
+        }:
+            return
         sql = self.language in {"sql", "postgres", "postgresql", "plsql"}
         keywords = self._SQL_KEYWORDS if sql else self._GENERAL_KEYWORDS
-        keyword_re = re.compile(
-            r"\b(?:" + "|".join(sorted(keywords, key=len, reverse=True)) + r")\b",
+        comment_pattern = (
+            r"--.*$" if sql else r"#.*$" if self.language in {
+                "python", "py", "bash", "sh", "shell", "powershell", "ps1", "yaml", "yml"
+            } else r"(?!)" if self.language == "json" else r"//.*$"
+        )
+        token_re = re.compile(
+            r"(?P<string>'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")"
+            + r"|(?P<comment>" + comment_pattern + r")"
+            + r"|(?P<number>\b(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?)\b)"
+            + r"|(?P<keyword>\b(?:" + "|".join(sorted(keywords, key=len, reverse=True)) + r")\b)",
             re.IGNORECASE if sql else 0,
         )
-        for match in keyword_re.finditer(text):
+        # Match in source order: a URL or # inside a string is not a comment.
+        formats = {"string": self.string_format, "comment": self.comment_format,
+                   "number": self.number_format, "keyword": self.keyword_format}
+        # Qt indexes UTF-16 units. Build offsets once, including emoji, instead
+        # of re-encoding a growing prefix for every token of a long code line.
+        offsets = [0]
+        for character in text:
+            offsets.append(offsets[-1] + (2 if ord(character) > 0xFFFF else 1))
+        for match in token_re.finditer(text):
             self.setFormat(
-                match.start(), match.end() - match.start(), self.keyword_format
-            )
-        for match in re.finditer(r"\b(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?)\b", text):
-            self.setFormat(
-                match.start(), match.end() - match.start(), self.number_format
-            )
-        for match in re.finditer(r"(?:'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")", text):
-            self.setFormat(
-                match.start(), match.end() - match.start(), self.string_format
-            )
-        comment_pattern = r"--.*$" if sql else r"#.*$|//.*$"
-        for match in re.finditer(comment_pattern, text):
-            self.setFormat(
-                match.start(), match.end() - match.start(), self.comment_format
+                offsets[match.start()],
+                offsets[match.end()] - offsets[match.start()],
+                formats[match.lastgroup],
             )
 
 
-FENCE_RE = re.compile(
-    r"^```([^\n`]*)\n(.*?)(?:\n```[ \t]*(?=\n|$)|\Z)",
-    re.MULTILINE | re.DOTALL,
-)
+FENCE_START_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
+
+
+def fenced_blocks(markdown: str) -> list[dict[str, str]]:
+    """Share fence boundaries between display normalization and QML cards."""
+    lines = markdown.splitlines(keepends=True)
+    blocks = []
+    pending = []
+    index = 0
+    while index < len(lines):
+        opening = FENCE_START_RE.fullmatch(lines[index].rstrip("\r\n"))
+        if opening is None or (opening[1][0] == "`" and "`" in opening[2]):
+            pending.append(lines[index])
+            index += 1
+            continue
+        if pending:
+            blocks.append({"kind": "text", "content": "".join(pending)})
+        pending = []
+        start = index
+        fence, info = opening.groups()
+        closing = re.compile(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*$")
+        index += 1
+        body = []
+        while index < len(lines) and not closing.fullmatch(lines[index].rstrip("\r\n")):
+            body.append(lines[index])
+            index += 1
+        content = "".join(body)
+        if index < len(lines):
+            content = content.removesuffix("\n").removesuffix("\r")
+            index += 1
+        blocks.append({"kind": "code", "content": content,
+                       "language": info.strip().split()[0].casefold() if info.strip() else "text",
+                       "raw": "".join(lines[start:index])})
+    if pending:
+        blocks.append({"kind": "text", "content": "".join(pending)})
+    return blocks
+
+
+def _table_cells(line: str) -> list[str]:
+    """Split GFM cells without treating an escaped pipe as a separator."""
+    cells = []
+    start = 0
+    escaped = False
+    line = line.strip()
+    for index, character in enumerate(line):
+        if character == "|" and not escaped:
+            cells.append(line[start:index])
+            start = index + 1
+        escaped = character == "\\" and not escaped
+    cells.append(line[start:])
+    if cells and not cells[0]:
+        cells.pop(0)
+    if cells and not cells[-1]:
+        cells.pop()
+    return [cell.strip() for cell in cells]
+
+
+def _prose_tables(text: str) -> list[dict[str, str]]:
+    lines = text.splitlines(keepends=True)
+    blocks = []
+    pending = []
+    index = 0
+    while index < len(lines):
+        header = lines[index]
+        delimiter = _table_cells(lines[index + 1]) if index + 1 < len(lines) else []
+        is_table = (
+            "|" in header and not header.startswith(("    ", "\t"))
+            and not re.match(r" {0,3}(?:>|#|[-+*]\s|\d+[.)]\s)", header)
+            and delimiter and len(delimiter) == len(_table_cells(header))
+            and all(re.fullmatch(r":?-+:?", cell) for cell in delimiter)
+        )
+        if not is_table:
+            pending.append(header)
+            index += 1
+            continue
+        if "".join(pending).strip():
+            blocks.append({"kind": "text", "content": "".join(pending).strip()})
+        pending = []
+        end = index + 2
+        while end < len(lines) and "|" in lines[end] and lines[end].strip():
+            if lines[end].startswith(("    ", "\t", ">", "#")):
+                break
+            end += 1
+        blocks.append({"kind": "table", "content": "".join(lines[index:end]).strip(),
+                       "columns": str(len(delimiter))})
+        index = end
+    if "".join(pending).strip():
+        blocks.append({"kind": "text", "content": "".join(pending).strip()})
+    return blocks
+
+
+def table_clipboard_text(markdown: str, format_name: str) -> str:
+    """Export rendered cell text using Qt's existing Markdown parser."""
+    if format_name == "markdown":
+        return markdown
+    document = QTextDocument()
+    document.setMarkdown(markdown)
+    table = next((frame for frame in document.rootFrame().childFrames()
+                  if isinstance(frame, QTextTable)), None)
+    if table is None:
+        return markdown
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, delimiter="\t" if format_name == "tsv" else ",")
+    for row in range(table.rows()):
+        values = []
+        for column in range(table.columns()):
+            cell = table.cellAt(row, column)
+            cursor = cell.firstCursorPosition()
+            cursor.setPosition(cell.lastPosition(), QTextCursor.KeepAnchor)
+            values.append(cursor.selectedText().replace("\u2029", "\n"))
+        writer.writerow(values)
+    return output.getvalue()
+
+
+def table_row_edges(document: QTextDocument) -> list[float]:
+    """Qt Quick omits per-cell borders; expose actual layout edges for QML."""
+    layout = document.documentLayout()
+    edges = []
+    for table in document.rootFrame().childFrames():
+        if not isinstance(table, QTextTable):
+            continue
+        for row in range(table.rows()):
+            bottom = max(
+                layout.blockBoundingRect(table.cellAt(row, column).lastCursorPosition().block()).bottom()
+                for column in range(table.columns())
+            )
+            edges.append(bottom + table.format().cellPadding())
+    return edges
 
 
 def presentation_blocks(markdown: str) -> list[dict[str, str]]:
@@ -125,7 +264,7 @@ def presentation_blocks(markdown: str) -> list[dict[str, str]]:
                     pending = pending[:heading_index]
                     heading_index = None
                 if ''.join(pending).strip():
-                    blocks.append({'kind': 'text', 'content': ''.join(pending).strip()})
+                    blocks.extend(_prose_tables(''.join(pending)))
                 pending = []
                 blocks.append({'kind': 'source', 'content': title, 'url': url,
                                'origin': urlparse(url).netloc})
@@ -135,15 +274,13 @@ def presentation_blocks(markdown: str) -> list[dict[str, str]]:
                     heading_index = None
                 pending.append(line)
         if ''.join(pending).strip():
-            blocks.append({'kind': 'text', 'content': ''.join(pending).strip()})
+            blocks.extend(_prose_tables(''.join(pending)))
 
-    cursor = 0
-    for match in FENCE_RE.finditer(markdown):
-        prose(markdown[cursor:match.start()])
-        blocks.append({'kind': 'code', 'content': match.group(2),
-                       'language': match.group(1).strip() or 'text'})
-        cursor = match.end()
-    prose(markdown[cursor:])
+    for block in fenced_blocks(markdown):
+        if block["kind"] == "code":
+            blocks.append({key: value for key, value in block.items() if key != "raw"})
+        else:
+            prose(block["content"])
     return blocks
 
 _LANGUAGE_BADGES = {
@@ -186,20 +323,19 @@ def _style_document_tables(
     dark: bool,
     ranges: list[tuple[int, int]],
 ) -> None:
-    """Give imported tables the bordered T3 look and record their extents."""
+    """Style tables with quiet horizontal rules and record their extents."""
     palette = brand_palette("dark_orange" if dark else "light")
     border = QColor(palette["chatBorder"])
-    header_background = QColor(palette["inlineCodeSurface"])
 
     def visit(frame) -> None:
         for child in frame.childFrames():
             if isinstance(child, QTextTable):
                 table_format = child.format()
-                table_format.setBorder(1)
+                table_format.setBorder(0)
                 table_format.setBorderBrush(border)
                 table_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
-                table_format.setBorderCollapse(True)
-                table_format.setCellPadding(6)
+                table_format.setBorderCollapse(False)
+                table_format.setCellPadding(8)
                 table_format.setCellSpacing(0)
                 table_format.setWidth(QTextLength(QTextLength.PercentageLength, 100))
                 child.setFormat(table_format)
@@ -216,14 +352,14 @@ def _style_document_tables(
                             start.setPosition(start.block().next().position(), QTextCursor.KeepAnchor)
                             start.removeSelectedText()
                         cell_format = QTextTableCellFormat(cell.format())
-                        cell_format.setLeftBorder(1)
-                        cell_format.setRightBorder(1)
-                        cell_format.setTopBorder(1)
+                        cell_format.setLeftBorder(0)
+                        cell_format.setRightBorder(0)
+                        cell_format.setTopBorder(0)
                         cell_format.setBottomBorder(1)
                         cell_format.setBorderBrush(border)
                         cell_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
+                        cell_format.clearBackground()
                         if row == 0:
-                            cell_format.setBackground(header_background)
                             header_cursor = cell.firstCursorPosition()
                             header_cursor.setPosition(cell.lastPosition(), QTextCursor.KeepAnchor)
                             header_style = QTextCharFormat()
@@ -310,6 +446,7 @@ def _apply_message_document_style(
         in_table = inside_table(block.position())
         next_block = block.next()
         if in_table:
+            block_format.clearBackground()
             block_format.setLineHeight(base_px * 1.5, QTextBlockFormat.FixedHeight.value)
             block_format.setTopMargin(0)
             block_format.setBottomMargin(0)
