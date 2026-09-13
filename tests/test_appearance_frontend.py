@@ -149,17 +149,29 @@ def test_theme_duplicate_editor_escape_and_import_feedback(appearance):
     assert not modal.property("visible")
 
 
-def test_hardware_acceleration_toggle(appearance):
-    frontend, window = appearance
-    assert frontend.hardwareAcceleration is False
-    switch = item(window, "hardwareAccelerationSwitch")
-    reveal(window, switch)
-    click(window, "hardwareAccelerationSwitch")
-    assert frontend.hardwareAcceleration is True
-    assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("true", "1")
-    click(window, "hardwareAccelerationSwitch")
-    assert frontend.hardwareAcceleration is False
-    assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("false", "0")
+def test_hardware_acceleration_toggle(tmp_path):
+    with appearance_window(tmp_path, full=True) as (frontend, engine, window, warnings):
+        window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
+        QTest.qWait(100)
+        switch = item(window, "hardwareAccelerationSwitch")
+        assert frontend.hardwareAcceleration is False
+
+        scroll = window.findChild(QObject, "appearanceSettingsScroll")
+        flick = scroll.property("contentItem")
+        flick.setProperty("contentY", flick.property("contentHeight") - flick.height())
+        QTest.qWait(50)
+
+        point = switch.mapToScene(QPointF(switch.width() / 2, switch.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.qWait(60)
+        assert frontend.hardwareAcceleration is True
+        assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("true", "1")
+
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.qWait(60)
+        assert frontend.hardwareAcceleration is False
+        assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("false", "0")
+        assert not warnings
 
 
 def test_preferences_reach_brand_header_and_actual_composer(tmp_path):

@@ -4458,6 +4458,13 @@ class QmlFrontendTest(unittest.TestCase):
 
         args3, _ = parser.parse_known_args([])
         self.assertFalse(args3.software_rendering)
+        self.assertFalse(args3.hardware_acceleration)
+
+        args4, _ = parser.parse_known_args(["--hardware-acceleration"])
+        self.assertTrue(args4.hardware_acceleration)
+
+        args5, _ = parser.parse_known_args(["--enable-gpu"])
+        self.assertTrue(args5.hardware_acceleration)
 
     def test_install_crash_handlers_captures_unhandled_exception(self):
         import sys
