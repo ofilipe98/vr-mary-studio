@@ -580,6 +580,22 @@ class ChatOrchestrator:
                     + "\n\nSOLICITAÇÃO ATUAL:\n"
                 )
                 orchestration_request = history_prefix + text
+            elif existing_messages and not resume_run_id:
+                recent_turns: list[str] = []
+                for msg in existing_messages[-4:]:
+                    msg_dict = dict(msg)
+                    role = str(msg_dict.get("role") or "").lower()
+                    role_label = "USUÁRIO" if role == "user" else "ASSISTENTE"
+                    msg_content = str(msg_dict.get("content") or "").strip()
+                    if msg_content:
+                        recent_turns.append(f"{role_label}:\n{msg_content[:2000]}")
+                if recent_turns:
+                    orchestration_request = (
+                        "CONTEXTO RECENTE DA CONVERSA:\n\n"
+                        + "\n\n".join(recent_turns)
+                        + "\n\nSOLICITAÇÃO ATUAL:\n"
+                        + text
+                    )
 
             handle_turn_event = self._guarded_turn_callback(conversation_id)
 
@@ -1150,12 +1166,22 @@ class ChatOrchestrator:
                 raise OrchestrationCancelled("O turno foi substituído.")
             self._pending_evidence_bundles[conversation_id] = result.synthesis_bundle
             draft = result.draft
-            if result.violations or draft is None or draft.answer_status == "insufficient_evidence":
+            if result.violations or draft is None:
                 self._pending_used_evidence_ids[conversation_id] = ()
                 final_text = build_controlled_failure(FinalResponseValidation(
                     verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
                     missing_sections=tuple(v.detail for v in result.violations[:3]) or result.merged.gaps[:3],
                 ))
+            elif draft.answer_status == "insufficient_evidence":
+                if draft.answer_markdown and draft.answer_markdown.strip():
+                    self._pending_used_evidence_ids[conversation_id] = tuple(draft.used_evidence_ids)
+                    final_text = render_sources(draft.answer_markdown, draft.used_evidence_ids, result.synthesis_bundle)
+                else:
+                    self._pending_used_evidence_ids[conversation_id] = ()
+                    final_text = build_controlled_failure(FinalResponseValidation(
+                        verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
+                        missing_sections=result.merged.gaps[:3],
+                    ))
             else:
                 self._pending_used_evidence_ids[conversation_id] = tuple(draft.used_evidence_ids)
                 final_text = render_sources(draft.answer_markdown, draft.used_evidence_ids, result.synthesis_bundle)
@@ -1274,6 +1300,13 @@ class ChatOrchestrator:
                 technical_level="low_to_medium",
                 detail_level="normal",
             )
+        dyn_cands = getattr(self, "_turn_dynamic_candidates", {}).get(conversation_id, [])
+        if bundle is not None and dyn_cands:
+            existing_ids = {c.evidence_id for c in bundle.candidates}
+            additional = [dc for dc in dyn_cands if dc.evidence_id not in existing_ids]
+            if additional:
+                bundle = replace(bundle, candidates=tuple(bundle.candidates) + tuple(additional))
+                self._pending_evidence_bundles[conversation_id] = bundle
         def finish(answer):
             if bundle and bundle.candidates and re.search(
                 r"\b(bug|defeito|falha|corrupção|vazamento|divergência|inevitável|nunca|sempre)\b",
@@ -1313,10 +1346,15 @@ class ChatOrchestrator:
                         raise
                     except Exception:
                         LOGGER.exception("Falha ao corrigir as conclusões operacionais")
-                    return build_controlled_failure(FinalResponseValidation(
-                        verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
-                        missing_sections=tuple(item.detail for item in issues),
+                    has_code_or_trace = bool(re.search(
+                        r"(\.java|\.class|\.xml|\.sql|Exception|Error|DAO|Controller|Service|\bat\s+[\w\.\$]+\()",
+                        answer,
                     ))
+                    if not has_code_or_trace:
+                        return build_controlled_failure(FinalResponseValidation(
+                            verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
+                            missing_sections=tuple(item.detail for item in issues),
+                        ))
             return answer
 
         try:

@@ -824,6 +824,9 @@ Retorne somente JSON:
         # Reserve call slot for synthesis (is_synthesis=True)
         synthesis_timeout = acquire_call(is_synthesis=True)
         try:
+            # Disable interactive tools in synthesis so the model consolidates evidence
+            # without triggering unauthorized background tool calls that get rejected.
+            synthesis_options = replace(options, mcp_tools=(), dynamic_tools=())
             raw_draft, started_payload, completed_payload = self.run_buffered_main_turn(
                 cid,
                 native_id,
@@ -832,7 +835,7 @@ Retorne somente JSON:
                 synthesis_effort,
                 context.workspace,
                 synthesis_prompt,
-                options,
+                synthesis_options,
                 skills,
                 timeout_seconds=synthesis_timeout,
             )
