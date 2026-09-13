@@ -94,8 +94,14 @@ class AntigravityProvider(AgentProvider):
             client.start()
             client.request("authenticate", {"methodId": "oauth-personal"})
             params = {"cwd": str(workspace.resolve()), "mcpServers": []}
+            if self.knowledge_root:
+                from ..knowledge_access import mcp_command
+                command = mcp_command(Path(self.knowledge_root), options.knowledge_context_path)
+                params["mcpServers"] = [{
+                    "name": "vr-mary-studio", "command": command[0],
+                    "args": command[1:], "env": [],
+                }]
             if options.vr_enabled and self.knowledge_root:
-                params["additionalDirectories"] = [str(Path(self.knowledge_root).resolve())]
                 message += "\n\nUse as fontes já fornecidas. Se uma ferramenta for recusada, não repita a operação; responda com o contexto disponível e indique lacunas."
             if native_id:
                 session_id = native_id[len(NATIVE_PREFIX):]
@@ -195,7 +201,16 @@ class AntigravityProvider(AgentProvider):
         if state["cancelled"] or options.collaboration_mode == "plan" or options.approval_profile == "research_readonly":
             client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
             return
+        preset = approval_preset(options.approval_profile)
         choices = params.get("options", [])
+        if preset.sandbox == "danger-full-access":
+            preferred = "allow_always"
+            selected = next((x for x in choices if x.get("kind") == preferred), None)
+            if not selected:
+                selected = next((x for x in choices if x.get("kind") == "allow_once"), None)
+            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
+            client.respond(request_id, {"outcome": outcome})
+            return
         key = uuid.uuid4().hex
         with self._lock:
             self._approvals[key] = (client, request_id, choices)

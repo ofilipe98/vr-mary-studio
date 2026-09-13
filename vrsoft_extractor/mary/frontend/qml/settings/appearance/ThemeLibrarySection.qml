@@ -1,126 +1,87 @@
 import QtQuick
 import QtQuick.Layouts
 import "../../theme"
-import "../../components"
-
 ColumnLayout {
     id: root
-    spacing: Theme.spaceMd
-    Layout.fillWidth: true
-
-    // Section Header
-    RowLayout {
-        Layout.fillWidth: true
-        spacing: Theme.spaceMd
-
-        ColumnLayout {
-            spacing: Theme.spaceXs
-            Layout.fillWidth: true
-
-            Text {
-                text: "Biblioteca de temas"
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.subtitleSize
-                font.weight: Font.DemiBold
-                color: Theme.palette.text
-            }
-
-            Text {
-                text: "Explore temas integrados ou crie paletas customizadas com exportação e importação flexível."
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.captionSize
-                color: Theme.palette.mutedText
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-        }
-
-        RowLayout {
-            spacing: Theme.spaceSm
-
-            VrButton {
-                text: "Importar tema"
-                variant: "secondary"
-                onClicked: importModal.open()
-            }
-
-            VrButton {
-                text: "Criar novo tema"
-                variant: "primary"
-                onClicked: {
-                    editorModal.isEditing = false
-                    editorModal.targetThemeId = ""
-                    editorModal.themeName = "Meu Tema Customizado"
-                    editorModal.themeAppearance = frontend.resolvedAppearance
-                    editorModal.colorBackground = frontend.palette.background || "#141416"
-                    editorModal.colorSurface = frontend.palette.surface || "#1e1e21"
-                    editorModal.colorBorder = frontend.palette.border || "#2c2c30"
-                    editorModal.colorAccent = frontend.palette.brandOrange || "#ff7a00"
-                    editorModal.colorText = frontend.palette.text || "#f3f3f3"
-                    editorModal.colorMuted = frontend.palette.mutedText || "#9da1a8"
-                    editorModal.open()
-                }
-            }
-        }
+    spacing: 12
+    function themeById(id) {
+        var themes = frontend.availableThemes
+        for(var i=0;i<themes.length;i++) if(themes[i].id===id) return themes[i]
+        return null
     }
-
-    // Grid of Theme Cards
+    readonly property var cards: {
+        var result=[]
+        var ids=["t3-code","t3-chat","grove","ocean","ember","iris"]
+        for(var i=0;i<ids.length;i++) {
+            var dark=themeById(ids[i]), light=themeById(ids[i]+"-light")
+            result.push({id:ids[i], name:dark.name, light:light, dark:dark, builtIn:true})
+        }
+        var themes=frontend.availableThemes
+        for(var j=0;j<themes.length;j++) {
+            var t=themes[j]
+            if(!t.builtIn) {
+                var group = t.collection ? result.find(card => card.id === t.collection) : null
+                if(group) group[t.appearance] = t
+                else result.push({id:t.collection || t.id,name:t.name,light:t.appearance==="light"?t:null,dark:t.appearance==="dark"?t:null,builtIn:false})
+            }
+        }
+        return result
+    }
+    function editTheme(theme, editing) {
+        editorModal.isEditing=editing
+        editorModal.targetThemeId=editing?theme.id:""
+        editorModal.themeName=editing?theme.name:"Tema personalizado"
+        editorModal.themeAppearance=theme.appearance
+        var p=theme.palette
+        editorModal.colorBackground=p.background
+        editorModal.colorSurface=p.surface
+        editorModal.colorBorder=p.border
+        editorModal.colorAccent=p.accessibleOrange
+        editorModal.colorText=p.text
+        editorModal.colorMuted=p.mutedText
+        editorModal.open()
+    }
+    function duplicateTheme(theme) {
+        var id=frontend.duplicateTheme(theme.id,theme.name+" (cópia)")
+        var copy=themeById(id)
+        if(copy) editTheme(copy,true)
+    }
+    function deleteCard(card) {
+        var ids = [card.light, card.dark].filter(t => t !== null).map(t => t.id)
+        for(var i=0;i<ids.length;i++) frontend.deleteCustomTheme(ids[i])
+    }
     GridLayout {
-        id: themesGrid
-        columns: root.width > 700 ? 2 : 1
-        rowSpacing: Theme.spaceMd
-        columnSpacing: Theme.spaceMd
+        Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+        columns: root.width < 460 * Theme.textScale ? 2 : 3
+        columnSpacing: 8; rowSpacing: 10
+        Text { text: "Temas"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); Layout.fillWidth: true; Layout.columnSpan: parent.columns === 2 ? 2 : 1 }
+        AppearanceAction {
+            objectName: "createThemeButton"; text: "Criar tema"; iconKind: "paintbrush"
+            onClicked: root.editTheme({appearance:frontend.resolvedAppearance,palette:frontend.palette},false)
+        }
+        AppearanceAction { objectName: "importThemeButton"; text: "Adicionar tema"; iconKind: "plus"; onClicked: importModal.open() }
+    }
+    GridLayout {
         Layout.fillWidth: true
-
+        columns: root.width >= 700 ? 3 : root.width >= 460 ? 2 : 1
+        rowSpacing: 8; columnSpacing: 8
         Repeater {
-            model: frontend.availableThemes
-
+            model: root.cards
             ThemeCard {
-                themeData: modelData
-
-                onEditRequested: {
-                    editorModal.isEditing = true
-                    editorModal.targetThemeId = modelData.id
-                    editorModal.themeName = modelData.name
-                    editorModal.themeAppearance = modelData.appearance
-                    editorModal.colorBackground = modelData.palette ? modelData.palette.background : "#141416"
-                    editorModal.colorSurface = modelData.palette ? modelData.palette.surface : "#1e1e21"
-                    editorModal.colorBorder = modelData.palette ? modelData.palette.border : "#2c2c30"
-                    editorModal.colorAccent = modelData.palette ? (modelData.palette.brandOrange || modelData.palette.accessibleOrange) : "#ff7a00"
-                    editorModal.colorText = modelData.palette ? modelData.palette.text : "#f3f3f3"
-                    editorModal.colorMuted = modelData.palette ? modelData.palette.mutedText : "#9da1a8"
-                    editorModal.open()
-                }
-
-                onDuplicateRequested: {
-                    frontend.duplicateTheme(modelData.id, (modelData.name || "Tema") + " (Cópia)")
-                }
-
+                required property var modelData
+                themeId: modelData.id; themeName: modelData.name
+                lightTheme: modelData.light; darkTheme: modelData.dark; isBuiltIn: modelData.builtIn
+                onEditRequested: root.editTheme(activeTheme,true)
+                onDuplicateRequested: root.duplicateTheme(activeTheme)
                 onExportRequested: {
-                    var jsonStr = frontend.exportThemeJson(modelData.id)
-                    exportModal.jsonContent = jsonStr
-                    exportModal.themeName = modelData.name
-                    exportModal.open()
+                    exportModal.jsonContent=frontend.exportThemeJson(activeTheme.id)
+                    exportModal.themeName=modelData.name; exportModal.open()
                 }
-
-                onDeleteRequested: {
-                    frontend.deleteCustomTheme(modelData.id)
-                }
+                onDeleteRequested: root.deleteCard(modelData)
             }
         }
     }
-
-    // Modals
-    ThemeEditorModal {
-        id: editorModal
-    }
-
-    ThemeImportModal {
-        id: importModal
-    }
-
-    // Export Modal (Viewer / Copy)
-    ThemeExportModal {
-        id: exportModal
-    }
+    ThemeEditorModal { id: editorModal; objectName: "themeEditorModal" }
+    ThemeImportModal { id: importModal; objectName: "themeImportModal" }
+    ThemeExportModal { id: exportModal; objectName: "themeExportModal" }
 }

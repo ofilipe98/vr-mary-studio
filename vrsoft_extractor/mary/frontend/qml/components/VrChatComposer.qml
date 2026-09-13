@@ -20,7 +20,7 @@ Rectangle {
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: composerInput.height + (hasChips ? 88 : 54)
     radius: Theme.composerRadius
-    color: Theme.palette.chatComposer
+    color: Qt.alpha(Theme.palette.chatComposer, Theme.glassOpacity)
     border.width: 1
     border.color: composerCard.page.composerDropActive
         ? Theme.palette.brandOrange
@@ -49,6 +49,8 @@ Rectangle {
     VrTextArea {
         id: composerInput
         objectName: "chatComposerInput"
+        font.family: Theme.promptFontFamily
+        font.pixelSize: Theme.promptFontSize(14)
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top

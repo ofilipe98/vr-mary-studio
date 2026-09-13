@@ -76,11 +76,13 @@ class MaryDatabase(KnowledgeRepositoryMixin, ConversationsRepositoryMixin):
             )
             for column, definition in (
                 ("service_tier", "TEXT NOT NULL DEFAULT ''"),
-                ("approval_profile", "TEXT NOT NULL DEFAULT 'auto_edits'"),
+                ("approval_profile", "TEXT NOT NULL DEFAULT 'full_access'"),
                 ("collaboration_mode", "TEXT NOT NULL DEFAULT 'default'"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("vr_mode", "TEXT NOT NULL DEFAULT ''"),
                 ("native_id_vr", "TEXT NOT NULL DEFAULT ''"),
+                ("native_tools_id", "TEXT NOT NULL DEFAULT ''"),
+                ("native_tools_id_vr", "TEXT NOT NULL DEFAULT ''"),
                 ("context_used_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("context_window_tokens", "INTEGER NOT NULL DEFAULT 0"),
                 ("total_processed_tokens", "INTEGER NOT NULL DEFAULT 0"),
@@ -122,6 +124,19 @@ class MaryDatabase(KnowledgeRepositoryMixin, ConversationsRepositoryMixin):
                 self._ensure_column(
                     connection,
                     "classification_reviews",
+                    column,
+                    definition,
+                )
+            for column, definition in (
+                ("source", "TEXT NOT NULL DEFAULT 'document'"),
+                ("evidence_id", "TEXT NOT NULL DEFAULT ''"),
+                ("provenance", "TEXT NOT NULL DEFAULT ''"),
+                ("metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("title", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                self._ensure_column(
+                    connection,
+                    "source_citations",
                     column,
                     definition,
                 )

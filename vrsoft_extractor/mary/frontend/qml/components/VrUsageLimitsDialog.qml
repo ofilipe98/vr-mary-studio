@@ -69,7 +69,7 @@ Dialog {
     readonly property bool compact: availableWidth < 480 * Theme.textScale
 
     background: Rectangle {
-        color: Theme.palette.chatSidebar
+        color: Qt.alpha(Theme.palette.chatSidebar, Theme.glassOpacity)
         border.width: 1
         border.color: Theme.palette.chatBorder
         radius: Theme.radiusCard

@@ -321,11 +321,20 @@ Rectangle {
     }
 
     function headerText() {
-        if (root.running) return (root.statusText && root.statusText !== "Pronto" ? root.statusText : "Trabalhando") + " · " + root.elapsedLabel
+        if (root.running) {
+            var st = (root.statusText && root.statusText !== "Pronto" ? root.statusText : "Trabalhando")
+            var count = root.items ? root.items.length : 0
+            return st + (count > 0 ? " (" + count + ")" : "") + " · " + root.elapsedLabel
+        }
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
-        return "Trabalhou por " + root.elapsedLabel
+        var base = "Trabalhou por " + root.elapsedLabel
+        if (root.items && root.items.length > 0) {
+            var count = root.items.length
+            return base + " (" + count + (count === 1 ? " ação" : " ações") + ")"
+        }
+        return base
     }
 
     function itemIcon(item) {

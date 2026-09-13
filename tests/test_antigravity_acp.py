@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import threading
 from pathlib import Path
@@ -90,6 +91,21 @@ def test_catalog_comes_from_acp_session(fake_runtime):
     assert [m for m, _ in FakeClient.instances[0].calls] == ["authenticate", "session/new"]
 
 
+def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, tmp_path):
+    from vrsoft_extractor.mary.models import ConversationOptions
+    provider = AntigravityProvider(tmp_path)
+    done = threading.Event()
+    provider.send_message("conversation", "", "gemini-test", "auto", tmp_path, "Hello",
+        lambda e: done.set() if e.kind == "turn_completed" else None,
+        ConversationOptions(knowledge_context_path="frozen-turn.json"))
+    assert done.wait(2)
+    params = next(params for method, params in FakeClient.instances[0].calls if method == "session/new")
+    server = params["mcpServers"][0]
+    assert server["env"] == []
+    assert server["args"][-2:] == ["--context", "frozen-turn.json"]
+    assert "additionalDirectories" not in params
+
+
 def test_legacy_session_is_not_silently_resumed_with_another_account():
     with pytest.raises(ProviderError, match="histórico"):
         AntigravityProvider().resume_conversation("chat", "cli-session", "default", "auto", Path.cwd())
@@ -156,6 +172,40 @@ def test_supervised_request_reaches_ui_and_approval_returns_selected_option():
     assert events[0].kind == "approval_requested"
     provider.approve_action(events[0].payload["request_id"], True)
     client.respond.assert_called_once_with(7, {"outcome": {"outcome": "selected", "optionId": "approve"}})
+
+
+def test_full_access_is_the_default_for_all_chats(tmp_path):
+    from vrsoft_extractor.mary.config import MarySettings
+    from vrsoft_extractor.mary.db import MaryDatabase
+    from vrsoft_extractor.mary.frontend.chat import ChatBridge
+    from PySide6.QtCore import QSettings
+
+    opts = ConversationOptions()
+    assert opts.approval_profile == "full_access"
+
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "old")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+
+    cid = db.create_conversation("Default test", "antigravity", "model", settings.work_dir)
+    row = db.get_conversation(cid)
+    assert row["approval_profile"] == "full_access"
+
+    bridge = ChatBridge(settings, db, prefs)
+    assert bridge._approval_profile == "full_access"
+    assert bridge.approvalItems[bridge.approvalIndex]["value"] == "full_access"
+
+
+def test_full_access_auto_approves_tools_without_ui_prompt():
+    provider = AntigravityProvider()
+    client, events = MagicMock(), []
+    state = {"client": client, "cancelled": False, "options": ConversationOptions(approval_profile="full_access")}
+    provider._permission("chat", state, events.append, 9, "session/request_permission", {
+        "toolCall": {"title": "Execute command"},
+        "options": [{"kind": "allow_once", "optionId": "opt_once"}, {"kind": "allow_always", "optionId": "opt_always"}],
+    })
+    assert len(events) == 0, "No approval_requested event should be emitted in full_access"
+    client.respond.assert_called_once_with(9, {"outcome": {"outcome": "selected", "optionId": "opt_always"}})
 
 
 def test_plan_never_auto_approves_tools():
@@ -242,3 +292,53 @@ for line in sys.stdin:
         client.close()
     assert client.process.poll() is not None
     assert all(not reader.is_alive() for reader in client._readers)
+
+
+def test_acp_client_isolates_and_cleans_temporary_directory(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    other_client_dir = tmp_path / "vr-acp-other-client"
+    other_client_dir.mkdir()
+    (other_client_dir / "runtime.dll").write_text("active runtime")
+    script = tmp_path / "acp_fixture.py"
+    script.write_text('''import sys, json
+for line in sys.stdin:
+    req = json.loads(line)
+    if req['method'] == 'initialize':
+        res = {'protocolVersion': 1, 'agentCapabilities': {}, 'authMethods': [{'id': 'oauth-personal'}]}
+    else:
+        res = {}
+    sys.stdout.write(json.dumps({'jsonrpc': '2.0', 'id': req['id'], 'result': res}) + '\\n')
+    sys.stdout.flush()
+''', encoding="utf-8")
+    popen = subprocess.Popen
+    captured_env = {}
+    def launch(command, **kwargs):
+        captured_env.update(kwargs.get("env", {}))
+        return popen([sys.executable, "-u", str(script)], **kwargs)
+
+    client = AcpClient(command="fixture")
+    with patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
+        client.start()
+        temp_dir = client._temp_dir
+        assert temp_dir is not None
+        assert os.path.isdir(temp_dir)
+        assert captured_env.get("TEMP") == temp_dir
+        assert captured_env.get("TMP") == temp_dir
+        # Create a dummy file inside to simulate PyInstaller _MEI extraction
+        dummy_mei = Path(temp_dir) / "_MEI12345"
+        dummy_mei.mkdir()
+        (dummy_mei / "test.dll").write_text("content")
+
+        client.close()
+
+    assert not os.path.exists(temp_dir), "Temporary directory must be cleaned up on close()"
+    assert (other_client_dir / "runtime.dll").read_text() == "active runtime"
+
+
+def test_failed_acp_launch_cleans_owned_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    client = AcpClient(command=str(tmp_path / "missing-program.exe"))
+    with pytest.raises(OSError):
+        client.start()
+    assert list(tmp_path.glob("vr-acp-*")) == []

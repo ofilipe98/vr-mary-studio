@@ -55,3 +55,15 @@ public class Parcial {
     assert parsed.qualified_name == "br.vr.Parcial"
     assert any(item["simple_name"] == "executar" for item in parsed.symbols)
     assert parsed.syntax_error_count > 0
+
+
+def test_generic_inheritance_and_same_line_overloads_are_preserved() -> None:
+    parsed = parse_java_ast(
+        "class X implements Mapper<String, java.util.List<Integer>>, Runnable { "
+        "void save(int x) {} void save(String x) {} }"
+    )
+    assert [r["target"] for r in parsed.relations if r["kind"] == "implements"] == [
+        "Mapper<String, java.util.List<Integer>>", "Runnable",
+    ]
+    methods = [s["signature"] for s in parsed.symbols if s["kind"] == "method"]
+    assert methods == ["void save(int x)", "void save(String x)"]

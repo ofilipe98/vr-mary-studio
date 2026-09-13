@@ -325,6 +325,9 @@ class ErpCodeCoverage:
             "coverage": after,
         }
 
+    def cancel(self, release_id: str, *, relative_jars: Iterable[str] = ()) -> list[str]:
+        return self.store.cancel_active_plans(release_id, relative_jars=relative_jars)
+
     def _validate_capacity(
         self,
         release_id: str,

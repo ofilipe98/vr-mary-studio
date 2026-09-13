@@ -230,9 +230,9 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            VrButton { text: "← Anterior"; enabled: studio.knowledgeCanPrevious; onClicked: studio.previousKnowledgePage() }
+            VrButton { text: "Anterior"; enabled: studio.knowledgeCanPrevious; onClicked: studio.previousKnowledgePage() }
             Text { text: studio.knowledgePageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-            VrButton { text: "Próxima →"; enabled: studio.knowledgeCanNext; onClicked: studio.nextKnowledgePage() }
+            VrButton { text: "Próxima"; enabled: studio.knowledgeCanNext; onClicked: studio.nextKnowledgePage() }
             Item { Layout.fillWidth: true }
             Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
         }

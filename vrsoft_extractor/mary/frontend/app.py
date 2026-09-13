@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import sys
+import threading
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, QTimer, QUrl, Qt
@@ -17,7 +20,7 @@ from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import load_vr_settings
 from ..workspace import initialize_workspace
-from .bridge import FrontendBridge
+from .bridge import FrontendBridge, _stored_bool
 from .chat import ChatBridge
 from .studio import StudioBridge
 
@@ -36,11 +39,56 @@ def apply_ui_scale_environment(preferences: QSettings) -> None:
     del preferences
 
 
+def install_crash_handlers(logs_dir: Path | None = None) -> None:
+    """Capture unhandled Python exceptions gracefully and persist tracebacks."""
+
+    def _handle_exception(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        print(f"[{timestamp}] UNHANDLED EXCEPTION:\n{error_msg}", file=sys.stderr)
+
+        if logs_dir is not None:
+            try:
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                crash_log = logs_dir / "crash.log"
+                with crash_log.open("a", encoding="utf-8") as f:
+                    f.write(f"=== Crash at {timestamp} ===\n{error_msg}\n\n")
+            except Exception:
+                pass
+
+    sys.excepthook = _handle_exception
+
+    def _handle_thread_exception(args: threading.ExceptHookArgs):
+        if issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        _handle_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+    threading.excepthook = _handle_thread_exception
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--project-dir", default=None)
     parser.add_argument("--vr-root", "--mary-root", dest="vr_root", default=None)
     parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument(
+        "--software-rendering",
+        "--gpu-safe-mode",
+        dest="software_rendering",
+        action="store_true",
+        help="Disable hardware GPU acceleration and use software rendering to prevent driver freezes/crashes.",
+    )
+    parser.add_argument(
+        "--hardware-acceleration",
+        "--enable-gpu",
+        dest="hardware_acceleration",
+        action="store_true",
+        help="Enable hardware GPU acceleration.",
+    )
     parser.add_argument("--screenshot", default="")
     parser.add_argument("--screenshot-page", default="Chat VR")
     parser.add_argument("--screenshot-theme", choices=("light", "dark_orange"), default="")
@@ -91,7 +139,7 @@ def _apply_application_font(app: QApplication) -> None:
     """Match the current Studio typography and stabilize headless rendering."""
 
     if sys.platform == "win32":
-        for candidate in (
+        for candidate in (\
             Path(r"C:\Windows\Fonts\segoeui.ttf"),
             Path(r"C:\Windows\Fonts\segoeuib.ttf"),
             Path(r"C:\Windows\Fonts\seguisym.ttf"),
@@ -107,8 +155,43 @@ def main(argv: list[str] | None = None) -> int:
     if args.screenshot_scale:
         os.environ["QT_SCALE_FACTOR"] = args.screenshot_scale
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
-    if args.screenshot or args.smoke_test:
-        os.environ.setdefault("QSG_RHI_BACKEND", "software")
+
+    preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
+    apply_ui_scale_environment(preferences)
+
+    # Determine if software rendering (CPU) should be used:
+    # 1. Explicit CLI / mode flags (--software-rendering, --smoke-test, --screenshot) force software.
+    # 2. Environment variables (VR_STUDIO_SOFTWARE_RENDERING=1, VR_STUDIO_GPU_SAFE=1) force software.
+    # 3. CLI flag --hardware-acceleration or VR_STUDIO_HARDWARE_ACCELERATION=1 forces hardware GPU.
+    # 4. Saved preference appearance/hardware_acceleration (defaults to False: software rendering).
+    use_software = False
+    if (
+        args.screenshot
+        or args.smoke_test
+        or args.software_rendering
+        or os.environ.get("VR_STUDIO_SOFTWARE_RENDERING") == "1"
+        or os.environ.get("VR_STUDIO_GPU_SAFE") == "1"
+    ):
+        use_software = True
+    elif (
+        getattr(args, "hardware_acceleration", False)
+        or os.environ.get("VR_STUDIO_HARDWARE_ACCELERATION") == "1"
+    ):
+        use_software = False
+    else:
+        hw_accel = _stored_bool(
+            preferences.value("appearance/hardware_acceleration", False), False
+        )
+        use_software = not hw_accel
+
+    if use_software:
+        os.environ["QSG_RHI_BACKEND"] = "software"
+        os.environ["QT_QUICK_BACKEND"] = "software"
+        existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+        if "--disable-gpu" not in existing_flags:
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                f"{existing_flags} --disable-gpu".strip()
+            )
 
     # The browser surface is loaded lazily, but Qt WebEngine must register its
     # QML types before QApplication exists. Builds without WebEngine keep the
@@ -119,9 +202,6 @@ def main(argv: list[str] | None = None) -> int:
         QtWebEngineQuick.initialize()
     except ImportError:  # pragma: no cover - optional Qt module in minimal builds
         pass
-
-    preferences = QSettings(ORGANIZATION_NAME, SETTINGS_APP_NAME)
-    apply_ui_scale_environment(preferences)
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -142,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"Configuração inválida: {exc}", file=sys.stderr)
         return 1
+
+    install_crash_handlers(settings.logs_dir)
 
     bridge = FrontendBridge(
         settings,
@@ -268,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
         return app.exec()
     finally:
         shutdown()
+        del engine
+        app.processEvents()
 
 
 if __name__ == "__main__":

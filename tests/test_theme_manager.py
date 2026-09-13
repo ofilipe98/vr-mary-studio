@@ -48,6 +48,7 @@ def test_theme_manager_defaults():
         assert mgr.panelAnimationDurationMs == 0
         assert mgr.typographyAdvanced is False
         assert mgr.wordWrap is True
+        assert mgr.environmentIdentification == "pill"
 
 
 def test_independent_theme_and_mode_switching():
@@ -98,6 +99,11 @@ def test_contrast_and_glass_opacity():
         mgr.resetSetting("glass")
         assert mgr.glassOpacity == 80
 
+        mgr.setEnvironmentIdentification("artwork")
+        assert mgr.environmentIdentification == "artwork"
+        mgr.resetSetting("environment")
+        assert mgr.environmentIdentification == "pill"
+
 
 def test_panel_animations_and_reduce_motion():
     with TemporaryDirectory() as tmp:
@@ -128,6 +134,7 @@ def test_typography_settings_and_reset():
         assert mgr.codeFontFamily == "Cascadia Code"
         assert mgr.codeFontSize == 14
 
+        mgr.setTypographyAdvanced(True)
         mgr.setPromptTypography("Consolas", 15)
         assert mgr.promptFontFamily == "Consolas"
         assert mgr.promptFontSize == 15
@@ -135,6 +142,41 @@ def test_typography_settings_and_reset():
         mgr.resetSetting("interfaceFont")
         assert mgr.interfaceFontFamily == "Segoe UI"
         assert mgr.interfaceFontSize == 14
+
+
+def test_simple_typography_inherits_and_advanced_restores_preferences(tmp_path):
+    mgr = _create_manager(tmp_path)
+    mgr.setInterfaceTypography("Arial", 16)
+    mgr.setCodeTypography("Consolas", 15)
+    mgr.setPromptTypography("Courier New", 18)
+    mgr.setTerminalTypography("Courier New", 17)
+    assert (mgr.promptFontFamily, mgr.promptFontSize) == ("Arial", 16)
+    assert (mgr.terminalFontFamily, mgr.terminalFontSize) == ("Consolas", 15)
+    mgr.setTypographyAdvanced(True)
+    assert (mgr.promptFontFamily, mgr.promptFontSize) == ("Courier New", 18)
+    assert (mgr.terminalFontFamily, mgr.terminalFontSize) == ("Courier New", 17)
+    mgr.setTypographyAdvanced(False)
+    restored = _create_manager(tmp_path)
+    assert (restored.terminalFontFamily, restored.terminalFontSize) == ("Consolas", 15)
+    restored.setTypographyAdvanced(True)
+    assert (restored.terminalFontFamily, restored.terminalFontSize) == ("Courier New", 17)
+
+
+def test_theme_lookup_and_duplication_are_independent_of_active_mode(tmp_path):
+    mgr = _create_manager(tmp_path)
+    mgr.setAppearanceMode("light")
+    mgr.setThemeForAppearance("dark", "ocean")
+    mgr.setThemeForAppearance("light", "iris")
+    assert mgr.themeDark == "ocean"
+    assert mgr.themeLight == "iris-light"
+    duplicate = mgr.duplicateTheme("ocean", "Ocean copy")
+    exported = json.loads(mgr.exportThemeJson(duplicate))
+    assert exported["appearance"] == "dark"
+    assert exported["palette"]["background"] == BUILTIN_THEMES["ocean"].palette["background"]
+    mgr.setThemeForAppearance("light", duplicate)
+    assert mgr.themeLight == "iris-light"
+    mgr.setAppearanceMode("dark")
+    assert mgr.activeThemeId == "ocean"
 
 
 def test_custom_themes_crud_and_fallback():
@@ -235,3 +277,44 @@ def test_defensive_theme_import_malformed_and_invalid():
     # Invalid hex colors in T3 format
     success, msg, theme = parse_imported_theme(json.dumps({"canvas": "not-a-color", "accent": "#123"}))
     assert success is False
+
+
+def test_t3_oklch_variants_import_atomically_and_persist(tmp_path):
+    mgr = _create_manager(tmp_path)
+    payload = {
+        "label": "Paired theme", "appearance": "light",
+        "colors": {"canvas": "oklch(1 0 0)", "accent": "#3155aa", "text": "#111111"},
+        "variants": {"dark": {"canvas": "oklch(0 0 0)", "accent": "#99bbff", "text": "#eeeeee"}},
+    }
+    result = mgr.importThemeJson(json.dumps(payload))
+    assert result["success"]
+    themes = [t for t in mgr.availableThemes if not t["builtIn"]]
+    assert len(themes) == 2
+    assert {t["appearance"] for t in themes} == {"light", "dark"}
+    assert {t["collection"] for t in themes} == {result["themeId"]}
+    assert {t["palette"]["background"] for t in themes} == {"#ffffff", "#000000"}
+    restored = _create_manager(tmp_path)
+    assert [t for t in restored.availableThemes if not t["builtIn"]] == themes
+    exported = mgr.exportThemeJson(result["themeId"])
+    assert mgr.importThemeJson(exported)["success"]
+    assert len([t for t in mgr.availableThemes if not t["builtIn"]]) == 4
+    count = len(mgr.availableThemes)
+    payload["variants"]["dark"]["canvas"] = "oklch(invalid)"
+    assert not mgr.importThemeJson(json.dumps(payload))["success"]
+    assert len(mgr.availableThemes) == count
+
+
+def test_native_partial_palette_is_completed_and_edit_updates_swatch(tmp_path):
+    mgr = _create_manager(tmp_path)
+    result = mgr.importThemeJson(json.dumps({
+        "name": "Small theme", "appearance": "dark",
+        "palette": {"background": "#112233", "text": "#eeeeee", "brandOrange": "#4477bb"},
+    }))
+    assert result["success"]
+    mgr.setAppearanceMode("dark")
+    mgr.setThemeForAppearance("dark", result["themeId"])
+    assert mgr.palette["background"] == "#112233"
+    assert {"chatComposer", "chatControl", "headingText", "border"} <= mgr.palette.keys()
+    assert mgr.updateCustomTheme(result["themeId"], "Edited", "dark", {"background": "#223344"})
+    assert mgr.palette["previewCanvas"] == "#223344"
+    assert not mgr.importThemeJson(json.dumps({"palette": {"text": "broken"}}))["success"]

@@ -373,7 +373,7 @@ def _parse_opencode_models(output: str) -> list[dict[str, Any]]:
 
 
 def _opencode_environment(
-    approval_profile: str, knowledge_root: Path | None = None
+    approval_profile: str, knowledge_root: Path | None = None, knowledge_context_path: str = ""
 ) -> dict[str, str]:
     environment = os.environ.copy()
     config: dict[str, Any] = {}
@@ -413,6 +413,13 @@ def _opencode_environment(
                     f"*{search_script}*": "allow",
                 }
             permission["webfetch"] = "allow"
+    if knowledge_root:
+        from ..knowledge_access import mcp_command
+        config.setdefault("mcp", {})["vr-mary-studio"] = {
+            "type": "local", "command": mcp_command(knowledge_root, knowledge_context_path),
+        }
+        if isinstance(permission, dict):
+            permission["vr-mary-studio_*"] = "allow"
     config["permission"] = permission
     environment["OPENCODE_CONFIG_CONTENT"] = json.dumps(config, ensure_ascii=False)
     return environment

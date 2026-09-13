@@ -7,8 +7,8 @@ rem Os executaveis de entry point da virtualenv guardam o caminho absoluto
 rem usado na criacao do ambiente e quebram quando a pasta do projeto e movida.
 rem Chamar o modulo pelo Python atual mantem este inicializador relocavel.
 if exist "%VR_STUDIO_PYTHON%" (
-  "%VR_STUDIO_PYTHON%" -m vrsoft_extractor.mary.frontend.app --project-dir "%CD%"
-  exit /b
+  "%VR_STUDIO_PYTHON%" -m vrsoft_extractor.mary.frontend.app --project-dir "%CD%" %*
+  exit /b %ERRORLEVEL%
 )
 
 where py >nul 2>nul
@@ -18,6 +18,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-py -m vrsoft_extractor.mary.frontend.app --project-dir "%CD%"
+py -m vrsoft_extractor.mary.frontend.app --project-dir "%CD%" %*
 exit /b %ERRORLEVEL%
 endlocal

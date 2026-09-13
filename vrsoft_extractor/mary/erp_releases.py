@@ -13,6 +13,7 @@ import re
 import shutil
 import sqlite3
 import time
+import warnings
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,13 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 from .apps_catalog import AppsCatalogStore
+
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"Overlapped entries: .*possible zip bomb.*",
+    category=UserWarning,
+)
 
 
 MANIFEST_SCHEMA_VERSION = 1
@@ -691,6 +699,7 @@ class ErpReleaseCatalog:
                     "origin": item["origin"],
                     "source_release_id": item["source_release_id"],
                     "package_source": self._portable_path(source),
+                    "source_relative_path": str(item["component"].get("source_relative_path") or ""),
                 }
         warnings = list(manifest.get("warnings") or [])
         warnings.extend(
@@ -828,8 +837,37 @@ class ErpReleaseCatalog:
         self.ensure_apps_catalog_synced()
         return self.apps_store.get_package(package_id)
 
-    def unlink_package(self, package_id: str) -> dict[str, Any]:
-        return self.apps_store.unlink_package(package_id)
+    def unlink_package(self, package_id: str, *, delete_data: bool = False) -> dict[str, Any]:
+        pkg_id = str(package_id or "").strip()
+        if not pkg_id or _safe_component(pkg_id) != pkg_id:
+            raise ErpReleaseError("Identificador de pacote inválido.")
+        if not self.apps_store.get_package(pkg_id):
+            raise ErpReleaseError(f"Pacote '{pkg_id}' não encontrado no catálogo.")
+        if delete_data:
+            targets = [
+                (self.paths.code_index / "releases", pkg_id),
+            ]
+            directories = []
+            for parent, name in targets:
+                target = (parent / name).resolve()
+                _require_child(target, parent.resolve())
+                directories.append(target)
+            self._purge_release_processing_data(pkg_id, preserve_occurrences=False)
+            for directory in directories:
+                if directory.is_dir():
+                    shutil.rmtree(directory)
+
+        result = self.apps_store.unlink_package(pkg_id, clean_orphaned_versions=True)
+        result["deleted_data"] = delete_data
+        return result
+
+    def rename_package(self, package_id: str, new_name: str) -> dict[str, Any]:
+        return self.apps_store.rename_package(package_id, new_name)
+
+    def delete_source_jars(self, package_id: str) -> dict[str, Any]:
+        selected = validate_release_id(package_id)
+        manifest = self.load_manifest(selected) if self.paths.manifest_for(selected).is_file() else None
+        return self.apps_store.delete_source_jars(selected, manifest=manifest)
 
     def override_version(
         self, app_id: str, current_version: str, manual_version: str, *, variant_id: str = ""
@@ -1184,7 +1222,12 @@ class ErpReleaseCatalog:
             jar_bytes = 0
             jar_hashes: set[str] = set()
             try:
-                with zipfile.ZipFile(jar_path) as archive:
+                with zipfile.ZipFile(jar_path) as archive, warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"Overlapped entries: .*possible zip bomb.*",
+                        category=UserWarning,
+                    )
                     for info in archive.infolist():
                         normalized = normalize_class_entry(info.filename)
                         if normalized is None:
@@ -1348,6 +1391,10 @@ class ErpReleaseCatalog:
     ) -> dict[str, int]:
         database_path = self.paths.code_index / "processing.sqlite"
         if not database_path.is_file():
+            directory = (self.paths.code_index / "decompilation" / release_id).resolve()
+            _require_child(directory, (self.paths.code_index / "decompilation").resolve())
+            if directory.is_dir():
+                shutil.rmtree(directory)
             return {
                 "removed_search_sources": 0,
                 "removed_processing_plans": 0,
@@ -1367,20 +1414,34 @@ class ErpReleaseCatalog:
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-            if "decompilation_plans" not in tables:
-                return {
-                    "removed_search_sources": 0,
-                    "removed_processing_plans": 0,
-                    "preserved_shared_decompilation_dirs": 0,
-                    "reclaimed_bytes": 0,
-                }
-            plan_ids = [
-                str(row["plan_id"])
-                for row in connection.execute(
-                    "SELECT plan_id FROM decompilation_plans WHERE release_id = ?",
-                    (release_id,),
+            if "decompilation_plans" in tables:
+                plan_ids = [
+                    str(row["plan_id"])
+                    for row in connection.execute(
+                        "SELECT plan_id FROM decompilation_plans WHERE release_id = ?",
+                        (release_id,),
+                    )
+                ]
+            # Validate every filesystem destination before committing any deletion.
+            decompilation_root = (self.paths.code_index / "decompilation").resolve()
+            for plan_id in set(plan_ids + [release_id]):
+                _require_child((decompilation_root / plan_id).resolve(), decompilation_root)
+            if "code_symbols" in tables:
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_code_symbols_source_id ON code_symbols(source_id)"
                 )
-            ]
+            if "code_relations" in tables:
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_code_relations_source_id ON code_relations(source_id)"
+                )
+            if "batch_members" in tables:
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_batch_members_occurrence ON batch_members(occurrence_id)"
+                )
+            if "class_occurrences" in tables:
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_occurrences_release_id ON class_occurrences(release_id)"
+                )
             connection.execute("BEGIN IMMEDIATE")
             if "code_sources" in tables:
                 removed_sources = int(
@@ -1389,6 +1450,16 @@ class ErpReleaseCatalog:
                         (release_id,),
                     ).fetchone()[0]
                 )
+                if "code_relations" in tables:
+                    connection.execute(
+                        "DELETE FROM code_relations WHERE source_id IN (SELECT id FROM code_sources WHERE release_id = ?)",
+                        (release_id,),
+                    )
+                if "code_symbols" in tables:
+                    connection.execute(
+                        "DELETE FROM code_symbols WHERE source_id IN (SELECT id FROM code_sources WHERE release_id = ?)",
+                        (release_id,),
+                    )
                 connection.execute(
                     "DELETE FROM code_sources WHERE release_id = ?", (release_id,)
                 )
@@ -1431,6 +1502,14 @@ class ErpReleaseCatalog:
                            WHERE output_reference != ''"""
                     )
                 ]
+            if "code_sources" in tables:
+                columns = {row["name"] for row in connection.execute("PRAGMA table_info(code_sources)")}
+                if "output_reference" in columns:
+                    remaining_references.extend(
+                        str(row[0]) for row in connection.execute(
+                            "SELECT DISTINCT output_reference FROM code_sources WHERE output_reference != ''"
+                        )
+                    )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -1441,13 +1520,17 @@ class ErpReleaseCatalog:
         reclaimed = 0
         preserved = 0
         decompilation_root = (self.paths.code_index / "decompilation").resolve()
-        for plan_id in plan_ids:
+        remaining_set = {
+            ref.replace("\\", "/").rstrip("/") for ref in remaining_references if ref
+        }
+        for plan_id in set(plan_ids + [release_id]):
             plan_dir = (decompilation_root / plan_id).resolve()
             _require_child(plan_dir, decompilation_root)
             relative = self._portable_path(plan_dir).replace("\\", "/").rstrip("/")
+            rel_prefix = relative + "/"
             shared = any(
-                reference.replace("\\", "/").startswith(relative + "/")
-                for reference in remaining_references
+                ref == relative or ref.startswith(rel_prefix)
+                for ref in remaining_set
             )
             if shared:
                 preserved += 1
@@ -1888,6 +1971,8 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _require_child(path: Path, parent: Path) -> None:
+    if path == parent:
+        raise ErpReleaseError("Destino calculado coincide com a raiz protegida.")
     try:
         path.relative_to(parent)
     except ValueError as exc:

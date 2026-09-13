@@ -15,8 +15,10 @@ Provides full parity with T3 Code's Settings -> Appearance architecture:
 
 from __future__ import annotations
 
+from pathlib import Path
 import json
 import logging
+import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -47,6 +49,7 @@ DEFAULT_CODE_FONT_SIZE = 13        # 10 to 18
 DEFAULT_TERMINAL_FONT_SIZE = 12    # 8 to 20
 DEFAULT_WORD_WRAP = True
 DEFAULT_FONT_SMOOTHING = True
+DEFAULT_ENVIRONMENT_IDENTIFICATION = "pill"
 
 
 def _clamp(val: int, min_v: int, max_v: int) -> int:
@@ -128,6 +131,7 @@ class ThemeDefinition:
     appearance: str  # "light" | "dark"
     built_in: bool = True
     palette: dict[str, str] = field(default_factory=dict)
+    collection: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,7 +140,70 @@ class ThemeDefinition:
             "appearance": self.appearance,
             "builtIn": self.built_in,
             "palette": self.palette,
+            "collection": self.collection,
         }
+
+
+def synthesize_palette_from_seed(canvas: str, accent: str, appearance: str) -> dict[str, str]:
+    """Synthesizes a complete semantic palette from canvas & accent colors."""
+    is_dark = appearance == "dark"
+    canvas_col = QColor(canvas)
+    accent_col = QColor(accent)
+
+    if is_dark:
+        surface_col = canvas_col.lighter(120)
+        raised_col = canvas_col.lighter(135)
+        border_col = canvas_col.lighter(145)
+        text_col = "#e2e8f0"
+        muted_col = "#71717a"
+        heading_col = "#f8fafc"
+    else:
+        surface_col = canvas_col.darker(108)
+        raised_col = canvas_col.darker(115)
+        border_col = canvas_col.darker(120)
+        text_col = "#18181b"
+        muted_col = "#71717a"
+        heading_col = "#09090b"
+
+    return {
+        "themeId": "custom",
+        "brandOrange": accent_col.name(),
+        "accessibleOrange": accent_col.name(),
+        "brandYellow": "#eab308",
+        "brandNavy": canvas_col.name(),
+        "navigationBackground": canvas_col.darker(110).name() if is_dark else surface_col.name(),
+        "background": canvas_col.name(),
+        "surface": surface_col.name(),
+        "surfaceRaised": raised_col.name(),
+        "chatBackground": canvas_col.name(),
+        "chatSidebar": surface_col.name(),
+        "chatComposer": surface_col.name() if is_dark else "#ffffff",
+        "chatControl": raised_col.name(),
+        "chatBorder": border_col.name(),
+        "chatDivider": surface_col.name(),
+        "messageSurface": surface_col.name(),
+        "codeSurface": canvas_col.darker(110).name() if is_dark else surface_col.name(),
+        "codeHeader": surface_col.name(),
+        "link": accent_col.name(),
+        "subtleText": muted_col,
+        "headingText": heading_col,
+        "inlineCodeSurface": raised_col.name(),
+        "quoteSurface": surface_col.name(),
+        "text": text_col,
+        "mutedText": muted_col,
+        "border": border_col.name(),
+        "hover": raised_col.name(),
+        "selection": raised_col.name(),
+        "accentSoft": surface_col.name(),
+        "focus": accent_col.name(),
+        "success": "#22c55e" if is_dark else "#16a34a",
+        "warning": "#eab308" if is_dark else "#ca8a04",
+        "danger": "#ef4444" if is_dark else "#dc2626",
+        "navText": heading_col,
+        "navMuted": muted_col,
+        "navHover": raised_col.name(),
+        "navDivider": border_col.name(),
+    }
 
 
 # ============================================================================
@@ -340,71 +407,84 @@ BUILTIN_THEMES: dict[str, ThemeDefinition] = {
     ),
 }
 
+# T3 Code palettes retain their semantic roles instead of approximating every
+# surface from two seed colors. The vendored source and license live with the data.
+_T3_ROLE_MAP = {
+    "background": "canvas", "surface": "surface", "surfaceRaised": "surfaceRaised",
+    "brandOrange": "messageAction", "accessibleOrange": "messageAction",
+    "brandYellow": "warning", "brandNavy": "chrome", "navigationBackground": "sidebar",
+    "chatBackground": "canvas", "chatSidebar": "sidebar", "chatComposer": "surface",
+    "chatControl": "toolbarControl", "chatBorder": "border", "chatDivider": "border",
+    "messageSurface": "messageSurface", "codeSurface": "codeBackground", "codeHeader": "surface",
+    "link": "messageAction", "subtleText": "textMuted", "headingText": "text",
+    "inlineCodeSurface": "accentSurface", "quoteSurface": "surface",
+    "text": "text", "mutedText": "textMuted", "border": "border", "hover": "toolbarControlHover",
+    "selection": "secondary", "accentSoft": "accentSurface", "focus": "focus",
+    "warning": "warning", "danger": "error", "navText": "sidebarForeground",
+    "navMuted": "sidebarMutedForeground", "navHover": "sidebarRowHover", "navDivider": "sidebarBorder",
+}
+_T3_THEME_DATA = json.loads((Path(__file__).parent / "data" / "t3_themes.json").read_text(encoding="utf-8"))["themes"]
+for _tid, _spec in _T3_THEME_DATA.items():
+    for _mode in ("light", "dark"):
+        _colors = _spec[_mode]
+        _palette = synthesize_palette_from_seed(_colors["canvas"], _colors["accent"], _mode)
+        _palette.update({target: _colors[source] for target, source in _T3_ROLE_MAP.items()})
+        _palette.update({"previewCanvas": _colors["canvas"], "previewAccent": _colors["accent"],
+                         "previewAction": _colors["messageAction"], "controlBorder": _colors["input"],
+                         "mutedSurface": _colors["muted"], "previewSidebar": _colors["sidebar"],
+                         "previewMessage": _colors["messageSurface"], "terminalBackground": _colors["terminalBackground"]})
+        if _tid == "t3-code":
+            # VR Code uses the Studio black/orange identity. Keep the persisted
+            # theme IDs compatible with preferences and existing exports.
+            _brand = brand_palette("dark_orange" if _mode == "dark" else "light")
+            _palette.update(_brand)
+            _palette.update({
+                "background": _brand["chatBackground"],
+                "surface": _brand["chatComposer"],
+                "surfaceRaised": _brand["chatControl"],
+                "border": _brand["chatBorder"],
+                "accessibleOrange": _brand["brandOrange"] if _mode == "dark" else _brand["accessibleOrange"],
+                "previewCanvas": _brand["chatBackground"],
+                "previewAccent": "#462813" if _mode == "dark" else "#FFE8D6",
+                "previewAction": _brand["brandOrange"],
+                "previewSidebar": _brand["chatSidebar"],
+                "previewMessage": _brand["messageSurface"],
+                "controlBorder": _brand["chatBorder"],
+                "mutedSurface": _brand["chatControl"],
+                "terminalBackground": _brand["chatBackground"],
+            })
+        _id = f"{_tid}-light" if _mode == "light" else _tid
+        _palette["themeId"] = _id
+        _name = {"t3-code": "VR Code", "t3-chat": "VR Chat"}.get(_tid, _spec["name"])
+        BUILTIN_THEMES[_id] = ThemeDefinition(id=_id, name=_name, appearance=_mode,
+                                             built_in=True, palette=_palette)
+
 
 # ============================================================================
 # Theme Importer & Defensive Parser
 # ============================================================================
 
-def synthesize_palette_from_seed(canvas: str, accent: str, appearance: str) -> dict[str, str]:
-    """Synthesizes a complete semantic palette from canvas & accent colors."""
-    is_dark = appearance == "dark"
-    canvas_col = QColor(canvas)
-    accent_col = QColor(accent)
-
-    if is_dark:
-        surface_col = canvas_col.lighter(120)
-        raised_col = canvas_col.lighter(135)
-        border_col = canvas_col.lighter(145)
-        text_col = "#e2e8f0"
-        muted_col = "#71717a"
-        heading_col = "#f8fafc"
-    else:
-        surface_col = canvas_col.darker(108)
-        raised_col = canvas_col.darker(115)
-        border_col = canvas_col.darker(120)
-        text_col = "#18181b"
-        muted_col = "#71717a"
-        heading_col = "#09090b"
-
-    return {
-        "themeId": "custom",
-        "brandOrange": accent_col.name(),
-        "accessibleOrange": accent_col.name(),
-        "brandYellow": "#eab308",
-        "brandNavy": canvas_col.name(),
-        "navigationBackground": canvas_col.darker(110).name() if is_dark else surface_col.name(),
-        "background": canvas_col.name(),
-        "surface": surface_col.name(),
-        "surfaceRaised": raised_col.name(),
-        "chatBackground": canvas_col.name(),
-        "chatSidebar": surface_col.name(),
-        "chatComposer": surface_col.name() if is_dark else "#ffffff",
-        "chatControl": raised_col.name(),
-        "chatBorder": border_col.name(),
-        "chatDivider": surface_col.name(),
-        "messageSurface": surface_col.name(),
-        "codeSurface": canvas_col.darker(110).name() if is_dark else surface_col.name(),
-        "codeHeader": surface_col.name(),
-        "link": accent_col.name(),
-        "subtleText": muted_col,
-        "headingText": heading_col,
-        "inlineCodeSurface": raised_col.name(),
-        "quoteSurface": surface_col.name(),
-        "text": text_col,
-        "mutedText": muted_col,
-        "border": border_col.name(),
-        "hover": raised_col.name(),
-        "selection": raised_col.name(),
-        "accentSoft": surface_col.name(),
-        "focus": accent_col.name(),
-        "success": "#22c55e" if is_dark else "#16a34a",
-        "warning": "#eab308" if is_dark else "#ca8a04",
-        "danger": "#ef4444" if is_dark else "#dc2626",
-        "navText": heading_col,
-        "navMuted": muted_col,
-        "navHover": raised_col.name(),
-        "navDivider": border_col.name(),
-    }
+def _t3_color(value: str) -> str:
+    """Convert T3's opaque OKLCH tokens into Qt's sRGB palette colors."""
+    if _is_valid_hex(value):
+        return _normalize_hex(value)
+    match = re.fullmatch(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s*\)", value)
+    if not match:
+        raise ValueError(f"Cor de tema inválida: {value}")
+    lightness, chroma, hue = map(float, match.groups())
+    if not (0 <= lightness <= 1 and 0 <= chroma <= 1 and math.isfinite(hue)):
+        raise ValueError(f"Cor OKLCH fora dos limites: {value}")
+    a, b = chroma * math.cos(math.radians(hue)), chroma * math.sin(math.radians(hue))
+    l = (lightness + .3963377774 * a + .2158037573 * b) ** 3
+    m = (lightness - .1055613458 * a - .0638541728 * b) ** 3
+    s = (lightness - .0894841775 * a - 1.291485548 * b) ** 3
+    rgb = (4.0767416621*l - 3.3077115913*m + .2309699292*s,
+           -1.2684380046*l + 2.6097574011*m - .3413193965*s,
+           -.0041960863*l - .7034186147*m + 1.707614701*s)
+    def byte(channel: float) -> int:
+        srgb = 12.92 * channel if channel <= .0031308 else 1.055 * channel ** (1/2.4) - .055
+        return round(max(0, min(1, srgb)) * 255)
+    return "#" + "".join(f"{byte(channel):02x}" for channel in rgb)
 
 
 def parse_imported_theme(raw_json: str) -> tuple[bool, str, ThemeDefinition | None]:
@@ -417,7 +497,7 @@ def parse_imported_theme(raw_json: str) -> tuple[bool, str, ThemeDefinition | No
     if not isinstance(data, dict):
         return False, "O conteúdo do tema deve ser um objeto JSON.", None
 
-    name = str(data.get("name") or "").strip()
+    name = str(data.get("name") or data.get("label") or "").strip()
     if not name:
         name = "Tema Importado"
 
@@ -430,10 +510,34 @@ def parse_imported_theme(raw_json: str) -> tuple[bool, str, ThemeDefinition | No
             # Detect by background luminance
             bg = data["palette"].get("background", "#141416")
             appearance = "light" if _color_luminance(bg) > 0.5 else "dark"
-        palette = dict(data["palette"])
+        supplied = data["palette"]
+        if any(not _is_valid_hex(str(value)) for key, value in supplied.items() if key != "themeId"):
+            return False, "A paleta contém uma cor inválida.", None
+        palette = synthesize_palette_from_seed(
+            supplied.get("background", "#141416" if appearance == "dark" else "#ffffff"),
+            supplied.get("accessibleOrange", supplied.get("brandOrange", "#ff7a00")), appearance)
+        palette.update(supplied)
         palette["themeId"] = theme_id
-        theme_def = ThemeDefinition(id=theme_id, name=name, appearance=appearance, built_in=False, palette=palette)
+        theme_def = ThemeDefinition(id=theme_id, name=name, appearance=appearance, built_in=False,
+                                    palette=palette, collection=str(data.get("collection") or ""))
         return True, "Tema Harness nativo importado com sucesso.", theme_def
+
+    # Current T3 exports put semantic colors under `colors`, in OKLCH or hex.
+    t3_colors = data.get("colors")
+    if isinstance(t3_colors, dict) and "canvas" in t3_colors:
+        try:
+            colors = {key: _t3_color(str(value)) for key, value in t3_colors.items()}
+            appearance = str(data.get("appearance", "dark"))
+            if appearance not in ("light", "dark"):
+                raise ValueError("Aparência de tema inválida.")
+            palette = synthesize_palette_from_seed(colors["canvas"], colors["accent"], appearance)
+            palette.update({target: colors[source] for target, source in _T3_ROLE_MAP.items() if source in colors})
+            palette.update(previewCanvas=colors["canvas"], previewAccent=colors["accent"],
+                           previewAction=colors.get("messageAction", colors["accent"]), themeId=theme_id)
+        except (ValueError, KeyError) as exc:
+            return False, f"Tema T3 Code inválido: {exc}", None
+        return True, "Tema T3 Code importado com sucesso.", ThemeDefinition(
+            id=theme_id, name=name, appearance=appearance, built_in=False, palette=palette)
 
     # Schema 2: T3 Code Theme JSON ("canvas", "accent", optional "colors")
     if "canvas" in data and "accent" in data:
@@ -512,6 +616,7 @@ class ThemeManager(QObject):
     motionChanged = Signal()
     typographyChanged = Signal()
     themeImportStatus = Signal(bool, str)  # success, message
+    environmentIdentificationChanged = Signal()
 
     def __init__(self, preferences: QSettings, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -584,6 +689,9 @@ class ThemeManager(QObject):
         self._font_smoothing = bool(
             p.value("appearance/font_smoothing", DEFAULT_FONT_SMOOTHING) in (True, "true", "1", 1)
         )
+        self._environment_identification = str(
+            p.value("appearance/environment_identification", DEFAULT_ENVIRONMENT_IDENTIFICATION) or DEFAULT_ENVIRONMENT_IDENTIFICATION
+        )
         self._word_wrap = bool(
             p.value("appearance/word_wrap", DEFAULT_WORD_WRAP) in (True, "true", "1", 1)
         )
@@ -605,6 +713,7 @@ class ThemeManager(QObject):
                                 appearance=item.get("appearance", "dark"),
                                 built_in=False,
                                 palette=item.get("palette", {}),
+                                collection=str(item.get("collection") or ""),
                             )
                             self._custom_themes[t.id] = t
             except Exception as e:
@@ -720,6 +829,19 @@ class ThemeManager(QObject):
     def glassOpacity(self) -> int:  # noqa: N802
         return self._glass_opacity
 
+    @Property(str, notify=environmentIdentificationChanged)
+    def environmentIdentification(self) -> str:  # noqa: N802
+        return self._environment_identification
+
+    @Slot(str)
+    def setEnvironmentIdentification(self, mode: str) -> None:  # noqa: N802
+        if mode not in ("pill", "artwork", "none") or mode == self._environment_identification:
+            return
+        self._environment_identification = mode
+        self._preferences.setValue("appearance/environment_identification", mode)
+        self._preferences.sync()
+        self.environmentIdentificationChanged.emit()
+
     @Property(int, notify=motionChanged)
     def panelAnimationDurationMs(self) -> int:  # noqa: N802
         return 0 if self._reduce_motion else self._panel_animation_duration_ms
@@ -750,11 +872,11 @@ class ThemeManager(QObject):
 
     @Property(str, notify=typographyChanged)
     def promptFontFamily(self) -> str:  # noqa: N802
-        return self._font_family_prompt or self._font_family_interface
+        return (self._font_family_prompt if self._typography_advanced else "") or self._font_family_interface
 
     @Property(int, notify=typographyChanged)
     def promptFontSize(self) -> int:  # noqa: N802
-        return self._font_size_prompt
+        return self._font_size_prompt if self._typography_advanced else self._font_size_interface
 
     @Property(str, notify=typographyChanged)
     def monospaceFontFamily(self) -> str:  # noqa: N802
@@ -774,11 +896,11 @@ class ThemeManager(QObject):
 
     @Property(str, notify=typographyChanged)
     def terminalFontFamily(self) -> str:  # noqa: N802
-        return self._font_family_terminal or self._font_family_code
+        return (self._font_family_terminal if self._typography_advanced else "") or self._font_family_code
 
     @Property(int, notify=typographyChanged)
     def terminalFontSize(self) -> int:  # noqa: N802
-        return self._font_size_terminal
+        return self._font_size_terminal if self._typography_advanced else self._font_size_code
 
     @Property(bool, notify=typographyChanged)
     def fontSmoothing(self) -> bool:  # noqa: N802
@@ -836,19 +958,25 @@ class ThemeManager(QObject):
 
     @Slot(str, str)
     def setThemeForAppearance(self, appearance: str, theme_id: str) -> None:  # noqa: N802
-        theme = self._get_theme(theme_id)
-        if not theme:
+        resolved_id = theme_id
+        if appearance == "light" and f"{theme_id}-light" in BUILTIN_THEMES:
+            resolved_id = f"{theme_id}-light"
+        elif appearance == "dark" and theme_id.endswith("-light") and theme_id[:-6] in BUILTIN_THEMES:
+            resolved_id = theme_id[:-6]
+
+        theme = BUILTIN_THEMES.get(resolved_id) or self._custom_themes.get(resolved_id) or self._get_theme(resolved_id)
+        if not theme or theme.appearance != appearance:
             return
         if appearance == "light":
-            if self._theme_light == theme_id:
+            if self._theme_light == resolved_id:
                 return
-            self._theme_light = theme_id
-            self._preferences.setValue("appearance/theme_light", theme_id)
+            self._theme_light = resolved_id
+            self._preferences.setValue("appearance/theme_light", resolved_id)
         elif appearance == "dark":
-            if self._theme_dark == theme_id:
+            if self._theme_dark == resolved_id:
                 return
-            self._theme_dark = theme_id
-            self._preferences.setValue("appearance/theme_dark", theme_id)
+            self._theme_dark = resolved_id
+            self._preferences.setValue("appearance/theme_dark", resolved_id)
         else:
             return
 
@@ -1007,6 +1135,8 @@ class ThemeManager(QObject):
             self.setTerminalTypography("", DEFAULT_TERMINAL_FONT_SIZE)
         elif setting_name == "wordWrap":
             self.setWordWrap(DEFAULT_WORD_WRAP)
+        elif setting_name in ("environment", "environmentIdentification"):
+            self.setEnvironmentIdentification(DEFAULT_ENVIRONMENT_IDENTIFICATION)
 
     # ------------------------------------------------------------------------
     # Custom Themes CRUD
@@ -1050,17 +1180,34 @@ class ThemeManager(QObject):
         if theme_id not in self._custom_themes:
             return False
         theme = self._custom_themes[theme_id]
+        was_active = self.activeThemeId == theme_id
         theme.name = name.strip() or theme.name
         theme.appearance = "dark" if appearance == "dark" else "light"
         new_palette = dict(theme.palette)
         for k, v in palette_map.items():
             if _is_valid_hex(str(v)):
                 new_palette[k] = _normalize_hex(str(v))
+        linked_roles = {
+            "background": ("chatBackground", "terminalBackground", "previewCanvas"),
+            "surface": ("chatComposer", "codeHeader", "messageSurface", "quoteSurface"),
+            "border": ("chatBorder", "chatDivider", "controlBorder"),
+            "text": ("headingText", "navText"),
+            "mutedText": ("subtleText", "navMuted"),
+            "accessibleOrange": ("brandOrange", "focus", "link", "previewAccent", "previewAction"),
+        }
+        for role, linked in linked_roles.items():
+            if new_palette.get(role) != theme.palette.get(role):
+                for key in linked:
+                    new_palette[key] = new_palette[role]
         new_palette["themeId"] = theme_id
         theme.palette = new_palette
+        if self._theme_light == theme_id and theme.appearance != "light":
+            self.setThemeForAppearance("light", DEFAULT_THEME_LIGHT)
+        if self._theme_dark == theme_id and theme.appearance != "dark":
+            self.setThemeForAppearance("dark", DEFAULT_THEME_DARK)
         self._save_custom_themes_to_storage()
 
-        if self.activeThemeId == theme_id:
+        if was_active or self.activeThemeId == theme_id:
             self._palette_cache = None
             self.themeChanged.emit()
         return True
@@ -1071,7 +1218,9 @@ class ThemeManager(QObject):
         if not source:
             return ""
         label = new_name.strip() or f"{source.name} (Cópia)"
-        return self.createCustomTheme(label, source.appearance, source.id)
+        payload = json.loads(self.exportThemeJson(source.id))
+        payload["name"] = label
+        return self.importThemeJson(json.dumps(payload))["themeId"]
 
     @Slot(str, result=bool)
     def deleteCustomTheme(self, theme_id: str) -> bool:  # noqa: N802
@@ -1099,7 +1248,18 @@ class ThemeManager(QObject):
             "name": theme.name,
             "appearance": theme.appearance,
             "palette": theme.palette,
+            "collection": theme.collection,
         }
+        related = []
+        if theme.collection:
+            related = [t for t in self._custom_themes.values() if t.collection == theme.collection]
+        else:
+            base_id = theme.id.removesuffix("-light")
+            if base_id in _T3_THEME_DATA:
+                related = [BUILTIN_THEMES[base_id], BUILTIN_THEMES[base_id + "-light"]]
+        variants = {t.appearance: {"palette": t.palette} for t in related if t.appearance != theme.appearance}
+        if variants:
+            payload["variants"] = variants
         return json.dumps(payload, indent=2, ensure_ascii=False)
 
     @Slot(str, result="QVariantMap")
@@ -1109,15 +1269,38 @@ class ThemeManager(QObject):
             self.themeImportStatus.emit(False, msg)
             return {"success": False, "message": msg, "themeId": ""}
 
-        # Avoid collision with built-in IDs
-        base_id = theme.id
-        counter = 1
-        while theme.id in BUILTIN_THEMES or theme.id in self._custom_themes:
-            theme.id = f"{base_id}_{counter}"
-            theme.palette["themeId"] = theme.id
-            counter += 1
-
-        self._custom_themes[theme.id] = theme
+        # Validate every exported variant before persisting any of the import.
+        data = json.loads(json_string)
+        themes = [theme]
+        variants = data.get("variants", {})
+        if not isinstance(variants, dict):
+            return {"success": False, "message": "Variantes de tema inválidas.", "themeId": ""}
+        for mode, colors in variants.items():
+            if mode not in ("light", "dark") or not isinstance(colors, dict) or not ({"canvas", "palette"} & colors.keys()):
+                return {"success": False, "message": "Variante T3 Code inválida.", "themeId": ""}
+            if mode == theme.appearance:
+                continue
+            variant_data = {"label": theme.name, "appearance": mode}
+            if "palette" in colors:
+                variant_data["palette"] = colors["palette"]
+            else:
+                variant_data["colors"] = colors
+            ok, message, variant = parse_imported_theme(json.dumps(variant_data))
+            if not ok or not variant:
+                return {"success": False, "message": message, "themeId": ""}
+            variant.id += "_" + mode
+            themes.append(variant)
+        reserved = set(BUILTIN_THEMES) | set(self._custom_themes)
+        for imported in themes:
+            base_id, counter = imported.id, 1
+            while imported.id in reserved:
+                imported.id = f"{base_id}_{counter}"
+                counter += 1
+            imported.palette["themeId"] = imported.id
+            reserved.add(imported.id)
+        for imported in themes:
+            imported.collection = theme.id if len(themes) > 1 else ""
+            self._custom_themes[imported.id] = imported
         self._save_custom_themes_to_storage()
         self.themeImportStatus.emit(True, f"Tema '{theme.name}' importado com sucesso.")
         return {"success": True, "message": f"Tema '{theme.name}' importado com sucesso.", "themeId": theme.id}

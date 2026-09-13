@@ -117,17 +117,128 @@ class RetrievalService:
         module: str = "",
         limit: int = 6,
         revision: str = "",
+        context: str = "",
+        cursor: int = 0,
+        application_contexts: list[dict[str, Any]] | None = None,
+        code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
+        project_workspace: str = "",
     ) -> dict[str, Any]:
         """Run a focused evidence retrieval for tools or direct queries."""
+        from .code_retrieval import retrieve_code_candidates, resolve_code_contexts
+        source = source.strip().casefold()
+        if source == "project":
+            from .project_sources import list_sources
+            return list_sources(project_workspace, cursor=cursor, limit=limit, query=query)
+        if source and source not in {"wiki", "kb", "schema", "code"}:
+            raise ValueError("Fonte desconhecida")
+        limit, cursor = max(1, min(20, int(limit))), max(0, int(cursor))
+        needed = cursor + limit + 1
+        results, errors, states = [], {}, {}
         token = self._router.retrieval_revision.set(revision)
         try:
-            self._prepare_search()
-            result = self._router.search(query, source=source, module=module, limit=limit)
-            if self._configuration["mode"] == "hybrid" and self._diagnostic != "Busca híbrida local":
-                result = {**result, "warnings": [*result.get("warnings", []), self._diagnostic]}
-            return result
+            document_error = None
+            try:
+                self._prepare_search()
+                self._router._ensure_index_ready()
+            except Exception as exc:
+                document_error = exc
+            for lane in ([source] if source else ["wiki", "kb", "schema", "code"]):
+                try:
+                    if lane == "code":
+                        contexts = resolve_code_contexts(self._router.root, application_contexts, context)
+                        candidates, _, _ = retrieve_code_candidates(self._router.root, query,
+                            application_contexts=contexts, code_analysis_release=code_analysis_release,
+                            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                            limit_per_scope=needed, limit_per_query=needed, max_caller_nodes=0,
+                            max_excerpt_chars=1200, module=module)
+                        hits = [{**c.to_dict(), "reference": c.evidence_id, "excerpt": c.excerpt[:600]} for c in candidates]
+                        states[lane] = "scope_required" if contexts == [] else ("available" if hits else "no_results")
+                    else:
+                        if document_error is not None:
+                            raise document_error
+                        rows = []
+                        for origin in self.enabled_origins(lane):
+                            page, _ = self._router.database.search_page(query, source=lane, module=module,
+                                source_origin=origin, limit=needed)
+                            rows.extend(r for r in page if not revision or r.get("revision") == revision)
+                        rows.sort(key=lambda r: (float(r.get("rank", 0)), str(r["source_id"])))
+                        hits = [self._document_payload(r) for r in rows[:needed]]
+                        states[lane] = "available" if hits else "no_results"
+                    results.append(hits)
+                except Exception as exc:
+                    errors[lane] = str(exc)
+                    states[lane] = "unavailable"
+            # Interleave source lanes so a populated documentary lane cannot hide code.
+            merged = [lane[i] for i in range(max((len(lane) for lane in results), default=0))
+                      for lane in results if i < len(lane)]
+            page = merged[cursor:cursor + limit]
+            more = cursor + len(page) < len(merged)
+            return {"query": query, "source": source, "module": module, "total": len(merged),
+                    "results": page, "cursor": cursor, "limit": limit, "has_more": more,
+                    "next_cursor": cursor + len(page) if more else None,
+                    "source_states": states, "conflicts": [], "warnings": [], "errors": errors}
         finally:
             self._router.retrieval_revision.reset(token)
+
+    @staticmethod
+    def _document_payload(row: dict) -> dict:
+        ref = f"{row['source']}:{row['source_id']}"
+        return {"reference": ref, "evidence_id": ref, "source": row["source"], "source_id": row["source_id"],
+                "document_id": row.get("id", 0), "title": row["title"], "heading": row.get("heading", ""),
+                "source_origin": row.get("source_origin", ""), "module": row.get("module", ""),
+                "excerpt": str(row.get("excerpt", ""))[:600], "url": row.get("url", ""),
+                "local_path": row.get("local_path", ""), "confidence": float(row.get("confidence") or .7)}
+
+    def sources(self, *, source: str = "", context: str = "", cursor: int = 0, limit: int = 20,
+                application_contexts: list[dict[str, Any]] | None = None, project_workspace: str = "", **_kwargs) -> dict:
+        from .code_retrieval import list_code_sources, check_code_availability
+        if source == "project":
+            from .project_sources import list_sources
+            return list_sources(project_workspace, cursor=cursor, limit=limit)
+        if source == "code" or context:
+            return list_code_sources(self._router.root, context_id=context, offset=cursor,
+                                     limit=limit, application_contexts=application_contexts)
+        if not source:
+            return {"sources": ["wiki", "kb", "schema", "code"] + (["project"] if project_workspace else []),
+                    "modules": ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo"],
+                    "code_availability": check_code_availability(self._router.root, application_contexts=application_contexts)}
+        if source not in {"wiki", "kb", "schema"}:
+            raise ValueError("Fonte desconhecida")
+        origins = self.enabled_origins(source)
+        with self._router.database.connect() as conn:
+            rows = conn.execute("SELECT * FROM documents WHERE source=? AND status='active' "
+                "AND review_status IN ('approved','kept') AND module<>'Revisar' AND source_origin IN (" +
+                ",".join("?" for _ in origins) + ") ORDER BY source_id,id LIMIT ? OFFSET ?",
+                [source, *origins, limit + 1, cursor]).fetchall()
+        hits = [self._document_payload(dict(r)) for r in rows[:limit]]
+        return {"state": "available", "source": source, "results": hits, "has_more": len(rows) > limit,
+                "next_cursor": cursor + len(hits) if len(rows) > limit else None}
+
+    def read(self, reference: str, *, cursor: int = 0, limit: int = 4000, start_line: int | None = None,
+             end_line: int | None = None, application_contexts: list[dict[str, Any]] | None = None,
+             code_analysis_release: str = "current", code_analysis_manifest_sha256: str = "", project_workspace: str = "") -> dict:
+        from .code_retrieval import read_code_source
+        if reference.startswith("project:"):
+            from .project_sources import read_source
+            return read_source(project_workspace, reference, cursor=cursor, limit=limit)
+        # Resolve documentary references before considering legacy Java FQCNs.
+        doc = self.resolve_document(reference, require_review=True)
+        if doc is not None:
+            with self._router.database.connect() as conn:
+                row = conn.execute("SELECT * FROM documents WHERE source=? AND source_id=?", (doc.source, doc.source_id)).fetchone()
+            payload = self._document_payload(dict(row))
+            text = doc.markdown or doc.ocr_text or ""
+            content = text[cursor:cursor + limit]
+            more = cursor + len(content) < len(text)
+            return {**payload, "state": "available", "reference": reference, "content": content,
+                    "cursor": cursor, "limit": limit, "total_characters": len(text), "has_more": more,
+                    "next_cursor": cursor + len(content) if more else None}
+        if reference.partition(":")[0] in {"wiki", "kb", "schema"}:
+            return {"state": "no_results", "reference": reference, "error": "Documento indisponível ou fora do escopo permitido."}
+        return read_code_source(self._router.root, reference, application_contexts=application_contexts,
+            code_analysis_release=code_analysis_release, code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+            cursor=cursor, limit=limit, start_line=start_line, end_line=end_line)
 
     def hybrid_search(self, query: str, limit: int = 10, *, source: str = "", module: str = "") -> list[str]:
         """Run hybrid search (FTS5 + Semantic RRF)."""
@@ -150,11 +261,46 @@ class RetrievalService:
             return self._expander.expand(candidates)
         return list(candidates)
 
-    def route(self, query: str, *, revision: str = "") -> EvidenceBundle:
+    def route(
+        self,
+        query: str,
+        *,
+        revision: str = "",
+        application_contexts: list[dict[str, Any]] | None = None,
+        code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
+    ) -> EvidenceBundle:
         token = self._router.retrieval_revision.set(revision)
         try:
-            self._prepare_search()
-            return self._finalize_bundle(self._router.route(query))
+            try:
+                self._prepare_search()
+                bundle = self._router.route(query)
+            except Exception as exc:
+                bundle = EvidenceBundle(profile=self._router.classify(query), warnings=(f"Busca documental indisponível: {exc}",))
+            if application_contexts is None or application_contexts:
+                root = getattr(self._settings, "root", None) or getattr(self._router, "root", None)
+                if root:
+                    from .code_retrieval import retrieve_code_candidates
+                    try:
+                        code_cands, _claims, _raw = retrieve_code_candidates(
+                            Path(root),
+                            query,
+                            application_contexts=application_contexts,
+                            code_analysis_release=code_analysis_release,
+                            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                            limit_per_scope=3,
+                            max_excerpt_chars=2000,
+                            max_caller_nodes=0,
+                            limit_per_query=2,
+                            module=bundle.profile.module,
+                            product=bundle.profile.product,
+                        )
+                        if code_cands:
+                            bundle = replace(bundle, candidates=tuple(code_cands) + tuple(bundle.candidates))
+                    except Exception as exc:
+                        bundle = replace(bundle, warnings=(*bundle.warnings, f"Busca Java indisponivel: {exc}"))
+                        logging.getLogger(__name__).warning("Falha ao recuperar candidatos iniciais de código: %s", exc)
+            return self._finalize_bundle(bundle)
         finally:
             self._router.retrieval_revision.reset(token)
 
@@ -171,17 +317,19 @@ class RetrievalService:
                     finally:
                         self._scheduled = False
                 threading.Thread(target=update, name="semantic-reindex", daemon=True).start()
+
     def _finalize_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
         # Final permission/version check closes the window between candidate search and context assembly.
         bundle = replace(bundle, candidates=tuple(c for c in bundle.candidates
-            if self.resolve_document(f"{c.source}:{c.source_id}", require_review=True) is not None))
+            if c.source == "code" or self.resolve_document(f"{c.source}:{c.source_id}", require_review=True) is not None))
         if self._configuration.get("relations"):
             if self.scope_signature() != self._relation_signature:
                 self.rebuild_relations()
             bundle = replace(bundle, candidates=tuple(self.expand_candidates(bundle.candidates)))
         if self._configuration["mode"] == "hybrid" and self._diagnostic != "Busca híbrida local":
             bundle = replace(bundle, warnings=(*bundle.warnings, self._diagnostic))
-        return bundle
+        from ..knowledge_access import bounded_candidates
+        return replace(bundle, candidates=bounded_candidates(bundle.candidates))
 
     def scope_signature(self) -> str:
         """Hash current permissions and complete source content, not just search snippets."""

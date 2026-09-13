@@ -113,7 +113,7 @@ CREATE TRIGGER IF NOT EXISTS knowledge_revision_delete AFTER DELETE ON documents
     UPDATE knowledge_revision SET revision=revision+1 WHERE singleton=1;
 END;
 
-CREATE TABLE IF NOT EXISTS document_versions (
+CREATE TABLE IF NOT EXISTS document_versions (\
     id INTEGER PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id),
     revision TEXT NOT NULL DEFAULT '',
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     status TEXT NOT NULL DEFAULT 'idle',
     archived INTEGER NOT NULL DEFAULT 0,
     service_tier TEXT NOT NULL DEFAULT '',
-    approval_profile TEXT NOT NULL DEFAULT 'auto',
+    approval_profile TEXT NOT NULL DEFAULT 'full_access',
     collaboration_mode TEXT NOT NULL DEFAULT 'default',
     vr_enabled INTEGER NOT NULL DEFAULT 0,
     vr_mode TEXT NOT NULL DEFAULT 'off',
@@ -294,10 +294,14 @@ CREATE TABLE IF NOT EXISTS source_citations (
     conversation_id TEXT NOT NULL REFERENCES conversations(id),
     document_id INTEGER REFERENCES documents(id),
     message_id INTEGER REFERENCES messages(id),
-    excerpt TEXT NOT NULL DEFAULT ''
+    excerpt TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'document',
+    evidence_id TEXT NOT NULL DEFAULT '',
+    provenance TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS message_skills (
+CREATE TABLE IF NOT EXISTS message_skills (\
     id INTEGER PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,

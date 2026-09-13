@@ -221,6 +221,44 @@ def mcp_thread_config(
     return {"mcp_servers": servers} if servers else {}
 
 
+VR_SOURCES_TOOL_NAME = "vr_sources"
+VR_SOURCES_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source": {
+            "type": "string",
+            "enum": ["wiki", "kb", "schema", "code", "project"],
+            "description": "Fonte opcional para listar inventário ou módulos.",
+        },
+        "context": {
+            "type": "string",
+            "description": "Contexto opcional de aplicação (ex.: vr-master-server, vr-pdv) para listar classes/pacotes de código.",
+        },
+        "cursor": {
+            "type": "integer",
+            "description": "Deslocamento de paginação (padrão 0).",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Quantidade de itens retornados (1-50, padrão 20).",
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+def vr_sources_tool_spec() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "name": VR_SOURCES_TOOL_NAME,
+        "description": (
+            "Descobre e lista fontes, módulos, contextos de aplicação e inventário de código Java "
+            "disponíveis na base local do VR. Use para identificar contextos, pacotes e módulos antes da busca detalhada."
+        ),
+        "inputSchema": VR_SOURCES_INPUT_SCHEMA,
+    }
+
+
 VR_SEARCH_TOOL_NAME = "vr_search"
 VR_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -229,15 +267,16 @@ VR_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Consulta em português com os termos técnicos do VR "
-                "(rotina, procedimento, tabela ou campo)."
+                "(rotina, procedimento, tabela, campo ou classe Java)."
             ),
         },
         "source": {
             "type": "string",
-            "enum": ["wiki", "kb", "schema"],
+            "enum": ["wiki", "kb", "schema", "code", "project"],
             "description": (
-                "Fonte opcional: wiki (funcionamento), kb (processos e casos) "
-                "ou schema (tabelas e relacionamentos). Omita para buscar em todas."
+                "Fonte opcional: wiki (funcionamento), kb (processos e casos), "
+                "schema (tabelas e relacionamentos) ou code (código Java descompilado). "
+                "Omita para buscar em Wiki, KB, Schema e código disponível no contexto."
             ),
         },
         "module": {
@@ -245,9 +284,17 @@ VR_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
             "enum": ["Fiscal", "ADM_FIN_ESTOQUE", "PDV"],
             "description": "Módulo opcional do ERP para restringir a busca.",
         },
+        "context": {
+            "type": "string",
+            "description": "Contexto opcional de aplicação para restringir busca em código.",
+        },
+        "cursor": {
+            "type": "integer",
+            "description": "Deslocamento para paginação de resultados (padrão 0).",
+        },
         "limit": {
             "type": "integer",
-            "description": "Quantidade máxima de resultados (1-10, padrão 6).",
+            "description": "Quantidade máxima de resultados (1-20, padrão 6).",
         },
     },
     "required": ["query"],
@@ -261,25 +308,99 @@ def vr_search_tool_spec() -> dict[str, Any]:
         "name": VR_SEARCH_TOOL_NAME,
         "description": (
             "Busca evidências validadas na base de conhecimento local do VR "
-            "(Wiki de funcionamento, KB de processos e Schema de banco). "
-            "Use sempre que faltar detalhe confiável sobre procedimentos, "
-            "funcionamento ou estrutura de dados antes de responder."
+            "(Wiki de funcionamento, KB de processos, Schema de banco e Código Java descompilado). "
+            "Use sempre que faltar detalhe confiável sobre regras, procedimentos, "
+            "funcionamento, rotinas ou implementações antes de responder."
         ),
         "inputSchema": VR_SEARCH_INPUT_SCHEMA,
     }
 
 
-def run_vr_search(arguments: dict[str, Any], router: Any) -> ToolExecutionResult:
+VR_READ_TOOL_NAME = "vr_read"
+VR_READ_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reference": {
+            "type": "string",
+            "description": (
+                "Identificador ou caminho da evidência a ler. Pode ser 'source:source_id' "
+                "(ex.: 'wiki:123', 'schema:TB_CLIENTE') ou FQCN / caminho de classe Java "
+                "(ex.: 'br.com.vrsoft.fiscal.venda.VendaFiscal')."
+            ),
+        },
+        "start_line": {
+            "type": "integer",
+            "description": "Linha inicial para leitura em código Java (1-indexed).",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Linha final para leitura em código Java (1-indexed).",
+        },
+        "cursor": {
+            "type": "integer",
+            "description": "Offset em caracteres para leitura paginada de documento ou código.",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Quantidade máxima de caracteres a retornar (máximo 8000, padrão 4000).",
+        },
+    },
+    "required": ["reference"],
+    "additionalProperties": False,
+}
+
+
+def vr_read_tool_spec() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "name": VR_READ_TOOL_NAME,
+        "description": (
+            "Lê o conteúdo integral ou trecho paginado de um documento da base VR "
+            "ou de uma classe Java descompilada usando sua referência ou FQCN."
+        ),
+        "inputSchema": VR_READ_INPUT_SCHEMA,
+    }
+
+
+def all_vr_tools_specs() -> list[dict[str, Any]]:
+    return [
+        vr_sources_tool_spec(),
+        vr_search_tool_spec(),
+        vr_read_tool_spec(),
+    ]
+
+
+def _access_service(router: Any) -> Any:
+    from .knowledge_router import KnowledgeRouter
+    from .retrieval.service import RetrievalService
+    return RetrievalService(router) if isinstance(router, KnowledgeRouter) else router
+
+
+def run_vr_sources(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolExecutionResult:
+    validate_tool_arguments(arguments, VR_SOURCES_INPUT_SCHEMA)
+    service = _access_service(router)
+    payload = service.sources(source=str(arguments.get("source") or ""), context=str(arguments.get("context") or ""),
+        cursor=max(0, int(arguments.get("cursor") or 0)), limit=max(1, min(50, int(arguments.get("limit") or 20))), **kwargs)
+    return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
+
+
+def run_vr_search(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolExecutionResult:
     validate_tool_arguments(arguments, VR_SEARCH_INPUT_SCHEMA)
-    try:
-        limit = int(arguments.get("limit") or 6)
-    except (TypeError, ValueError):
-        limit = 6
-    payload = router.search(
-        str(arguments.get("query") or "").strip(),
-        source=str(arguments.get("source") or ""),
-        module=str(arguments.get("module") or ""),
-        limit=limit,
-    )
-    text = json.dumps(payload, ensure_ascii=False)
-    return ToolExecutionResult(text=text, parsed=payload)
+    service = _access_service(router)
+    options = {"source": str(arguments.get("source") or ""), "module": str(arguments.get("module") or ""),
+               "limit": max(1, min(20, int(arguments.get("limit") or 6)))}
+    if arguments.get("context"):
+        options["context"] = str(arguments["context"])
+    if "cursor" in arguments:
+        options["cursor"] = max(0, int(arguments["cursor"]))
+    payload = service.search(str(arguments.get("query") or "").strip(), **options, **kwargs)
+    return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
+
+
+def run_vr_read(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolExecutionResult:
+    validate_tool_arguments(arguments, VR_READ_INPUT_SCHEMA)
+    service = _access_service(router)
+    payload = service.read(str(arguments.get("reference") or "").strip(),
+        cursor=max(0, int(arguments.get("cursor") or 0)), limit=max(1, min(8000, int(arguments.get("limit") or 4000))),
+        start_line=arguments.get("start_line"), end_line=arguments.get("end_line"), **kwargs)
+    return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)

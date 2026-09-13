@@ -4,6 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
+import sqlite3
 from vrsoft_extractor.mary.apps_catalog import (
     UNIDENTIFIED_VERSION,
     AppsCatalogStore,
@@ -549,6 +551,134 @@ class TestAppsCatalog(unittest.TestCase):
             self.assertEqual(len(comparison["pendingVerificationClasses"]), 2)  # B and C
             self.assertIn("pendingNote", comparison)
             self.assertTrue(len(comparison["pendingNote"]) > 0)
+
+
+    def test_rename_package(self):
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            store = AppsCatalogStore(root=temp_path, catalog_file=temp_path / "apps_catalog.json")
+
+            store.register_package(
+                manifest={
+                    "release_id": "pkg_orig",
+                    "artifacts": [{
+                        "application_key": "vrapp",
+                        "application_name": "VRApp",
+                        "version_detected": "1.0.0",
+                        "sha256": "h123",
+                        "file_size": 1000,
+                    }],
+                },
+                package_id="pkg_orig",
+                package_name="Original Name",
+            )
+
+            pkg = store.get_package("pkg_orig")
+            self.assertEqual(pkg["name"], "Original Name")
+
+            result = store.rename_package("pkg_orig", "Novo Nome Amigavel")
+            self.assertEqual(result["name"], "Novo Nome Amigavel")
+
+            pkg_updated = store.get_package("pkg_orig")
+            self.assertEqual(pkg_updated["name"], "Novo Nome Amigavel")
+
+            variants = store.list_variants("vrapp", "1.0.0")
+            self.assertEqual(len(variants), 1)
+            self.assertEqual(variants[0]["origin_packages"][0]["package_name"], "Novo Nome Amigavel")
+
+
+    def test_delete_source_jars(self):
+        with TemporaryDirectory() as temp_dir, TemporaryDirectory() as src_dir:
+            temp_path = Path(temp_dir)
+            src_path = Path(src_dir)
+            store = AppsCatalogStore(root=temp_path, catalog_file=temp_path / "apps_catalog.json")
+
+            dummy_jar = src_path / "dummy.jar"
+            dummy_jar.write_bytes(b"dummy jar content")
+            self.assertTrue(dummy_jar.is_file())
+
+            store.register_package(
+                manifest={
+                    "release_id": "pkg_to_del",
+                    "artifacts": [{
+                        "application_key": "vrapp",
+                        "application_name": "VRApp",
+                        "version_detected": "1.0.0",
+                        "sha256": hashlib.sha256(b"dummy jar content").hexdigest(),
+                        "file_size": len(b"dummy jar content"),
+                        "relative_path": "dummy.jar",
+                    }],
+                },
+                package_id="pkg_to_del",
+                source_path=str(src_path),
+            )
+
+            res = store.delete_source_jars("pkg_to_del")
+            self.assertEqual(res["deleted_count"], 1)
+            self.assertEqual(res["deleted_files"], ["dummy.jar"])
+            self.assertFalse(dummy_jar.exists())
+
+
+    def test_unlink_package_delete_data_options(self):
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            catalog = ErpReleaseCatalog(temp_path)
+
+            # Setup processing.sqlite
+            db_dir = temp_path / "indice" / "codigo"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / "processing.sqlite"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("CREATE TABLE code_sources (source_key TEXT, release_id TEXT, qualified_name TEXT)")
+                conn.execute("INSERT INTO code_sources VALUES ('k1', 'pkg_keep', 'vr.TestKeep')")
+                conn.execute("INSERT INTO code_sources VALUES ('k2', 'pkg_delete', 'vr.TestDel')")
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Setup decompilation dirs
+            decomp_keep = db_dir / "decompilation" / "pkg_keep"
+            decomp_keep.mkdir(parents=True, exist_ok=True)
+            (decomp_keep / "TestKeep.java").write_text("class TestKeep {}", encoding="utf-8")
+
+            decomp_del = db_dir / "decompilation" / "pkg_delete"
+            decomp_del.mkdir(parents=True, exist_ok=True)
+            (decomp_del / "TestDel.java").write_text("class TestDel {}", encoding="utf-8")
+
+            # Register packages
+            catalog.apps_store.register_package(
+                manifest={"release_id": "pkg_keep", "artifacts": [{"application_key": "app1", "application_name": "App1", "version_detected": "1.0", "sha256": "h1"}]},
+                package_id="pkg_keep",
+            )
+            catalog.apps_store.register_package(
+                manifest={"release_id": "pkg_delete", "artifacts": [{"application_key": "app2", "application_name": "App2", "version_detected": "1.0", "sha256": "h2"}]},
+                package_id="pkg_delete",
+            )
+
+            # 1. Unlink without deleting data
+            res_keep = catalog.unlink_package("pkg_keep", delete_data=False)
+            self.assertTrue(res_keep["unlinked"])
+            self.assertFalse(res_keep["deleted_data"])
+            self.assertIsNone(catalog.get_package("pkg_keep"))
+            self.assertTrue(decomp_keep.is_dir())
+            conn2 = sqlite3.connect(db_path)
+            try:
+                self.assertIsNotNone(conn2.execute("SELECT 1 FROM code_sources WHERE release_id = 'pkg_keep'").fetchone())
+            finally:
+                conn2.close()
+
+            # 2. Unlink with deleting data
+            res_del = catalog.unlink_package("pkg_delete", delete_data=True)
+            self.assertTrue(res_del["unlinked"])
+            self.assertTrue(res_del["deleted_data"])
+            self.assertIsNone(catalog.get_package("pkg_delete"))
+            self.assertFalse(decomp_del.exists())
+            conn3 = sqlite3.connect(db_path)
+            try:
+                self.assertIsNone(conn3.execute("SELECT 1 FROM code_sources WHERE release_id = 'pkg_delete'").fetchone())
+            finally:
+                conn3.close()
 
 
 if __name__ == "__main__":

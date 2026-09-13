@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,7 @@ from .jvm_batches import (
 
 
 CODE_INDEX_SCHEMA_VERSION = 6
+JAVA_PARSER_REVISION = 1
 _PACKAGE_RE = re.compile(
     r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;?\s*$"
 )
@@ -129,6 +132,8 @@ class JavaCodeIndex:
                 );
                 CREATE INDEX IF NOT EXISTS idx_code_symbols_name
                     ON code_symbols(simple_name COLLATE NOCASE, qualified_name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_symbols_source_id
+                    ON code_symbols(source_id);
                 CREATE TABLE IF NOT EXISTS code_relations (
                     id INTEGER PRIMARY KEY,
                     source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,
@@ -142,6 +147,8 @@ class JavaCodeIndex:
                     ON code_relations(target COLLATE NOCASE);
                 CREATE INDEX IF NOT EXISTS idx_code_relations_kind_target
                     ON code_relations(kind, target COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_relations_source_id
+                    ON code_relations(source_id);
                 CREATE VIRTUAL TABLE IF NOT EXISTS code_sources_fts USING fts5(
                     qualified_name,
                     symbols_text,
@@ -184,6 +191,7 @@ class JavaCodeIndex:
                 "syntax_error_count",
                 "INTEGER NOT NULL DEFAULT 0",
             )
+            _ensure_column(connection, "code_sources", "parser_revision", "INTEGER NOT NULL DEFAULT 0")
             _ensure_column(
                 connection,
                 "code_relations",
@@ -353,20 +361,65 @@ class JavaCodeIndex:
                 if item.is_file()
                 and item.suffix.casefold() in DECOMPILED_SOURCE_SUFFIXES
             )
-            for source_path in source_paths:
+
+            def _parse_task(sp: Path) -> tuple[Path, dict[str, Any] | None, Exception | None]:
                 try:
-                    changed = self._index_source(plan, batch, output_dir, source_path, provenance)
-                except (OSError, UnicodeError, sqlite3.Error, ValueError) as exc:
-                    errors.append(
-                        {
-                            "batch_id": batch["batch_id"],
-                            "source": source_path.relative_to(output_dir).as_posix(),
-                            "error": f"{type(exc).__name__}: {exc}",
-                        }
-                    )
-                else:
-                    indexed += int(changed)
-                    unchanged += int(not changed)
+                    return sp, self._parse_source(plan, batch, output_dir, sp, provenance), None
+                except (OSError, UnicodeError, ValueError) as exc:
+                    return sp, None, exc
+
+            parse_workers = min(16, os.cpu_count() or 4)
+            # Bound retained source text/AST results to one transaction chunk.
+            chunk_size = 200
+            with ThreadPoolExecutor(max_workers=parse_workers, thread_name_prefix="vr-idx-ast") as pool:
+                for chunk_start in range(0, len(source_paths), chunk_size):
+                    paths = source_paths[chunk_start : chunk_start + chunk_size]
+                    chunk = list(pool.map(_parse_task, paths))
+                    valid_items: list[tuple[Path, dict[str, Any]]] = []
+                    for sp, data, err in chunk:
+                        if err is not None:
+                            errors.append(
+                                {
+                                    "batch_id": batch["batch_id"],
+                                    "source": sp.relative_to(output_dir).as_posix(),
+                                    "error": f"{type(err).__name__}: {err}",
+                                }
+                            )
+                        elif data is not None:
+                            valid_items.append((sp, data))
+
+                    if not valid_items:
+                        continue
+
+                    try:
+                        now = _utc_now()
+                        chunk_indexed = chunk_unchanged = 0
+                        with self.store.connect() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            for sp, data in valid_items:
+                                changed = self._apply_indexed_data(connection, plan, batch, data, now)
+                                chunk_indexed += int(changed)
+                                chunk_unchanged += int(not changed)
+                            connection.commit()
+                        indexed += chunk_indexed
+                        unchanged += chunk_unchanged
+                    except (sqlite3.Error, OSError, ValueError):
+                        for sp, data in valid_items:
+                            try:
+                                changed = self._index_source(
+                                    plan, batch, output_dir, sp, provenance, data=data
+                                )
+                            except (OSError, UnicodeError, sqlite3.Error, ValueError) as item_exc:
+                                errors.append(
+                                    {
+                                        "batch_id": batch["batch_id"],
+                                        "source": sp.relative_to(output_dir).as_posix(),
+                                        "error": f"{type(item_exc).__name__}: {item_exc}",
+                                    }
+                                )
+                            else:
+                                indexed += int(changed)
+                                unchanged += int(not changed)
         return {
             "schema_version": CODE_INDEX_SCHEMA_VERSION,
             "plan_id": plan_id,
@@ -515,14 +568,14 @@ class JavaCodeIndex:
             result.setdefault(family, []).append(row)
         return result
 
-    def _index_source(
+    def _parse_source(
         self,
         plan: sqlite3.Row,
         batch: sqlite3.Row,
         output_dir: Path,
         source_path: Path,
         provenance: dict[str, list[sqlite3.Row]],
-    ) -> bool:
+    ) -> dict[str, Any]:
         body = source_path.read_text(encoding="utf-8", errors="replace")
         relative_path = source_path.relative_to(output_dir).as_posix()
         fallback_qualified = relative_path.rsplit(".", 1)[0].replace("/", ".")
@@ -550,109 +603,152 @@ class JavaCodeIndex:
                 + [str(item["target"]) for item in parsed.relations]
             )
         )
-        now = _utc_now()
-        with self.store.connect() as connection:
-            existing = connection.execute(
-                """SELECT id, source_sha256, schema_version
-                   FROM code_sources WHERE source_key = ?""",
-                (source_key,),
-            ).fetchone()
-            if (
-                existing is not None
-                and existing["source_sha256"] == source_hash
-                and int(existing["schema_version"]) == CODE_INDEX_SCHEMA_VERSION
-            ):
-                return False
-            connection.execute("BEGIN IMMEDIATE")
-            values = (
-                CODE_INDEX_SCHEMA_VERSION,
-                plan["release_id"],
-                plan["release_hash"],
-                batch["jar_relative_path"],
-                batch["artifact_sha256"],
-                batch["batch_id"],
-                int(batch["class_version"]),
-                batch["tool"],
-                batch["output_reference"],
-                relative_path,
-                source_hash,
-                parsed.package_name,
-                parsed.primary_type,
-                parsed.qualified_name,
-                json.dumps(logical_names, ensure_ascii=False),
-                json.dumps(content_hashes),
-                len(rows),
-                parsed.parser_kind,
-                parsed.syntax_error_count,
-                symbols_text,
-                body,
-                now,
+        return {
+            "source_key": source_key,
+            "source_hash": source_hash,
+            "relative_path": relative_path,
+            "parsed": parsed,
+            "logical_names": logical_names,
+            "content_hashes": content_hashes,
+            "rows": rows,
+            "symbols_text": symbols_text,
+            "body": body,
+        }
+
+    def _apply_indexed_data(
+        self,
+        connection: sqlite3.Connection,
+        plan: sqlite3.Row,
+        batch: sqlite3.Row,
+        data: dict[str, Any],
+        now: str,
+    ) -> bool:
+        source_key = data["source_key"]
+        source_hash = data["source_hash"]
+        parsed = data["parsed"]
+        existing = connection.execute(
+            """SELECT id, source_sha256, schema_version, parser_revision
+               FROM code_sources WHERE source_key = ?""",
+            (source_key,),
+        ).fetchone()
+        if (
+            existing is not None
+            and existing["source_sha256"] == source_hash
+            and int(existing["schema_version"]) == CODE_INDEX_SCHEMA_VERSION
+            and int(existing["parser_revision"]) == JAVA_PARSER_REVISION
+        ):
+            return False
+        values = (
+            CODE_INDEX_SCHEMA_VERSION,
+            plan["release_id"],
+            plan["release_hash"],
+            batch["jar_relative_path"],
+            batch["artifact_sha256"],
+            batch["batch_id"],
+            int(batch["class_version"]),
+            batch["tool"],
+            batch["output_reference"],
+            data["relative_path"],
+            source_hash,
+            parsed.package_name,
+            parsed.primary_type,
+            parsed.qualified_name,
+            json.dumps(data["logical_names"], ensure_ascii=False),
+            json.dumps(data["content_hashes"]),
+            len(data["rows"]),
+            parsed.parser_kind,
+            parsed.syntax_error_count,
+            data["symbols_text"],
+            data["body"],
+            now,
+            JAVA_PARSER_REVISION,
+        )
+        if existing is None:
+            cursor = connection.execute(
+                """INSERT INTO code_sources
+                   (source_key, schema_version, release_id, release_hash,
+                    jar_relative_path, artifact_sha256, batch_id,
+                    class_version, tool,
+                    output_reference, source_relative_path, source_sha256,
+                    package_name, primary_type, qualified_name,
+                    logical_names_json, content_hashes_json, occurrence_count,
+                    parser_kind, syntax_error_count, symbols_text, body, indexed_at, parser_revision)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (source_key, *values),
             )
-            if existing is None:
-                cursor = connection.execute(
-                    """INSERT INTO code_sources
-                       (source_key, schema_version, release_id, release_hash,
-                        jar_relative_path, artifact_sha256, batch_id,
-                        class_version, tool,
-                        output_reference, source_relative_path, source_sha256,
-                        package_name, primary_type, qualified_name,
-                        logical_names_json, content_hashes_json, occurrence_count,
-                        parser_kind, syntax_error_count, symbols_text, body, indexed_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (source_key, *values),
+            source_id = int(cursor.lastrowid)
+        else:
+            source_id = int(existing["id"])
+            connection.execute(
+                """UPDATE code_sources SET
+                   schema_version=?, release_id=?, release_hash=?,
+                   jar_relative_path=?, artifact_sha256=?, batch_id=?,
+                   class_version=?, tool=?,
+                   output_reference=?, source_relative_path=?, source_sha256=?,
+                   package_name=?, primary_type=?, qualified_name=?,
+                   logical_names_json=?, content_hashes_json=?, occurrence_count=?,
+                   parser_kind=?, syntax_error_count=?, symbols_text=?, body=?,
+                   indexed_at=?, parser_revision=? WHERE id=?""",
+                (*values, source_id),
+            )
+            connection.execute("DELETE FROM code_symbols WHERE source_id = ?", (source_id,))
+            connection.execute("DELETE FROM code_relations WHERE source_id = ?", (source_id,))
+        connection.executemany(
+            """INSERT INTO code_symbols
+               (source_id, kind, simple_name, qualified_name, signature,
+                visibility, line_start) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    source_id,
+                    item["kind"],
+                    item["simple_name"],
+                    item["qualified_name"],
+                    item["signature"],
+                    item["visibility"],
+                    item["line_start"],
                 )
-                source_id = int(cursor.lastrowid)
-            else:
-                source_id = int(existing["id"])
-                connection.execute(
-                    """UPDATE code_sources SET
-                       schema_version=?, release_id=?, release_hash=?,
-                       jar_relative_path=?, artifact_sha256=?, batch_id=?,
-                       class_version=?, tool=?,
-                       output_reference=?, source_relative_path=?, source_sha256=?,
-                       package_name=?, primary_type=?, qualified_name=?,
-                       logical_names_json=?, content_hashes_json=?, occurrence_count=?,
-                       parser_kind=?, syntax_error_count=?, symbols_text=?, body=?,
-                       indexed_at=? WHERE id=?""",
-                    (*values, source_id),
+                for item in parsed.symbols
+            ],
+        )
+        connection.executemany(
+            """INSERT INTO code_relations
+               (source_id, kind, target, source_symbol, confidence, line_start)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    source_id,
+                    item["kind"],
+                    item["target"],
+                    item.get("source_symbol", ""),
+                    float(item.get("confidence", 0.0)),
+                    item["line_start"],
                 )
-                connection.execute("DELETE FROM code_symbols WHERE source_id = ?", (source_id,))
-                connection.execute("DELETE FROM code_relations WHERE source_id = ?", (source_id,))
-            connection.executemany(
-                """INSERT INTO code_symbols
-                   (source_id, kind, simple_name, qualified_name, signature,
-                    visibility, line_start) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        source_id,
-                        item["kind"],
-                        item["simple_name"],
-                        item["qualified_name"],
-                        item["signature"],
-                        item["visibility"],
-                        item["line_start"],
-                    )
-                    for item in parsed.symbols
-                ],
-            )
-            connection.executemany(
-                """INSERT INTO code_relations
-                   (source_id, kind, target, source_symbol, confidence, line_start)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        source_id,
-                        item["kind"],
-                        item["target"],
-                        item.get("source_symbol", ""),
-                        float(item.get("confidence", 0.0)),
-                        item["line_start"],
-                    )
-                    for item in parsed.relations
-                ],
-            )
-            connection.commit()
+                for item in parsed.relations
+            ],
+        )
         return True
+
+    def _index_source(
+        self,
+        plan: sqlite3.Row,
+        batch: sqlite3.Row,
+        output_dir: Path,
+        source_path: Path,
+        provenance: dict[str, list[sqlite3.Row]],
+        *,
+        connection: sqlite3.Connection | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> bool:
+        if data is None:
+            data = self._parse_source(plan, batch, output_dir, source_path, provenance)
+        now = _utc_now()
+        if connection is not None:
+            return self._apply_indexed_data(connection, plan, batch, data, now)
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            changed = self._apply_indexed_data(conn, plan, batch, data, now)
+            conn.commit()
+            return changed
 
     def search(
         self,

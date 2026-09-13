@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import warnings
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -22,6 +23,13 @@ from .erp_releases import (
 )
 from .code_processing_policy import processing_window_status
 from .jvm_toolchain import DecompileRequest, DecompileResult, JvmToolchain
+
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"Overlapped entries: .*possible zip bomb.*",
+    category=UserWarning,
+)
 
 
 PROCESSING_SCHEMA_VERSION = 2
@@ -106,6 +114,8 @@ class DecompilationBatchStore:
                 ON class_occurrences(release_hash, jar_relative_path);
             CREATE INDEX IF NOT EXISTS idx_occurrences_content
                 ON class_occurrences(content_sha256);
+            CREATE INDEX IF NOT EXISTS idx_occurrences_release_id
+                ON class_occurrences(release_id);
             CREATE TABLE IF NOT EXISTS decompilation_batches (
                 batch_id TEXT PRIMARY KEY,
                 plan_id TEXT NOT NULL REFERENCES decompilation_plans(plan_id),
@@ -136,6 +146,8 @@ class DecompilationBatchStore:
                 PRIMARY KEY (batch_id, ordinal),
                 UNIQUE (batch_id, occurrence_id)
             );
+            CREATE INDEX IF NOT EXISTS idx_batch_members_occurrence
+                ON batch_members(occurrence_id);
             """
         )
         batch_columns = {
@@ -278,6 +290,50 @@ class DecompilationBatchStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def cancel_active_plans(self, release_id: str, *, relative_jars: Iterable[str] = ()) -> list[str]:
+        with _exclusive_file_lock(self.lock_path), self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """SELECT plan_id FROM decompilation_plans
+                   WHERE release_id = ? AND state != 'completed'""",
+                (release_id,),
+            ).fetchall()
+            plan_ids = [str(row["plan_id"]) for row in rows]
+            selected = set(relative_jars)
+            if selected:
+                scoped_ids = []
+                for plan_id in plan_ids:
+                    jars = {str(row[0]) for row in connection.execute(
+                        "SELECT relative_path FROM plan_artifacts WHERE plan_id = ?", (plan_id,)
+                    )}
+                    if jars.intersection(selected):
+                        if not jars.issubset(selected):
+                            raise DecompilationBatchError("O plano inclui outros aplicativos; cancele o lote completo.")
+                        scoped_ids.append(plan_id)
+                plan_ids = scoped_ids
+            if plan_ids:
+                placeholders = ",".join("?" for _ in plan_ids)
+                connection.execute(
+                    f"""DELETE FROM batch_members WHERE batch_id IN
+                         (SELECT batch_id FROM decompilation_batches
+                          WHERE plan_id IN ({placeholders}))""",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM decompilation_batches WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM plan_artifacts WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM decompilation_plans WHERE plan_id IN ({placeholders})",
+                    plan_ids,
+                )
+                connection.commit()
+            return plan_ids
 
 
 class DecompilationBatchPlanner:
@@ -512,7 +568,12 @@ class DecompilationBatchPlanner:
                 )
             rows: list[tuple[Any, ...]] = []
             try:
-                with zipfile.ZipFile(jar_path) as archive:
+                with zipfile.ZipFile(jar_path) as archive, warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"Overlapped entries: .*possible zip bomb.*",
+                        category=UserWarning,
+                    )
                     for entry_index, info in enumerate(archive.infolist()):
                         normalized = normalize_class_entry(info.filename)
                         if normalized is None or info.is_dir():
@@ -802,9 +863,11 @@ class DecompilationBatchExecutor:
                 if batch is None:
                     break
                 claimed.append(batch)
+            active_workers = min(worker_count, max(1, len(claimed)))
+            cores_per_worker = max(1, int(max_cpu_cores) // active_workers)
             if worker_count > 1 and len(claimed) > 1:
                 with ThreadPoolExecutor(
-                    max_workers=min(worker_count, len(claimed)),
+                    max_workers=active_workers,
                     thread_name_prefix="vr-decompile",
                 ) as pool:
                     futures = [
@@ -815,7 +878,7 @@ class DecompilationBatchExecutor:
                             max_heap_mb=max_heap_mb,
                             timeout_seconds=timeout_seconds,
                             max_cpu_cores=cores_per_worker,
-                            cpu_core_offset=(ordinal % worker_count)
+                            cpu_core_offset=(ordinal % active_workers)
                             * cores_per_worker,
                             process_priority=process_priority,
                         )
@@ -1139,9 +1202,18 @@ class DecompilationBatchExecutor:
         input_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = input_path.with_suffix(".tmp")
         try:
-            with zipfile.ZipFile(jar_path) as source, zipfile.ZipFile(
-                temporary, "w", compression=zipfile.ZIP_DEFLATED
-            ) as target:
+            with (
+                zipfile.ZipFile(jar_path) as source,
+                zipfile.ZipFile(
+                    temporary, "w", compression=zipfile.ZIP_DEFLATED
+                ) as target,
+                warnings.catch_warnings(),
+            ):
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Overlapped entries: .*possible zip bomb.*",
+                    category=UserWarning,
+                )
                 target.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
                 infos = source.infolist()
                 written_entries: set[str] = set()

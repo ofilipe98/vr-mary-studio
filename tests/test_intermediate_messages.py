@@ -313,6 +313,8 @@ class TestOrchestratorMultiMessage:
         orch._finalized_turns = set()
         orch._agent_run_lock = threading.RLock()
         orch._dynamic_tool_callbacks = {}
+        orch._turn_dynamic_candidates = {}
+        orch._turn_application_contexts = {}
         return orch, db
 
     def test_assistant_started_creates_execution_state_message(self, tmp_path: Path) -> None:

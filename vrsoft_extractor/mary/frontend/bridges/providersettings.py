@@ -7,7 +7,7 @@ from typing import Any
 from ...erp_releases import ErpReleaseCatalog, ErpReleaseError
 from ...models import ModelRef
 
-from .presentation import (PROVIDER_LABELS, EFFORT_LABELS, ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS, DEFAULT_CODE_PROCESSING_HEAP_MB, DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS, DEFAULT_CODE_PROCESSING_CPU_CORES, DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER, DEFAULT_CODE_PROCESSING_WINDOW, CODE_PROCESSING_HARDWARE_PROFILE_VERSION)
+from .presentation import (PROVIDER_LABELS, EFFORT_LABELS, ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS, DEFAULT_CODE_PROCESSING_HEAP_MB, DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS, DEFAULT_CODE_PROCESSING_CPU_CORES, DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER, DEFAULT_CODE_PROCESSING_WINDOW, CODE_PROCESSING_HARDWARE_PROFILE_VERSION)
 
 class ProviderSettingsDomain:
     """Domain operations using the facade as the sole state and transaction owner."""
@@ -675,7 +675,7 @@ class ProviderSettingsDomain:
         self._code_analysis_jar_source = (
             requested_source
             if requested_source
-            in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE}
+            in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM}
             else ERP_JAR_SOURCE_VR_EXEC
         )
         scope_preference = self._workspace_research_preference(
@@ -722,27 +722,30 @@ class ProviderSettingsDomain:
         window_preference = self._workspace_research_preference(
             "code_processing_window"
         )
+        global_heap = self._preferences.value(
+            "code_processing/max_heap_mb", DEFAULT_CODE_PROCESSING_HEAP_MB
+        )
         try:
             requested_heap = int(
-                self._preferences.value(
-                    heap_preference, DEFAULT_CODE_PROCESSING_HEAP_MB
-                )
+                self._preferences.value(heap_preference, global_heap)
             )
         except (TypeError, ValueError):
             requested_heap = DEFAULT_CODE_PROCESSING_HEAP_MB
+        global_timeout = self._preferences.value(
+            "code_processing/timeout_seconds", DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
+        )
         try:
             requested_timeout = int(
-                self._preferences.value(
-                    timeout_preference, DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
-                )
+                self._preferences.value(timeout_preference, global_timeout)
             )
         except (TypeError, ValueError):
             requested_timeout = DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS
+        global_cpu = self._preferences.value(
+            "code_processing/max_cpu_cores", DEFAULT_CODE_PROCESSING_CPU_CORES
+        )
         try:
             requested_cpu = int(
-                self._preferences.value(
-                    cpu_preference, DEFAULT_CODE_PROCESSING_CPU_CORES
-                )
+                self._preferences.value(cpu_preference, global_cpu)
             )
         except (TypeError, ValueError):
             requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
@@ -755,18 +758,20 @@ class ProviderSettingsDomain:
         if hardware_profile_version < CODE_PROCESSING_HARDWARE_PROFILE_VERSION:
             requested_heap = DEFAULT_CODE_PROCESSING_HEAP_MB
             requested_cpu = DEFAULT_CODE_PROCESSING_CPU_CORES
+        global_disk = self._preferences.value(
+            "code_processing/disk_multiplier", DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
+        )
         try:
             requested_disk = int(
-                self._preferences.value(
-                    disk_preference, DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
-                )
+                self._preferences.value(disk_preference, global_disk)
             )
         except (TypeError, ValueError):
             requested_disk = DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER
+        global_window = self._preferences.value(
+            "code_processing/window", DEFAULT_CODE_PROCESSING_WINDOW
+        )
         requested_window = str(
-            self._preferences.value(
-                window_preference, DEFAULT_CODE_PROCESSING_WINDOW
-            )
+            self._preferences.value(window_preference, global_window)
             or DEFAULT_CODE_PROCESSING_WINDOW
         )
         self._code_processing_max_heap_mb = (
@@ -820,11 +825,23 @@ class ProviderSettingsDomain:
             self._code_processing_max_heap_mb,
         )
         self._preferences.setValue(
+            "code_processing/max_heap_mb",
+            self._code_processing_max_heap_mb,
+        )
+        self._preferences.setValue(
             timeout_preference,
             self._code_processing_timeout_seconds,
         )
         self._preferences.setValue(
+            "code_processing/timeout_seconds",
+            self._code_processing_timeout_seconds,
+        )
+        self._preferences.setValue(
             cpu_preference,
+            self._code_processing_max_cpu_cores,
+        )
+        self._preferences.setValue(
+            "code_processing/max_cpu_cores",
             self._code_processing_max_cpu_cores,
         )
         self._preferences.setValue(
@@ -835,7 +852,12 @@ class ProviderSettingsDomain:
             disk_preference,
             self._code_processing_disk_multiplier,
         )
+        self._preferences.setValue(
+            "code_processing/disk_multiplier",
+            self._code_processing_disk_multiplier,
+        )
         self._preferences.setValue(window_preference, self._code_processing_window)
+        self._preferences.setValue("code_processing/window", self._code_processing_window)
         try:
             ErpReleaseCatalog(
                 self._settings.root,

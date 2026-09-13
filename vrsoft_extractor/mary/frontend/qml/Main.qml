@@ -15,6 +15,8 @@ ApplicationWindow {
     visible: true
     title: frontend.appName
     color: Theme.palette.background
+    font.family: Theme.fontFamily
+    font.pixelSize: Theme.bodySize
 
     Binding { target: Theme; property: "viewportWidth"; value: window.width }
     Binding { target: Theme; property: "viewportHeight"; value: window.height }
@@ -52,7 +54,7 @@ ApplicationWindow {
         anchors.fill: parent
         active: window.chatVisited || frontend.currentPage === 1
         visible: active && frontend.currentPage === 1
-        opacity: frontend.currentPage === 1 ? 1 : 0.72
+        opacity: frontend.currentPage === 1 ? 1 : 0
         sourceComponent: chatComponent
 
         transform: Translate {
@@ -73,7 +75,7 @@ ApplicationWindow {
         anchors.fill: parent
         active: window.hubVisited || frontend.currentPage !== 1
         visible: active && frontend.currentPage !== 1
-        opacity: frontend.currentPage !== 1 ? 1 : 0.72
+        opacity: frontend.currentPage !== 1 ? 1 : 0
         sourceComponent: settingsHubComponent
 
         transform: Translate {

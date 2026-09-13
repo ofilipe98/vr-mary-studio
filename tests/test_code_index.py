@@ -137,6 +137,45 @@ public class Venda extends Base implements Runnable {
     }
 
 
+def test_batch_rollback_does_not_double_count_indexed_sources(tmp_path, monkeypatch):
+    import sqlite3
+
+    index, _, plan_id = _indexed_project(tmp_path)
+    apply = index._apply_indexed_data
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise sqlite3.OperationalError("injected transaction failure")
+        return apply(*args, **kwargs)
+
+    monkeypatch.setattr(index, "_apply_indexed_data", fail_second)
+    result = index.index_plan(plan_id)
+    assert result["errors"] == []
+    assert result["indexed_sources"] == 2
+    assert result["unchanged_sources"] == 0
+    with index.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM code_sources").fetchone()[0] == 2
+
+
+def test_reindex_repairs_older_parser_output_without_changing_source_hash(tmp_path):
+    index, _, plan_id = _indexed_project(tmp_path)
+    index.index_plan(plan_id)
+    with index.store.connect() as connection:
+        hashes = [row[0] for row in connection.execute("SELECT source_sha256 FROM code_sources ORDER BY id")]
+        connection.execute("UPDATE code_sources SET parser_revision=0")
+        connection.execute("DELETE FROM code_symbols")
+        connection.commit()
+    result = index.index_plan(plan_id)
+    assert result["indexed_sources"] == 2
+    with index.store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM code_symbols").fetchone()[0] > 0
+        assert [row[0] for row in connection.execute("SELECT source_sha256 FROM code_sources ORDER BY id")] == hashes
+    assert index.index_plan(plan_id)["unchanged_sources"] == 2
+
+
 def test_parser_falls_back_when_native_ast_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     def unavailable(*_args: object, **_kwargs: object) -> object:
         raise code_index_module.JavaAstUnavailable("not installed")

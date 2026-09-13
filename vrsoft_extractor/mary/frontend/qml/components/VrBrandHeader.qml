@@ -22,6 +22,14 @@ Item {
             Layout.preferredWidth: 40
             Layout.preferredHeight: 40
 
+            Rectangle {
+                objectName: "environmentArtwork"
+                anchors.fill: parent; radius: 10
+                visible: frontend.environmentStage !== "" && frontend.environmentIdentification === "artwork"
+                color: Qt.alpha(Theme.palette.focus, .2)
+                border.color: Theme.palette.focus
+            }
+
             Image {
                 anchors.fill: parent
                 source: frontend.brandSymbolUrl
@@ -45,13 +53,27 @@ Item {
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.05
             }
-            Text {
-                text: "STUDIO"
-                color: Theme.palette.brandYellow
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(9)
-                font.weight: Font.DemiBold
-                font.letterSpacing: 1.7
+            Row {
+                spacing: 6
+                Text {
+                    text: "STUDIO"
+                    color: Theme.palette.brandYellow
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(9)
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 1.7
+                }
+                Rectangle {
+                    objectName: "environmentVersionPill"
+                    visible: frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
+                    width: stageLabel.implicitWidth + 10; height: stageLabel.implicitHeight + 2; radius: height / 2
+                    color: Theme.palette.accentSoft
+                    Text {
+                        id: stageLabel; anchors.centerIn: parent
+                        text: frontend.appVersion + " " + frontend.environmentStage
+                        color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: 9
+                    }
+                }
             }
         }
 

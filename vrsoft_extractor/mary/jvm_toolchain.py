@@ -306,14 +306,21 @@ class VineflowerAdapter(DecompilerAdapter):
     expected_sha256 = VINEFLOWER_SHA256
 
     def command(self, request: DecompileRequest) -> list[str]:
-        return [
+        cmd = [
             self.java.path,
             f"-Xmx{max(512, request.max_heap_mb)}m",
             "-jar",
             str(self.jar_path),
-            str(request.input_path.resolve()),
-            str(request.output_dir.resolve()),
         ]
+        if request.max_cpu_cores > 0:
+            cmd.append(f"--thread-count={max(1, request.max_cpu_cores)}")
+        cmd.extend(
+            [
+                str(request.input_path.resolve()),
+                str(request.output_dir.resolve()),
+            ]
+        )
+        return cmd
 
 
 class CfrAdapter(DecompilerAdapter):

@@ -84,11 +84,12 @@ def test_provider_usage_payloads_share_one_context_shape() -> None:
     assert opencode["tokenUsage"]["modelContextWindow"] == 128_000
 
 
-def _settings(tmp_path: Path) -> MarySettings:
+def _settings(tmp_path: Path, **overrides: Any) -> MarySettings:
     settings = MarySettings(
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "mary").resolve(),
         old_root=(tmp_path / "old").resolve(),
+        **overrides,
     )
     settings.app_dir.mkdir(parents=True)
     settings.old_root.mkdir(parents=True)
@@ -406,7 +407,7 @@ def test_changing_vr_mode_preserves_a_native_session_per_mode(
     conversation_id = orchestrator.new_conversation(
         "codex", "sol", defer_provider_start=True, vr_enabled=True
     )
-    database.update_conversation(conversation_id, native_id_vr="native-vr")
+    database.update_conversation(conversation_id, native_id_vr="native-vr", native_tools_id_vr="native-vr")
 
     orchestrator.update_vr_mode(conversation_id, False)
 
@@ -1457,7 +1458,7 @@ def test_claude_receives_project_and_knowledge_as_distinct_readable_roots(
     assert popen.call_args.kwargs["cwd"] == project
 
 
-def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
+def test_claude_native_mode_exposes_knowledge_through_mcp_only(
     tmp_path: Path,
 ) -> None:
     knowledge = (tmp_path / "VR_Mary_V2").resolve()
@@ -1490,9 +1491,11 @@ def test_claude_native_mode_does_not_inject_vr_permissions_or_knowledge(
     assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
     assert "--permission-mode" not in command
     assert "--add-dir" not in command
-    assert "--allowedTools" not in command
+    assert command[command.index("--allowedTools") + 1] == "mcp__vr-mary-studio__*"
     assert "--disallowedTools" not in command
-    assert str(knowledge) not in command
+    mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
+    assert "vr-mary-studio" in mcp
+    assert str(knowledge) in mcp["vr-mary-studio"]["args"]
 
 
 @pytest.mark.parametrize(
@@ -1539,9 +1542,10 @@ def test_claude_native_turn_honours_approval_profile(
         assert "--permission-mode" not in command
     else:
         assert command[command.index("--permission-mode") + 1] == expected_mode
-    assert "--allowedTools" not in command
+    assert command[command.index("--allowedTools") + 1] == "mcp__vr-mary-studio__*"
     assert "--disallowedTools" not in command
-    assert str(knowledge) not in command
+    mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
+    assert str(knowledge) in mcp["vr-mary-studio"]["args"]
     assert popen.call_args.kwargs["cwd"] == project
 
 
@@ -1841,7 +1845,7 @@ def _tool_names(options: ConversationOptions | None) -> set[str]:
 
 
 def test_native_turn_registers_vr_search_only_when_opt_in(tmp_path: Path) -> None:
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, native_vr_search_enabled=False)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
     provider = FakeProvider("codex")

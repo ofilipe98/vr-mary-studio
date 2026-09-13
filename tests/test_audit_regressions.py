@@ -116,6 +116,7 @@ class WireProvider(ultra._UltraFakeProvider):
 
     def send_message(self, conversation_id, native_id, model, effort, workspace,
                      message, callback, options=None, skills=None, image_paths=None):
+        self.native_id = native_id
         self.wire._native_to_local[native_id] = conversation_id
         self.wire._callbacks[conversation_id] = callback
         self.wire._active_turns[conversation_id] = ""
@@ -123,7 +124,7 @@ class WireProvider(ultra._UltraFakeProvider):
         self.ready.set()
 
     def notify(self, method, turn="", text=""):
-        params = {"threadId": "native-x"}
+        params = {"threadId": self.native_id}
         if turn:
             params["turnId"] = turn
         if method in {"turn/started", "turn/completed"}:

@@ -5,6 +5,9 @@ import "../theme"
 Switch {
     id: control
     property bool subdued: false
+    property color activeColor: Theme.palette.accessibleOrange
+    property color thumbColor: control.checked ? "#FFFFFF" : Theme.palette.mutedText
+    property color inactiveColor: Theme.palette.chatControl
 
     implicitWidth: 32
     implicitHeight: 20
@@ -21,11 +24,11 @@ Switch {
         y: (control.height - height) / 2
         radius: height / 2
         color: control.checked
-            ? (control.subdued ? Qt.tint(Theme.palette.chatControl, Qt.alpha(Theme.palette.accessibleOrange, 0.40)) : Theme.palette.accessibleOrange) : Theme.palette.chatControl
+            ? (control.subdued ? Qt.tint(Theme.palette.chatControl, Qt.alpha(control.activeColor, 0.40)) : control.activeColor) : control.inactiveColor
         border.width: control.activeFocus ? 2 : 1
         border.color: control.activeFocus
             ? Theme.palette.focus : control.checked
-                ? (control.subdued ? Theme.palette.focus : Theme.palette.accessibleOrange) : Theme.palette.chatBorder
+                ? (control.subdued ? Theme.palette.focus : control.activeColor) : Theme.palette.chatBorder
         opacity: control.enabled ? 1 : 0.4
         Rectangle { anchors.fill: parent; radius: parent.radius; color: Theme.palette.text; opacity: control.hovered && control.enabled ? 0.06 : 0 }
 
@@ -35,7 +38,7 @@ Switch {
             radius: 7
             y: 2
             x: control.checked ? parent.width - width - 2 : 2
-            color: control.checked ? "#FFFFFF" : Theme.palette.mutedText
+            color: control.thumbColor
 
             Behavior on x {
                 enabled: !frontend.reduceMotion

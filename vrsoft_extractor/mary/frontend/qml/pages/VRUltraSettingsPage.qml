@@ -8,6 +8,8 @@ Item {
     id: root
     objectName: "vrUltraSettingsPage"
 
+    signal openApplicationsRequested()
+
     readonly property int selectedModelIndex: {
         if (!chat.researchModelKeys.length) return -1
         var selectedKey = chat.researchModelKeys[0]
@@ -420,12 +422,19 @@ Item {
                         }
                     }
                     VrButton {
+                        objectName: "vrUltraManageAppsButton"
                         text: "Gerenciar aplicativos…"
                         variant: "secondary"
                         onClicked: {
+                            root.openApplicationsRequested()
                             var p = root.parent
-                            while (p && !p.hasOwnProperty("tabIndex")) p = p.parent
-                            if (p) p.tabIndex = 3
+                            while (p) {
+                                if (p.hasOwnProperty("tabIndex") || p.tabIndex !== undefined) {
+                                    p.tabIndex = 3
+                                    break
+                                }
+                                p = p.parent
+                            }
                         }
                     }
 

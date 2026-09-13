@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import io
 import os
+import struct
 import threading
 import time
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -412,3 +415,120 @@ def test_executor_rejects_plan_from_old_processing_schema(tmp_path: Path) -> Non
         DecompilationBatchExecutor(
             tmp_path, catalog=catalog, adapters=(_FakeAdapter("vineflower"),)
         ).run(plan["plan_id"])
+
+
+def test_cancel_active_plans(tmp_path: Path) -> None:
+    catalog = _catalog(tmp_path)
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+        "r1", ("A.jar",), max_classes=20
+    )
+    store = DecompilationBatchStore(tmp_path)
+    active = store.status(plan["plan_id"])
+    assert active["state"] != "completed"
+
+    cancelled_ids = store.cancel_active_plans("r1")
+    assert cancelled_ids == [plan["plan_id"]]
+    with pytest.raises(DecompilationBatchError, match="encontrado"):
+        store.status(plan["plan_id"])
+    assert store.status() == []
+
+
+def test_cancel_scoped_plan_preserves_other_application(tmp_path):
+    catalog = _catalog(tmp_path)
+    planner = DecompilationBatchPlanner(tmp_path, catalog=catalog)
+    first = planner.plan("r1", ("A.jar",), max_classes=20)
+    second = planner.plan("r1", ("B.jar",), max_classes=20)
+    store = DecompilationBatchStore(tmp_path)
+    assert store.cancel_active_plans("r1", relative_jars=("A.jar",)) == [first["plan_id"]]
+    assert store.status(second["plan_id"])["state"] == "pending"
+
+
+def test_single_active_batch_uses_configured_cpu_budget(tmp_path):
+    catalog = _catalog(tmp_path)
+    plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan("r1", ("A.jar",), max_classes=20)
+    adapter = _FakeAdapter("vineflower")
+    result = DecompilationBatchExecutor(tmp_path, catalog=catalog, adapters=(adapter,)).run(
+        plan["plan_id"], limit=4, max_workers=4, max_cpu_cores=8
+    )
+    assert len(adapter.requests) == 1
+    assert adapter.requests[0].max_cpu_cores == 8
+    assert result["cpu_cores_per_worker"] == 8
+
+
+def _overlapped_jar(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
+        archive.writestr("br/vr/First.class", b"\xca\xfe\xba\xbe\x00\x00\x00\x34")
+
+    raw = bytearray(buf.getvalue())
+    eocd_pos = raw.rfind(b"\x50\x4b\x05\x06")
+    centdir = struct.unpack(
+        zipfile.structEndArchive,
+        raw[eocd_pos : eocd_pos + zipfile.sizeEndCentDir],
+    )
+    total_entries = centdir[zipfile._ECD_ENTRIES_TOTAL]
+    cd_size = centdir[zipfile._ECD_SIZE]
+    cd_offset = centdir[zipfile._ECD_OFFSET]
+
+    cd_bytes = raw[cd_offset : cd_offset + cd_size]
+    first_pos = cd_bytes.find(b"br/vr/First.class")
+    entry_start = cd_bytes.rfind(b"\x50\x4b\x01\x02", 0, first_pos)
+    centdir_entry = struct.unpack(
+        zipfile.structCentralDir,
+        cd_bytes[entry_start : entry_start + zipfile.sizeCentralDir],
+    )
+    fn_len = centdir_entry[zipfile._CD_FILENAME_LENGTH]
+    extra_len = centdir_entry[zipfile._CD_EXTRA_FIELD_LENGTH]
+    comment_len = centdir_entry[zipfile._CD_COMMENT_LENGTH]
+    entry_len = zipfile.sizeCentralDir + fn_len + extra_len + comment_len
+    entry_bytes = bytearray(cd_bytes[entry_start : entry_start + entry_len])
+
+    new_cd = cd_bytes + entry_bytes
+    new_cd_size = len(new_cd)
+    new_total_entries = total_entries + 1
+
+    new_raw = (
+        raw[:cd_offset]
+        + new_cd
+        + struct.pack(
+            zipfile.structEndArchive,
+            b"\x50\x4b\x05\x06",
+            0,
+            0,
+            new_total_entries,
+            new_total_entries,
+            new_cd_size,
+            cd_offset,
+            0,
+        )
+    )
+    path.write_bytes(new_raw)
+
+
+def test_scan_and_materialize_suppresses_overlapped_zip_bomb_warning(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "ERP" / "releases" / "r1" / "jars"
+    _overlapped_jar(source / "Overlapped.jar")
+    catalog = ErpReleaseCatalog(tmp_path, expected_jar_count=1)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        catalog.import_release("r1")
+        plan = DecompilationBatchPlanner(tmp_path, catalog=catalog).plan(
+            "r1", ("Overlapped.jar",), max_classes=10
+        )
+        executor = DecompilationBatchExecutor(
+            tmp_path, catalog=catalog, adapters=(_FakeAdapter("vineflower"),)
+        )
+        result = executor.run(plan["plan_id"], limit=1)
+
+    zip_warnings = [
+        warning
+        for warning in recorded
+        if "possible zip bomb" in str(warning.message)
+    ]
+    assert zip_warnings == []
+    assert result["plan"]["batches_by_state"] == {"completed": 1}

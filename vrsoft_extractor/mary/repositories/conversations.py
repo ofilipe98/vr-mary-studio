@@ -24,7 +24,7 @@ class ConversationsRepositoryMixin:
         cloned_from: str = "",
         effort: str = "medium",
         service_tier: str = "",
-        approval_profile: str = "auto",
+        approval_profile: str = "full_access",
         collaboration_mode: str = "default",
         vr_enabled: bool = False,
         vr_mode: str = "",
@@ -93,6 +93,7 @@ class ConversationsRepositoryMixin:
     def update_conversation(self, conversation_id: str, **fields: Any) -> None:
         allowed = {
             "title", "provider", "model", "effort", "native_id", "native_id_vr",
+            "native_tools_id", "native_tools_id_vr",
             "status", "archived",
             "service_tier", "approval_profile", "collaboration_mode", "trashed_at",
             "workspace", "original_workspace", "vr_enabled", "vr_mode",
@@ -179,10 +180,20 @@ class ConversationsRepositoryMixin:
                 if updated.rowcount != 1:
                     raise RuntimeError("Publicação sem propriedade da investigação.")
                 connection.execute("DELETE FROM source_citations WHERE message_id=?", (message_id,))
+                citation_rows = []
+                for c in research_citations or []:
+                    doc_id = int(c.get("document_id") or 0)
+                    doc_id_val = doc_id if doc_id > 0 else None
+                    evidence_id = str(c.get("evidence_id") or "")
+                    source = str(c.get("source") or "document")
+                    title = str(c.get("title") or "")
+                    provenance = str(c.get("local_path") or c.get("provenance") or c.get("url") or "")
+                    excerpt = str(c.get("excerpt") or "")[:4000]
+                    if doc_id_val is not None or evidence_id or source == "code" or title:
+                        citation_rows.append((conversation_id, doc_id_val, message_id, excerpt, source, evidence_id, provenance, title, json.dumps(c.get("entities") or {}, ensure_ascii=False)))
                 connection.executemany(
-                    "INSERT INTO source_citations(conversation_id,document_id,message_id,excerpt) VALUES(?,?,?,?)",
-                    [(conversation_id, int(c["document_id"]), message_id, str(c.get("excerpt") or "")[:4000])
-                     for c in research_citations or [] if int(c.get("document_id") or 0) > 0],
+                    "INSERT INTO source_citations(conversation_id,document_id,message_id,excerpt,source,evidence_id,provenance,title,metadata_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                    citation_rows,
                 )
                 return message_id
 
@@ -211,7 +222,7 @@ class ConversationsRepositoryMixin:
             cursor = connection.execute(
                 """INSERT INTO messages
                    (conversation_id,role,content,provider_message_id,turn_id,
-                    edited_from_message_id,response_mode,execution_ordinal,message_status,created_at)
+                    edited_from_message_id,response_mode,execution_ordinal,message_status,created_at)\
                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (
                     conversation_id,
@@ -247,21 +258,57 @@ class ConversationsRepositoryMixin:
             connection.execute(
                 "DELETE FROM source_citations WHERE message_id=?", (message_id,)
             )
+            citation_rows = []
+            for item in citations:
+                doc_id = int(item.get("document_id") or 0)
+                doc_id_val = doc_id if doc_id > 0 else None
+                evidence_id = str(item.get("evidence_id") or "")
+                source = str(item.get("source") or "document")
+                title = str(item.get("title") or "")
+                provenance = str(item.get("local_path") or item.get("provenance") or item.get("url") or "")
+                excerpt = str(item.get("excerpt") or "")[:4000]
+                if doc_id_val is not None or evidence_id or source == "code" or title:
+                    citation_rows.append((
+                        conversation_id,
+                        doc_id_val,
+                        message_id,
+                        excerpt,
+                        source,
+                        evidence_id,
+                        provenance,
+                        title,
+                        json.dumps(item.get("entities") or {}, ensure_ascii=False),
+                    ))
             connection.executemany(
                 """INSERT INTO source_citations
-                   (conversation_id,document_id,message_id,excerpt)
-                   VALUES(?,?,?,?)""",
-                [
-                    (
-                        conversation_id,
-                        int(item.get("document_id") or 0) or None,
-                        message_id,
-                        str(item.get("excerpt") or "")[:4000],
-                    )
-                    for item in citations
-                    if int(item.get("document_id") or 0) > 0
-                ],
+                   (conversation_id,document_id,message_id,excerpt,source,evidence_id,provenance,title,metadata_json)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                citation_rows,
             )
+
+    def get_source_citations(self, message_id: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT id, conversation_id, document_id, message_id, excerpt,
+                          source, evidence_id, provenance, title, metadata_json
+                   FROM source_citations WHERE message_id=? ORDER BY id""",
+                (message_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_conversation_source_citations(self, conversation_id: str) -> dict[int, list[dict[str, Any]]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT id, conversation_id, document_id, message_id, excerpt,
+                          source, evidence_id, provenance, title, metadata_json
+                   FROM source_citations WHERE conversation_id=? ORDER BY id""",
+                (conversation_id,),
+            ).fetchall()
+            result: dict[int, list[dict[str, Any]]] = {}
+            for row in rows:
+                mid = int(row["message_id"])
+                result.setdefault(mid, []).append(dict(row))
+            return result
 
     def add_message_skills(
         self,
@@ -368,9 +415,9 @@ class ConversationsRepositoryMixin:
                     raise KeyError(conversation_id)
                 if str(row["status"] or "idle") == "running":
                     raise RuntimeError(
-                        "JÃ¡ existe uma resposta em andamento nesta conversa."
+                        "Já existe uma resposta em andamento nesta conversa."
                     )
-                raise RuntimeError("A conversa nÃ£o estÃ¡ ativa para receber mensagens.")
+                raise RuntimeError("A conversa não está ativa para receber mensagens.")
             cursor = connection.execute(
                 """INSERT INTO messages
                    (conversation_id,role,content,turn_id,edited_from_message_id,created_at)
@@ -444,7 +491,7 @@ class ConversationsRepositoryMixin:
                     [
                         (
                             conversation_id,
-                            "ExecuÃ§Ã£o anterior interrompida pelo encerramento da aplicaÃ§Ã£o.",
+                            "Execução anterior interrompida pelo encerramento da aplicação.",
                             now,
                         )
                         for conversation_id in conversation_ids

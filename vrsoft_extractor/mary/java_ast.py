@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Iterator
 
 try:  # The structural parser remains available for source/dev fallback.
@@ -42,11 +42,17 @@ def tree_sitter_available() -> bool:
     return tree_sitter_java is not None and Language is not None and Parser is not None
 
 
-@lru_cache(maxsize=1)
+_thread_local = threading.local()
+
+
 def _parser() -> Any:
     if not tree_sitter_available():
         raise JavaAstUnavailable("Tree-sitter Java não está instalado.")
-    return Parser(Language(tree_sitter_java.language()))
+    parser = getattr(_thread_local, "parser", None)
+    if parser is None:
+        parser = Parser(Language(tree_sitter_java.language()))
+        _thread_local.parser = parser
+    return parser
 
 
 def parse_java_ast(body: str, *, fallback_qualified: str = "") -> JavaAstParse:
@@ -262,59 +268,55 @@ def _relation(
         "kind": kind,
         "target": target,
         "source_symbol": source_symbol,
-        "line_start": line_start,
         "confidence": confidence,
+        "line_start": line_start,
     }
 
 
-def _split_type_list(value: str) -> list[str]:
-    depth = 0
-    current: list[str] = []
-    result: list[str] = []
-    for character in value:
-        if character == "<":
-            depth += 1
-        elif character == ">":
-            depth = max(0, depth - 1)
-        if character == "," and depth == 0:
-            item = _compact("".join(current))
-            if item:
-                result.append(item)
-            current = []
-        else:
-            current.append(character)
-    item = _compact("".join(current))
-    if item:
-        result.append(item)
-    return result
-
-
-def _bounded(value: str, limit: int = 240) -> str:
-    return value if len(value) <= limit else f"{value[: limit - 1]}…"
+def _text(source: bytes, node: Any) -> str:
+    if node is None:
+        return ""
+    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
 
 def _compact(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _text(source: bytes, node: Any | None) -> str:
-    if node is None:
-        return ""
-    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+def _bounded(value: str, limit: int = 250) -> str:
+    text = _compact(value)
+    return text[:limit]
 
 
-def _walk(root: Any) -> Iterator[Any]:
-    yield root
-    for child in root.named_children:
-        yield from _walk(child)
+def _split_type_list(raw: str) -> list[str]:
+    depth = 0
+    start = 0
+    result = []
+    for index, char in enumerate(raw):
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            result.append(raw[start:index].strip())
+            start = index + 1
+    result.append(raw[start:].strip())
+    return [item for item in result if item]
 
 
 def _unique(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[tuple[tuple[str, Any], ...]] = set()
-    result: list[dict[str, Any]] = []
+    unique_items: list[dict[str, Any]] = []
     for item in items:
-        marker = tuple(sorted(item.items()))
-        if marker not in seen:
-            seen.add(marker)
-            result.append(item)
-    return result
+        key = tuple(sorted(item.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_items.append(item)
+    return unique_items
+
+
+def _walk(node: Any) -> Iterator[Any]:
+    yield node
+    for child in node.children:
+        yield from _walk(child)

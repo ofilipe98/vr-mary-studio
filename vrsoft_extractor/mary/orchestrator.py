@@ -19,10 +19,14 @@ from .db import MaryDatabase
 from .chat_tools import (
     ToolExecutionError,
     VR_SEARCH_TOOL_NAME,
+    VR_SOURCES_TOOL_NAME,
+    VR_READ_TOOL_NAME,
+    all_vr_tools_specs,
     dynamic_tool_spec,
     run_local_tool,
     run_vr_search,
-    vr_search_tool_spec,
+    run_vr_sources,
+    run_vr_read,
 )
 from .models import (
     ConversationOptions,
@@ -235,6 +239,10 @@ class ChatOrchestrator:
         )
         self._pending_finalizers: dict[str, set[Future]] = {}
         self._finalizers_lock = threading.Lock()
+        self._turn_application_contexts: dict[str, list[dict[str, Any]] | None] = {}
+        self._turn_dynamic_candidates: dict[str, list[EvidenceCandidate]] = {}
+        self._turn_access_paths: dict[str, str] = {}
+        self._turn_tool_usage: dict[str, tuple[int, int]] = {}
         # Opt-in: native turns may expose vr_search so the provider pulls local
         # evidence on demand instead of receiving the upfront VR pipeline.
         self.native_vr_search_enabled = bool(
@@ -335,7 +343,7 @@ class ChatOrchestrator:
         model: str = "",
         effort: str = "medium",
         service_tier: str = "",
-        approval_profile: str = "auto",
+        approval_profile: str = "full_access",
         collaboration_mode: str = "default",
         dynamic_tool_ids: list[str] | None = None,
         mcp_tools: list[dict[str, str]] | None = None,
@@ -389,7 +397,9 @@ class ChatOrchestrator:
             )
             self.database.update_conversation(
                 conversation_id,
-                **{self._native_column(bool(vr_enabled)): native_id},
+                **{self._native_column(bool(vr_enabled)): native_id,
+                   "native_tools_id_vr" if vr_enabled else "native_tools_id":
+                       native_id if any(t.get("name") == VR_READ_TOOL_NAME for t in options.dynamic_tools) else ""},
             )
         return conversation_id
 
@@ -453,13 +463,29 @@ class ChatOrchestrator:
         message_id = self.database.begin_user_turn(conversation_id, stored_text, skills=skills)
         native_column = self._native_column(use_vr)
         native_id = str(conversation[native_column] or "")
+        tools_column = "native_tools_id_vr" if use_vr else "native_tools_id"
+        if (conversation["provider"] == "codex" and native_id
+                and conversation[tools_column] != native_id
+                and any(tool.get("name") == VR_READ_TOOL_NAME for tool in options.dynamic_tools)):
+            # Codex registers dynamic tools only on thread/start. Reuse the local
+            # conversation and its normal history transfer when upgrading an old
+            # native session; thread/resume cannot add the new tool contract.
+            native_id = ""
         if resume_run_id:
             # A cancelled research may never have sent a turn to its main native thread.
             # Such empty sessions are not durable in every adapter. Resume the local
             # investigation in a fresh native session using its persisted request.
             native_id = ""
         starts_new_native_session = not native_id
+        access_path = ""
         try:
+            from .knowledge_access import create_scope
+            access_path = create_scope()
+            options = replace(options, knowledge_context_path=access_path)
+            self._turn_access_paths[conversation_id] = access_path
+            self._turn_application_contexts[conversation_id] = application_contexts
+            self._turn_dynamic_candidates[conversation_id] = []
+            self._turn_tool_usage[conversation_id] = (0, 0)
             if not native_id:
                 native_id = provider.start_conversation(
                     conversation_id,
@@ -469,7 +495,8 @@ class ChatOrchestrator:
                     options,
                 )
                 self.database.update_conversation(
-                    conversation_id, **{native_column: native_id}
+                    conversation_id, **{native_column: native_id, tools_column:
+                        native_id if any(t.get("name") == VR_READ_TOOL_NAME for t in options.dynamic_tools) else ""}
                 )
             local_query = (
                 self._local_search_query(
@@ -556,15 +583,45 @@ class ChatOrchestrator:
             handle_turn_event = self._guarded_turn_callback(conversation_id)
 
             def run() -> None:
+                nonlocal application_contexts, code_analysis_manifest_sha256, orchestration_request
                 self._execution_context.owner = message_id
                 try:
+                    from .knowledge_access import publish_scope
+                    from .retrieval.code_retrieval import resolve_code_contexts
+                    code_scope_warning = ""
+                    try:
+                        application_contexts = resolve_code_contexts(self.settings.root, application_contexts)
+                    except (ValueError, RuntimeError) as exc:
+                        application_contexts = []
+                        code_scope_warning = f"O contexto de codigo selecionado esta indisponivel: {exc}"
+                    if application_contexts is not None:
+                        code_analysis_manifest_sha256 = ""
+                    from .workspace import is_managed_conversation_workspace
+                    project_workspace = "" if is_managed_conversation_workspace(self.settings, workspace) else str(workspace.resolve())
+                    with self._agent_run_lock:
+                        if (self._pending_user_messages.get(conversation_id) != message_id
+                                or self._turn_access_paths.get(conversation_id) != access_path
+                                or conversation_id in self._cancelled_conversations):
+                            return
+                        self._turn_application_contexts[conversation_id] = application_contexts
+                        publish_scope(access_path, {
+                            "project_workspace": project_workspace,
+                            "application_contexts": application_contexts,
+                            "code_analysis_release": code_analysis_release,
+                            "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+                        })
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None
                     response_contract: ResponseContract | None = None
                     if use_vr:
                         try:
                             evidence_bundle = self.retrieval_service.route(
-                                local_query
+                                local_query, **({
+                                    "application_contexts": application_contexts,
+                                    "code_analysis_release": code_analysis_release,
+                                    "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+                                } if application_contexts is not None or code_analysis_release != "current"
+                                   or code_analysis_manifest_sha256 else {})
                             )
                         except Exception:
                             LOGGER.exception(
@@ -646,10 +703,19 @@ class ChatOrchestrator:
                             supports_native_tools=str(conversation["provider"]) == "codex",
                         )
                         if use_vr
-                        else text
+                        else self._enrich_off_prompt(
+                            text,
+                            conversation=dict(conversation),
+                            workspace=workspace,
+                        )
                     )
                     if history_prefix:
                         enriched = history_prefix + enriched
+                    if use_vr and project_workspace:
+                        enriched = self._enrich_off_prompt(enriched, conversation=dict(conversation), workspace=workspace)
+                        orchestration_request = self._enrich_off_prompt(orchestration_request, conversation=dict(conversation), workspace=workspace)
+                    if code_scope_warning:
+                        enriched = code_scope_warning + "\n\n" + enriched
                     if evidence_bundle is not None:
                         self._pending_evidence_bundles[
                             conversation_id
@@ -781,6 +847,12 @@ class ChatOrchestrator:
 
             threading.Thread(target=run, daemon=True).start()
         except Exception:
+            from .knowledge_access import close_scope
+            close_scope(access_path)
+            self._turn_access_paths.pop(conversation_id, None)
+            self._turn_application_contexts.pop(conversation_id, None)
+            self._turn_dynamic_candidates.pop(conversation_id, None)
+            self._turn_tool_usage.pop(conversation_id, None)
             self._pending_user_messages.pop(conversation_id, None)
             self._pending_response_modes.pop(conversation_id, None)
             self._pending_evidence_bundles.pop(conversation_id, None)
@@ -1115,7 +1187,17 @@ class ChatOrchestrator:
 
     def _collect_research_evidence(self, run_id: str) -> tuple[EvidenceCandidate, ...]:
         with self._agent_run_lock:
-            return tuple(self._research_evidence.get(run_id, {}).values())
+            registry = self._research_evidence.get(run_id, {})
+            cid = next((cid for cid, active in self._active_orchestration_runs.items() if active == run_id), "")
+            access_path = self._turn_access_paths.get(cid, "")
+            if access_path and Path(access_path + ".events").is_file():
+                from .knowledge_access import result_candidates
+                for line in Path(access_path + ".events").read_text(encoding="utf-8").splitlines():
+                    try:
+                        registry.update({c.evidence_id: c for c in result_candidates(json.loads(line))})
+                    except (ValueError, TypeError):
+                        continue  # A writer may still be appending the last line.
+            return tuple(registry.values())
 
     @staticmethod
     def _record_research_usage(context, usage, prompt, output) -> None:
@@ -1336,6 +1418,8 @@ class ChatOrchestrator:
             approval_profile="research_readonly",
             collaboration_mode="default",
             vr_enabled=True,
+            dynamic_tools=tuple(all_vr_tools_specs()),
+            knowledge_context_path=self._turn_access_paths.get(conversation_id, ""),
         )
         native_id = provider.start_conversation(
             local_id,
@@ -1375,6 +1459,35 @@ class ChatOrchestrator:
         def callback(event: RuntimeEvent) -> None:
             nonlocal latest_token_usage
             if done.is_set() or self._pending_user_messages.get(conversation_id) != execution_owner:
+                return
+            if event.kind == "dynamic_tool_requested":
+                from .knowledge_access import load_scope, result_candidates
+                try:
+                    name = str(event.payload.get("tool") or event.text)
+                    handler = {VR_SEARCH_TOOL_NAME: run_vr_search, VR_SOURCES_TOOL_NAME: run_vr_sources,
+                               VR_READ_TOOL_NAME: run_vr_read}[name]
+                    arguments = event.payload.get("arguments") or {}
+                    if isinstance(arguments, str):
+                        arguments = json.loads(arguments)
+                    with self._agent_run_lock:
+                        calls, chars = self._turn_tool_usage.get(conversation_id, (0, 0))
+                        if calls >= 24 or chars >= 96000:
+                            raise ValueError("Limite de consultas do turno atingido.")
+                        self._turn_tool_usage[conversation_id] = (calls + 1, chars)
+                    result = handler(arguments, self.retrieval_service, **load_scope(agent_options.knowledge_context_path))
+                    with self._agent_run_lock:
+                        if done.is_set() or self._pending_user_messages.get(conversation_id) != execution_owner:
+                            return
+                        calls, chars = self._turn_tool_usage.get(conversation_id, (0, 0))
+                        if chars + len(result.text) > 96000:
+                            raise ValueError("Limite de resultados do turno atingido.")
+                        self._turn_tool_usage[conversation_id] = (calls, chars + len(result.text))
+                        registry = self._research_evidence.get(run_id)
+                        if registry is not None and name != VR_SOURCES_TOOL_NAME:
+                            registry.update({c.evidence_id: c for c in result_candidates(result.parsed)})
+                    provider.respond_dynamic_tool(event.payload["request_id"], result.content_items(), not bool(result.parsed.get("error")))
+                except Exception as exc:
+                    provider.respond_dynamic_tool(event.payload["request_id"], [{"type": "inputText", "text": str(exc)}], False)
                 return
             if event.kind == "tool_event" and agent_id != "vr_fanout_codigo":
                 from .evidence_reads import capture_read
@@ -1783,6 +1896,64 @@ class ChatOrchestrator:
             + "somente o título e a URL original."
         )
 
+    def _collect_application_contexts(self, conversation_id: str) -> list[dict[str, Any]] | None:
+        return getattr(self, "_turn_application_contexts", {}).get(conversation_id)
+
+    def _enrich_off_prompt(
+        self,
+        text: str,
+        *,
+        conversation: dict[str, Any],
+        workspace: Path,
+    ) -> str:
+        from .workspace import is_managed_conversation_workspace
+        if is_managed_conversation_workspace(self.settings, workspace):
+            # Managed scratchpads have no persistent project instructions to
+            # inherit. Local knowledge remains available through registered
+            # tools/MCP without altering the user's prompt.
+            return text
+
+        instructions_text = ""
+        for name in ("INSTRUCTIONS.md", "instructions.md"):
+            instr_path = workspace / name
+            if instr_path.is_file() and instr_path.resolve().is_relative_to(workspace.resolve()):
+                try:
+                    with instr_path.open(encoding="utf-8", errors="replace") as stream:
+                        instructions_text = stream.read(8000).strip()
+                    if instructions_text:
+                        break
+                except Exception:
+                    pass
+
+        project_files: list[str] = []
+        try:
+            for item in sorted(workspace.iterdir()):
+                if len(project_files) >= 50:
+                    break
+                if item.name.startswith(".") or item.name.startswith("__"):
+                    continue
+                kind = "diretório" if item.is_dir() else "arquivo"
+                project_files.append(f"- {item.name} ({kind})")
+        except Exception:
+            pass
+
+        sections: list[str] = []
+        if instructions_text:
+            sections.append(f"INSTRUÇÕES DO PROJETO:\n{instructions_text}")
+        if project_files:
+            file_list = "\n".join(project_files[:50])
+            sections.append(f"MATERIAIS E ARQUIVOS DO PROJETO:\n{file_list}")
+
+        sections.append(
+            "ACESSO LOCAL SOB DEMANDA: Você tem ferramentas nativas `vr_sources`, `vr_search` e `vr_read` "
+            "disponíveis para consultar o conhecimento local VR (Wiki, KB, Schema) e código Java descompilado quando relevante."
+            " Para arquivos compartilhados do projeto, use source='project' e as referencias retornadas por vr_sources."
+        )
+
+        prompt_header = "\n\n".join(sections)
+        return f"{prompt_header}\n\nSOLICITAÇÃO DO USUÁRIO:\n{text}"
+
+
     def _guarded_turn_callback(self, conversation_id: str) -> EventCallback:
         """Bind a provider callback to the immutable user message for this turn."""
         message_id = self._pending_user_messages.get(conversation_id)
@@ -2179,7 +2350,39 @@ class ChatOrchestrator:
             turn_callback = self._external_callbacks.get(event.conversation_id)
             turn_generation = self._callback_generations.get(event.conversation_id, 0)
         try:
+            # A provider may report turn completion immediately after requesting
+            # a local tool. Let an already-running read finish before removing
+            # its immutable scope and callback. Approval-gated requests remain
+            # pending for the user and must not hold this finalizer.
+            tool_deadline = time.monotonic() + 5.0
+            while time.monotonic() < tool_deadline:
+                with self._agent_run_lock:
+                    outstanding = any(
+                        key[0] == event.conversation_id
+                        for key in getattr(self, "_dynamic_tool_callbacks", {})
+                    )
+                    awaiting_approval = any(
+                        pending_event.conversation_id == event.conversation_id
+                        for pending_event, _tool in getattr(
+                            self, "_pending_dynamic_tools", {}
+                        ).values()
+                    )
+                if not outstanding or awaiting_approval:
+                    break
+                time.sleep(0.01)
             derived_events: list[RuntimeEvent] = []
+            from .knowledge_access import result_candidates
+            access_paths = getattr(self, "_turn_access_paths", {})
+            dynamic_candidates = getattr(self, "_turn_dynamic_candidates", {})
+            access_path = access_paths.get(event.conversation_id, "")
+            if access_path and Path(access_path + ".events").is_file():
+                for line in Path(access_path + ".events").read_text(encoding="utf-8").splitlines():
+                    try:
+                        dynamic_candidates.setdefault(event.conversation_id, []).extend(
+                            result_candidates(json.loads(line))
+                        )
+                    except (ValueError, TypeError):
+                        LOGGER.warning("Resultado MCP invalido descartado")
             if self.database.get_conversation(event.conversation_id) is None:
                 with self._agent_run_lock:
                     self._pending_user_messages.pop(event.conversation_id, None)
@@ -2213,11 +2416,17 @@ class ChatOrchestrator:
                         return
                     message_id = self._persist_execution_message(event.conversation_id, state, key, text, status)
                     bundle = self._pending_evidence_bundles.get(event.conversation_id)
-                    if key == final_key and bundle is not None and not terminal_state:
+                    dyn_cands = getattr(self, "_turn_dynamic_candidates", {}).get(event.conversation_id, [])
+                    all_candidates = list(bundle.candidates) if bundle is not None else []
+                    for dc in dyn_cands:
+                        if not any(c.evidence_id == dc.evidence_id for c in all_candidates):
+                            all_candidates.append(dc)
+                    if key == final_key and all_candidates and not terminal_state:
                         used = self._pending_used_evidence_ids.get(event.conversation_id)
-                        candidates = ([item for item in bundle.candidates if item.evidence_id in set(used)]
-                                      if used is not None else self._candidates_cited_in_content(text, bundle))
-                        self.database.add_source_citations(event.conversation_id, message_id, [item.to_dict() for item in candidates])
+                        candidates = ([item for item in all_candidates if item.evidence_id in set(used)]
+                                      if used is not None else self._candidates_cited_in_content(text, all_candidates))
+                        if candidates:
+                            self.database.add_source_citations(event.conversation_id, message_id, [item.to_dict() for item in candidates])
                     if meta.get("start_event_id") and meta["status"] == "completed" and meta.get("text") == text:
                         continue
                     if not meta.get("start_event_id"):
@@ -2256,26 +2465,32 @@ class ChatOrchestrator:
                 evidence_bundle = self._pending_evidence_bundles.get(
                     event.conversation_id
                 )
-                if evidence_bundle is not None:
+                dyn_cands = getattr(self, "_turn_dynamic_candidates", {}).get(event.conversation_id, [])
+                all_candidates = list(evidence_bundle.candidates) if evidence_bundle is not None else []
+                for dc in dyn_cands:
+                    if not any(c.evidence_id == dc.evidence_id for c in all_candidates):
+                        all_candidates.append(dc)
+                if all_candidates:
                     used_ids = self._pending_used_evidence_ids.get(
                         event.conversation_id
                     )
                     candidates = (
                         [
                             item
-                            for item in evidence_bundle.candidates
+                            for item in all_candidates
                             if item.evidence_id in set(used_ids)
                         ]
                         if used_ids is not None
                         else self._candidates_cited_in_content(
-                            content, evidence_bundle
+                            content, all_candidates
                         )
                     )
-                    self.database.add_source_citations(
-                        event.conversation_id,
-                        assistant_message_id,
-                        [item.to_dict() for item in candidates],
-                    )
+                    if candidates:
+                        self.database.add_source_citations(
+                            event.conversation_id,
+                            assistant_message_id,
+                            [item.to_dict() for item in candidates],
+                        )
             elif not terminal_state:
                 empty_warning = RuntimeEvent(
                     event.conversation_id,
@@ -2296,6 +2511,15 @@ class ChatOrchestrator:
                         int(event.payload.get("_owner_message") or (execution_state.execution_id if execution_state else 0)),
                         terminal_state or "idle"):
                     return
+                from .knowledge_access import close_scope
+                close_scope(access_paths.pop(event.conversation_id, ""))
+                getattr(self, "_turn_application_contexts", {}).pop(
+                    event.conversation_id, None
+                )
+                dynamic_candidates.pop(event.conversation_id, None)
+                getattr(self, "_turn_tool_usage", {}).pop(
+                    event.conversation_id, None
+                )
                 self._pending_user_messages.pop(event.conversation_id, None)
                 self._pending_response_modes.pop(event.conversation_id, None)
                 self._pending_evidence_bundles.pop(event.conversation_id, None)
@@ -2359,22 +2583,27 @@ class ChatOrchestrator:
 
     @staticmethod
     def _candidates_cited_in_content(
-        content: str, evidence_bundle: EvidenceBundle
-    ) -> list[Any]:
+        content: str, evidence_bundle: EvidenceBundle | Iterable[EvidenceCandidate]
+    ) -> list[EvidenceCandidate]:
         """Persist only evidence the direct answer actually references.
 
-        The direct flow does not report evidence IDs separately, so a canonical
-        URL (or an evidence ID) must appear in the final answer before it is
-        recorded as a citation.
+        Checks canonical URL, evidence ID, heading (Java class / section),
+        document title, or source_id in the final answer.
         """
 
         normalized_content = str(content or "").replace("\\/", "/")
+        items = evidence_bundle.candidates if hasattr(evidence_bundle, "candidates") else evidence_bundle
+        items = tuple({item.evidence_id: item for item in items}.values())
         selected = []
-        for candidate in evidence_bundle.candidates:
+        for candidate in items:
             url = str(candidate.url or "").strip()
             url_used = bool(url) and url.rstrip("/") in normalized_content
-            id_used = candidate.evidence_id in normalized_content
-            if url_used or id_used:
+            id_used = bool(candidate.evidence_id) and candidate.evidence_id in normalized_content
+            heading = str(candidate.heading or "").strip()
+            heading_used = (candidate.source == "code" and bool(heading) and "." in heading
+                            and heading in normalized_content
+                            and sum(c.heading == heading for c in items) == 1)
+            if url_used or id_used or heading_used:
                 selected.append(candidate)
         return selected
 
@@ -2383,6 +2612,8 @@ class ChatOrchestrator:
         if conversation:
             with self._agent_run_lock:
                 self._cancelled_conversations.add(conversation_id)
+                from .knowledge_access import invalidate_scope
+                invalidate_scope(self._turn_access_paths.get(conversation_id, ""))
                 run_id = self._active_orchestration_runs.get(conversation_id, "")
                 active = list(
                     self._active_agent_runs.get(conversation_id, {}).items()
@@ -2431,8 +2662,9 @@ class ChatOrchestrator:
         event, tool = pending
         self.database.decide_approval(request_id, "accept" if approved else "decline")
         if approved:
-            if str(tool.get("name")) == VR_SEARCH_TOOL_NAME:
-                self._execute_vr_search(event)
+            tool_name = str(tool.get("name"))
+            if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+                self._execute_vr_native_tool(event, tool_name)
             else:
                 self._execute_dynamic_tool(event, tool)
         else:
@@ -2485,7 +2717,7 @@ class ChatOrchestrator:
             native_id_vr="",
             status="idle",
             service_tier="",
-            approval_profile="auto",
+            approval_profile="full_access",
             collaboration_mode="default",
         )
         return conversation_id
@@ -2809,12 +3041,13 @@ class ChatOrchestrator:
         effective_vr = (
             bool(row["vr_enabled"]) if use_vr is None else bool(use_vr)
         )
-        if effective_vr:
-            # The native evidence tool must be registered at thread start;
-            # Codex only reads dynamicTools on thread/start.
-            dynamic = (*dynamic, vr_search_tool_spec())
-        elif self.native_vr_search_enabled:
-            dynamic = (*dynamic, vr_search_tool_spec())
+        # In all modes (OFF, VR, ULTRA), register vr_sources, vr_search, vr_read
+        # so the model has uniform access to all local knowledge and code.
+        # native_vr_search_enabled defaults to True; if explicitly False, native OFF turns do not expose tools.
+        if effective_vr or self.native_vr_search_enabled:
+            for spec in all_vr_tools_specs():
+                if not any(d.get("name") == spec.get("name") for d in dynamic):
+                    dynamic = (*dynamic, spec)
         base = ConversationOptions.from_mapping(row)
         row_mode = str(row["vr_mode"] or "").strip().casefold()
         if row_mode not in ConversationOptions.VALID_VR_MODES:
@@ -3023,8 +3256,8 @@ class ChatOrchestrator:
     def _handle_dynamic_tool(self, event: RuntimeEvent) -> None:
         self._remember_dynamic_tool_callback(event)
         name = str(event.payload.get("tool") or event.text)
-        if name == VR_SEARCH_TOOL_NAME:
-            self._handle_vr_search_tool(event)
+        if name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+            self._handle_vr_native_tool(event, name)
             return
         selected = self.database.conversation_tools(event.conversation_id)["dynamic"]
         tools = {
@@ -3058,49 +3291,80 @@ class ChatOrchestrator:
             return
         self._execute_dynamic_tool(event, tool)
 
-    def _handle_vr_search_tool(self, event: RuntimeEvent) -> None:
+    def _handle_vr_native_tool(self, event: RuntimeEvent, tool_name: str) -> None:
         row = self._conversation(event.conversation_id)
         request_id = str(event.payload.get("request_id") or "")
         if str(row["approval_profile"]) == "supervised":
-            # Read-only search, but supervised profiles still confirm every call.
             self.database.save_approval(request_id, event.conversation_id, event.payload)
             self._pending_dynamic_tools[request_id] = (
                 event,
-                {"name": VR_SEARCH_TOOL_NAME},
+                {"name": tool_name},
             )
             callback = self._external_callbacks.get(event.conversation_id)
             if callback:
+                action_text = {
+                    VR_SEARCH_TOOL_NAME: "Buscar evidências na base VR?",
+                    VR_SOURCES_TOOL_NAME: "Listar fontes e inventário da base VR?",
+                    VR_READ_TOOL_NAME: "Ler conteúdo na base VR?",
+                }.get(tool_name, f"Executar {tool_name}?")
                 callback(
                     RuntimeEvent(
                         event.conversation_id,
                         "dynamic_tool_approval_requested",
-                        "Buscar evidências na base VR?",
+                        action_text,
                         event.payload,
                     )
                 )
             return
-        self._execute_vr_search(event)
+        self._execute_vr_native_tool(event, tool_name)
+
+    def _handle_vr_search_tool(self, event: RuntimeEvent) -> None:
+        self._handle_vr_native_tool(event, VR_SEARCH_TOOL_NAME)
 
     def _execute_vr_search(self, event: RuntimeEvent) -> None:
+        self._execute_vr_native_tool(event, VR_SEARCH_TOOL_NAME)
+
+    def _execute_vr_native_tool(self, event: RuntimeEvent, tool_name: str) -> None:
+        from .knowledge_access import load_scope, result_candidates
+        cid = event.conversation_id
+        owner = self._pending_user_messages.get(cid)
+        access_path = self._turn_access_paths.get(cid, "")
+
+        def owns_turn() -> bool:
+            return (self._pending_user_messages.get(cid) == owner
+                    and self._turn_access_paths.get(cid, "") == access_path
+                    and cid not in self._cancelled_conversations)
+
         def run() -> None:
             try:
+                with self._agent_run_lock:
+                    if not owns_turn():
+                        return
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if calls >= 24 or chars >= 96000:
+                        raise ValueError("Limite de consultas deste turno atingido.")
+                    self._turn_tool_usage[cid] = (calls + 1, chars)
                 raw_arguments = event.payload.get("arguments") or {}
                 if isinstance(raw_arguments, str):
                     raw_arguments = json.loads(raw_arguments)
-                result = run_vr_search(raw_arguments, self.knowledge_router)
-                self._respond_dynamic_tool(
-                    event,
-                    result.text,
-                    True,
-                    [{"type": "inputText", "text": result.text}],
-                )
-            except KeyError:
-                LOGGER.warning(
-                    "Conversa %s removida antes da resposta da tool vr_search.",
-                    event.conversation_id,
-                )
-            except (ToolExecutionError, ValueError, json.JSONDecodeError) as exc:
-                self._respond_dynamic_tool(event, str(exc), False)
+                scope = load_scope(access_path) if access_path else {}
+                handler = {VR_SEARCH_TOOL_NAME: run_vr_search, VR_SOURCES_TOOL_NAME: run_vr_sources,
+                           VR_READ_TOOL_NAME: run_vr_read}[tool_name]
+                result = handler(raw_arguments, self.retrieval_service, **scope)
+                with self._agent_run_lock:
+                    if not owns_turn():
+                        return
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if chars + len(result.text) > 96000:
+                        raise ValueError("Limite de resultados atingido; reduza limit.")
+                    self._turn_tool_usage[cid] = (calls, chars + len(result.text))
+                    if tool_name != VR_SOURCES_TOOL_NAME and isinstance(result.parsed, dict):
+                        self._turn_dynamic_candidates.setdefault(cid, []).extend(result_candidates(result.parsed))
+                    self._respond_dynamic_tool(event, result.text, not bool(result.parsed.get("error")), result.content_items())
+            except Exception as exc:
+                with self._agent_run_lock:
+                    if owns_turn():
+                        self._respond_dynamic_tool(event, str(exc), False)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -3189,11 +3453,18 @@ class ChatOrchestrator:
             ] = (generation, callback)
 
     def close(self) -> None:
+        from .knowledge_access import close_scope
         with self._agent_run_lock:
             active = set(self._external_callbacks) | set(self._active_agent_runs)
             self._finalized_turns.update(active)
         for provider in self.providers.values():
             provider.close()
+        for path in self._turn_access_paths.values():
+            close_scope(path)
+        self._turn_access_paths.clear()
+        self._turn_application_contexts.clear()
+        self._turn_dynamic_candidates.clear()
+        self._turn_tool_usage.clear()
         self.drain_turn_finalizations(timeout=5.0)
         self._turn_finalizer_executor.shutdown(wait=False, cancel_futures=True)
         for conversation_id in active:

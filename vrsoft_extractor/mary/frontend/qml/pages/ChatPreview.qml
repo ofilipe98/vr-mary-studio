@@ -121,7 +121,8 @@ Item {
         target: root.chatBridge
         function onApprovalRequested(payload) {
             root.approvalPayload = payload
-            approvalDialog.open()
+            if (payload.request_id !== undefined) approvalDialog.open()
+            else approvalDialog.close()
         }
         function onStateChanged() {
             if (root.chatBridge.turnRunning && !root.previousTurnRunning) {
@@ -187,10 +188,67 @@ Item {
         orientation: Qt.Horizontal
 
         handle: Rectangle {
-            implicitWidth: 5
-            color: SplitHandle.hovered || SplitHandle.pressed
-                ? Theme.palette.focus : Theme.palette.chatDivider
-            opacity: SplitHandle.hovered || SplitHandle.pressed ? 0.75 : 0.35
+            id: chatSplitHandle
+            implicitWidth: 7
+            color: "transparent"
+
+            // Left slice matches sidebar background
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: chatCenterLine.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: Theme.palette.chatSidebar
+            }
+
+            // Right slice matches content background
+            Rectangle {
+                anchors.left: chatCenterLine.right
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: Theme.palette.chatBackground
+            }
+
+            // Crisp 1px hairline divider
+            Rectangle {
+                id: chatCenterLine
+                anchors.centerIn: parent
+                width: 1
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: SplitHandle.pressed
+                    ? Theme.palette.brandOrange
+                    : SplitHandle.hovered
+                        ? Theme.palette.focus
+                        : Theme.palette.chatDivider
+                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 0.55
+
+                Behavior on color {
+                    enabled: !root.frontendBridge.reduceMotion
+                    ColorAnimation { duration: Theme.fastDuration }
+                }
+                Behavior on opacity {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: Theme.fastDuration }
+                }
+            }
+
+            // Interactive grip indicator pill on hover/press
+            Rectangle {
+                anchors.centerIn: parent
+                width: 3
+                height: 36
+                radius: 1.5
+                visible: SplitHandle.hovered || SplitHandle.pressed
+                color: SplitHandle.pressed ? Theme.palette.brandOrange : Theme.palette.focus
+                opacity: SplitHandle.pressed ? 0.95 : 0.85
+
+                Behavior on opacity {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: Theme.fastDuration }
+                }
+            }
         }
 
         Rectangle {
@@ -217,7 +275,7 @@ Item {
                 enabled: !root.frontendBridge.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
-            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatDivider }
+            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatDivider; visible: root.width < 760 }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -696,13 +754,14 @@ Item {
                             Component {
                                 id: activityComponent
                                 VrChatActivity {
+                                    property bool cardExpanded: false
                                     items: messageItem.messageKey ? messageItem.activityData : root.chatBridge.traceItems
                                     reasoningText: messageItem.messageKey ? "" : root.chatBridge.reasoningText
                                     statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : root.chatBridge.statusText
                                     elapsedLabel: root.chatBridge.activityElapsedLabel
                                     running: messageItem.messageKey ? messageItem.isStreaming : root.chatBridge.turnRunning
-                                    expanded: root.activityExpanded
-                                    onToggleRequested: root.activityExpanded = !root.activityExpanded
+                                    expanded: cardExpanded || (running && root.activityExpanded)
+                                    onToggleRequested: cardExpanded = !cardExpanded
                                 }
                             }
                             Component {
@@ -2395,6 +2454,7 @@ Item {
     }
     Dialog {
         id: approvalDialog
+        objectName: "chatApprovalDialog"
         anchors.centerIn: parent
         width: 510
         modal: true
@@ -2406,10 +2466,10 @@ Item {
             Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
-                VrButton { text: "Negar"; onClicked: { root.chatBridge.decideApproval(false, false); approvalDialog.close() } }
+                VrButton { text: "Negar"; onClicked: { approvalDialog.close(); root.chatBridge.decideApproval(false, false) } }
                 Item { Layout.fillWidth: true }
-                VrButton { text: "Aprovar uma vez"; onClicked: { root.chatBridge.decideApproval(true, false); approvalDialog.close() } }
-                VrButton { text: "Aprovar nesta sessão"; variant: "primary"; onClicked: { root.chatBridge.decideApproval(true, true); approvalDialog.close() } }
+                VrButton { objectName: "chatApproveOnce"; text: "Aprovar uma vez"; onClicked: { approvalDialog.close(); root.chatBridge.decideApproval(true, false) } }
+                VrButton { text: "Aprovar nesta sessão"; variant: "primary"; onClicked: { approvalDialog.close(); root.chatBridge.decideApproval(true, true) } }
             }
         }
         background: Rectangle { color: Theme.palette.surface; border.width: 1; border.color: Theme.palette.warning; radius: Theme.radiusPopup }

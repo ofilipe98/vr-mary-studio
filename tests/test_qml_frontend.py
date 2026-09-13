@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QSG_RHI_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt, QUrl
+from PySide6.QtCore import QObject, QSettings, Qt, QUrl, QMetaObject
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -529,14 +529,19 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSeniorProfileCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeAnalysisCard"))
 
-            settings_page.setProperty("tabIndex", 3)
+            manage_apps_btn = window.findChild(QObject, "vrUltraManageAppsButton")
+            self.assertIsNotNone(manage_apps_btn)
+            QMetaObject.invokeMethod(manage_apps_btn, "click")
             for _attempt in range(40):
                 self.application.processEvents()
                 if window.findChild(QObject, "appsSettingsPage") is not None:
                     break
                 QTest.qWait(10)
+            self.assertEqual(settings_page.property("tabIndex"), 3)
+            self.assertEqual(window.findChild(QObject, "settingsTabBar").property("currentIndex"), 3)
             self.assertIsNotNone(window.findChild(QObject, "appsSettingsPage"))
             self.assertIsNotNone(window.findChild(QObject, "appsCatalogView"))
+            self.assertIsNotNone(window.findChild(QObject, "appSelector"))
             self.assertIsNotNone(window.findChild(QObject, "appsImportCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryPicker"))
@@ -590,6 +595,9 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertIsNotNone(
                 window.findChild(QObject, "vrUltraPauseCodeProcessing")
+            )
+            self.assertIsNotNone(
+                window.findChild(QObject, "vrUltraCancelCodeProcessing")
             )
             self.assertIsNotNone(
                 window.findChild(QObject, "vrUltraRetryCodeProcessing")
@@ -1194,6 +1202,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("desatualizado", bridge.codeAnalysisReleaseItems[0]["label"])
             bridge.setCodeAnalysisEnabled(True)
             self.assertFalse(bridge.codeAnalysisEnabled)
+            bridge.close()
 
     def test_code_processing_limits_are_safe_and_persisted_per_workspace(self):
         with TemporaryDirectory() as temporary:
@@ -1383,6 +1392,8 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(manifest["jar_count"], 2)
             self.assertEqual(manifest["expected_jar_count"], 46)
 
+            bridge.close()
+
     def test_single_jar_snapshot_runs_locally_in_background_and_refreshes_selector(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1563,7 +1574,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("active: root.tabIndex === 3", settings_qml)
         self.assertIn("root.appsVisited", settings_qml)
         self.assertIn("asynchronous: true", settings_qml)
-        self.assertIn("ProgressBar {", apps_qml)
+        self.assertTrue("VrProgressBar {" in apps_qml or "ProgressBar {" in apps_qml)
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', apps_qml)
         self.assertIn("chat.codeProcessingCoveredJars", apps_qml)
         self.assertIn("enabled: chat.codeProcessingRunning", apps_qml)
@@ -1926,6 +1937,140 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertFalse(bridge.codeProcessingPauseRequested)
             self.assertEqual(bridge.codeProcessingCoveredJars, 1)
             self.assertIn("pausado entre lotes", bridge.codeProcessingStatus)
+            bridge.close()
+
+    def test_local_code_processing_cancel_running(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database)
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+            batch_started = threading.Event()
+            allow_batch_finish = threading.Event()
+
+            class FakeToolchain:
+                def __init__(self, _root, **_kwargs):
+                    pass
+
+                def doctor(self):
+                    return {
+                        "java": {"available": True},
+                        "vineflower": {"available": True},
+                        "cfr": {"available": True},
+                    }
+
+            class FakeCoverage:
+                def __init__(self):
+                    self.covered = 0
+                    self.cancelled = False
+                    self.executor = object()
+
+                def payload(self):
+                    return {
+                        "release_manifest_sha256": manifest_hash,
+                        "expected_jar_count": 2,
+                        "covered_jar_count": self.covered,
+                        "remaining_jar_count": 2 - self.covered,
+                        "active_plans": [] if self.cancelled else ["plan-1"],
+                        "blocked_plans": [],
+                    }
+
+                def status(self, _release_id):
+                    return self.payload()
+
+                def advance(self, _release_id, **_kwargs):
+                    batch_started.set()
+                    allow_batch_finish.wait(timeout=2)
+                    self.covered = 1
+                    return {
+                        "coverage": self.payload(),
+                        "executed": [{"state": "completed"}],
+                    }
+
+                def cancel(self, _release_id):
+                    self.cancelled = True
+                    return ["plan-1"]
+
+            with (
+                patch(
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.JvmToolchain",
+                    FakeToolchain,
+                ),
+                patch(
+                    "vrsoft_extractor.mary.frontend.bridges.codeadmin.ErpCodeCoverage",
+                    return_value=FakeCoverage(),
+                ),
+            ):
+                self.assertTrue(bridge.startCodeProcessing())
+                self.assertTrue(batch_started.wait(timeout=2))
+                bridge.cancelCodeProcessing()
+                self.assertTrue(bridge.codeProcessingCancelRequested)
+                self.assertIn("Cancelamento solicitado", bridge.codeProcessingStatus)
+                allow_batch_finish.set()
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    QTest.qWait(20)
+                    threading.Event().wait(0.001)
+                    if not bridge.codeProcessingRunning:
+                        break
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertFalse(bridge.codeProcessingCancelRequested)
+            self.assertFalse(bridge.codeProcessingCanCancel)
+            self.assertIn("cancelada pelo usuário", bridge.codeProcessingStatus)
+            bridge.close()
+
+    def test_local_code_processing_cancel_paused(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            self._import_release(settings, "r1")
+            bridge = ChatBridge(settings, database)
+            manifest_hash = ErpReleaseCatalog(settings.root).load_manifest("r1")[
+                "release_manifest_sha256"
+            ]
+
+            coverage = {
+                "release_manifest_sha256": manifest_hash,
+                "expected_jar_count": 1,
+                "covered_jar_count": 0,
+                "remaining_jar_count": 1,
+                "progress_percent": 5.0,
+                "active_plans": ["plan-1"],
+                "blocked_plans": [],
+            }
+            audit_event = {
+                "event": "paused",
+                "release_id": "r1",
+                "release_manifest_sha256": manifest_hash,
+                "run_id": "run-1",
+            }
+            bridge._apply_code_processing_coverage(coverage)
+            bridge._restore_code_processing_audit(audit_event, coverage)
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertTrue(bridge.codeProcessingCanCancel)
+            self.assertIn("pausado entre lotes", bridge.codeProcessingStatus)
+
+            bridge.cancelCodeProcessing()
+
+            self.assertFalse(bridge.codeProcessingRunning)
+            self.assertFalse(bridge.codeProcessingCancelRequested)
+            self.assertFalse(bridge.codeProcessingCanCancel)
+            self.assertIn("cancelada pelo usuário", bridge.codeProcessingStatus)
             bridge.close()
 
     def test_local_code_processing_stops_before_planning_without_toolchain(self):
@@ -4139,6 +4284,203 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.effortItems, [])
             self.assertFalse(bridge.supportsReasoning)
             self.assertEqual(bridge.effortIndex, -1)
+
+
+    def test_apps_settings_page_app_selector_filtering_and_selection(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(settings, database, preferences)
+
+            sample_catalog = [
+                {
+                    "appId": "vradm",
+                    "name": "VRAdm",
+                    "versionCount": 3,
+                    "readyCount": 3,
+                    "pendingCount": 0,
+                    "failedCount": 0,
+                    "hasUnidentified": False,
+                    "hasVariants": False,
+                },
+                {
+                    "appId": "vratacado",
+                    "name": "VRAtacado",
+                    "versionCount": 1,
+                    "readyCount": 1,
+                    "pendingCount": 0,
+                    "failedCount": 0,
+                    "hasUnidentified": False,
+                    "hasVariants": False,
+                },
+            ]
+            chat_bridge._applications_catalog = sample_catalog
+            chat_bridge.stateChanged.emit()
+
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            try:
+                settings_page = window.findChild(QObject, "settingsPage")
+                self.assertIsNotNone(settings_page)
+                settings_page.setProperty("tabIndex", 3)
+                for _attempt in range(40):
+                    self.application.processEvents()
+                    if window.findChild(QObject, "appSelector") is not None:
+                        break
+                    QTest.qWait(10)
+
+                app_selector = window.findChild(QObject, "appSelector")
+                self.assertIsNotNone(app_selector)
+                self.assertTrue(app_selector.property("visible"))
+
+                app_selector.setProperty("searchText", "atacado")
+                filtered_raw = app_selector.property("filteredApps")
+                filtered = (
+                    filtered_raw.toVariant()
+                    if hasattr(filtered_raw, "toVariant")
+                    else filtered_raw
+                )
+                self.assertEqual(len(filtered), 1)
+                self.assertEqual(filtered[0]["appId"], "vratacado")
+
+                app_selector.setProperty("searchText", "")
+                filtered_all_raw = app_selector.property("filteredApps")
+                filtered_all = (
+                    filtered_all_raw.toVariant()
+                    if hasattr(filtered_all_raw, "toVariant")
+                    else filtered_all_raw
+                )
+                self.assertEqual(len(filtered_all), 2)
+
+                selected = []
+                app_selector.applicationSelected.connect(selected.append)
+                app_selector.applicationSelected.emit("vratacado")
+                self.assertEqual(selected, ["vratacado"])
+
+                popup = window.findChild(QObject, "appSelectorPopup")
+                self.assertIsNotNone(popup)
+                self.assertFalse(popup.property("opened"))
+
+                app_selector.toggleSelector()
+                self.application.processEvents()
+                self.assertTrue(popup.property("opened"))
+
+                app_selector.toggleSelector()
+                self.application.processEvents()
+                self.assertFalse(popup.property("opened"))
+
+                selector_qml = (MAIN_QML.parent / "components" / "VrAppSelector.qml").read_text(encoding="utf-8")
+                self.assertIn("CloseOnPressOutsideParent", selector_qml)
+                self.assertIn("VrCheckBox", selector_qml)
+                self.assertIn("batchDecompileRequested", selector_qml)
+                self.assertIn("selectedAppIds", selector_qml)
+                self.assertIn("allFilteredSelected", selector_qml)
+
+                settings_qml = (MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml").read_text(encoding="utf-8")
+                self.assertIn("onBatchDecompileRequested", settings_qml)
+                self.assertIn("startBatchAppsProcessing", settings_qml)
+                self.assertIn("appsBatchActionCard", settings_qml)
+                self.assertIn("appsBatchProcessingStatusCard", settings_qml)
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
+
+    def test_app_selector_batch_selection_component(self):
+        from PySide6.QtQml import QQmlComponent, QQmlEngine
+
+        engine = QQmlEngine()
+        engine.addImportPath(str(MAIN_QML.parent))
+        component = QQmlComponent(engine, str(MAIN_QML.parent / "components" / "VrAppSelector.qml"))
+        self.assertEqual(component.status(), QQmlComponent.Status.Ready, [e.toString() for e in component.errors()])
+        item = component.create()
+        self.assertIsNotNone(item)
+        try:
+            item.setProperty("model", [
+                {"appId": "vradm", "name": "VRAdm", "pendingCount": 1},
+                {"appId": "vratacado", "name": "VRAtacado", "pendingCount": 0},
+            ])
+            selected_ids = item.property("selectedAppIds")
+            if hasattr(selected_ids, "toVariant"):
+                selected_ids = selected_ids.toVariant()
+            self.assertEqual(selected_ids, [])
+            self.assertFalse(item.property("allFilteredSelected"))
+
+            item.setProperty("selectedAppIds", ["vradm"])
+            self.assertFalse(item.property("allFilteredSelected"))
+
+            item.setProperty("selectedAppIds", ["vradm", "vratacado"])
+            self.assertTrue(item.property("allFilteredSelected"))
+
+            item.setProperty("selectedAppIds", [])
+            self.assertFalse(item.property("allFilteredSelected"))
+
+            batch_emitted = []
+            item.batchDecompileRequested.connect(batch_emitted.append)
+            item.batchDecompileRequested.emit(["vradm", "vratacado"])
+            self.assertEqual(batch_emitted, [["vradm", "vratacado"]])
+        finally:
+            item.deleteLater()
+            engine.deleteLater()
+            self.application.processEvents()
+
+
+    def test_global_decompile_config_dialog_and_buttons(self):
+        qml = (MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml").read_text(encoding="utf-8")
+        self.assertIn('objectName: "globalDecompileConfigHeaderButton"', qml)
+        self.assertIn('objectName: "batchDecompileSettingsButton"', qml)
+        self.assertIn('objectName: "globalDecompileConfigDialog"', qml)
+        self.assertIn('objectName: "globalDecompileHeapPicker"', qml)
+        self.assertIn('objectName: "globalDecompileTimeoutPicker"', qml)
+        self.assertIn('objectName: "globalDecompileCpuPicker"', qml)
+        self.assertIn('objectName: "globalDecompileDiskPicker"', qml)
+        self.assertIn('objectName: "globalDecompileWindowPicker"', qml)
+        self.assertIn('objectName: "globalDecompileCloseButton"', qml)
+
+
+    def test_software_rendering_flags_and_safe_mode_args(self):
+        from vrsoft_extractor.mary.frontend.app import build_parser
+
+        parser = build_parser()
+        args1, _ = parser.parse_known_args(["--software-rendering"])
+        self.assertTrue(args1.software_rendering)
+
+        args2, _ = parser.parse_known_args(["--gpu-safe-mode"])
+        self.assertTrue(args2.software_rendering)
+
+        args3, _ = parser.parse_known_args([])
+        self.assertFalse(args3.software_rendering)
+
+    def test_install_crash_handlers_captures_unhandled_exception(self):
+        import sys
+        from vrsoft_extractor.mary.frontend.app import install_crash_handlers
+
+        original_hook = sys.excepthook
+        with TemporaryDirectory() as temporary:
+            log_dir = Path(temporary) / "logs"
+            install_crash_handlers(log_dir)
+            try:
+                try:
+                    raise RuntimeError("Teste de protecao contra crash")
+                except RuntimeError:
+                    exc_type, exc_val, exc_tb = sys.exc_info()
+                    sys.excepthook(exc_type, exc_val, exc_tb)
+
+                crash_log = log_dir / "crash.log"
+                self.assertTrue(crash_log.is_file())
+                content = crash_log.read_text(encoding="utf-8")
+                self.assertIn("Teste de protecao contra crash", content)
+                self.assertIn("RuntimeError", content)
+            finally:
+                sys.excepthook = original_hook
 
 
 if __name__ == "__main__":

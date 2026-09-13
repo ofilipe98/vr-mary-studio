@@ -17,9 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Any, Callable
 
-from ..code_index import JavaCodeIndex
 from ..config import MarySettings
-from ..erp_releases import ErpReleaseCatalog
 from ..models import (
     ConversationOptions,
     EvidenceBundle,
@@ -46,7 +44,6 @@ from ..research_fanout import (
     resolve_model_ref,
 )
 from ..supervision import (
-    EvidenceClaim,
     FinalResponseValidation,
     RefinementReason,
     ResponseContract,
@@ -67,44 +64,12 @@ from .contracts import (
     ResearchFanoutResult,
     ResearchStagePlan,
 )
+from ..retrieval.code_retrieval import (
+    _code_scope_queries as _code_scope_queries,
+    retrieve_code_candidates,
+)
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _code_scope_queries(value: str, limit: int = 8) -> tuple[str, ...]:
-    """Prefer code-shaped terms after documentation workers narrowed the scope."""
-
-    ignored = {
-        "ainda", "apenas", "como", "com", "das", "depois", "dos", "essa",
-        "este", "esta", "isso", "para", "pela", "pelo", "porque", "qual",
-        "quando", "sobre", "uma", "usar", "user", "request", "passo",
-        "completa", "completo", "confirmado", "explicando", "fato", "fluxo",
-        "funciona", "inferência", "hipótese", "analise",
-        "analisar", "código", "codigo", "enviou", "evidência", "evidencias",
-        "fonte", "informação", "informacao", "novamente", "original",
-        "release", "solicitação", "solicitacao", "tente", "trecho", "trechos",
-        "processo", "sistema", "utiliza", "utilizar", "validar", "validação",
-        "validacao", "você", "voce", "vrmaster",
-    }
-    raw = re.findall(r"[A-Za-zÀ-ÿ_$][A-Za-zÀ-ÿ0-9_$]{2,}", str(value or ""))
-    unique = list(dict.fromkeys(raw))
-    symbols = [
-        item for item in unique
-        if item.casefold() not in ignored
-        and (re.search(r"[a-z][A-Z]", item) or item.isupper() or "_" in item)
-    ]
-    preferred = [
-        item
-        for item in unique
-        if item.casefold() not in ignored
-        and (re.search(r"[a-z][A-Z]", item) or item.isupper() or len(item) >= 6)
-    ]
-    fallback = [
-        item
-        for item in unique
-        if item.casefold() not in ignored and item not in preferred
-    ]
-    return tuple(dict.fromkeys(symbols + preferred + fallback))[: max(1, int(limit))]
 
 
 class ExecutionRunner:
@@ -474,7 +439,7 @@ class ExecutionRunner:
                            {**stage, "reason": "request_model_permissions_or_sources_changed"})
             outcome: ModuleResearch | None = None
 
-            for attempt in range(min(RESEARCH_ATTEMPTS, context.budget.max_retries_per_worker + 1)):
+            for attempt in range(min(RESEARCH_ATTEMPTS, context.budget.max_retries_per_worker + 1)) :
                 if context.cancellation.is_cancelled:
                     outcome = ModuleResearch(module=module, raw_error="Cancelado pelo usuário")
                     break
@@ -658,111 +623,21 @@ class ExecutionRunner:
                 expected_release_hash = str(code_analysis_manifest_sha256 or "").strip()
                 if context.metadata.get("code_scope_error"):
                     raise ProviderError(context.metadata["code_scope_error"])
-                if application_contexts is not None:
-                    from ..code_context import validate_application_contexts
-                    validate_application_contexts(self.settings.root, application_contexts)
-                if expected_release_hash:
-                    release_status = ErpReleaseCatalog(self.settings.root).status(code_analysis_release)
-                    current_release_hash = str(release_status.get("release_manifest_sha256") or "")
-                    if release_status.get("freshness") != "fresh":
-                        raise RuntimeError(
-                            "Os JARs da release mudaram depois da seleção; "
-                            "o Agente de Código não usará um índice possivelmente desatualizado."
-                        )
-                    if current_release_hash != expected_release_hash:
-                        raise RuntimeError(
-                            "O hash do manifesto mudou depois do início do turno; "
-                            "o Agente de Código foi interrompido."
-                        )
-                code_results: list[dict[str, Any]] = []
-                seen_code: set[str] = set()
-                scopes = application_contexts if application_contexts is not None else [None]
-                for app_context in scopes:
-                    scope_release = app_context["package_id"] if app_context else code_analysis_release
-                    scope_hash = app_context["manifest_sha256"] if app_context else expected_release_hash
-                    scoped_count = 0
-                    for code_query in _code_scope_queries(scoped_text):
-                        for res in JavaCodeIndex(self.settings.root).search(
-                            code_query, release_id=scope_release, limit=3,
-                            **({"artifacts": app_context["artifacts"], "manifest_hash": scope_hash} if app_context else {}),
-                        ):
-                            if scope_hash and str(res.get("release_hash") or "") != scope_hash:
-                                continue
-                            key = str(res.get("source_key") or "")
-                            identity = (app_context["context_id"] if app_context else "") + key
-                            if key and identity not in seen_code:
-                                seen_code.add(identity)
-                                res["application_context"] = app_context or {}
-                                code_results.append(res)
-                                scoped_count += 1
-                            if scoped_count >= 8:
-                                break
-                        if scoped_count >= 8:
-                            break
-
-                code_candidates: list[EvidenceCandidate] = []
-                code_claims: list[EvidenceClaim] = []
-                for result in code_results:
-                    result = JavaCodeIndex(self.settings.root).expanded_excerpt(result)
-                    code_confidence = (
-                        0.85
-                        if result["freshness"] == "fresh"
-                        and result.get("classpath_resolution") in {"unique", "resolved"}
-                        else 0.45
-                    )
-                    app_context = result.get("application_context", {})
-                    context_prefix = app_context.get("context_id", "")[:16]
-                    evidence_id = f"code:{context_prefix + ':' if context_prefix else ''}{str(result['source_key'])[:20]}"
-                    title = (
-                        f"{app_context.get('label', 'Código')} · {result['release_id']} · {result['jar_relative_path']} · "
-                        f"{result['qualified_name']} · linhas {result['line_start']}-{result['line_end']}"
-                    )
-                    code_candidates.append(
-                        EvidenceCandidate(
-                            evidence_id=evidence_id,
-                            source="code",
-                            source_id=str(result["source_key"]),
-                            document_id=0,
-                            chunk_id=0,
-                            title=title,
-                            heading=str(result["qualified_name"]),
-                            content_type="java_decompiled",
-                            module=bundle.profile.module,
-                            product=bundle.profile.product,
-                            excerpt=str(result["excerpt"]),
-                            local_path=f"{result['output_reference']}/{result['source_relative_path']}",
-                            updated_at=str(result["indexed_at"]),
-                            score=float(result["score"]),
-                            confidence=code_confidence,
-                            entities={"source_sha256": (str(result.get("source_sha256") or ""),),
-                                      "application_context": (app_context.get("context_id", ""),),
-                                      "application": (app_context.get("label", ""),)},
-                        )
-                    )
-                    code_claims.append(
-                        EvidenceClaim(
-                            text=f"{result['qualified_name']}: {result['excerpt']}",
-                            evidence_ids=(evidence_id,),
-                            kind="fact",
-                            confidence=code_confidence,
-                            worker_id="fanout_codigo",
-                        )
-                    )
-
-                from ..retrieval.code_relations import caller_evidence
-                related = []
-                for app_context in scopes:
-                    related.extend(caller_evidence(self.settings.root, _code_scope_queries(scoped_text),
-                        release_id=app_context["package_id"] if app_context else code_analysis_release,
-                        manifest_hash=app_context["manifest_sha256"] if app_context else expected_release_hash,
-                        **({"application_context": app_context} if app_context else {}),
-                        max_seconds=min(.3, context.budget.time_remaining())))
-                for related_candidate in related:
-                    code_candidates.append(related_candidate)
-                    code_claims.append(EvidenceClaim(
-                        text=related_candidate.title + ": " + related_candidate.excerpt,
-                        evidence_ids=(related_candidate.evidence_id,), kind="fact", confidence=related_candidate.confidence,
-                        worker_id="fanout_codigo"))
+                code_candidates, code_claims, code_results = retrieve_code_candidates(
+                    self.settings.root,
+                    scoped_text,
+                    application_contexts=application_contexts,
+                    code_analysis_release=code_analysis_release,
+                    code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                    limit_per_scope=8,
+                    max_excerpt_chars=3000,
+                    limit_per_query=3,
+                    max_caller_nodes=3,
+                    max_seconds=min(0.3, context.budget.time_remaining()),
+                    module=bundle.profile.module,
+                    product=bundle.profile.product,
+                    budget_remaining=context.budget.time_remaining(),
+                )
 
                 fallback_report = WorkerReport(
                     worker_id="fanout_codigo",
@@ -867,6 +742,7 @@ Retorne somente JSON:
                         )
 
                 if application_contexts is not None:
+                    from ..code_context import validate_application_contexts
                     validate_application_contexts(self.settings.root, application_contexts)
                 ordered.append(ModuleResearch(module="Código", report=code_report))
                 synthesis_bundle = replace(
@@ -878,7 +754,7 @@ Retorne somente JSON:
                 emit_event(
                     cid,
                     "agent_completed",
-                    f"Agente de Código concluiu com {len(code_claims)} achados.",
+                    f"Agente de Código concluído com {len(code_claims)} achados.",
                     {
                         **code_stage,
                         "status": code_status,
@@ -908,6 +784,9 @@ Retorne somente JSON:
             }.values()))
             allowed_ids = tuple(c.evidence_id for c in synthesis_bundle.candidates)
 
+        from ..knowledge_access import bounded_candidates
+        synthesis_bundle = replace(synthesis_bundle, candidates=bounded_candidates(synthesis_bundle.candidates))
+        allowed_ids = tuple(c.evidence_id for c in synthesis_bundle.candidates)
         merged = merge_module_research(ordered)
         emit_event(
             cid,

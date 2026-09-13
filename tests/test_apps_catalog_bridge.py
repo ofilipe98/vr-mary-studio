@@ -85,6 +85,35 @@ def test_import_runs_off_qt_thread_and_reports_error(bridge, tmp_path, monkeypat
     assert "injected import failure" in bridge.releaseSnapshotStatus
 
 
+@pytest.mark.parametrize("operation", ["detect", "import", "delete"])
+def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path, monkeypatch, operation):
+    entered, release, heartbeat = (threading.Event() for _ in range(3))
+
+    def blocked(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        raise RuntimeError("decompiled failure")
+
+    if operation == "delete":
+        monkeypatch.setattr(ErpReleaseCatalog, "delete_source_jars", blocked)
+    else:
+        monkeypatch.setattr(codeadmin, f"{operation}_decompiled_source", blocked)
+    try:
+        result = (bridge.detectDecompiledDirectory(str(tmp_path)) if operation == "detect"
+                  else bridge.deleteSourceJars("one") if operation == "delete"
+                  else bridge.importDecompiledDirectory(str(tmp_path), "one", "One"))
+        assert result["pending"]
+        assert entered.wait(2)
+        QTimer.singleShot(0, heartbeat.set)
+        wait_until(heartbeat.is_set)
+        assert not bridge.unlinkPackage("one", False)
+        assert bridge.importDecompiledDirectory(str(tmp_path))["busy"]
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert "decompiled failure" in bridge.releaseSnapshotStatus
+
+
 def test_ready_state_is_projected_from_real_coverage(bridge, tmp_path, monkeypatch):
     source = tmp_path / "source"
     _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))
@@ -108,8 +137,9 @@ def test_variant_processing_scopes_to_selected_application(bridge, tmp_path, mon
     catalog = ErpReleaseCatalog(bridge._settings.root, expected_jar_count=2)
     catalog.import_release("one", source)
     bridge.refreshCodeAnalysisReleases()
-    wait_until(lambda: bridge._apps_catalog_thread is None)
+    wait_until(lambda: bridge._apps_catalog_thread is None and any(app.get("appId") == "vrapp" for app in bridge.applicationsCatalog))
     bridge.selectApplication("vrapp")
+    wait_until(lambda: len(bridge.appVersions) > 0)
     bridge.selectAppVersion(bridge.appVersions[0]["version"])
     calls = []
     monkeypatch.setattr(codeadmin.CodeAdminDomain, "_start_code_processing", lambda self, **kwargs: calls.append(bridge._code_processing_relative_jars) or True)
@@ -219,3 +249,61 @@ def test_removal_waits_for_catalog_reader_outside_qt(bridge, tmp_path, monkeypat
     wait_until(lambda: not bridge.releaseSnapshotRunning)
     assert not catalog.paths.manifest_for("one").exists(), bridge.releaseSnapshotStatus
     assert catalog.paths.manifest_for("two").exists()
+
+def test_unlink_package_delete_data_runs_async_and_purges(bridge, tmp_path):
+    source = tmp_path / "source"
+    _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))
+    catalog = ErpReleaseCatalog(bridge._settings.root, expected_jar_count=1)
+    catalog.import_release("one", source)
+    bridge.refreshCodeAnalysisReleases()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    assert catalog.paths.manifest_for("one").exists()
+
+    assert bridge.unlinkPackage("one", delete_data=True)
+    assert bridge.releaseSnapshotRunning
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert not catalog.paths.manifest_for("one").exists()
+    assert "sucesso" in bridge.releaseSnapshotStatus.lower()
+
+def test_start_batch_apps_processing_scopes_to_selected_jars(bridge, tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))
+    _vr_jar(source / "VROther.jar", (1, 0, 0, 0))
+    _vr_jar(source / "VRThird.jar", (1, 0, 0, 0))
+    catalog = ErpReleaseCatalog(bridge._settings.root, expected_jar_count=3)
+    catalog.import_release("one", source)
+    bridge.refreshCodeAnalysisReleases()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+
+    calls = []
+    monkeypatch.setattr(codeadmin.CodeAdminDomain, "_start_code_processing", lambda self, **kwargs: calls.append(self._code_processing_relative_jars) or True)
+
+    assert not bridge.startBatchAppsProcessing([])
+    assert not bridge.startBatchAppsProcessing(["nonexistent_app"])
+
+    assert bridge.startBatchAppsProcessing(["vrapp", "vrother"])
+    assert len(calls) == 1
+    assert set(calls[0]) == {"VRApp.jar", "VROther.jar"}
+    assert bridge._code_processing_total_jars == 2
+
+
+
+def test_global_decompile_configuration_persistence(bridge):
+    bridge.setCodeProcessingMaxHeapMb(4096)
+    bridge.setCodeProcessingTimeoutSeconds(600)
+    bridge.setCodeProcessingMaxCpuCores(4)
+    bridge.setCodeProcessingDiskMultiplier(8)
+    bridge.setCodeProcessingWindow("night")
+
+    assert int(bridge._preferences.value("code_processing/max_heap_mb")) == 4096
+    assert int(bridge._preferences.value("code_processing/timeout_seconds")) == 600
+    assert int(bridge._preferences.value("code_processing/max_cpu_cores")) == 4
+    assert int(bridge._preferences.value("code_processing/disk_multiplier")) == 8
+    assert str(bridge._preferences.value("code_processing/window")) == "night"
+
+    from scripts.batch_decompile import load_global_decompile_config
+    cfg = load_global_decompile_config(bridge._preferences)
+    assert cfg["heap_mb"] == 4096
+    assert cfg["timeout_seconds"] == 600
+    assert cfg["max_cpu_cores"] == 4
+    assert cfg["max_workers"] == codeadmin.CODE_PROCESSING_HARDWARE.parallel_workers_for(4, 4096)

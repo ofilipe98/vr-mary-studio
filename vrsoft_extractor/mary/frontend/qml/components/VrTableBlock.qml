@@ -7,7 +7,7 @@ Column {
     objectName: "tableBlock"
     property string markdown: ""
     property int columns: 2
-    property bool expanded: false
+    property bool expanded: !frontend.wordWrap
     property bool copied: false
     signal layoutChanging()
     spacing: 2
@@ -27,7 +27,11 @@ Column {
         id: viewport
         objectName: "tableViewport"
         width: root.width
-        height: body.paintedHeight + (contentWidth > width ? 10 : 0)
+        // Qt's painted text bounds omit the final cell padding at some scales.
+        // Include the measured row edge so the bottom divider remains visible.
+        height: Math.max(body.paintedHeight, root.rowEdges.length
+            ? Math.ceil(root.rowEdges[root.rowEdges.length - 1]) : 0)
+            + (contentWidth > width ? 10 : 0)
         contentWidth: Math.max(width, body.width, body.paintedWidth)
         contentHeight: height
         clip: true

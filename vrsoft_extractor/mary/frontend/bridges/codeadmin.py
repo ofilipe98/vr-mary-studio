@@ -17,7 +17,8 @@ from ...erp_releases import ErpReleaseCatalog, ErpReleaseError
 from ...jvm_batches import DecompilationBatchError
 from ...jvm_toolchain import JvmToolchain
 
-from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
+from ...decompiled_detection import detect_decompiled_source, import_decompiled_source
+from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
 
 class CodeAdminDomain:
     """Domain operations using the facade as the sole state and transaction owner."""
@@ -112,7 +113,7 @@ class CodeAdminDomain:
 
     def setCodeAnalysisJarSource(self, source: str) -> None:  # noqa: N802
         selected = str(source or "").strip()
-        if selected not in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE}:
+        if selected not in {ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM}:
             return
         if selected == self._code_analysis_jar_source:
             return
@@ -192,6 +193,7 @@ class CodeAdminDomain:
             self._workspace_research_preference("code_processing_max_heap_mb"),
             selected,
         )
+        self._preferences.setValue("code_processing/max_heap_mb", selected)
         self._preferences.sync()
         self.stateChanged.emit()
 
@@ -209,6 +211,7 @@ class CodeAdminDomain:
             self._workspace_research_preference("code_processing_timeout_seconds"),
             selected,
         )
+        self._preferences.setValue("code_processing/timeout_seconds", selected)
         self._preferences.sync()
         self.stateChanged.emit()
 
@@ -226,6 +229,7 @@ class CodeAdminDomain:
             self._workspace_research_preference("code_processing_max_cpu_cores"),
             selected,
         )
+        self._preferences.setValue("code_processing/max_cpu_cores", selected)
         self._preferences.sync()
         self.stateChanged.emit()
 
@@ -252,6 +256,7 @@ class CodeAdminDomain:
             self._workspace_research_preference("code_processing_disk_multiplier"),
             selected,
         )
+        self._preferences.setValue("code_processing/disk_multiplier", selected)
         self._preferences.sync()
         self.refreshCodeProcessingStatus()
         self.refreshApplicationsCatalog()
@@ -272,6 +277,7 @@ class CodeAdminDomain:
             self._workspace_research_preference("code_processing_window"),
             selected,
         )
+        self._preferences.setValue("code_processing/window", selected)
         self._preferences.sync()
         self.stateChanged.emit()
 
@@ -372,7 +378,9 @@ class CodeAdminDomain:
         ] | None = None
         while True:
             try:
-                latest = self._code_processing_status_results.get_nowait()
+                candidate = self._code_processing_status_results.get_nowait()
+                if candidate[0] == self._code_processing_status_generation:
+                    latest = candidate
             except queue.Empty:
                 break
         if latest is None:
@@ -401,6 +409,8 @@ class CodeAdminDomain:
         self._code_processing_covered_jars = 0
         self._code_processing_total_jars = 0
         self._code_processing_can_retry = False
+        self._code_processing_can_cancel = False
+        self._code_processing_cancel_requested = False
         self._code_processing_current_jar = ""
         self._code_processing_current_batch = ""
         self._code_processing_attention_batches = []
@@ -501,6 +511,14 @@ class CodeAdminDomain:
             self._code_processing_status = (
                 f"Pronto para processar: {covered}/{total} JARs indexados."
             )
+        self._code_processing_can_cancel = bool(
+            active
+            or blocked
+            or (
+                self._code_processing_progress > 0
+                and self._code_processing_covered_jars < self._code_processing_total_jars
+            )
+        )
 
 
     def _restore_code_processing_audit(
@@ -527,12 +545,16 @@ class CodeAdminDomain:
         if event == "failed":
             error = str(details.get("error") or "erro desconhecido")
             self._code_processing_status = f"Última execução falhou: {error}"
+        elif event == "cancelled":
+            self._code_processing_status = "Descompilação cancelada pelo usuário."
+            self._code_processing_can_cancel = False
         elif event == "paused":
             self._code_processing_status = (
                 "Processamento pausado entre lotes: "
                 f"{self._code_processing_covered_jars}/"
                 f"{self._code_processing_total_jars} JARs indexados."
             )
+            self._code_processing_can_cancel = True
         elif event in {"started", "toolchain_validated", "progress", "batch_retried"}:
             self._code_processing_status = (
                 "Execução anterior foi interrompida; pronta para retomar: "
@@ -642,6 +664,9 @@ class CodeAdminDomain:
         self._code_processing_running = True
         self._code_processing_pause_requested = False
         self._code_processing_pause_event.clear()
+        self._code_processing_cancel_requested = False
+        self._code_processing_cancel_event.clear()
+        self._code_processing_can_cancel = True
         self._code_processing_status = (
             f"Validando Java 17 e decompiladores para {release_id}..."
         )
@@ -676,6 +701,53 @@ class CodeAdminDomain:
         self._code_processing_status = (
             "Pausa solicitada; os lotes Java atuais serão concluídos com segurança."
         )
+        self.stateChanged.emit()
+
+    def cancelCodeProcessing(self) -> None:  # noqa: N802
+        if self._code_processing_running:
+            if self._code_processing_cancel_requested:
+                return
+            self._code_processing_cancel_requested = True
+            self._code_processing_cancel_event.set()
+            self._code_processing_pause_event.set()
+            self._code_processing_status = (
+                "Cancelamento solicitado; aguardando os lotes atuais terminarem."
+            )
+            self.stateChanged.emit()
+            return
+
+        release_id = (
+            self._code_analysis_release
+            or self._code_processing_release
+            or self._selected_app_origin_id
+        )
+        if release_id:
+            try:
+                from ...jvm_batches import DecompilationBatchStore
+                DecompilationBatchStore(self._settings.root).cancel_active_plans(
+                    release_id, relative_jars=self._code_processing_relative_jars
+                )
+            except Exception as exc:
+                self._code_processing_status = f"Não foi possível cancelar: {exc}"
+                self.stateChanged.emit()
+                return
+            try:
+                from ...code_coverage import CodeProcessingAudit
+                same_execution = release_id == self._code_processing_release
+                CodeProcessingAudit(self._settings.root).record(
+                    "cancelled",
+                    run_id=(self._code_processing_run_id if same_execution else "") or uuid4().hex,
+                    release_id=release_id,
+                    manifest_sha256=self._code_processing_manifest_hash if same_execution else "",
+                    details={"cancelled_by_user": True,
+                             "relative_jars": list(self._code_processing_relative_jars)},
+                )
+            except Exception:
+                pass
+        self._reset_code_processing_status("Descompilação cancelada pelo usuário.")
+        self._invalidate_release_coverage()
+        self._refresh_code_analysis_releases()
+        self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
 
@@ -828,6 +900,25 @@ class CodeAdminDomain:
                         }
                     )
                     return
+                if self._code_processing_cancel_event.is_set():
+                    telemetry = self._merge_code_processing_telemetry(
+                        job_telemetry, [], started_monotonic
+                    )
+                    manager.cancel(release_id, **({"relative_jars": relative_jars} if relative_jars else {}))
+                    coverage = scoped(manager.status(release_id))
+                    self._record_code_processing_coverage(
+                        audit,
+                        "cancelled",
+                        run_id,
+                        release_id,
+                        manifest_hash,
+                        coverage,
+                        telemetry,
+                    )
+                    publish(
+                        {"kind": "cancelled", "coverage": coverage, "telemetry": telemetry}
+                    )
+                    return
                 if self._code_processing_pause_event.is_set():
                     telemetry = self._merge_code_processing_telemetry(
                         job_telemetry, [], started_monotonic
@@ -916,6 +1007,22 @@ class CodeAdminDomain:
                 telemetry = self._merge_code_processing_telemetry(
                     job_telemetry, executed, started_monotonic
                 )
+                if self._code_processing_cancel_event.is_set():
+                    manager.cancel(release_id, **({"relative_jars": relative_jars} if relative_jars else {}))
+                    coverage = scoped(manager.status(release_id))
+                    self._record_code_processing_coverage(
+                        audit,
+                        "cancelled",
+                        run_id,
+                        release_id,
+                        manifest_hash,
+                        coverage,
+                        telemetry,
+                    )
+                    publish(
+                        {"kind": "cancelled", "coverage": coverage, "telemetry": telemetry}
+                    )
+                    return
                 self._record_code_processing_coverage(
                     audit,
                     "progress",
@@ -1129,6 +1236,7 @@ class CodeAdminDomain:
             elif kind == "paused":
                 self._code_processing_running = False
                 self._code_processing_pause_requested = False
+                self._code_processing_cancel_requested = False
                 reason = str(event.get("reason") or "").strip()
                 self._code_processing_status = (
                     f"Processamento pausado entre lotes: "
@@ -1136,15 +1244,24 @@ class CodeAdminDomain:
                     f"{self._code_processing_total_jars} JARs indexados."
                     + (f" Motivo: {reason}." if reason else "")
                 )
+            elif kind == "cancelled":
+                self._code_processing_running = False
+                self._code_processing_pause_requested = False
+                self._code_processing_cancel_requested = False
+                self._code_processing_can_cancel = False
+                self._code_processing_status = "Descompilação cancelada pelo usuário."
             elif kind == "attention":
                 self._code_processing_running = False
                 self._code_processing_pause_requested = False
+                self._code_processing_cancel_requested = False
             elif kind == "completed":
                 self._code_processing_running = False
                 self._code_processing_pause_requested = False
+                self._code_processing_cancel_requested = False
             elif kind == "error":
                 self._code_processing_running = False
                 self._code_processing_pause_requested = False
+                self._code_processing_cancel_requested = False
                 self._code_processing_status = (
                     "Falha no processamento local: "
                     + str(event.get("error") or "erro desconhecido")
@@ -1359,6 +1476,8 @@ class CodeAdminDomain:
 
 
     def _poll_release_snapshot(self) -> None:
+        if self._closed:
+            return
         latest: dict[str, Any] | None = None
         while True:
             try:
@@ -1370,6 +1489,28 @@ class CodeAdminDomain:
 
         self._release_snapshot_running = False
         self._release_snapshot_poll_timer.stop()
+        if latest.get("workspace", self._settings.root) != self._settings.root:
+            return
+        if latest.get("operation") in {"detect_decompiled", "import_decompiled", "delete_source_jars"}:
+            if latest.get("ok"):
+                result = latest["result"]
+                if latest["operation"] == "detect_decompiled":
+                    self._release_snapshot_status = result.get("error", "Confira os fontes detectados.")
+                    self.decompiledDirectoryDetected.emit(result)
+                elif latest["operation"] == "delete_source_jars":
+                    self._release_snapshot_status = f"Exclusão concluída: {result['deleted_count']} JARs originais removidos."
+                    self._refresh_code_analysis_jar_sources()
+                    self.refreshApplicationsCatalog()
+                else:
+                    self._release_snapshot_status = f"Importação concluída: {result['total_indexed_sources']} fontes indexados."
+                    self._invalidate_release_coverage()
+                    self.refreshApplicationsCatalog()
+                    self.refreshCodeAnalysisReleases()
+            else:
+                self._apps_catalog_error = latest["error"]
+                self._release_snapshot_status = latest["error"]
+            self.stateChanged.emit()
+            return
         if latest.get("operation") == "preview":
             self._application_preview_thread = None
             if latest["root"] == self._settings.root and latest["generation"] == self._application_preview_generation:
@@ -1425,6 +1566,25 @@ class CodeAdminDomain:
                 )
             self.stateChanged.emit()
             return
+        if str(latest.get("operation") or "") == "unlink_package":
+            if bool(latest.get("ok")):
+                self.refreshApplicationsCatalog()
+                self._invalidate_release_coverage()
+                self._refresh_code_analysis_releases()
+                self._refresh_code_analysis_jar_sources()
+                self.refreshCodeProcessingStatus()
+                pkg = str(latest.get("package_id") or "")
+                self._release_snapshot_status = (
+                    f"Pacote '{pkg}' e seus índices e descompilados foram excluídos com sucesso."
+                )
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._apps_catalog_error = detail
+                self._release_snapshot_status = (
+                    f"Não foi possível remover o pacote: {detail}"
+                )
+            self.stateChanged.emit()
+            return
         if bool(latest.get("ok")):
             self.refreshApplicationsCatalog()
             self._invalidate_release_coverage()
@@ -1471,6 +1631,22 @@ class CodeAdminDomain:
 
     def _refresh_code_analysis_jar_sources(self) -> None:
         workspace_path = self._settings.erp_releases_dir
+        custom_dir = str(
+            self._preferences.value(
+                self._workspace_research_preference("custom_jar_source_dir"), ""
+            )
+            or ""
+        ).strip()
+        custom_option = ()
+        if custom_dir:
+            custom_path = Path(custom_dir)
+            custom_option = (
+                (
+                    ERP_JAR_SOURCE_CUSTOM,
+                    f"Diretório personalizado ({custom_path.name or custom_dir})",
+                    custom_path,
+                ),
+            )
         options = (
             (
                 ERP_JAR_SOURCE_VR_EXEC,
@@ -1482,7 +1658,7 @@ class CodeAdminDomain:
                 "Workspace atual",
                 workspace_path,
             ),
-        )
+        ) + custom_option
         items: list[dict[str, Any]] = []
         catalog = ErpReleaseCatalog(self._settings.root)
         for value, label, path in options:
@@ -1945,16 +2121,168 @@ class CodeAdminDomain:
             return selected
         return ""
 
-    def unlinkPackage(self, package_id: str) -> bool:  # noqa: N802
+    def selectCustomJarDirectory(self) -> str:  # noqa: N802
+        initial = self.codeAnalysisJarSourcePath or str(self._settings.root)
+        selected = QFileDialog.getExistingDirectory(
+            None,
+            "Selecionar diretório padrão de JARs do ERP",
+            initial,
+        )
+        if selected:
+            resolved = str(Path(selected).resolve())
+            self._preferences.setValue(
+                self._workspace_research_preference("custom_jar_source_dir"),
+                resolved,
+            )
+            self._preferences.setValue(
+                self._workspace_research_preference("code_analysis_jar_source"),
+                ERP_JAR_SOURCE_CUSTOM,
+            )
+            self._code_analysis_jar_source = ERP_JAR_SOURCE_CUSTOM
+            self._preferences.sync()
+            self._refresh_code_analysis_jar_sources()
+            self.stateChanged.emit()
+            return resolved
+        return ""
+
+    def renamePackage(self, package_id: str, new_name: str) -> bool:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return False
         try:
             catalog = ErpReleaseCatalog(self._settings.root)
-            catalog.unlink_package(package_id)
+            catalog.rename_package(package_id, new_name)
             self.refreshApplicationsCatalog()
             return True
         except Exception as exc:
             self._apps_catalog_error = str(exc)
             self.stateChanged.emit()
             return False
+
+    def deleteSourceJars(self, package_id: str) -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"deleted_count": 0, "error": "Aguarde a operação em andamento."}
+        workspace = self._settings.root
+        self._start_package_task("delete_source_jars", lambda: ErpReleaseCatalog(workspace).delete_source_jars(package_id))
+        return {"pending": True}
+
+    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"is_valid": False, "busy": True}
+        target_dir = str(directory or "").strip()
+        if not target_dir:
+            initial = str(self._settings.root)
+            target_dir = QFileDialog.getExistingDirectory(
+                None,
+                "Selecionar pasta de código descompilado",
+                initial,
+            )
+            if not target_dir:
+                return {"is_valid": False, "canceled": True}
+        self._start_package_task("detect_decompiled", lambda: detect_decompiled_source(target_dir))
+        return {"pending": True}
+
+    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"success": False, "busy": True}
+        workspace = self._settings.root
+        self._start_package_task("import_decompiled", lambda: import_decompiled_source(
+            workspace, source_dir, release_id=release_id, package_name=package_name,
+        ))
+        return {"pending": True}
+
+    def _start_package_task(self, operation: str, task: Any) -> None:
+        workspace = self._settings.root
+        results = self._release_snapshot_results
+        signal = self._releaseSnapshotReady
+        self._release_snapshot_running = True
+        self._release_snapshot_status = {
+            "detect_decompiled": "Detectando fontes...",
+            "import_decompiled": "Importando fontes...",
+            "delete_source_jars": "Verificando e excluindo JARs originais...",
+        }[operation]
+        self._apps_catalog_error = ""
+
+        def worker() -> None:
+            result = {"operation": operation, "workspace": workspace}
+            try:
+                result.update(ok=True, result=task())
+            except Exception as exc:
+                result.update(ok=False, error=str(exc))
+            results.put(result)
+            if not self._closed:
+                signal.emit()
+
+        self._package_operation_thread = threading.Thread(target=worker, daemon=False)
+        self._release_snapshot_poll_timer.start()
+        self._package_operation_thread.start()
+        self.stateChanged.emit()
+
+    def unlinkPackage(self, package_id: str, delete_data: bool = False) -> bool:  # noqa: N802
+        selected = str(package_id or "").strip()
+        if not selected or self._closed or self._release_snapshot_running or self._code_processing_running:
+            return False
+
+        if not delete_data:
+            try:
+                catalog = ErpReleaseCatalog(self._settings.root)
+                catalog.unlink_package(selected, delete_data=False)
+                self.refreshApplicationsCatalog()
+                self.refreshCodeAnalysisReleases()
+                self.stateChanged.emit()
+                return True
+            except Exception as exc:
+                self._apps_catalog_error = str(exc)
+                self.stateChanged.emit()
+                return False
+
+        if self._release_snapshot_running or self._code_processing_running:
+            return False
+
+        self._release_snapshot_running = True
+        self._release_snapshot_status = (
+            f"Removendo pacote '{selected}' e excluindo índices e descompilados..."
+        )
+        self.stateChanged.emit()
+        results = self._release_snapshot_results
+        workspace = self._settings.root
+
+        def worker() -> None:
+            try:
+                for reader in (self._apps_catalog_thread, self._release_coverage_thread):
+                    if reader is not None and reader is not threading.current_thread():
+                        reader.join(timeout=5)
+                        if reader.is_alive():
+                            raise ErpReleaseError(
+                                "A consulta do índice ainda está ativa; tente remover novamente."
+                            )
+                catalog = ErpReleaseCatalog(workspace)
+                res = catalog.unlink_package(selected, delete_data=True)
+            except Exception as exc:
+                results.put({
+                    "operation": "unlink_package",
+                    "workspace": workspace,
+                    "ok": False,
+                    "package_id": selected,
+                    "error": str(exc),
+                })
+                if not self._closed:
+                    self._releaseSnapshotReady.emit()
+                return
+            results.put({
+                "operation": "unlink_package",
+                "workspace": workspace,
+                "ok": True,
+                "package_id": selected,
+                "deleted_data": True,
+                **res,
+            })
+            if not self._closed:
+                self._releaseSnapshotReady.emit()
+
+        self._release_snapshot_poll_timer.start()
+        self._package_operation_thread = threading.Thread(target=worker, daemon=False)
+        self._package_operation_thread.start()
+        return True
 
     def overrideVersion(self, app_id: str, current_version: str, manual_version: str, *, variant_id: str = "") -> bool:  # noqa: N802
         try:
@@ -2064,6 +2392,58 @@ class CodeAdminDomain:
             self._code_processing_relative_jars = (jar,)
             self._code_processing_covered_jars = 0
             self._code_processing_total_jars = 1
+            return self._start_code_processing(retry_batch_id="")
+        except Exception as exc:
+            self._code_processing_status = str(exc)
+            self.stateChanged.emit()
+            return False
+
+    def startBatchAppsProcessing(self, app_ids: list[str]) -> bool:  # noqa: N802
+        if self._code_processing_running or self._release_snapshot_running:
+            return False
+        if not app_ids:
+            return False
+        try:
+            catalog = ErpReleaseCatalog(self._settings.root)
+            data = catalog.apps_store.load_catalog()
+            all_jars: list[str] = []
+            target_release = self._selected_app_origin_id or self._code_analysis_release
+
+            for app_id in app_ids:
+                app = data.get("applications", {}).get(app_id)
+                if not app:
+                    continue
+                for ver in app.get("versions", {}).values():
+                    for var in ver.get("variants", {}).values():
+                        origins = var.get("origin_packages", [])
+                        if not origins:
+                            continue
+                        if not target_release:
+                            target_release = origins[0].get("package_id")
+                        origin = next(
+                            (o for o in origins if o.get("package_id") == target_release),
+                            origins[0],
+                        )
+                        jar = str(origin.get("relative_path") or var.get("relative_path") or "")
+                        if jar and jar not in all_jars:
+                            all_jars.append(jar)
+
+            if not target_release or not all_jars:
+                raise ValueError("Nenhum arquivo JAR elegível encontrado para os aplicativos selecionados.")
+
+            self.setCodeAnalysisRelease(target_release)
+            if self._code_analysis_release != target_release:
+                raise ValueError("O pacote selecionado não está disponível para processamento.")
+
+            manifest = catalog.load_manifest(target_release)
+            manifest_jars = {a.get("relative_path") for a in manifest.get("artifacts", [])}
+            valid_jars = tuple(j for j in all_jars if j in manifest_jars)
+            if not valid_jars:
+                raise ValueError("Nenhum dos JARs selecionados foi encontrado no manifesto do pacote.")
+
+            self._code_processing_relative_jars = valid_jars
+            self._code_processing_covered_jars = 0
+            self._code_processing_total_jars = len(valid_jars)
             return self._start_code_processing(retry_batch_id="")
         except Exception as exc:
             self._code_processing_status = str(exc)

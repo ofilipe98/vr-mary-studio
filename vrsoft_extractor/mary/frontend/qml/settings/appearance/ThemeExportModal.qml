@@ -14,7 +14,9 @@ Popup {
     modal: true
     focus: true
     dim: true
-    anchors.centerIn: Overlay.overlay
+    Overlay.modal: Rectangle { color: Qt.alpha(Theme.palette.background, .85) }
+    parent: Overlay.overlay
+    anchors.centerIn: parent
     width: Math.min(620, parent ? parent.width - 40 : 620)
     height: Math.min(520, parent ? parent.height - 40 : 520)
     padding: 0
@@ -22,7 +24,7 @@ Popup {
 
     background: Rectangle {
         radius: Theme.radiusCard
-        color: Theme.palette.surface
+        color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity)
         border.width: 1
         border.color: Theme.palette.border
     }
@@ -76,7 +78,7 @@ Popup {
             spacing: Theme.spaceMd
 
             Text {
-                text: "O JSON abaixo representa a definição completa do tema. Você pode compartilhá-lo ou importá-lo em outras instâncias do Harness."
+                text: "O JSON abaixo contém o tema completo. Você pode compartilhá-lo ou importá-lo em outra instalação do VRStudio."
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.captionSize
                 color: Theme.palette.mutedText

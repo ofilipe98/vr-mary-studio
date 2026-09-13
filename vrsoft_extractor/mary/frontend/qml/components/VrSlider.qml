@@ -4,6 +4,7 @@ import "../theme"
 
 Slider {
     id: control
+    property color activeColor: Theme.palette.accessibleOrange
 
     implicitWidth: 200
     implicitHeight: 24
@@ -25,7 +26,7 @@ Slider {
         Rectangle {
             width: control.visualPosition * parent.width
             height: parent.height
-            color: control.enabled ? Theme.palette.accessibleOrange : Theme.palette.mutedText
+            color: control.enabled ? control.activeColor : Theme.palette.mutedText
             radius: 3
         }
     }
@@ -33,11 +34,11 @@ Slider {
     handle: Rectangle {
         x: control.leftPadding + control.visualPosition * (control.availableWidth - width)
         y: control.topPadding + control.availableHeight / 2 - height / 2
-        implicitWidth: 18
-        implicitHeight: 18
-        radius: 9
-        color: control.pressed ? Theme.palette.brandOrange : (control.hovered ? "#FFFFFF" : "#EEEEEE")
-        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.accessibleOrange
+        implicitWidth: 16
+        implicitHeight: 16
+        radius: 8
+        color: control.pressed ? control.activeColor : Theme.palette.background
+        border.color: control.activeFocus ? Theme.palette.focus : control.activeColor
         border.width: control.activeFocus ? 3 : 2
 
         scale: !frontend.reduceMotion && (control.pressed || control.hovered) ? 1.15 : 1.0

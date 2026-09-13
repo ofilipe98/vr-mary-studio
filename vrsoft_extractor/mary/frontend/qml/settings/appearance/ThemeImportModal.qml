@@ -15,7 +15,9 @@ Popup {
     modal: true
     focus: true
     dim: true
-    anchors.centerIn: Overlay.overlay
+    Overlay.modal: Rectangle { color: Qt.alpha(Theme.palette.background, .85) }
+    parent: Overlay.overlay
+    anchors.centerIn: parent
     width: Math.min(620, parent ? parent.width - 40 : 620)
     height: Math.min(520, parent ? parent.height - 40 : 520)
     padding: 0
@@ -23,7 +25,7 @@ Popup {
 
     background: Rectangle {
         radius: Theme.radiusCard
-        color: Theme.palette.surface
+        color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity)
         border.width: 1
         border.color: Theme.palette.border
     }
@@ -72,11 +74,11 @@ Popup {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            anchors.margins: Theme.spaceLg
+            Layout.margins: Theme.spaceLg
             spacing: Theme.spaceMd
 
             Text {
-                text: "Cole abaixo a definição em JSON do tema. Formatos suportados: Harness nativo, T3 Code ou VS Code."
+                text: "Cole a definição JSON do tema. Formatos suportados: VRStudio, T3 Code ou VS Code."
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.captionSize
                 color: Theme.palette.mutedText

@@ -71,8 +71,10 @@ param(
     [ValidateSet('', 'Fiscal', 'ADM_FIN_ESTOQUE', 'PDV', 'Multimodulo', 'Revisar')]
     [string]$Module = '',
 
-    [ValidateSet('', 'wiki', 'kb')]
+    [ValidateSet('', 'wiki', 'kb', 'schema', 'code')]
     [string]$Source = '',
+
+    [string]$Context = '',
 
     [ValidateRange(1, 20)]
     [int]$Limit = 8,
@@ -205,8 +207,8 @@ def conversation_workspace(settings: MarySettings, conversation_id: str) -> Path
     )
 
 
-def is_managed_conversation_workspace(settings: MarySettings, path: Path) -> bool:
-    resolved = path.resolve(strict=False)
+def is_managed_conversation_workspace(settings: MarySettings, path: Path | str) -> bool:
+    resolved = Path(path).resolve(strict=False)
     for work_dir in (settings.work_dir, settings.legacy_work_dir):
         try:
             resolved.relative_to(work_dir.resolve(strict=False))
@@ -216,10 +218,10 @@ def is_managed_conversation_workspace(settings: MarySettings, path: Path) -> boo
     return False
 
 
-def prepare_conversation_workspace(settings: MarySettings, path: Path) -> Path:
+def prepare_conversation_workspace(settings: MarySettings, path: Path | str) -> Path:
     """Prepare Studio-owned workspaces without modifying a user project folder."""
 
-    resolved = path.resolve(strict=False)
+    resolved = Path(path).resolve(strict=False)
     if is_managed_conversation_workspace(settings, resolved):
         return ensure_conversation_workspace(resolved, settings.root)
     if not resolved.is_dir():

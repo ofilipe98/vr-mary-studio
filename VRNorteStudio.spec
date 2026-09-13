@@ -26,6 +26,8 @@ a = Analysis(
         (".env.example", "."),
         ("README.md", "."),
         ("vrsoft_extractor/mary/data/produtos_filas.md", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/t3_themes.json", "vrsoft_extractor/mary/data"),
+        ("vrsoft_extractor/mary/data/t3_themes.LICENSE", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/data/vr-search.ps1", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/data/antigravity-browser-noop.ps1", "vrsoft_extractor/mary/data"),
         ("vrsoft_extractor/mary/data/Abrir-VR-no-Codex.cmd", "vrsoft_extractor/mary/data"),

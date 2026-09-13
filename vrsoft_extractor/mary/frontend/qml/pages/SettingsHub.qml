@@ -120,17 +120,87 @@ Item {
         root.syncSearchField()
     }
 
-    Rectangle { anchors.fill: parent; color: Theme.palette.background }
+    Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
 
     SplitView {
         anchors.fill: parent
         orientation: Qt.Horizontal
 
         handle: Rectangle {
-            implicitWidth: 5
-            color: SplitHandle.hovered || SplitHandle.pressed
-                ? Theme.palette.focus : Theme.palette.chatDivider
-            opacity: SplitHandle.hovered || SplitHandle.pressed ? 0.75 : 0.45
+            id: splitHandle
+            implicitWidth: 7
+            color: "transparent"
+
+            // Left slice matches navigation background
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: centerLine.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: Theme.palette.navigationBackground
+            }
+
+            // Right slice matches content background
+            Rectangle {
+                anchors.left: centerLine.right
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: Theme.palette.chatBackground
+            }
+
+            // Subtle depth gradient along the content edge
+            Rectangle {
+                anchors.left: centerLine.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 3
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.14) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
+
+            // Crisp 1px hairline divider
+            Rectangle {
+                id: centerLine
+                anchors.centerIn: parent
+                width: 1
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                color: SplitHandle.pressed
+                    ? Theme.palette.brandOrange
+                    : SplitHandle.hovered
+                        ? Theme.palette.focus
+                        : Theme.palette.navDivider
+                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 0.55
+
+                Behavior on color {
+                    enabled: !frontend.reduceMotion
+                    ColorAnimation { duration: Theme.fastDuration }
+                }
+                Behavior on opacity {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.fastDuration }
+                }
+            }
+
+            // Interactive grip indicator pill on hover/press
+            Rectangle {
+                anchors.centerIn: parent
+                width: 3
+                height: 36
+                radius: 1.5
+                visible: SplitHandle.hovered || SplitHandle.pressed
+                color: SplitHandle.pressed ? Theme.palette.brandOrange : Theme.palette.focus
+                opacity: SplitHandle.pressed ? 0.95 : 0.85
+
+                Behavior on opacity {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.fastDuration }
+                }
+            }
         }
 
         Rectangle {
@@ -362,13 +432,13 @@ Item {
 
             SequentialAnimation {
                 id: pageEntrance
-                PropertyAction { target: pageViewport; property: "opacity"; value: 0.94 }
-                PropertyAction { target: pageShift; property: "y"; value: Theme.motionDistance }
+                PropertyAction { target: pageViewport; property: "opacity"; value: 0.15 }
+                PropertyAction { target: pageShift; property: "y"; value: 8 }
                 ParallelAnimation {
                     NumberAnimation {
                         target: pageViewport
                         property: "opacity"
-                        to: 1
+                        to: 1.0
                         duration: Theme.motionDuration
                         easing.type: Easing.OutCubic
                     }

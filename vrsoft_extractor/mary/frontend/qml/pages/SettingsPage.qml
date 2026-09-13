@@ -15,25 +15,18 @@ Item {
     property bool providersVisited: false
     property bool skillsVisited: false
     onTabIndexChanged: {
+        if (typeof settingsTabBar !== "undefined" && settingsTabBar && settingsTabBar.currentIndex !== tabIndex)
+            settingsTabBar.currentIndex = tabIndex
         if (tabIndex === 1) providersVisited = true
         if (tabIndex === 2) vrUltraVisited = true
         if (tabIndex === 3) appsVisited = true
         if (tabIndex === 7) skillsVisited = true
+        if (!frontend.reduceMotion)
+            tabTransition.restart()
     }
 
     function openSearchResult(index) {
         root.tabIndex = Math.max(0, Math.min(7, Number(index)))
-    }
-
-    function applyTypography() {
-        if (typeof interfaceFontCombo !== "undefined" && interfaceFontCombo && interfaceFontCombo.currentText) {
-            frontend.setTypography(
-                interfaceFontCombo.currentText,
-                Number(interfaceFontSizeCombo.currentText.replace(" px", "")),
-                monospaceFontCombo.currentText,
-                Number(monospaceFontSizeCombo.currentText.replace(" px", "")),
-                typeof wordWrapSwitch !== "undefined" && wordWrapSwitch ? wordWrapSwitch.checked : frontend.wordWrap)
-        }
     }
 
     Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
@@ -63,20 +56,49 @@ Item {
         }
 
         VrTabBar {
+            id: settingsTabBar
             understated: true
             Layout.minimumWidth: 0
             objectName: "settingsTabBar"
             Layout.fillWidth: true
             model: ["Geral", "Provedores", "VR Ultra", "Aplicativos e versões", "Aparência", "Browser", "Projetos arquivados", "Skills"]
             currentIndex: root.tabIndex
+            Binding on currentIndex {
+                value: root.tabIndex
+            }
             onActivated: index => root.tabIndex = index
         }
 
         StackLayout {
+            id: settingsStack
             Layout.minimumWidth: 0
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.tabIndex
+
+            transform: Translate { id: tabShift; y: 0 }
+
+            SequentialAnimation {
+                id: tabTransition
+                PropertyAction { target: settingsStack; property: "opacity"; value: 0.25 }
+                PropertyAction { target: tabShift; property: "y"; value: 6 }
+                ParallelAnimation {
+                    NumberAnimation {
+                        target: settingsStack
+                        property: "opacity"
+                        to: 1.0
+                        duration: Theme.motionDuration
+                        easing.type: Easing.OutCubic
+                    }
+                    NumberAnimation {
+                        target: tabShift
+                        property: "y"
+                        to: 0
+                        duration: Theme.motionDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
+            }
 
             // ------------------------------------------------------------ Geral
             ScrollView {
@@ -511,6 +533,41 @@ Item {
                         }
                     }
 
+
+                    // Hidden legacy controls preserving full test backward compatibility
+                    Item {
+                        visible: false
+                        VrComboBox {
+                            id: interfaceFontCombo
+                            objectName: "interfaceFontCombo"
+                            model: ["Segoe UI", "Arial", "Inter", "Tahoma"]
+                            currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontFamily))
+                        }
+                        VrComboBox {
+                            id: interfaceFontSizeCombo
+                            objectName: "interfaceFontSizeCombo"
+                            model: ["12 px", "13 px", "14 px", "15 px", "16 px", "18 px", "20 px", "22 px"]
+                            currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontSize + " px"))
+                        }
+                        VrComboBox {
+                            id: monospaceFontCombo
+                            objectName: "monospaceFontCombo"
+                            model: ["Consolas", "Cascadia Code", "Courier New"]
+                            currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontFamily))
+                        }
+                        VrComboBox {
+                            id: monospaceFontSizeCombo
+                            objectName: "monospaceFontSizeCombo"
+                            model: ["10 px", "11 px", "12 px", "13 px", "14 px", "16 px", "18 px", "20 px"]
+                            currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontSize + " px"))
+                        }
+                        VrSwitch {
+                            id: wordWrapSwitch
+                            objectName: "wordWrapSwitch"
+                            checked: frontend.wordWrap
+                        }
+                    }
+
                     Item { Layout.preferredHeight: 16 }
                 }
             }
@@ -558,8 +615,13 @@ Item {
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                ColumnLayout {
+                Item {
                     width: appearanceScroll.availableWidth
+                    implicitHeight: appearanceColumn.implicitHeight
+                    ColumnLayout {
+                    id: appearanceColumn
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(848, parent.width)
                     spacing: 24
 
                     AppearanceSettingsView {
@@ -596,8 +658,8 @@ Item {
                                 Layout.minimumWidth: 0
                                 objectName: "uiScaleDescription"
                                 text: frontend.uiScale === "auto"
-                                    ? "Automática ativa: " + Theme.automaticScalePercent + "%. Acompanha a janela sem alterar painéis e controles."
-                                    : "Ajusta a tipografia imediatamente, sem alterar as proporções de painéis e controles."
+                                    ? "Automática ativa: " + Theme.automaticScalePercent + "%. Ajusta a leitura ao tamanho da janela."
+                                    : "Ajusta a leitura em todo o aplicativo. Textos e controles se adaptam à escala escolhida."
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(12)
@@ -624,42 +686,52 @@ Item {
                         }
                     }
 
-                    // Hidden legacy controls preserving full test backward compatibility
-                    Item {
-                        visible: false
-                        VrComboBox {
-                            id: interfaceFontCombo
-                            objectName: "interfaceFontCombo"
-                            model: ["Segoe UI", "Arial", "Inter", "Tahoma"]
-                            currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontFamily))
+                    // Aceleracao grafica de hardware
+                    VrSettingsRow {
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: 3
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                objectName: "hardwareAccelerationText"
+                                text: "Aceleração gráfica de hardware"
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(13)
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                objectName: "hardwareAccelerationDescription"
+                                text: frontend.hardwareAcceleration
+                                    ? "Ativa: renderiza via placa de vídeo dedicada (Direct3D 11). Pode acionar recursos do driver da NVIDIA. Desative para renderização por processador (CPU). (Requer reiniciar o app)"
+                                    : "Desativada: renderização por software (CPU). O app opera sem exigir GPU dedicada e sem acionar a barra Game Ready da NVIDIA. (Requer reiniciar o app)"
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(12)
+                                wrapMode: Text.WordWrap
+                            }
                         }
-                        VrComboBox {
-                            id: interfaceFontSizeCombo
-                            objectName: "interfaceFontSizeCombo"
-                            model: ["12 px", "13 px", "14 px", "15 px", "16 px", "18 px", "20 px", "22 px"]
-                            currentIndex: Math.max(0, model.indexOf(frontend.interfaceFontSize + " px"))
-                        }
-                        VrComboBox {
-                            id: monospaceFontCombo
-                            objectName: "monospaceFontCombo"
-                            model: ["Consolas", "Cascadia Code", "Courier New"]
-                            currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontFamily))
-                        }
-                        VrComboBox {
-                            id: monospaceFontSizeCombo
-                            objectName: "monospaceFontSizeCombo"
-                            model: ["10 px", "11 px", "12 px", "13 px", "14 px", "16 px", "18 px", "20 px"]
-                            currentIndex: Math.max(0, model.indexOf(frontend.monospaceFontSize + " px"))
-                        }
+
                         VrSwitch {
-                            id: wordWrapSwitch
-                            objectName: "wordWrapSwitch"
-                            checked: frontend.wordWrap
+                            subdued: true
+                            Layout.alignment: Qt.AlignRight
+                            objectName: "hardwareAccelerationSwitch"
+                            Accessible.name: "Aceleração gráfica de hardware"
+                            checked: frontend.hardwareAcceleration
+                            onToggled: frontend.setHardwareAcceleration(checked)
                         }
                     }
 
                     Item { Layout.preferredHeight: 16 }
                 }
+            }
             }
 
             // ----------------------------------------------------------- Browser
@@ -1201,7 +1273,9 @@ Item {
 
     Component {
         id: vrUltraSettingsComponent
-        VRUltraSettingsPage { }
+        VRUltraSettingsPage {
+            onOpenApplicationsRequested: root.tabIndex = 3
+        }
     }
 
     Component {

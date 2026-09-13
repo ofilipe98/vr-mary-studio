@@ -24,7 +24,7 @@ QtObject {
     function automaticScaleForSize(width, height) {
         var relativeSize = Math.min(Number(width) / 1120, Number(height) / 700)
         var progress = Math.max(0, Math.min(1, (relativeSize - 1) / 2.08))
-        return 1.045 + 0.105 * progress
+        return 1.0 + 0.10 * progress
     }
 
     function fontSize(pixelSize) {
@@ -91,11 +91,7 @@ QtObject {
     // the reduce-motion preference at each animation site.
     readonly property int pressDuration: frontend.reduceMotion ? 0 : 90
     readonly property int fastDuration: frontend.reduceMotion ? 0 : 140
-    readonly property int motionDuration: frontend.reduceMotion
-        ? 0
-        : (frontend.panelAnimationDurationMs > 0 ? frontend.panelAnimationDurationMs : 180)
-    readonly property int pageDuration: frontend.reduceMotion
-        ? 0
-        : (frontend.panelAnimationDurationMs > 0 ? Math.round(frontend.panelAnimationDurationMs * 1.2) : 220)
+    readonly property int motionDuration: frontend.panelAnimationDurationMs
+    readonly property int pageDuration: frontend.panelAnimationDurationMs
     readonly property int motionDistance: frontend.reduceMotion ? 0 : 10
 }

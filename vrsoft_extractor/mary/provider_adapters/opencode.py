@@ -159,7 +159,8 @@ class OpenCodeProvider(AgentProvider):
                 bufsize=1,
                 env=_opencode_environment(
                     options.approval_profile,
-                    self.knowledge_root if options.vr_enabled else None,
+                    self.knowledge_root if self.knowledge_root else None,
+                    options.knowledge_context_path,
                 ),
                 **startup_info,
             )

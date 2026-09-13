@@ -21,3 +21,6 @@ releases/
 
 # Generated audit, benchmark and visual-review output.
 /reports/
+
+# Local indexes and SQLite runtime databases
+indice/

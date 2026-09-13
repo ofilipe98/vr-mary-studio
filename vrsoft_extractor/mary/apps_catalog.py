@@ -13,6 +13,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import warnings
 import zipfile
 from functools import wraps
 from contextlib import closing
@@ -20,6 +21,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from uuid import uuid4
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"Overlapped entries: .*possible zip bomb.*",
+    category=UserWarning,
+)
+
 
 UNIDENTIFIED_VERSION = "Versão não identificada"
 CATALOG_SCHEMA_VERSION = 1
@@ -445,6 +453,101 @@ class AppsCatalogStore:
         }
 
     @_transaction
+    def rename_package(self, package_id: str, new_name: str) -> dict[str, Any]:
+        """Rename an imported package, updating its display name and linked variant origins."""
+        catalog = self.load_catalog()
+        pkg_id = str(package_id or "").strip()
+        package = catalog.get("packages", {}).get(pkg_id)
+        if not package:
+            raise AppsCatalogError(f"Pacote '{package_id}' não encontrado no catálogo.")
+
+        cleaned_name = str(new_name or "").strip()
+        if not cleaned_name:
+            raise AppsCatalogError("O novo nome do pacote não pode ser vazio.")
+
+        package["name"] = cleaned_name
+
+        updated_origins = 0
+        for app_entry in catalog.get("applications", {}).values():
+            for ver_entry in app_entry.get("versions", {}).values():
+                for var_entry in ver_entry.get("variants", {}).values():
+                    for origin in var_entry.get("origin_packages", []):
+                        if origin.get("package_id") == pkg_id:
+                            origin["package_name"] = cleaned_name
+                            updated_origins += 1
+
+        self.save_catalog(catalog)
+        return {
+            "package_id": pkg_id,
+            "name": cleaned_name,
+            "updated_origins": updated_origins,
+        }
+
+    def delete_source_jars(self, package_id: str, *, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Safely delete original source JARs after import/snapshot, preserving internal indexes."""
+        catalog = self.load_catalog()
+        pkg_id = str(package_id or "").strip()
+        package = catalog.get("packages", {}).get(pkg_id)
+        if not package:
+            raise AppsCatalogError(f"Pacote '{package_id}' não encontrado no catálogo.")
+
+        source_path_str = str(package.get("source_path") or "").strip()
+        components = package.get("composition", []) + package.get("dependencies", [])
+        snapshot_root = None
+        if manifest and manifest.get("snapshot_managed"):
+            source_path_str = str(manifest.get("source_origin_dir") or "").strip()
+            snapshot_root = (self.root / str(manifest["source_dir"])).resolve()
+            components = [item for item in manifest.get("artifacts", [])
+                          if item.get("provenance", {}).get("origin") != "base"]
+        if not source_path_str:
+            raise AppsCatalogError(f"O pacote '{package_id}' não possui caminho de origem registrado.")
+
+        source_path = Path(source_path_str)
+        source_path = (self.root / source_path).resolve() if not source_path.is_absolute() else source_path.resolve()
+        protected = (self.root / "indice").resolve()
+        deleted: list[str] = []
+        freed_bytes = 0
+        candidates: dict[Path, str] = {}
+        for comp in components:
+            provenance_path = comp.get("provenance", {}).get("source_relative_path")
+            rel = provenance_path or comp.get("jar_path") or comp.get("relative_path")
+            if not rel:
+                continue
+            jar_file = source_path if source_path.is_file() else (source_path / rel).resolve()
+            if snapshot_root and manifest.get("auto_detected") and not provenance_path and source_path.is_dir():
+                # Older manifests did not retain the original path before categorization.
+                matches = [p.resolve() for p in source_path.rglob(Path(rel).name) if p.is_file()]
+                if len(matches) > 1:
+                    raise AppsCatalogError("Há múltiplos JARs com o mesmo nome na origem.")
+                if not matches:
+                    continue
+                jar_file = matches[0]
+            if source_path.is_dir() and not jar_file.is_relative_to(source_path):
+                raise AppsCatalogError("JAR fora da pasta de origem registrada.")
+            if jar_file.is_relative_to(protected) or (snapshot_root and jar_file.is_relative_to(snapshot_root)):
+                raise AppsCatalogError("Não é permitido excluir JARs do índice interno.")
+            if jar_file.is_file() and jar_file.suffix.casefold() == ".jar":
+                candidates[jar_file] = str(comp.get("sha256") or "")
+        # Verify the complete selection before deleting: a source may have been replaced.
+        for jar_file, expected_hash in candidates.items():
+            with jar_file.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != expected_hash:
+                raise AppsCatalogError(f"O JAR de origem foi alterado: {jar_file.name}")
+        for jar_file in candidates:
+            size = jar_file.stat().st_size
+            jar_file.unlink()
+            freed_bytes += size
+            deleted.append(jar_file.name)
+
+        return {
+            "package_id": pkg_id,
+            "deleted_count": len(deleted),
+            "deleted_files": deleted,
+            "freed_bytes": freed_bytes,
+        }
+
+    @_transaction
     def override_version(
         self,
         app_id: str,
@@ -837,7 +940,12 @@ class AppsCatalogStore:
 
         classes: dict[str, str] = {}
         try:
-            with zipfile.ZipFile(jar_file) as archive:
+            with zipfile.ZipFile(jar_file) as archive, warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Overlapped entries: .*possible zip bomb.*",
+                    category=UserWarning,
+                )
                 for info in archive.infolist():
                     name = info.filename
                     if name.endswith(".class") and not name.endswith("/"):

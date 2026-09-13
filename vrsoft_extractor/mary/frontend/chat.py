@@ -111,6 +111,7 @@ class ChatBridge(QObject):
     projectFolderChanged = Signal()
     messageCopied = Signal(str)
     stateChanged = Signal()
+    decompiledDirectoryDetected = Signal("QVariantMap")
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     conversationArchived = Signal(str)
@@ -178,6 +179,7 @@ class ChatBridge(QObject):
         self._stream_terminal_kind = ""
         self._assistant_stream_started = False
         self._approval_request: dict[str, Any] = {}
+        self._pending_approvals: list[dict[str, Any]] = []
         self._activity_steps: list[dict[str, str]] = []
         self._activity_items: list[dict[str, str]] = []
         self._trace_items: list[dict[str, Any]] = []
@@ -216,8 +218,10 @@ class ChatBridge(QObject):
             self._preferences.value("chat/last_service_tier", "") or ""
         )
         self._approval_profile = str(
-            self._preferences.value("chat/last_approval_profile", "auto") or "auto"
+            self._preferences.value("chat/last_approval_profile", "full_access") or "full_access"
         )
+        if self._approval_profile in ("auto", "auto_edits", ""):
+            self._approval_profile = "full_access"
         self._vr_mode = "vr"
         self._research_model_keys: list[str] = []
         self._research_max_parallel = 3
@@ -240,6 +244,7 @@ class ChatBridge(QObject):
         self._application_import_preview = {}
         self._application_preview_generation = 0
         self._application_preview_thread = None
+        self._package_operation_thread = None
         self._release_snapshot_running = False
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
@@ -297,6 +302,9 @@ class ChatBridge(QObject):
         self._code_processing_eta: dict[str, Any] = {}
         self._code_processing_capacity: dict[str, Any] = {}
         self._code_processing_pause_event = threading.Event()
+        self._code_processing_cancel_event = threading.Event()
+        self._code_processing_cancel_requested = False
+        self._code_processing_can_cancel = False
         self._code_processing_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
         )
@@ -748,6 +756,14 @@ class ChatBridge(QObject):
         return self._code_processing_pause_requested
 
     @Property(bool, notify=stateChanged)
+    def codeProcessingCancelRequested(self) -> bool:  # noqa: N802
+        return self._code_processing_cancel_requested
+
+    @Property(bool, notify=stateChanged)
+    def codeProcessingCanCancel(self) -> bool:  # noqa: N802
+        return self._code_processing_can_cancel
+
+    @Property(bool, notify=stateChanged)
     def codeProcessingStatusLoading(self) -> bool:  # noqa: N802
         return self._code_processing_status_loading
 
@@ -1089,7 +1105,8 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def approvalIndex(self) -> int:  # noqa: N802
         values = [item["value"] for item in self.approvalItems]
-        return values.index(self._approval_profile) if self._approval_profile in values else 2
+        default_index = values.index("full_access") if "full_access" in values else 3
+        return values.index(self._approval_profile) if self._approval_profile in values else default_index
 
     @Property("QVariantList", notify=stateChanged)
     def attachments(self) -> list[dict[str, str]]:
@@ -1223,6 +1240,7 @@ class ChatBridge(QObject):
         ):
             timer.stop()
         self._code_processing_pause_event.set()
+        self._code_processing_cancel_event.set()
         processing_thread = self._code_processing_thread
         if processing_thread is not None and processing_thread.is_alive():
             processing_thread.join(timeout=2.0)
@@ -1241,6 +1259,8 @@ class ChatBridge(QObject):
             self._app_sources_thread.join(timeout=1.0)
         if self._application_preview_thread is not None:
             self._application_preview_thread.join(timeout=1.0)
+        if self._package_operation_thread is not None:
+            self._package_operation_thread.join(timeout=2.0)
         self._orchestrator.close()
         self._active_turns.clear()
         self._sync_selected_turn_state()
@@ -1791,8 +1811,10 @@ class ChatBridge(QObject):
             self._preferences.value("chat/last_service_tier", "") or ""
         )
         self._approval_profile = str(
-            self._preferences.value("chat/last_approval_profile", "auto") or "auto"
+            self._preferences.value("chat/last_approval_profile", "full_access") or "full_access"
         )
+        if self._approval_profile in ("auto", "auto_edits", ""):
+            self._approval_profile = "full_access"
         self._vr_mode = self._normalize_vr_mode(
             self._preferences.value("chat/vr_mode", "")
         ) or (
@@ -2028,6 +2050,10 @@ class ChatBridge(QObject):
     def pauseCodeProcessing(self) -> None:  # noqa: N802
         return self._CodeAdmin_domain.pauseCodeProcessing()
 
+    @Slot()
+    def cancelCodeProcessing(self) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.cancelCodeProcessing()
+
     def _run_code_processing(
         self,
         release_id: str,
@@ -2134,9 +2160,32 @@ class ChatBridge(QObject):
     def selectAndImportSingleJar(self) -> str:  # noqa: N802
         return self._CodeAdmin_domain.selectAndImportSingleJar()
 
+    @Slot(result=str)
+    def selectCustomJarDirectory(self) -> str:  # noqa: N802
+        return self._CodeAdmin_domain.selectCustomJarDirectory()
+
+    @Slot(str, str, result=bool)
+    def renamePackage(self, package_id: str, new_name: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.renamePackage(package_id, new_name)
+
+    @Slot(str, result="QVariantMap")
+    def deleteSourceJars(self, package_id: str) -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.deleteSourceJars(package_id)
+
+    @Slot(result="QVariantMap")
+    @Slot(str, result="QVariantMap")
+    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.detectDecompiledDirectory(directory)
+
+    @Slot(str, str, str, result="QVariantMap")
+    @Slot(str, result="QVariantMap")
+    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.importDecompiledDirectory(source_dir, release_id, package_name)
+
     @Slot(str, result=bool)
-    def unlinkPackage(self, package_id: str) -> bool:  # noqa: N802
-        return self._CodeAdmin_domain.unlinkPackage(package_id)
+    @Slot(str, bool, result=bool)
+    def unlinkPackage(self, package_id: str, delete_data: bool = False) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.unlinkPackage(package_id, delete_data)
 
     @Slot(str, str, str, result=bool)
     def overrideVersion(self, app_id: str, current_version: str, manual_version: str) -> bool:  # noqa: N802
@@ -2154,6 +2203,11 @@ class ChatBridge(QObject):
     @Slot(str, str, str, result=bool)
     def startVariantProcessing(self, app_id: str, version: str, variant_id: str) -> bool:  # noqa: N802
         return self._CodeAdmin_domain.startVariantProcessing(app_id, version, variant_id)
+
+    @Slot(list, result=bool)
+    def startBatchAppsProcessing(self, app_ids: list[str]) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.startBatchAppsProcessing(app_ids)
+
 
     @staticmethod
     def _normalize_response_mode(value: object) -> str:
@@ -2616,7 +2670,14 @@ class ChatBridge(QObject):
                 )
         except Exception as exc:
             self._status_text = f"Falha: {exc}"
-        self._approval_request = {}
+        self._pending_approvals = [r for r in self._pending_approvals if not (
+            str(r.get("request_id") or "") == request_id
+            and r.get("conversation_id") == conversation_id
+            and r.get("_dynamic") == request.get("_dynamic")
+        )]
+        if conversation_id == self._selected_conversation_id():
+            self._status_text = "Aprovado" if approved else "Negado"
+        self._Activity_domain._show_next_approval()
         self.stateChanged.emit()
 
     @Slot(object)
@@ -3152,6 +3213,10 @@ class ChatBridge(QObject):
     def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:
         return ActivityDomain._execution_activity(event)
 
+    @staticmethod
+    def _extract_tool_entry(event: RuntimeEvent) -> dict[str, Any] | None:
+        return ActivityDomain._extract_tool_entry(event)
+
     def _reload_execution_timeline(self, cid: str, rows: list[Any]) -> bool:
         """Replay semantic public events, retaining DB text and message identity.
 
@@ -3166,6 +3231,7 @@ class ChatBridge(QObject):
             if row["execution_id"] and row["role"] == "assistant":
                 persisted[f"{row['execution_id']}:{row['execution_ordinal']}"] = row
         terminal_ids: set[int] = set()
+        assistant_counts: dict[int, int] = {}
         for record in events:
             payload = json.loads(record["payload_json"] or "{}")
             eid = int(payload.get("execution_id") or 0)
@@ -3179,10 +3245,43 @@ class ChatBridge(QObject):
                 terminal_ids.add(eid)
             if kind == "tool_event":
                 payload["runtime_event_id"] = record["id"]
-                activity = self._execution_activity(RuntimeEvent(cid, kind, record["text"], payload, record["created_at"]))
-                if activity:
-                    group[activity["messageKey"]] = activity
+                tool_entry = ActivityDomain._extract_tool_entry(RuntimeEvent(cid, kind, record["text"], payload, record["created_at"]))
+                if tool_entry:
+                    count = assistant_counts.get(eid, 0)
+                    act_key = f"activity:{eid}:{count}"
+                    activity = next((r for r in group.values() if r.get("role") == "activity"
+                                     and any(t.get("id") == tool_entry["id"] for t in r["activityData"])), None)
+                    if activity is None:
+                        activity = group.get(act_key)
+                    if activity is None:
+                        activity = {
+                            "messageId": -2,
+                            "role": "activity",
+                            "content": "",
+                            "displayContent": "",
+                            "segments": [],
+                            "createdAt": record["created_at"],
+                            "responseMode": "activity",
+                            "messageKey": act_key,
+                            "isStreaming": False,
+                            "activityData": [],
+                        }
+                        group[act_key] = activity
+                    existing_tool = next((t for t in activity["activityData"] if t.get("id") == tool_entry["id"]), None)
+                    if existing_tool is not None:
+                        detail = existing_tool.get("detail", "")
+                        existing_tool.update(tool_entry)
+                        if not tool_entry.get("detail"):
+                            existing_tool["detail"] = detail
+                    else:
+                        activity["activityData"].append(tool_entry)
             elif kind in {"assistant_started", "assistant_delta", "assistant_completed"} and key:
+                if ":" in key:
+                    try:
+                        ordinal = int(key.split(":")[-1])
+                        assistant_counts[eid] = max(assistant_counts.get(eid, 0), ordinal)
+                    except ValueError:
+                        pass
                 item = group.setdefault(key, {"messageId": -1, "role": "assistant", "content": "", "displayContent": "", "segments": [], "createdAt": record["created_at"], "responseMode": "native", "messageKey": key, "isStreaming": True})
                 if kind == "assistant_delta":
                     item["content"] += record["text"]

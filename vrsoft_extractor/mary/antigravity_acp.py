@@ -6,9 +6,11 @@ No CLI/IDE token is copied into this profile.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from pathlib import Path
@@ -114,6 +116,13 @@ class AcpClient:
         self._closed = False
         self._readers = []
         self.capabilities = {}
+        self._temp_dir: str | None = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def start(self):
         with self._lock:
@@ -121,9 +130,21 @@ class AcpClient:
                 raise AcpError("initialize")
             if not self.command:
                 raise RuntimeError("Servidor Antigravity ACP não encontrado. Atualize o Antigravity CLI.")
-            self.process = subprocess.Popen([self.command], cwd=str(Path.home()), env=self.env,
-                                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            bufsize=0, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+
+            if self.process is not None:
+                raise AcpError("initialize")
+            # Only this client owns this directory. Other vr-acp-* directories
+            # may belong to active clients, including another Studio process.
+            env = dict(self.env)
+            self._temp_dir = tempfile.mkdtemp(prefix="vr-acp-")
+            env.update(TEMP=self._temp_dir, TMP=self._temp_dir, TMPDIR=self._temp_dir)
+            try:
+                self.process = subprocess.Popen([self.command], cwd=str(Path.home()), env=env,
+                                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                bufsize=0, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            except OSError:
+                self.close()
+                raise
             for name in ("stdout", "stderr"):
                 reader = threading.Thread(target=self._read, args=(getattr(self.process, name), name), daemon=True)
                 self._readers.append(reader)
@@ -243,12 +264,31 @@ class AcpClient:
                 return
             self._closed = True
             process = self.process
+            temp_dir = self._temp_dir
+            self._temp_dir = None
         self._fail_pending()
-        stop_process_tree(process)
+        if process and process.stdin:
+            try:
+                process.stdin.close()
+            except Exception:
+                pass
+        if process and process.poll() is None:
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                stop_process_tree(process)
         for reader in self._readers:
             if reader is not threading.current_thread():
                 reader.join(timeout=2)
         if process:
-            for stream in (process.stdin, process.stdout, process.stderr):
+            for stream in (process.stdout, process.stderr):
                 if stream:
-                    stream.close()
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+        if temp_dir and (process is None or process.poll() is not None):
+            try:
+                shutil.rmtree(temp_dir)
+            except OSError:
+                logging.getLogger(__name__).warning("Could not remove owned ACP temporary directory: %s", temp_dir)

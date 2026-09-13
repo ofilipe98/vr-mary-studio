@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +85,7 @@ class FrontendBridge(QObject):
     navigationCollapsedChanged = Signal()
     reduceMotionChanged = Signal()
     uiScaleChanged = Signal()
+    hardwareAccelerationChanged = Signal()
     typographyChanged = Signal()
     browserPreferencesChanged = Signal()
 
@@ -94,6 +97,7 @@ class FrontendBridge(QObject):
     glassOpacityChanged = Signal()
     motionChanged = Signal()
     themeImportStatus = Signal(bool, str)
+    environmentIdentificationChanged = Signal()
 
     def __init__(
         self,
@@ -125,6 +129,7 @@ class FrontendBridge(QObject):
         self._theme_manager.motionChanged.connect(self.reduceMotionChanged)
         self._theme_manager.typographyChanged.connect(self.typographyChanged)
         self._theme_manager.themeImportStatus.connect(self.themeImportStatus)
+        self._theme_manager.environmentIdentificationChanged.connect(self.environmentIdentificationChanged)
 
         self._navigation_collapsed = (
             _stored_bool(self._preferences.value("appearance/nav_collapsed", False))
@@ -145,6 +150,10 @@ class FrontendBridge(QObject):
             self._ui_scale = normalized_ui_scale(
                 self._preferences.value("appearance/ui_scale", "auto")
             )
+
+        self._hardware_acceleration = _stored_bool(
+            self._preferences.value("appearance/hardware_acceleration", False), False
+        )
 
         self._browser_agent_access = _stored_bool(
             self._preferences.value("browser/agent_access", True), True
@@ -189,6 +198,12 @@ class FrontendBridge(QObject):
     @Property(str, constant=True)
     def appVersion(self) -> str:  # noqa: N802 - QML property naming
         return f"v{__version__}"
+
+    @Property(str, constant=True)
+    def environmentStage(self) -> str:  # noqa: N802
+        if "dev" in __version__.lower():
+            return "Nightly"
+        return "" if getattr(sys, "frozen", False) else "Dev"
 
     @Property(str, constant=True)
     def version(self) -> str:
@@ -264,6 +279,10 @@ class FrontendBridge(QObject):
     @Property(int, notify=glassOpacityChanged)
     def glassOpacity(self) -> int:  # noqa: N802
         return self._theme_manager.glassOpacity
+
+    @Property(str, notify=environmentIdentificationChanged)
+    def environmentIdentification(self) -> str:  # noqa: N802
+        return self._theme_manager.environmentIdentification
 
     @Property(int, notify=motionChanged)
     def panelAnimationDurationMs(self) -> int:  # noqa: N802
@@ -369,6 +388,10 @@ class FrontendBridge(QObject):
     def uiScaleFactor(self) -> float:  # noqa: N802 - QML property naming
         return 1.0 if self._ui_scale == "auto" else int(self._ui_scale) / 100.0
 
+    @Property(bool, notify=hardwareAccelerationChanged)
+    def hardwareAcceleration(self) -> bool:  # noqa: N802
+        return self._hardware_acceleration
+
     # ------------------------------------------------------------------------
     # Browser Properties
     # ------------------------------------------------------------------------
@@ -427,6 +450,10 @@ class FrontendBridge(QObject):
     @Slot(int)
     def setGlassOpacity(self, opacity: int) -> None:  # noqa: N802
         self._theme_manager.setGlassOpacity(opacity)
+
+    @Slot(str)
+    def setEnvironmentIdentification(self, mode: str) -> None:  # noqa: N802
+        self._theme_manager.setEnvironmentIdentification(mode)
 
     @Slot(int)
     def setPanelAnimationDurationMs(self, duration_ms: int) -> None:  # noqa: N802
@@ -605,6 +632,16 @@ class FrontendBridge(QObject):
         )
         self._preferences.sync()
         self.uiScaleChanged.emit()
+
+    @Slot(bool)
+    def setHardwareAcceleration(self, enabled: bool) -> None:  # noqa: N802
+        flag = bool(enabled)
+        if flag == self._hardware_acceleration:
+            return
+        self._hardware_acceleration = flag
+        self._preferences.setValue("appearance/hardware_acceleration", flag)
+        self._preferences.sync()
+        self.hardwareAccelerationChanged.emit()
 
     # ------------------------------------------------------------------------
     # Slots: Browser

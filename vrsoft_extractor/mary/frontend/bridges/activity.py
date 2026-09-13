@@ -43,11 +43,63 @@ class ActivityDomain:
             self._messages.replace([row for row in self._messages._items if row.get("role") != "activity" or row.get("messageKey")])
         self._record_execution_event(event)
         if event.kind == "tool_event" and execution_id:
-            activity = self._execution_activity(event)
-            if activity is not None:
-                if not self._messages.update_by_key("messageKey", activity["messageKey"], **{k: v for k, v in activity.items() if k != "messageKey"}):
-                    self._messages.append(activity)
+            tool_entry = self._extract_tool_entry(event)
+            if tool_entry is not None:
+                assistant_count = sum(
+                    1 for r in self._messages._items
+                    if r.get("role") == "assistant"
+                    and str(r.get("messageKey") or "").startswith(f"{execution_id}:")
+                )
+                activity_key = f"activity:{execution_id}:{assistant_count}"
+                existing_activity = next(
+                    (r for r in self._messages._items
+                     if str(r.get("messageKey") or "").startswith(f"activity:{execution_id}:")
+                     and any(t.get("id") == tool_entry["id"] for t in r.get("activityData", []))),
+                    None,
+                )
+                if existing_activity is not None:
+                    activity_key = existing_activity["messageKey"]
+                else:
+                    existing_activity = next((r for r in self._messages._items if r.get("messageKey") == activity_key), None)
+                if existing_activity is not None:
+                    activity_data = list(existing_activity.get("activityData") or [])
+                    found = False
+                    for idx, entry in enumerate(activity_data):
+                        if entry.get("id") == tool_entry["id"]:
+                            updated = dict(entry)
+                            updated.update(tool_entry)
+                            if not tool_entry.get("detail") and entry.get("detail"):
+                                updated["detail"] = entry["detail"]
+                            activity_data[idx] = updated
+                            found = True
+                            break
+                    if not found:
+                        activity_data.append(tool_entry)
+                    is_running = any(entry.get("state") == "running" for entry in activity_data)
+                    self._messages.update_by_key(
+                        "messageKey",
+                        activity_key,
+                        activityData=activity_data,
+                        isStreaming=is_running,
+                    )
+                else:
+                    new_activity = {
+                        "messageId": -2,
+                        "role": "activity",
+                        "content": "",
+                        "displayContent": "",
+                        "segments": [],
+                        "createdAt": event.created_at,
+                        "responseMode": "activity",
+                        "messageKey": activity_key,
+                        "isStreaming": tool_entry["state"] == "running",
+                        "activityData": [tool_entry],
+                    }
+                    self._messages.append(new_activity)
         if event.kind == "assistant_started":
+            for row in self._messages._items:
+                if row.get("role") == "activity" and str(row.get("messageKey") or "").startswith(f"activity:{execution_id}:"):
+                    self._messages.update_by_key("messageKey", row["messageKey"], isStreaming=False)
             key = str(event.payload.get("message_key") or "")
             if key:
                 if any(row.get("messageKey") == key for row in self._messages._items):
@@ -128,12 +180,7 @@ class ActivityDomain:
             if not self._stream_timer.isActive():
                 self._stream_timer.start()
         elif event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
-            self._approval_request = dict(event.payload)
-            self._approval_request["conversation_id"] = event.conversation_id
-            self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
-            self._status_text = "Aguardando aprovação…"
-            self.approvalRequested.emit(dict(self._approval_request))
-            self.stateChanged.emit()
+            self._enqueue_approval(event)
         elif event.kind == "reasoning_delta":
             self._reasoning_text += str(event.text or "")
             self._record_trace_text_delta(event, item_type="reasoning")
@@ -160,18 +207,23 @@ class ActivityDomain:
         elif event.kind == "context_transferred":
             self._status_text = "Contexto transferido para nova sessão."
             self.stateChanged.emit()
-        elif event.kind in {"turn_completed", "orchestration_completed"}:
-            self._queue_terminal_state(event.kind)
-        elif event.kind in {"error", "orchestration_cancelled"}:
+        elif event.kind in {"turn_completed", "orchestration_completed", "error", "orchestration_cancelled"}:
+            self._discard_conversation_approvals(event.conversation_id)
+            for row in self._messages._items:
+                if row.get("role") == "activity":
+                    activities = [dict(act) for act in row.get("activityData", [])]
+                    for act in activities:
+                        if act.get("state") == "running":
+                            act["state"] = ("error" if event.kind == "error" else
+                                            "cancelled" if event.kind == "orchestration_cancelled" else "completed")
+                    self._messages.update_by_key("messageKey", row.get("messageKey"),
+                                                 isStreaming=False, activityData=activities)
             self._queue_terminal_state(event.kind)
 
 
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
         if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
-            self._approval_request = dict(event.payload)
-            self._approval_request["conversation_id"] = event.conversation_id
-            self._approval_request["_dynamic"] = event.kind.startswith("dynamic")
-            self.approvalRequested.emit(dict(self._approval_request))
+            self._enqueue_approval(event)
             return
         if event.kind in {
             "turn_completed",
@@ -179,8 +231,32 @@ class ActivityDomain:
             "error",
             "orchestration_cancelled",
         }:
+            self._discard_conversation_approvals(event.conversation_id)
             self._finish_background_turn(event.conversation_id)
 
+
+    def _enqueue_approval(self, event: RuntimeEvent) -> None:
+        request = {**event.payload, "conversation_id": event.conversation_id,
+                   "_dynamic": event.kind.startswith("dynamic")}
+        key = (request.get("conversation_id"), request.get("request_id"), request["_dynamic"])
+        if not any((r.get("conversation_id"), r.get("request_id"), r.get("_dynamic")) == key
+                   for r in self._pending_approvals):
+            self._pending_approvals.append(request)
+        if not self._approval_request:
+            self._show_next_approval()
+
+    def _show_next_approval(self) -> None:
+        self._approval_request = self._pending_approvals[0] if self._pending_approvals else {}
+        if self._approval_request.get("conversation_id") == self._selected_conversation_id():
+            self._status_text = "Aguardando aprovação…"
+        self.approvalRequested.emit(dict(self._approval_request))
+        self.stateChanged.emit()
+
+    def _discard_conversation_approvals(self, conversation_id: str) -> None:
+        self._pending_approvals = [r for r in self._pending_approvals
+                                   if r.get("conversation_id") != conversation_id]
+        if self._approval_request.get("conversation_id") == conversation_id:
+            self._show_next_approval()
 
     def _ensure_streaming_message(self) -> None:
         if self._current_message_key and any(row.get("messageKey") == self._current_message_key for row in self._messages._items):
@@ -782,22 +858,75 @@ class ActivityDomain:
 
 
     @staticmethod
-    def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:
-        item = event.payload.get("item") or event.payload.get("part") or event.payload
-        item_type = str(item.get("type") or item.get("step_type") or "tool")
+    def _extract_tool_entry(event: RuntimeEvent) -> dict[str, Any] | None:
+        payload = dict(event.payload or {})
+        raw_item = payload.get("item") or payload.get("part") or {}
+        if not raw_item and any(key in payload for key in ("name", "tool", "input", "command", "step_type")):
+            raw_item = payload
+        item = raw_item if isinstance(raw_item, dict) else {}
+        item_type = str(item.get("type") or item.get("step_type") or payload.get("step_type") or "tool")
         if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
             return None
-        identity = str(item.get("id") or event.payload.get("itemId") or event.payload.get("runtime_event_id") or "tool")
-        key = f"activity:{event.payload.get('execution_id')}:{identity}"
-        lifecycle = str(event.payload.get("lifecycle") or "")
-        complete = lifecycle.endswith("completed") or item.get("status") in {"completed", "error", "failed"} or event.payload.get("success") is not None
-        state = "error" if event.payload.get("success") is False or item.get("status") in {"error", "failed"} else "completed" if complete else "running"
-        return {"messageId": -2, "role": "activity", "content": "", "displayContent": "",
-                "segments": [], "createdAt": event.created_at, "responseMode": "activity",
-                "messageKey": key, "isStreaming": state == "running",
-                "activityData": [{"id": identity, "kind": "tool", "itemType": item_type,
-                                  "text": short_event_text(event.text or item.get("name") or item_type),
-                                  "detail": "", "state": state}]}
+        identity = str(
+            item.get("id")
+            or payload.get("itemId")
+            or payload.get("toolCallId")
+            or payload.get("callId")
+            or payload.get("runtime_event_id")
+            or payload.get("request_id")
+            or "tool"
+        )
+        lifecycle = str(payload.get("lifecycle") or "")
+        complete = (
+            lifecycle.endswith("completed")
+            or item.get("status") in {"completed", "error", "failed"}
+            or payload.get("success") is not None
+        )
+        state = (
+            "error"
+            if payload.get("success") is False or item.get("status") in {"error", "failed"}
+            else "completed"
+            if complete
+            else "running"
+        )
+        detail = str(
+            item.get("command")
+            or item.get("arguments")
+            or item.get("input")
+            or payload.get("arguments")
+            or item.get("output")
+            or payload.get("output")
+            or ""
+        )[:8000]
+        label = short_event_text(event.text or item.get("name") or item.get("tool") or item_type)
+        return {
+            "id": identity,
+            "kind": "tool",
+            "itemType": item_type,
+            "text": label,
+            "detail": detail,
+            "state": state,
+        }
+
+    @staticmethod
+    def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:
+        entry = ActivityDomain._extract_tool_entry(event)
+        if entry is None:
+            return None
+        eid = event.payload.get("execution_id") or 0
+        key = f"activity:{eid}:0"
+        return {
+            "messageId": -2,
+            "role": "activity",
+            "content": "",
+            "displayContent": "",
+            "segments": [],
+            "createdAt": event.created_at,
+            "responseMode": "activity",
+            "messageKey": key,
+            "isStreaming": entry["state"] == "running",
+            "activityData": [entry],
+        }
 
 
     @staticmethod

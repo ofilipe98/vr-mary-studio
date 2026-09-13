@@ -107,12 +107,9 @@ Item {
         }
     }
 
-    function activate(index) {
-        if (index < 0 || index >= root.count)
-            return
-        const target = tabRepeater.itemAt(index)
+    onCurrentIndexChanged: {
+        const target = tabRepeater.itemAt(currentIndex)
         if (target) {
-            target.forceActiveFocus()
             const left = target.x
             const right = target.x + target.width
             if (left < tabFlick.contentX)
@@ -120,6 +117,14 @@ Item {
             else if (right > tabFlick.contentX + tabFlick.width)
                 tabFlick.contentX = Math.max(0, right - tabFlick.width)
         }
+    }
+
+    function activate(index) {
+        if (index < 0 || index >= root.count)
+            return
+        const target = tabRepeater.itemAt(index)
+        if (target)
+            target.forceActiveFocus()
         if (index === root.currentIndex)
             return
         root.currentIndex = index

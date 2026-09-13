@@ -7,11 +7,13 @@ param(
     [ValidateSet('', 'Fiscal', 'ADM_FIN_ESTOQUE', 'PDV', 'Multimodulo', 'Revisar')]
     [string]$Module = '',
 
-    [ValidateSet('', 'wiki', 'kb')]
+    [ValidateSet('', 'wiki', 'kb', 'schema', 'code')]
     [string]$Source = '',
 
     [ValidateSet('', 'vrwiki', 'endoo', 'movidesk', 'local')]
     [string]$Origin = '',
+
+    [string]$Context = '',
 
     [ValidateRange(1, 20)]
     [int]$Limit = 8,

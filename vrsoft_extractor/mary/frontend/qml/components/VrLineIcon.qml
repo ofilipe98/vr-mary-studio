@@ -229,6 +229,42 @@ Canvas {
             ctx.beginPath(); ctx.arc(12, 13, 1.2, 0, Math.PI * 2); ctx.fill()
         } else if (kind === "trendUp" || kind === "arrowUpRight") {
             line(7, 17, 17, 7); line(11, 7, 17, 7); line(17, 7, 17, 13)
+        } else if (kind === "sun") {
+            ctx.beginPath(); ctx.arc(12, 12, 4.2, 0, Math.PI * 2); ctx.stroke()
+            line(12, 2.5, 12, 5.0); line(12, 19.0, 12, 21.5)
+            line(2.5, 12, 5.0, 12); line(19.0, 12, 21.5, 12)
+            line(5.3, 5.3, 7.0, 7.0); line(17.0, 17.0, 18.7, 18.7)
+            line(5.3, 18.7, 7.0, 17.0); line(17.0, 7.0, 18.7, 5.3)
+        } else if (kind === "moon") {
+            ctx.beginPath()
+            ctx.arc(12, 12, 7.5, -Math.PI * 0.45, Math.PI * 0.7)
+            ctx.quadraticCurveTo(11.5, 12, 14.5, 5.5)
+            ctx.stroke()
+        } else if (kind === "reset" || kind === "undo") {
+            ctx.beginPath()
+            ctx.arc(12, 12.5, 6.5, -Math.PI * 0.8, Math.PI * 0.8)
+            ctx.stroke()
+            line(4.5, 6.5, 8.5, 7.2); line(8.5, 7.2, 8.2, 11.2)
+        } else if (kind === "paintbrush") {
+            ctx.beginPath()
+            ctx.moveTo(18.5, 3.5); ctx.lineTo(20.5, 5.5); ctx.lineTo(13.5, 12.5); ctx.lineTo(11.5, 10.5); ctx.closePath(); ctx.stroke()
+            ctx.beginPath()
+            ctx.moveTo(11.5, 10.5); ctx.lineTo(13.5, 12.5); ctx.quadraticCurveTo(11, 16, 7.5, 17.5)
+            ctx.quadraticCurveTo(5.5, 18.5, 4, 20); ctx.quadraticCurveTo(5, 16, 6.5, 13.5)
+            ctx.quadraticCurveTo(8.5, 11.5, 11.5, 10.5); ctx.stroke()
+        } else if (kind === "file") {
+            ctx.beginPath()
+            ctx.moveTo(6, 3.5); ctx.lineTo(14, 3.5); ctx.lineTo(18, 7.5); ctx.lineTo(18, 20.5); ctx.lineTo(6, 20.5); ctx.closePath(); ctx.stroke()
+            line(14, 3.5, 14, 7.5); line(14, 7.5, 18, 7.5)
+        } else if (kind === "cube") {
+            ctx.beginPath()
+            ctx.moveTo(12, 3.5); ctx.lineTo(19, 7.5); ctx.lineTo(19, 16.5); ctx.lineTo(12, 20.5); ctx.lineTo(5, 16.5); ctx.lineTo(5, 7.5); ctx.closePath(); ctx.stroke()
+            line(12, 3.5, 12, 12); line(5, 7.5, 12, 12); line(19, 7.5, 12, 12); line(12, 12, 12, 20.5)
+        } else if (kind === "react" || kind === "atom") {
+            ctx.beginPath(); ctx.arc(12, 12, 2, 0, Math.PI * 2); ctx.fill()
+            ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, 0, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, -Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
         }
     }
 }

@@ -23,7 +23,9 @@ Popup {
     modal: true
     focus: true
     dim: true
-    anchors.centerIn: Overlay.overlay
+    Overlay.modal: Rectangle { color: Qt.alpha(Theme.palette.background, .85) }
+    parent: Overlay.overlay
+    anchors.centerIn: parent
     width: Math.min(680, parent ? parent.width - 40 : 680)
     height: Math.min(620, parent ? parent.height - 40 : 620)
     padding: 0
@@ -31,7 +33,7 @@ Popup {
 
     background: Rectangle {
         radius: Theme.radiusCard
-        color: Theme.palette.surface
+        color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity)
         border.width: 1
         border.color: Theme.palette.border
     }
@@ -79,20 +81,26 @@ Popup {
 
         // Body with ScrollView
         ScrollView {
+            id: editorScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             contentWidth: availableWidth
+            leftPadding: 16
+            rightPadding: 16
+            topPadding: 16
+            bottomPadding: 16
 
             ColumnLayout {
-                width: parent.width
+                width: editorScroll.availableWidth
                 spacing: Theme.spaceLg
-                anchors.margins: Theme.spaceLg
 
                 // Basic details: Name and Appearance
-                RowLayout {
+                GridLayout {
+                    columns: modal.width < 560 ? 1 : 2
                     Layout.fillWidth: true
-                    spacing: Theme.spaceMd
+                    columnSpacing: Theme.spaceMd
+                    rowSpacing: Theme.spaceMd
 
                     ColumnLayout {
                         spacing: Theme.spaceXs
@@ -108,6 +116,7 @@ Popup {
 
                         VrTextField {
                             id: nameInput
+                            objectName: "themeNameInput"
                             Layout.fillWidth: true
                             text: modal.themeName
                             placeholderText: "Ex: Neon Cyberpunk"
@@ -176,7 +185,7 @@ Popup {
                             // Mini sidebar
                             Rectangle {
                                 Layout.fillHeight: true
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: modal.width < 560 ? 72 : 120
                                 color: modal.colorSurface
                                 border.width: 1
                                 border.color: modal.colorBorder
@@ -209,7 +218,7 @@ Popup {
                                 spacing: 8
 
                                 Text {
-                                    text: modal.themeName || "Mary Studio"
+                                    text: modal.themeName || "VRStudio"
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.bodySize
                                     font.weight: Font.DemiBold
@@ -217,7 +226,9 @@ Popup {
                                 }
 
                                 Text {
-                                    text: "Visualização das cores semânticas selecionadas."
+                                    text: "Prévia das cores selecionadas."
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.captionSize
                                     color: modal.colorMuted
@@ -266,7 +277,7 @@ Popup {
 
                 // Color Inputs Grid
                 GridLayout {
-                    columns: 2
+                    columns: modal.width < 560 ? 1 : 2
                     rowSpacing: Theme.spaceMd
                     columnSpacing: Theme.spaceMd
                     Layout.fillWidth: true
@@ -276,11 +287,18 @@ Popup {
                         spacing: Theme.spaceXs
                         Layout.fillWidth: true
 
-                        Text { text: "Fundo principal (Canvas)"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
+                        Text { text: "Fundo principal"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorBackground; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorBackground; onTextChanged: modal.colorBackground = text }
+                            VrTextField {
+                                id: colorBackgroundInput
+                                objectName: "colorBackgroundInput"
+                                Layout.fillWidth: true
+                                text: modal.colorBackground
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorBackground = text
+                            }
                         }
                     }
 
@@ -289,11 +307,18 @@ Popup {
                         spacing: Theme.spaceXs
                         Layout.fillWidth: true
 
-                        Text { text: "Superfície (Cards, Barra Lateral)"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
+                        Text { text: "Superfície (cartões e barra lateral)"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorSurface; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorSurface; onTextChanged: modal.colorSurface = text }
+                            VrTextField {
+                                id: colorSurfaceInput
+                                objectName: "colorSurfaceInput"
+                                Layout.fillWidth: true
+                                text: modal.colorSurface
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorSurface = text
+                            }
                         }
                     }
 
@@ -306,7 +331,14 @@ Popup {
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorBorder; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorBorder; onTextChanged: modal.colorBorder = text }
+                            VrTextField {
+                                id: colorBorderInput
+                                objectName: "colorBorderInput"
+                                Layout.fillWidth: true
+                                text: modal.colorBorder
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorBorder = text
+                            }
                         }
                     }
 
@@ -319,7 +351,14 @@ Popup {
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorAccent; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorAccent; onTextChanged: modal.colorAccent = text }
+                            VrTextField {
+                                id: colorAccentInput
+                                objectName: "colorAccentInput"
+                                Layout.fillWidth: true
+                                text: modal.colorAccent
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorAccent = text
+                            }
                         }
                     }
 
@@ -332,7 +371,14 @@ Popup {
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorText; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorText; onTextChanged: modal.colorText = text }
+                            VrTextField {
+                                id: colorTextInput
+                                objectName: "colorTextInput"
+                                Layout.fillWidth: true
+                                text: modal.colorText
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorText = text
+                            }
                         }
                     }
 
@@ -345,7 +391,14 @@ Popup {
                         RowLayout {
                             spacing: Theme.spaceSm
                             Rectangle { width: 32; height: 32; radius: 6; color: modal.colorMuted; border.width: 1; border.color: Theme.palette.border }
-                            VrTextField { Layout.fillWidth: true; text: modal.colorMuted; onTextChanged: modal.colorMuted = text }
+                            VrTextField {
+                                id: colorMutedInput
+                                objectName: "colorMutedInput"
+                                Layout.fillWidth: true
+                                text: modal.colorMuted
+                                validator: RegularExpressionValidator { regularExpression: /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/ }
+                                onTextChanged: if(acceptableInput) modal.colorMuted = text
+                            }
                         }
                     }
                 }
@@ -383,7 +436,9 @@ Popup {
                 }
 
                 VrButton {
+                    objectName: "themeSaveButton"
                     text: modal.isEditing ? "Salvar alterações" : "Criar tema"
+                    enabled: modal.themeName.trim().length > 0 && colorBackgroundInput.acceptableInput && colorSurfaceInput.acceptableInput && colorBorderInput.acceptableInput && colorAccentInput.acceptableInput && colorTextInput.acceptableInput && colorMutedInput.acceptableInput
                     variant: "primary"
                     onClicked: {
                         var paletteMap = {
