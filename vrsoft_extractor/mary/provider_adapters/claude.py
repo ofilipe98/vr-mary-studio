@@ -241,6 +241,7 @@ class ClaudeProvider(AgentProvider):
         final_text = ""
         message_id = ""
         message_text = ""
+        task_calls: dict[str, dict[str, Any]] = {}
         stderr_lines: deque[str] = deque(maxlen=100)
 
         def read_stderr() -> None:
@@ -297,6 +298,8 @@ class ClaudeProvider(AgentProvider):
                         final_text = snapshot_text
                 for block in message.get("content", []):
                     if block.get("type") == "tool_use":
+                        if block.get("name") in {"TaskCreate", "TaskUpdate", "TaskList"}:
+                            task_calls[str(block.get("id") or "")] = block
                         callback(
                             RuntimeEvent(
                                 conversation_id,
@@ -305,6 +308,16 @@ class ClaudeProvider(AgentProvider):
                                 block,
                             )
                         )
+            elif kind == "user":
+                for block in (payload.get("message") or {}).get("content") or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    call = task_calls.pop(str(block.get("tool_use_id") or ""), None)
+                    if call is not None and not block.get("is_error"):
+                        callback(RuntimeEvent(conversation_id, "task_tool_result", payload={
+                            "name": call.get("name"), "input": call.get("input"),
+                            "result": payload.get("tool_use_result"),
+                        }))
             elif kind == "result":
                 result_text = str(payload.get("result") or "")
                 if result_text and not final_text:

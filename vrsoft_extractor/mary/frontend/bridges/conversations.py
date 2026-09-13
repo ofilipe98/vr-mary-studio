@@ -307,6 +307,7 @@ class ConversationsDomain:
         if changing_conversation:
             self._reset_stream_state()
             self._activity_steps = []
+            self._task_plan.steps = []
             self._activity_items = []
             self._reset_trace_state()
             self._turn_segments = []

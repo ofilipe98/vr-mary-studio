@@ -28,6 +28,7 @@ from .chat_tools import (
     run_vr_sources,
     run_vr_read,
 )
+from .task_plan import claude_task_result, provider_plan
 from .models import (
     ConversationOptions,
     EvidenceCandidate,
@@ -2053,6 +2054,10 @@ class ChatOrchestrator:
         event_owner = event.payload.get("execution_id")
         if event_owner is not None and owner != event_owner:
             return
+        if event.kind in {"task_plan_updated", "task_tool_result"} or provider_plan(event) is not None:
+            with self._agent_run_lock:
+                if event.conversation_id in self._finalized_turns or event.conversation_id in self._cancelled_conversations:
+                    return
         if execution is not None:
             event.payload.setdefault("execution_id", execution.execution_id)
             if event.kind in {"assistant_started", "assistant_delta", "assistant_completed"}:
@@ -2100,6 +2105,29 @@ class ChatOrchestrator:
                     self._terminal_turn_states[event.conversation_id] = "error"
             if cancelled:
                 return
+        if event.kind == "task_tool_result":
+            previous = self.database.latest_event(event.conversation_id, "task_plan_updated")
+            previous_payload = json.loads(previous["payload_json"]) if previous else {}
+            task_payload = claude_task_result(event.payload, previous_payload.get("task_records") or {})
+            if task_payload is not None:
+                self._handle_event(RuntimeEvent(
+                    event.conversation_id, "task_plan_updated",
+                    payload={**event.payload, **task_payload}, created_at=event.created_at,
+                ))
+        steps = provider_plan(event)
+        if steps is not None:
+            if event.kind == "task_plan_updated":
+                event.payload["steps"] = steps
+            else:
+                self._handle_event(RuntimeEvent(
+                    event.conversation_id,
+                    "task_plan_updated",
+                    payload={"steps": steps, **{
+                        key: event.payload[key]
+                        for key in ("execution_id", "turnId") if key in event.payload
+                    }},
+                    created_at=event.created_at,
+                ))
         event.payload["runtime_event_id"] = self.database.add_event(event)
         if event.kind == "assistant_delta":
             if str(event.payload.get("phase") or "") != "commentary":

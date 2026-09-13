@@ -126,6 +126,10 @@ Canvas {
             line(6, 15, 12, 9); line(12, 9, 18, 15)
         } else if (kind === "chevronRight") {
             line(9, 6, 15, 12); line(15, 12, 9, 18)
+        } else if (kind === "listTodo") {
+            rect(3, 4, 4, 4, 0)
+            line(13, 5, 21, 5); line(13, 12, 21, 12); line(13, 19, 21, 19)
+            line(3, 17, 5, 19); line(5, 19, 9, 15)
         } else if (kind === "task") {
             rect(4, 4, 16, 16, 2.5)
             line(7.5, 9, 9.5, 11); line(9.5, 11, 13, 7.5)

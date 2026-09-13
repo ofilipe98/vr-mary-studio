@@ -30,6 +30,7 @@ from ..code_processing_audit import CodeProcessingAudit
 from ..config import MarySettings
 from ..db import MaryDatabase
 from ..models import RuntimeEvent
+from ..task_plan import TaskPlan
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
 
@@ -181,6 +182,8 @@ class ChatBridge(QObject):
         self._approval_request: dict[str, Any] = {}
         self._pending_approvals: list[dict[str, Any]] = []
         self._activity_steps: list[dict[str, str]] = []
+        self._task_plan = TaskPlan()
+        self._task_plan_current = False
         self._activity_items: list[dict[str, str]] = []
         self._trace_items: list[dict[str, Any]] = []
         self._trace_sequence = 0
@@ -1188,6 +1191,16 @@ class ChatBridge(QObject):
         return [dict(item) for item in self._activity_steps]
 
     @Property("QVariantList", notify=stateChanged)
+    def taskSteps(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._task_plan.steps]
+
+    @Property(bool, notify=stateChanged)
+    def taskPlanVisible(self) -> bool:  # noqa: N802
+        return self.turnRunning and self._task_plan_current and any(
+            step["state"] != "completed" for step in self._task_plan.steps
+        )
+
+    @Property("QVariantList", notify=stateChanged)
     def activityItems(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_items]
 
@@ -1843,6 +1856,8 @@ class ChatBridge(QObject):
         self._attachments = []
         self.draftRestored.emit("")
         self._activity_steps = []
+        self._task_plan = TaskPlan()
+        self._task_plan_current = False
         self._activity_items = []
         self._reset_trace_state()
         self._reasoning_text = ""
@@ -2553,6 +2568,7 @@ class ChatBridge(QObject):
         self._sync_selected_turn_state()
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
+        self._task_plan_current = False
         self._activity_items = []
         self._reset_trace_state()
         self._reasoning_text = ""
@@ -2862,6 +2878,16 @@ class ChatBridge(QObject):
         self, event: RuntimeEvent, *, emit_state: bool = True
     ) -> None:
         """Adapt orchestration events into compact, QML-safe presentation state."""
+        if event.kind == "turn_started":
+            self._task_plan_current = False
+        if event.kind == "task_plan_updated":
+            steps = event.payload.get("steps")
+            if isinstance(steps, list):
+                self._task_plan.update(steps, event.created_at, str(event.payload.get("turnId") or event.payload.get("execution_id") or ""))
+                self._task_plan_current = True
+                if emit_state:
+                    self.stateChanged.emit()
+            return
         execution_kinds = {
             "turn_started",
             "response_plan_created",
@@ -3387,6 +3413,8 @@ class ChatBridge(QObject):
     def _clear_selection(self) -> None:
         changed = self._selected_index != -1 or bool(self._selected)
         self._reset_stream_state()
+        self._task_plan = TaskPlan()
+        self._task_plan_current = False
         self._selected_index = -1
         self._selected = {}
         self._sync_selected_turn_state()
@@ -3394,6 +3422,7 @@ class ChatBridge(QObject):
         self._messages.replace([])
         if changed:
             self.selectionChanged.emit()
+            self.stateChanged.emit()
 
     def _refresh_projects(self) -> None:
         return self._Conversations_domain._refresh_projects()

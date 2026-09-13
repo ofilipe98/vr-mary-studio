@@ -10,12 +10,24 @@ Rectangle {
     property var steps: []
     property bool running: false
     property bool expanded: true
+    property real maximumListHeight: 384
     signal toggleRequested()
-    signal closeRequested()
 
-    implicitHeight: content.implicitHeight + 8
+    implicitHeight: content.implicitHeight + 10
     color: "transparent"
     clip: true
+
+    // Clip the lower corners below the seam, as in an attached composer banner.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: parent.height + 16
+        radius: 16
+        color: Qt.alpha(Theme.palette.chatComposer, Theme.glassOpacity)
+        border.width: 1
+        border.color: Theme.palette.chatBorder
+    }
 
     ColumnLayout {
         id: content
@@ -24,49 +36,60 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: 4
         anchors.rightMargin: 4
-        spacing: 4
+        spacing: 0
 
         Item {
             id: taskHeader
+            objectName: "taskPlanHeader"
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
+            Layout.preferredHeight: 24
 
             RowLayout {
                 anchors.fill: parent
-                spacing: 7
+                spacing: 4
+
+                Item {
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 24
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: 12
+                        height: 12
+                        kind: "listTodo"
+                        foreground: Theme.palette.mutedText
+                    }
+                }
 
                 Text {
                     text: "Tarefas"
-                    color: Theme.palette.text
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
-                    font.weight: Font.DemiBold
-                }
-                Text {
-                    text: root.completedCount() + "/" + root.steps.length
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSize(12)
                 }
                 Text {
-                    visible: !root.expanded
                     Layout.fillWidth: true
                     text: root.currentStepText()
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
-                    font.weight: Font.DemiBold
+                    font.pixelSize: Theme.fontSize(12)
+                    font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
-                Item { visible: root.expanded; Layout.fillWidth: true }
+                Text {
+                    text: root.completedCount() + "/" + root.steps.length + (root.width >= 400 ? " concluídas" : "")
+                    color: root.completedCount() === root.steps.length ? Theme.palette.success : Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12)
+                    font.weight: Font.Medium
+                }
                 Row {
-                    visible: !root.expanded && root.steps.length > 0
-                    spacing: 3
+                    visible: root.steps.length > 1 && root.steps.length <= 10 && root.width >= 600
+                    spacing: 2
                     Repeater {
-                        model: Math.min(6, root.steps.length)
+                        model: root.steps.length
                         delegate: Rectangle {
                             required property int index
-                            width: 13
+                            width: (80 - (root.steps.length - 1) * 2) / root.steps.length
                             height: 3
                             radius: 2
                             color: root.segmentColor(index)
@@ -74,68 +97,97 @@ Rectangle {
                     }
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: 13
-                    Layout.preferredHeight: 13
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 14
                     kind: root.expanded ? "chevronDown" : "chevronUp"
                     foreground: Theme.palette.mutedText
-                }
-                VrIconButton {
-                    implicitWidth: 26
-                    implicitHeight: 26
-                    iconSize: 12
-                    iconKind: "close"
-                    foreground: Theme.palette.mutedText
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Fechar tarefas"
-                    onClicked: root.closeRequested()
                 }
             }
 
             HoverHandler { id: headerHover }
             TapHandler { onTapped: root.toggleRequested() }
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: "Tarefas: " + root.completedCount() + " de " + root.steps.length
+            Accessible.onPressAction: root.toggleRequested()
+            Keys.onSpacePressed: root.toggleRequested()
+            Keys.onReturnPressed: root.toggleRequested()
         }
 
-        ColumnLayout {
+        ScrollView {
+            id: taskScroll
+            objectName: "taskPlanScroll"
             visible: root.expanded
             Layout.fillWidth: true
-            Layout.leftMargin: 4
-            Layout.rightMargin: 30
-            Layout.bottomMargin: 2
-            spacing: 5
+            Layout.preferredHeight: Math.min(taskList.implicitHeight, root.maximumListHeight)
+            contentWidth: availableWidth
+            contentHeight: taskList.implicitHeight
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-            Repeater {
-                model: root.steps.slice(0, 8)
-                delegate: RowLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    spacing: 8
+            ColumnLayout {
+                id: taskList
+                width: taskScroll.availableWidth
+                spacing: 1
 
-                    Rectangle {
-                        Layout.preferredWidth: 7
-                        Layout.preferredHeight: 7
-                        radius: 4
-                        color: root.stateColor(String(modelData.state || "pending"))
-                        border.width: modelData.state === "pending" ? 1 : 0
-                        border.color: Theme.palette.mutedText
-                    }
-                    Text {
+                Repeater {
+                    model: root.steps
+                    delegate: RowLayout {
+                        required property var modelData
                         Layout.fillWidth: true
-                        text: modelData.text || ""
-                        color: modelData.state === "running"
-                            ? Theme.palette.text : Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
-                        font.weight: modelData.state === "running" ? Font.DemiBold : Font.Normal
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        visible: modelData.state === "running"
-                        text: "agora"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(9)
+                        Layout.minimumHeight: 20
+                        spacing: 4
+
+                        Item {
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 20
+                            VrLineIcon {
+                                visible: modelData.state === "completed"
+                                anchors.centerIn: parent
+                                width: 10
+                                height: 10
+                                kind: "check"
+                                foreground: Theme.palette.success
+                            }
+                            Rectangle {
+                                visible: modelData.state !== "completed"
+                                anchors.centerIn: parent
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: modelData.state === "running" ? Theme.palette.brandOrange : "transparent"
+                                border.width: modelData.state === "pending" ? 1 : 0
+                                border.color: Theme.palette.mutedText
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.text || ""
+                            color: modelData.state === "running"
+                                ? Theme.palette.text : Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(12)
+                            opacity: modelData.state === "completed" ? 0.65 : 1
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            text: modelData.state === "completed" ? "Concluída"
+                                : modelData.state === "running" ? "Executando" : "Pendente"
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(10)
+                        }
+                        Text {
+                            Layout.preferredWidth: 40
+                            Layout.rightMargin: 4
+                            horizontalAlignment: Text.AlignRight
+                            text: modelData.durationMs !== undefined
+                                ? root.durationText(modelData.durationMs)
+                                : modelData.state === "running" ? "agora" : ""
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(10)
+                        }
                     }
                 }
             }
@@ -153,8 +205,16 @@ Rectangle {
         for (var index = 0; index < root.steps.length; ++index)
             if (String(root.steps[index].state || "") === "running")
                 return String(root.steps[index].text || "")
-        if (root.running) return "Preparando a próxima etapa…"
-        return root.steps.length ? "Tarefas concluídas" : ""
+        for (var pendingIndex = 0; pendingIndex < root.steps.length; ++pendingIndex)
+            if (String(root.steps[pendingIndex].state || "") === "pending")
+                return String(root.steps[pendingIndex].text || "")
+        return root.steps.length && root.completedCount() === root.steps.length
+            ? "Tarefas concluídas" : ""
+    }
+
+    function durationText(milliseconds) {
+        var seconds = Math.floor(milliseconds / 1000)
+        return seconds >= 60 ? Math.floor(seconds / 60) + "m " + (seconds % 60) + "s" : seconds + "s"
     }
 
     function stateColor(state) {

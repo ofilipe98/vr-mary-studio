@@ -682,6 +682,14 @@ class ConversationsRepositoryMixin:
                 (conversation_id, kind),
             ).fetchone()
 
+    def task_plan_events(self, conversation_id: str) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """SELECT * FROM runtime_events
+                   WHERE conversation_id=? AND kind='task_plan_updated' ORDER BY id""",
+                (conversation_id,),
+            ).fetchall()
+
     def orchestration_events_after(
         self, conversation_id: str, event_id: int
     ) -> list[sqlite3.Row]:

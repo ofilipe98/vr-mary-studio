@@ -184,6 +184,8 @@ class AntigravityProvider(AgentProvider):
             callback(RuntimeEvent(cid, "assistant_delta" if kind == "agent_message_chunk" else "reasoning_delta", text))
         elif kind in ("tool_call", "tool_call_update"):
             callback(RuntimeEvent(cid, "tool_event", str(update.get("title") or "Ferramenta"), update))
+        elif kind == "plan":
+            callback(RuntimeEvent(cid, "task_plan_updated", payload={"plan": update.get("entries")}))
         elif kind == "usage_update":
             # ACP reports context occupancy, not cumulative billed tokens.
             breakdown = _token_breakdown(total_tokens=update.get("used"))

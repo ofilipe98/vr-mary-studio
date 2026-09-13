@@ -45,7 +45,6 @@ Item {
     property var openSurfaceTabs: []
     property bool activityExpanded: false
     property bool taskBarExpanded: false
-    property bool taskBarDismissed: false
     property bool previousTurnRunning: false
     property bool copyFeedbackVisible: false
     readonly property var surfaceTabs: [
@@ -126,7 +125,6 @@ Item {
         }
         function onStateChanged() {
             if (root.chatBridge.turnRunning && !root.previousTurnRunning) {
-                root.taskBarDismissed = false
                 root.taskBarExpanded = false
                 root.activityExpanded = false
             }
@@ -954,19 +952,17 @@ Item {
 
             VrTaskBar {
                 id: taskBar
-                visible: root.chatBridge.turnRunning
-                    && root.chatBridge.activitySteps.length > 0
-                    && !root.taskBarDismissed
+                visible: root.chatBridge.taskPlanVisible
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
-                anchors.bottomMargin: 8
-                width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
+                anchors.bottomMargin: -1
+                width: Math.max(0, composerCard.width - 44)
+                maximumListHeight: Math.min(384, root.height * 0.4)
                 z: 20
-                steps: root.chatBridge.activitySteps
+                steps: root.chatBridge.taskSteps
                 running: root.chatBridge.turnRunning
                 expanded: root.taskBarExpanded
                 onToggleRequested: root.taskBarExpanded = !root.taskBarExpanded
-                onCloseRequested: root.taskBarDismissed = true
             }
 
             Rectangle {

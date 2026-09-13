@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from ...models import RuntimeEvent
+from ...task_plan import TaskPlan
 
 from .presentation import (markdown_for_display, short_event_text, segments_for_display)
 
@@ -386,6 +387,16 @@ class ActivityDomain:
 
 
     def _restore_activity_from_history(self, conversation_id: str) -> None:
+        self._task_plan = TaskPlan()
+        self._task_plan_current = False
+        for row in self._database.task_plan_events(conversation_id):
+            try:
+                payload = json.loads(row["payload_json"])
+                steps = payload.get("steps")
+                if isinstance(steps, list):
+                    self._task_plan.update(steps, row["created_at"], str(payload.get("turnId") or payload.get("execution_id") or ""))
+            except (TypeError, ValueError, KeyError, AttributeError):
+                continue
         self._activity_steps = []
         self._activity_items = []
         self._reset_trace_state()
@@ -436,6 +447,8 @@ class ActivityDomain:
                         self._displayed_streaming_text += text
                         self._advance_default_activity()
                 else:
+                    if kind == "task_plan_updated":
+                        continue  # Already restored across turns, with original timestamps.
                     self._record_execution_event(
                         RuntimeEvent(conversation_id, kind, text, payload),
                         emit_state=False,
@@ -449,6 +462,7 @@ class ActivityDomain:
                     terminal = True
         finally:
             self._restoring_turn_history = False
+        self._task_plan_current = any(str(row["kind"]) == "task_plan_updated" for row in rows)
         if not self._activity_steps and any(
             str(row["kind"] or "") in {"turn_started", "assistant_delta"}
             for row in rows
