@@ -1432,6 +1432,21 @@ class ChatBridge(QObject):
             return bool(self._stage_attachment_paths(mime.urls()))
         return False
 
+    @Slot(str, result=str)
+    def attachmentSizeLabel(self, path: str) -> str:  # noqa: N802
+        try:
+            p = Path(path).expanduser().resolve(strict=False)
+            if p.is_file():
+                size_bytes = p.stat().st_size
+                if size_bytes < 1024:
+                    return f"{size_bytes} B"
+                if size_bytes < 1024 * 1024:
+                    return f"{max(1, round(size_bytes / 1024))} KB"
+                return f"{size_bytes / (1024 * 1024):.1f} MB"
+        except Exception:
+            pass
+        return ""
+
     @Slot(str, result="QVariantList")
     def fileSuggestions(self, query: str) -> list[dict[str, Any]]:  # noqa: N802
         needle = str(query or "").strip().casefold()
@@ -1692,6 +1707,12 @@ class ChatBridge(QObject):
                 self._active_turn_started_epochs[conversation_id] = started_epoch
             editing = conversation_id in self._draft_records
             pinned = conversation_id in self._pinned_conversation_ids
+            vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
+                "vr" if bool(row["vr_enabled"]) else "off"
+            )
+            if editing and conversation_id == selected_id:
+                vr_mode = self._vr_mode
+            vr_enabled = vr_mode != "off"
             conversations.append(
                 {
                     "conversationId": conversation_id,
@@ -1711,6 +1732,8 @@ class ChatBridge(QObject):
                     "startedAtEpoch": self._active_turn_started_epochs.get(
                         conversation_id, 0.0
                     ),
+                    "vrMode": vr_mode,
+                    "vrEnabled": vr_enabled,
                 }
             )
         conversations.sort(
@@ -1949,6 +1972,7 @@ class ChatBridge(QObject):
                 self._orchestrator.update_vr_mode(conversation_id, resolved)
             except Exception as exc:
                 self._status_text = f"Falha: {exc}"
+            self.refresh()
         self.stateChanged.emit()
 
     def _load_research_config(self) -> None:
@@ -2426,16 +2450,7 @@ class ChatBridge(QObject):
 
     @Property("QVariantMap", notify=stateChanged)
     def resumableResearch(self) -> dict:  # noqa: N802
-        cid = str(self._selected.get("conversationId") or "")
-        repository = getattr(self._orchestrator, "research_repository", None)
-        run = repository.latest_resumable(cid) if repository and cid and not self.turnRunning else None
-        if not run:
-            return {}
-        budget = json.loads(run["budget_json"])
-        return {"runId": run["run_id"], "status": run["status"],
-                "publicationReady": bool(run["status"] == "completed" and json.loads(run["result_json"] or "{}").get("publication_text")),
-                "callsRemaining": budget.get("remaining_calls", 0),
-                "secondsRemaining": budget.get("time_remaining_seconds", 0)}
+        return {}
 
     @Property(QObject, constant=True)
     def retrievalSettings(self):  # noqa: N802
@@ -2443,7 +2458,7 @@ class ChatBridge(QObject):
 
     @Slot(bool)
     def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        return self._ProviderSettings_domain.resumeResearch(grant_budget)
+        return None
 
     def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> None:
         content = str(text or "").strip()

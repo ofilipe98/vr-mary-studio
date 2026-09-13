@@ -38,7 +38,7 @@ Item {
         { title: "Contraste e nitidez visual", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Opacidade de vidro e superfícies translúcidas", category: "Aparência", tab: 4, icon: "settings" },
         { title: "Animações de painéis e movimento", category: "Aparência", tab: 4, icon: "settings" },
-        { title: "Fonte e escala da interface", category: "Aparência", tab: 4, icon: "edit" },
+        { title: "Fonte da interface", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Tipografia avançada (Interface, Prompt, Código, Terminal)", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Suavização de fontes e quebra de linha (Word wrap)", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Browser e acesso do agente", category: "Browser", tab: 5, icon: "browser" },

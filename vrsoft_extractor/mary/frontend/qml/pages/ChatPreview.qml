@@ -68,6 +68,7 @@ Item {
     property real clockNow: Date.now() / 1000
     property var expertProfiles: [
         { key: "senior", label: "Sênior", icon: "expertSenior" },
+        { key: "training", label: "Treinamento", icon: "expertTraining" },
         { key: "support", label: "Suporte", icon: "expertSupport" },
         { key: "implementation", label: "Implantação", icon: "expertImplementation" }
     ]
@@ -454,6 +455,8 @@ Item {
                         required property bool editing
                         required property bool pinned
                         required property real startedAtEpoch
+                        required property string vrMode
+                        required property bool vrEnabled
                         width: conversationList.width
                         height: 78
                         radius: 8
@@ -481,12 +484,44 @@ Item {
                                         ? "#F3C74E" : Theme.palette.mutedText
                                 }
                                 Text {
-                                    Layout.fillWidth: true
+                                    id: conversationProjectLabel
                                     text: conversationItem.projectLabel
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(9)
                                     elide: Text.ElideRight
+                                    Layout.preferredWidth: Math.min(implicitWidth, Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 90))
+                                }
+                                Rectangle {
+                                    id: conversationVrBadge
+                                    objectName: "conversationVrBadge"
+                                    visible: conversationItem.vrEnabled && conversationItem.vrMode !== "off"
+                                    Layout.alignment: Qt.AlignVCenter
+                                    implicitHeight: 14
+                                    implicitWidth: conversationVrBadgeText.implicitWidth + 8
+                                    radius: 4
+                                    color: Theme.palette.accessibleOrange
+
+                                    Text {
+                                        id: conversationVrBadgeText
+                                        anchors.centerIn: parent
+                                        text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"
+                                        color: "#FFFFFF"
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSize(8)
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    ToolTip.visible: conversationVrBadgeHover.hovered
+                                    ToolTip.text: conversationItem.vrMode === "ultra" ? "VR Ultra ativo" : "VR ativo"
+                                    ToolTip.delay: 300
+
+                                    HoverHandler {
+                                        id: conversationVrBadgeHover
+                                    }
+                                }
+                                Item {
+                                    Layout.fillWidth: true
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
@@ -2528,17 +2563,94 @@ Item {
         id: conversationDeleteDialog
         objectName: "conversationDeleteDialog"
         anchors.centerIn: parent
-        width: 430
+        width: 440
         modal: true
-        title: "Excluir esta conversa?"
+        dim: true
+        padding: 0
+        topPadding: 0
+        bottomPadding: 0
+        leftPadding: 0
+        rightPadding: 0
+        header: null
+        footer: null
         standardButtons: Dialog.NoButton
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            color: Theme.palette.surface
+            border.width: 1
+            border.color: Theme.palette.chatBorder
+            radius: 14
+        }
         contentItem: ColumnLayout {
-            spacing: Theme.spaceMd
-            Text { Layout.fillWidth: true; text: "A conversa será removida da lista e enviada para a lixeira."; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            spacing: 0
             RowLayout {
                 Layout.fillWidth: true
-                VrButton { text: "Cancelar"; onClicked: conversationDeleteDialog.close() }
+                Layout.topMargin: 20
+                Layout.leftMargin: 20
+                Layout.rightMargin: 16
+                Layout.bottomMargin: 14
+                spacing: 14
+                Rectangle {
+                    width: 40
+                    height: 40
+                    radius: 20
+                    color: Qt.alpha(Theme.palette.danger, 0.12)
+                    Layout.alignment: Qt.AlignTop
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: 18
+                        height: 18
+                        kind: "trash"
+                        foreground: Theme.palette.danger
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 4
+                    Text {
+                        text: "Excluir esta conversa?"
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(15)
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "A conversa será removida da lista e enviada para a lixeira."
+                        color: Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(13)
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                VrIconButton {
+                    Layout.alignment: Qt.AlignTop
+                    iconKind: "close"
+                    iconSize: 10
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    foreground: Theme.palette.mutedText
+                    onClicked: conversationDeleteDialog.close()
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: Theme.palette.chatBorder
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                Layout.bottomMargin: 14
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                spacing: 10
                 Item { Layout.fillWidth: true }
+                VrButton {
+                    text: "Cancelar"
+                    onClicked: conversationDeleteDialog.close()
+                }
                 VrButton {
                     text: root.chatBridge.conversationDeleteRunning ? "Excluindo…" : "Excluir"
                     variant: "danger"
@@ -2551,7 +2663,6 @@ Item {
                 }
             }
         }
-        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.danger; radius: Theme.radiusPopup }
     }
 
     function toggleFileFolder(path) {

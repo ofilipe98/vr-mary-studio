@@ -938,8 +938,4 @@ class ProviderSettingsDomain:
 
 
     def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        run = self.resumableResearch
-        if not run or self.turnRunning:
-            return
-        self._send_message("Retomar investigação" + (" (+15 chamadas, +300 s)" if grant_budget else ""),
-                           resume_run_id=run["runId"], grant_budget=grant_budget)
+        return None

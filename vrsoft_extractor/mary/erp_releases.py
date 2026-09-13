@@ -1321,10 +1321,11 @@ class ErpReleaseCatalog:
         return str(statuses[0]["release_id"])
 
     def load_manifest(self, release_id: str) -> dict[str, Any]:
-        if str(release_id or "").strip() in ("current", ""):
+        normalized = str(release_id or "").strip()
+        if normalized in ("current", "") and not self.paths.manifest_for("current").is_file():
             release_id = self._resolve_current_release_id()
         else:
-            release_id = validate_release_id(release_id)
+            release_id = validate_release_id(normalized)
         path = self.paths.manifest_for(release_id)
         if not path.is_file():
             raise ErpReleaseError(f"Release ainda não indexada: {release_id}")

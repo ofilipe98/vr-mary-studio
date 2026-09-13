@@ -154,21 +154,14 @@ def test_hardware_acceleration_toggle(tmp_path):
         window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
         QTest.qWait(100)
         switch = item(window, "hardwareAccelerationSwitch")
+        assert not switch.isVisible()
         assert frontend.hardwareAcceleration is False
 
-        scroll = window.findChild(QObject, "appearanceSettingsScroll")
-        flick = scroll.property("contentItem")
-        flick.setProperty("contentY", flick.property("contentHeight") - flick.height())
-        QTest.qWait(50)
-
-        point = switch.mapToScene(QPointF(switch.width() / 2, switch.height() / 2)).toPoint()
-        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
-        QTest.qWait(60)
+        frontend.setHardwareAcceleration(True)
         assert frontend.hardwareAcceleration is True
         assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("true", "1")
 
-        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
-        QTest.qWait(60)
+        frontend.setHardwareAcceleration(False)
         assert frontend.hardwareAcceleration is False
         assert str(frontend._preferences.value("appearance/hardware_acceleration")).lower() in ("false", "0")
         assert not warnings

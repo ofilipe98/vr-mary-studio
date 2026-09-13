@@ -339,6 +339,10 @@ class QmlFrontendTest(unittest.TestCase):
             chat_page.activateExpertProfile("support")
             self.assertFalse(chat_bridge.seniorProfileEnabled)
             self.assertEqual(chat_bridge.vrResponseMode, "auto")
+            chat_page.activateExpertProfile("training")
+            self.assertTrue(chat_bridge.seniorProfileEnabled)
+            self.assertEqual(chat_bridge.vrResponseMode, "training")
+            self.assertTrue(chat_page.expertProfileSelected("training"))
             self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
@@ -3115,6 +3119,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Behavior on expertReveal", chat_qml)
         self.assertIn("VrProfileIcon", chat_qml)
         self.assertIn("expertSenior", chat_qml)
+        self.assertIn("expertTraining", chat_qml)
+        self.assertIn('"Treinamento"', chat_qml)
+        line_icon_qml = (
+            MAIN_QML.parent / "components" / "VrLineIcon.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('kind === "expertTraining"', line_icon_qml)
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
@@ -3123,6 +3133,9 @@ class QmlFrontendTest(unittest.TestCase):
             'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
             composer_qml,
         )
+        self.assertIn('objectName: "chatAttachmentThumbnail"', composer_qml)
+        self.assertIn("hasImageAttachments", composer_qml)
+        self.assertIn("fillMode: Image.PreserveAspectCrop", composer_qml)
         markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
         self.assertIn("Theme.bodySize", markdown_qml)
         self.assertIn("Qt.PointingHandCursor", markdown_qml)
@@ -3202,7 +3215,7 @@ class QmlFrontendTest(unittest.TestCase):
                 window.setProperty("height", 700)
                 window.show()
                 QTest.qWait(200)
-                composer = window.findChild(QObject, "chatComposerInput")
+                composer = window.findChild(QObject, "chatComposerScroll") or window.findChild(QObject, "chatComposerInput")
                 self.assertIsNotNone(composer)
                 compact_height = composer.property("height")
 
@@ -3212,6 +3225,11 @@ class QmlFrontendTest(unittest.TestCase):
 
                 self.assertGreater(composer.property("height"), compact_height)
                 self.assertLessEqual(composer.property("height"), 200)
+
+                scroll_bar = window.findChild(QObject, "chatComposerScrollBar")
+                self.assertIsNotNone(scroll_bar)
+                self.assertTrue(scroll_bar.property("visible"))
+                self.assertLess(scroll_bar.property("size"), 1.0)
             finally:
                 if engine.rootObjects():
                     engine.rootObjects()[0].close()
@@ -3661,6 +3679,52 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(added, 1)
             self.assertEqual(bridge.attachments, [{"name": image.name, "path": str(image)}])
 
+    def test_image_attachment_in_composer_shows_thumbnail(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            image = settings.root / "evidencia.png"
+            image.write_bytes(b"png data")
+            bridge = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            try:
+                window = engine.rootObjects()[0]
+                composer = window.findChild(QObject, "chatComposerCard")
+                self.assertIsNotNone(composer)
+                self.assertFalse(composer.property("hasImageAttachments"))
+                chat_bridge.addDroppedAttachments([QUrl.fromLocalFile(str(image))])
+                self.application.processEvents()
+                self.assertTrue(composer.property("hasImageAttachments"))
+                self.assertEqual(chat_bridge.attachmentSizeLabel(str(image)), "8 B")
+                thumbnails_list = window.findChild(QObject, "chatAttachmentThumbnailsList")
+                self.assertIsNotNone(thumbnails_list)
+                thumbnails_list.forceLayout()
+                self.application.processEvents()
+                content_item = thumbnails_list.property("contentItem")
+                thumbnail = next((sub for item in content_item.childItems() for sub in item.childItems() if sub.property("objectName") == "chatAttachmentThumbnail"), None)
+                self.assertIsNotNone(thumbnail)
+                self.assertTrue(thumbnail.property("visible"))
+                self.assertEqual(thumbnail.property("width"), 60)
+                self.assertEqual(thumbnail.property("height"), 60)
+                attachment_list = window.findChild(QObject, "chatAttachmentList")
+                self.assertIsNotNone(attachment_list)
+                self.assertEqual(attachment_list.property("count"), 1)
+            finally:
+                window.close()
+                engine.deleteLater()
+
     def test_unsent_text_and_images_are_persisted_as_a_separate_draft(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -3754,6 +3818,61 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.conversations.item(0)["conversationId"], first)
             self.assertTrue(bridge.conversations.item(0)["pinned"])
             self.assertEqual(bridge.conversations.item(1)["conversationId"], second)
+
+    def test_conversations_expose_vr_mode_and_badge_roles(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            off_id = database.create_conversation(
+                "Normal Chat", "codex", "modelo", settings.root, vr_enabled=False, vr_mode="off"
+            )
+            vr_id = database.create_conversation(
+                "VR Chat", "codex", "modelo", settings.root, vr_enabled=True, vr_mode="vr"
+            )
+            ultra_id = database.create_conversation(
+                "Ultra Chat", "codex", "modelo", settings.root, vr_enabled=True, vr_mode="ultra"
+            )
+
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = ChatBridge(settings, database, preferences)
+
+            items = {
+                bridge.conversations.item(i)["conversationId"]: bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+            }
+
+            self.assertEqual(items[off_id]["vrMode"], "off")
+            self.assertFalse(items[off_id]["vrEnabled"])
+
+            self.assertEqual(items[vr_id]["vrMode"], "vr")
+            self.assertTrue(items[vr_id]["vrEnabled"])
+
+            self.assertEqual(items[ultra_id]["vrMode"], "ultra")
+            self.assertTrue(items[ultra_id]["vrEnabled"])
+
+            bridge.selectConversationId(off_id)
+            bridge.setVrMode("vr")
+            updated_item = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == off_id
+            )
+            self.assertEqual(updated_item["vrMode"], "vr")
+            self.assertTrue(updated_item["vrEnabled"])
+
+            chat_preview_qml = (
+                MAIN_QML.parent / "pages" / "ChatPreview.qml"
+            ).read_text(encoding="utf-8")
+            self.assertIn('objectName: "conversationVrBadge"', chat_preview_qml)
+            self.assertIn("required property string vrMode", chat_preview_qml)
+            self.assertIn("required property bool vrEnabled", chat_preview_qml)
+            self.assertIn('text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"', chat_preview_qml)
+            self.assertIn("Theme.palette.accessibleOrange", chat_preview_qml)
 
     def test_context_uses_provider_model_metadata_and_hides_without_it(self):
         with TemporaryDirectory() as temporary:
@@ -4488,6 +4607,12 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIn("RuntimeError", content)
             finally:
                 sys.excepthook = original_hook
+
+    def test_chat_stop_button_icon_has_high_contrast(self):
+        assets_dir = MAIN_QML.parent.parent.parent / "assets"
+        stop_svg = (assets_dir / "chat-stop.svg").read_text(encoding="utf-8")
+        self.assertIn('fill="#FFFFFF"', stop_svg)
+        self.assertNotIn('fill="#A1261D"', stop_svg)
 
 
 if __name__ == "__main__":

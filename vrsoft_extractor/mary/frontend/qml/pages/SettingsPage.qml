@@ -629,6 +629,7 @@ Item {
                     }
 
                     Rectangle {
+                        visible: false
                         Layout.fillWidth: true
                         height: 1
                         color: Theme.palette.border
@@ -636,6 +637,7 @@ Item {
 
                     // Escala da interface
                     VrSettingsRow {
+                        visible: false
                         Layout.fillWidth: true
 
                         ColumnLayout {
@@ -688,6 +690,7 @@ Item {
 
                     // Aceleracao grafica de hardware
                     VrSettingsRow {
+                        visible: false
                         Layout.fillWidth: true
 
                         ColumnLayout {
@@ -1290,24 +1293,92 @@ Item {
         anchors.centerIn: parent
         width: Math.min(460, root.width - Theme.spaceLg * 2)
         modal: true
-        title: "Excluir conversa definitivamente?"
+        dim: true
+        padding: 0
+        topPadding: 0
+        bottomPadding: 0
+        leftPadding: 0
+        rightPadding: 0
+        header: null
+        footer: null
         standardButtons: Dialog.NoButton
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            color: Theme.palette.surface
+            border.width: 1
+            border.color: Theme.palette.chatBorder
+            radius: 14
+        }
         contentItem: ColumnLayout {
-            spacing: Theme.spaceMd
-            Text {
+            spacing: 0
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."
-                color: Theme.palette.text
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.bodySize
-                wrapMode: Text.WordWrap
+                Layout.topMargin: 20
+                Layout.leftMargin: 20
+                Layout.rightMargin: 16
+                Layout.bottomMargin: 14
+                spacing: 14
+                Rectangle {
+                    width: 40
+                    height: 40
+                    radius: 20
+                    color: Qt.alpha(Theme.palette.danger, 0.12)
+                    Layout.alignment: Qt.AlignTop
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: 18
+                        height: 18
+                        kind: "trash"
+                        foreground: Theme.palette.danger
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 4
+                    Text {
+                        text: "Excluir conversa definitivamente?"
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(15)
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."
+                        color: Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(13)
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                VrIconButton {
+                    Layout.alignment: Qt.AlignTop
+                    iconKind: "close"
+                    iconSize: 10
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    foreground: Theme.palette.mutedText
+                    onClicked: deleteDialog.close()
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: Theme.palette.chatBorder
             }
             RowLayout {
                 Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                VrButton { text: "Cancelar"; onClicked: deleteDialog.close() }
+                Layout.topMargin: 12
+                Layout.bottomMargin: 14
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                spacing: 10
                 Item { Layout.fillWidth: true }
+                VrButton {
+                    text: "Cancelar"
+                    onClicked: deleteDialog.close()
+                }
                 VrButton {
                     text: "Excluir definitivamente"
                     variant: "danger"
@@ -1319,6 +1390,5 @@ Item {
                 }
             }
         }
-        background: Rectangle { color: Theme.palette.surface; border.width: 1; border.color: Theme.palette.danger; radius: Theme.radiusPopup }
     }
 }
