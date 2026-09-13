@@ -764,6 +764,14 @@ class JavaCodeIndex:
         tokens = _search_tokens(query)
         if not tokens:
             return []
+        if str(release_id or "").strip() in ("current", ""):
+            try:
+                from .erp_releases import ErpReleaseCatalog
+                statuses = ErpReleaseCatalog(self.root).list_statuses(full_hash=False)
+                if statuses:
+                    release_id = str(statuses[0].get("release_id") or "")
+            except Exception:
+                pass
         selected: dict[int, dict[str, Any]] = {}
         release_filter = " AND s.release_id = ?" if release_id else ""
         release_params: list[Any] = [release_id] if release_id else []

@@ -225,14 +225,20 @@ class KnowledgeRouter:
         entities = {
             key: tuple(values) for key, values in raw_entities.items() if values
         }
+        full_terms = tuple(search_terms(query, limit=120))
+        inferred_module = infer_search_module(full_terms) or infer_search_module(terms)
         product = next(
             (
                 label
                 for marker, label in (
+                    ("vrpdv", "VRPdv"),
                     ("vrmaster", "VRMaster"),
                     ("vrcaixa", "VRCaixa"),
                     ("vrfiscal", "VRFiscal"),
+                    ("vrconcentrador", "VRConcentrador"),
+                    ("vrautorizador", "VRAutorizador"),
                     ("tef", "TEF"),
+                    ("pdv", "VRPdv"),
                 )
                 if marker in normalized
             ),
@@ -241,7 +247,7 @@ class KnowledgeRouter:
         return QueryProfile(
             query=str(query or "").strip(),
             intents=intents,
-            module=infer_search_module(terms),
+            module=inferred_module,
             product=product,
             entities=entities,
             answer_type=answer_type,
@@ -793,6 +799,8 @@ class KnowledgeRouter:
         candidates: list[EvidenceCandidate],
     ) -> tuple[ModuleRoutingDecision, ...]:
         query_modules = set(infer_search_modules(profile.terms))
+        if not query_modules and profile.query:
+            query_modules = set(infer_search_modules(search_terms(profile.query, limit=120)))
         if profile.module:
             query_modules.add(profile.module)
         evidence_scores = {module: 0.0 for module in KNOWLEDGE_MODULES}
@@ -854,6 +862,9 @@ class KnowledgeRouter:
                     reasons=tuple(reasons),
                 )
             )
+        decisions.sort(
+            key=lambda item: (-int(item.selected), -item.confidence, item.module)
+        )
         return tuple(decisions)
 
     def _search_lane(

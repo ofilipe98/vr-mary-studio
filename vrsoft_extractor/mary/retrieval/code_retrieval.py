@@ -26,25 +26,60 @@ def _code_scope_queries(value: str, limit: int = 8) -> tuple[str, ...]:
         "processo", "sistema", "utiliza", "utilizar", "validar", "validação",
         "validacao", "você", "voce", "vrmaster",
     }
-    raw = re.findall(r"[A-Za-zÀ-ÿ_$][A-Za-zÀ-ÿ0-9_$]{2,}", str(value or ""))
+    text_val = str(value or "")
+    log_noise = {
+        "ERRO", "ERROR", "CARREGANDO", "PROCESSANDO", "AUTORIZADOR", "CONCENTRADOR",
+        "REDE", "RETORNO", "DISPLAY", "TECLADO", "ON", "OFF", "INFO", "WARN",
+        "WARNING", "DEBUG", "TRACE", "FATAL", "NULL", "TRUE", "FALSE", "BANCO",
+        "TECLA", "EVENT", "DISPATCHER",
+    }
+    stack_frames = re.findall(r"\bat\s+(?:[\w\$]+\.)*([A-Z][\w\$]+)\.([\w\$]+)\(", text_val)
+    exceptions = re.findall(r"\b([A-Z][\w\$]+Exception)\b", text_val)
+    java_files = re.findall(r"\b([A-Z][\w\$]+)\.java\b", text_val)
+
+    stack_classes = [c for c, _ in stack_frames]
+    stack_methods = [m for _, m in stack_frames if m not in {"main", "run"}]
+    stack_symbols = list(dict.fromkeys(stack_classes + exceptions + java_files + stack_methods))
+
+    raw = re.findall(r"[A-Za-zÀ-ÿ_$][A-Za-zÀ-ÿ0-9_$]{2,}", text_val)
     unique = list(dict.fromkeys(raw))
+
+    camel = [
+        item for item in unique
+        if item.casefold() not in ignored
+        and (re.search(r"[a-z0-9][A-Z]", item) or re.search(r"^[A-Z][a-z0-9]+[A-Z]", item))
+        and item not in stack_symbols
+    ]
+
     symbols = [
         item for item in unique
         if item.casefold() not in ignored
-        and (re.search(r"[a-z][A-Z]", item) or item.isupper() or "_" in item)
+        and item.upper() not in log_noise
+        and item not in stack_symbols
+        and item not in camel
+        and ("_" in item or (item.isupper() and len(item) <= 6))
     ]
+
     preferred = [
-        item
-        for item in unique
+        item for item in unique
         if item.casefold() not in ignored
-        and (re.search(r"[a-z][A-Z]", item) or item.isupper() or len(item) >= 6)
+        and item.upper() not in log_noise
+        and item not in stack_symbols
+        and item not in camel
+        and item not in symbols
+        and len(item) >= 6
     ]
+
     fallback = [
-        item
-        for item in unique
-        if item.casefold() not in ignored and item not in preferred
+        item for item in unique
+        if item.casefold() not in ignored
+        and item not in stack_symbols
+        and item not in camel
+        and item not in symbols
+        and item not in preferred
     ]
-    return tuple(dict.fromkeys(symbols + preferred + fallback))[: max(1, int(limit))]
+
+    return tuple(dict.fromkeys(stack_symbols + camel + symbols + preferred + fallback))[: max(1, int(limit))]
 
 
 def check_code_availability(
@@ -167,6 +202,33 @@ def retrieve_code_candidates(
                 if scoped_count >= limit_per_scope:
                     break
             if scoped_count >= limit_per_scope:
+                break
+
+    # If scoped search did not find enough candidates or if stack-trace classes
+    # exist outside the selected app_context, search across the release as fallback:
+    if len(code_results) < limit_per_scope and application_contexts is not None:
+        for code_query in _code_scope_queries(scoped_text):
+            for res in JavaCodeIndex(root).search(
+                code_query,
+                release_id=code_analysis_release,
+                limit=limit_per_query,
+            ):
+                if expected_release_hash and str(res.get("release_hash") or "") != expected_release_hash:
+                    continue
+                key = str(res.get("source_key") or "")
+                if key and key not in seen_code:
+                    seen_code.add(key)
+                    jar_path = str(res.get("jar_relative_path") or "")
+                    app_name = jar_path.split("/")[0] if "/" in jar_path else "Código"
+                    res["application_context"] = {
+                        "app_id": app_name.lower(),
+                        "application": app_name,
+                        "label": app_name,
+                    }
+                    code_results.append(res)
+                if len(code_results) >= limit_per_scope:
+                    break
+            if len(code_results) >= limit_per_scope:
                 break
 
     code_candidates: list[EvidenceCandidate] = []

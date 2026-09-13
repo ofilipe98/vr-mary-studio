@@ -44,7 +44,10 @@ SEARCH_STOPWORDS = frozenset(
 MODULE_HINTS: dict[str, frozenset[str]] = {
     "PDV": frozenset(
         {
+            "autorizador",
             "caixa",
+            "cmos",
+            "concentrador",
             "cupom",
             "ecf",
             "funcao",
@@ -55,6 +58,7 @@ MODULE_HINTS: dict[str, frozenset[str]] = {
             "tef",
             "venda",
             "vrcaixa",
+            "vrpdv",
         }
     ),
     "Fiscal": frozenset(

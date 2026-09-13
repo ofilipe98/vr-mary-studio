@@ -1031,11 +1031,11 @@ class ChatOrchestrator:
         """Decide the module fan-out trigger deterministically."""
         if has_images or bundle is None or intent is None:
             return None
-        selected = [
-            item.module
-            for item in bundle.module_routing
-            if item.selected
-        ]
+        ranked_decisions = sorted(
+            [item for item in bundle.module_routing if item.selected],
+            key=lambda item: (-getattr(item, "confidence", 0.0), item.module),
+        )
+        selected = [item.module for item in ranked_decisions]
         deep_request = force_deep or intent.purpose == "implementation" or (
             intent.requested_detail == "very_high"
             and intent.purpose in {"troubleshooting", "training_manual"}
