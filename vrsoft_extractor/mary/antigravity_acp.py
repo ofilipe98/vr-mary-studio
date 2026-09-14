@@ -33,15 +33,51 @@ class AcpError(RuntimeError):
         super().__init__(f"Antigravity: falha em {method}" + (f" (ACP {code})." if code is not None else "."))
 
 
+def find_acp_server(base: Path | str | None) -> Path | None:
+    if not base:
+        return None
+    p = Path(base)
+    server_name = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
+    if p.is_file() and p.name.lower() == server_name.lower():
+        return p
+
+    base_dir = p.parent if p.is_file() or p.suffix else p
+
+    # 1. Direct sibling (for unit-test fixtures or flat portable layouts)
+    direct = base_dir / server_name
+    if direct.is_file():
+        return direct
+
+    # 2. Nested under acp/<version>/ (official Antigravity CLI layout)
+    for parent_dir in (base_dir, base_dir.parent):
+        acp_dir = parent_dir / "acp"
+        if acp_dir.is_dir():
+            matches = [m for m in acp_dir.rglob(server_name) if m.is_file()]
+            if matches:
+                def sort_key(item: Path):
+                    try:
+                        parts = tuple(int(x) for x in item.parent.name.split("."))
+                    except Exception:
+                        parts = ()
+                    return (parts, item.stat().st_mtime)
+                matches.sort(key=sort_key, reverse=True)
+                return matches[0]
+
+    return None
+
+
 def resolve_acp() -> str | None:
     direct = shutil.which("agy_acp_server.exe") or shutil.which("agy_acp_server")
     if direct:
         return direct
     cli = shutil.which("agy.exe") or shutil.which("agy")
-    server_name = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
-    candidates = [Path(cli).with_name(server_name)] if cli else []
-    candidates.append(native_cli_path("antigravity").with_name(server_name))
-    return next((str(p) for p in candidates if p.is_file()), None)
+    candidates = [Path(cli)] if cli else []
+    candidates.append(native_cli_path("antigravity"))
+    for candidate in candidates:
+        found = find_acp_server(candidate)
+        if found and found.is_file():
+            return str(found)
+    return None
 
 
 def profile_path() -> Path:

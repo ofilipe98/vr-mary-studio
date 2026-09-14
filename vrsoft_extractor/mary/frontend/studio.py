@@ -314,6 +314,7 @@ class StudioBridge(QObject):
             env_factory=acp_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
         )
+        self._agy_check_running = False
         self._agy_check_cancel = threading.Event()
         self._agy_check_process = None
         self._agy_check_client = None
@@ -1747,6 +1748,9 @@ class StudioBridge(QObject):
             enabled = self._stored_bool(self._preferences.value(f"providers/{provider}/enabled", True), True)
             command = resolve_acp() if provider == "antigravity" else resolve_cli(provider)
             available = command is not None
+            if available and provider not in self._provider_installs:
+                if self._provider_install_status.get(provider, {}).get('runtimeState') in {'error', 'cancelled'}:
+                    self._provider_install_status.pop(provider, None)
             auth_info = self._antigravity_auth.get_ui_snapshot() if (provider == "antigravity" and hasattr(self, "_antigravity_auth")) else {}
             account_status = auth_info.get("accountStatus", getattr(self, "_agy_account_status", "Conta Google ainda não verificada")) if provider == "antigravity" else "Autenticação gerenciada pelo CLI"
             checking = provider == "antigravity" and getattr(self, "_agy_check_running", False)
