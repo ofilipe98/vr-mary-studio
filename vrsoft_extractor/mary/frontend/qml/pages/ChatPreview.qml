@@ -84,6 +84,9 @@ Item {
     readonly property real sidebarBorderX: conversationSidebarVisible && conversationSidebar.visible
         ? (conversationSidebar.width + 3)
         : 0
+    readonly property real sidebarBorderOffset: conversationSidebarVisible && conversationSidebar.visible
+        ? (conversationSidebar.width + 4)
+        : 0
     readonly property real surfaceBorderOffset: surfaceVisible && surfacePanel.visible
         ? (surfacePanel.width + 4)
         : 0
@@ -280,7 +283,7 @@ Item {
                 enabled: !root.frontendBridge.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
-            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatBorder }
+            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatBorder; visible: root.width < 760 }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -749,11 +752,11 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
-                anchors.bottom: taskBar.visible ? taskBar.top : composerCard.top
+                anchors.bottom: taskBar.visible ? taskBar.top : parent.bottom
                 anchors.leftMargin: chatMain.width < 600 ? 14 : 24
                 anchors.rightMargin: chatMain.width < 600 ? 14 : 24
                 anchors.topMargin: 20
-                anchors.bottomMargin: 10
+                anchors.bottomMargin: taskBar.visible ? 10 : (root.expertStripHeight + 36 + composerCard.normalHeight + 10)
                 visible: count > 0
                 clip: true
                 // Keep actual message geometry stable across the entire history.
@@ -828,7 +831,7 @@ Item {
                 onContentYChanged: {
                     if (holdingReader && !followTail && contentY !== readerY)
                         Qt.callLater(restoreReader)
-                    if (!followTail && (atYEnd || (contentHeight - height - contentY) <= 24)) {
+                    if (!followTail && (atYEnd || (contentHeight - height - contentY) <= 4)) {
                         followTail = true
                     }
                 }
@@ -845,7 +848,7 @@ Item {
                     duration: 120
                     easing.type: Easing.OutCubic
                     onFinished: {
-                        if (messageList.atYEnd || (messageList.contentHeight - messageList.height - messageList.contentY) <= 24) {
+                        if (messageList.atYEnd || (messageList.contentHeight - messageList.height - messageList.contentY) <= 4) {
                             messageList.followTail = true
                             messageList.positionViewAtEnd()
                         }
@@ -869,12 +872,12 @@ Item {
                         var top = messageList.originY
                         var bottom = top + Math.max(0, messageList.contentHeight - messageList.height)
                         var destination = Math.max(top, Math.min(bottom, start - delta))
-                        if (destination >= bottom - 24) {
+                        if (destination >= bottom - 4) {
                             messageList.followTail = true
                         }
                         if (precise) {
                             messageList.contentY = destination
-                            if (destination < bottom - 24) messageList.followTail = false
+                            if (destination < bottom - 4) messageList.followTail = false
                         } else {
                             wheelAnimation.from = messageList.contentY
                             wheelAnimation.to = destination
@@ -1041,7 +1044,7 @@ Item {
                 property bool shouldShow: messageList.visible
                     && messageList.count > 0
                     && !messageList.followTail
-                    && (messageList.contentHeight - messageList.height - messageList.contentY > 24)
+                    && (messageList.contentHeight - messageList.height - messageList.contentY > 4)
                 visible: opacity > 0.001
                 opacity: shouldShow ? 1.0 : 0.0
                 scale: shouldShow ? 1.0 : 0.88

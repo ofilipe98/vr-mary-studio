@@ -64,6 +64,7 @@ ApplicationWindow {
             id: titleBar
             window: window
             chatPage: chatLoader.item
+            hubPage: hubLoader.item
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right

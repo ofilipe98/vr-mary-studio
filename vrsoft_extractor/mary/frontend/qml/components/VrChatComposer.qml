@@ -11,16 +11,21 @@ Rectangle {
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
     property alias modelSelectorItem: modelSelector
-    readonly property bool isScrolledUp: {
-        var list = composerCard.page.messageListHandle
-        if (!list || list.count === 0) return false
-        if (list.followTail) return false
+    readonly property bool isAtBottom: {
+        var list = composerCard.page ? composerCard.page.messageListHandle : null
+        if (!list || list.count === 0) return true
+        if (list.contentHeight <= list.height) return true
+        if (list.atYEnd) return true
         var dist = list.contentHeight - list.height - list.contentY
-        if (dist <= 24 || list.atYEnd) return false
-        return true
+        return dist <= 4
     }
-    property bool isCompact: !composerInput.activeFocus
-        && (composerCard.page.chatBridge.turnRunning || isScrolledUp)
+    readonly property bool isScrolledUp: {
+        var list = composerCard.page ? composerCard.page.messageListHandle : null
+        if (!list || list.count === 0) return false
+        return !isAtBottom
+    }
+    property bool isCompact: composerCard.page && composerCard.page.messageListHandle && composerCard.page.messageListHandle.count > 0
+        && (!isAtBottom || (composerCard.page.chatBridge.turnRunning && !composerInput.activeFocus))
     readonly property bool hasChips: (composerCard.page.chatBridge.attachments.length > 0) || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
     readonly property bool hasImageAttachments: {
         var list = composerCard.page.chatBridge.attachments || []
@@ -44,14 +49,16 @@ Rectangle {
     readonly property real skillsAreaHeight: hasSkills ? 34 : 0
     readonly property real chipAreaHeight: attachmentsAreaHeight + skillsAreaHeight
 
-    readonly property real normalHeight: composerScroll.height + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + 54
+    readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
+        composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + 54
     readonly property real compactHeight: 46
 
     objectName: "chatComposerCard"
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: composerCard.page.messageListHandle.count > 0 ? parent.bottom : undefined
     anchors.bottomMargin: composerCard.page.messageListHandle.count > 0 ? (composerCard.page.expertStripHeight + 36) : 0
-    y: composerCard.page.messageListHandle.count > 0 ? undefined
+    y: composerCard.page.messageListHandle.count > 0 ? 0
         : Math.max(composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 32,
             (parent.height + composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 24 - height - composerCard.page.expertStripHeight) / 2)
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
@@ -67,6 +74,8 @@ Rectangle {
 
     Behavior on height {
         enabled: !composerCard.page.frontendBridge.reduceMotion
+            && composerCard.isAtBottom
+            && !composerCard.isCompact
         NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
     }
     Behavior on y {
@@ -267,14 +276,20 @@ Rectangle {
 
         Behavior on height {
             enabled: !composerCard.page.frontendBridge.reduceMotion
+                && composerCard.isAtBottom
+                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         Behavior on anchors.topMargin {
             enabled: !composerCard.page.frontendBridge.reduceMotion
+                && composerCard.isAtBottom
+                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         Behavior on anchors.rightMargin {
             enabled: !composerCard.page.frontendBridge.reduceMotion
+                && composerCard.isAtBottom
+                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         ScrollBar.vertical: VrScrollBar {
@@ -292,6 +307,12 @@ Rectangle {
             verticalAlignment: composerCard.isCompact ? TextEdit.AlignVCenter : TextEdit.AlignTop
             background: Item { }
             onTextChanged: composerCard.page.composerAssistDelayHandle.restart()
+            onActiveFocusChanged: {
+                if (activeFocus && composerCard.isCompact && composerCard.page.messageListHandle) {
+                    composerCard.page.messageListHandle.followTail = true
+                    composerCard.page.messageListHandle.positionViewAtEnd()
+                }
+            }
             Keys.priority: Keys.BeforeItem
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Paste) && composerCard.page.chatBridge.pasteClipboardAttachment())
@@ -377,6 +398,8 @@ Rectangle {
         opacity: composerCard.isCompact ? 0.0 : 1.0
         Behavior on opacity {
             enabled: !composerCard.page.frontendBridge.reduceMotion
+                && composerCard.isAtBottom
+                && !composerCard.isCompact
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
         flickableDirection: Flickable.HorizontalFlick

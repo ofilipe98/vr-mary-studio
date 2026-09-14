@@ -14,6 +14,9 @@ Item {
     readonly property bool settingsActive: frontend.currentPage === 7
     readonly property SettingsPage loadedSettings: settingsPageLoader.item as SettingsPage
     readonly property bool compactSettings: settingsActive && root.width < 980
+    readonly property real sidebarBorderOffset: (!compactSettings && settingsNavigation && settingsNavigation.visible)
+        ? (settingsNavigation.width + 4)
+        : 0
     readonly property bool settingsSearching: settingsActive
         && settingsSearch.trim().length > 0
     readonly property var settingsSearchItems: [
@@ -173,8 +176,8 @@ Item {
                     ? Theme.palette.brandOrange
                     : SplitHandle.hovered
                         ? Theme.palette.focus
-                        : Theme.palette.navDivider
-                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 0.55
+                        : Theme.palette.chatBorder
+                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 1.0
 
                 Behavior on color {
                     enabled: !frontend.reduceMotion
@@ -204,6 +207,7 @@ Item {
         }
 
         Rectangle {
+            id: settingsNavigation
             objectName: "settingsNavigation"
             visible: !root.compactSettings
             SplitView.minimumWidth: 220

@@ -44,7 +44,7 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
     studio = StudioBridge(settings, db, prefs)
     window = None
     try:
-        with patch.object(chat, 'refreshModels'):
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
             engine = create_engine(frontend, chat, studio)
             window = engine.rootObjects()[0]
             window.setWidth(1366)
@@ -114,6 +114,52 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation('ExpandAtBottom', 'codex', 'test', settings.root)
+    for i in range(10):
+        db.add_message(cid, 'user' if i % 2 else 'assistant', ('Mensagem no historico.\n\n' * 5))
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            window.setWidth(1000)
+            window.setHeight(600)
+            QTest.qWait(350)
+            timeline = window.findChild(QObject, 'messageList')
+            composer = window.findChild(QObject, 'chatComposerCard')
+
+            # 1. Scrolled up (e.g. 50px before bottom): composer must remain compact
+            max_y = timeline.property('contentHeight') - timeline.property('height')
+            timeline.setProperty('followTail', False)
+            timeline.setProperty('contentY', max_y - 60)
+            QTest.qWait(100)
+            assert not composer.property('isAtBottom')
+            assert composer.property('isCompact')
+            assert abs(composer.property('height') - composer.property('compactHeight')) < 1
+
+            # 2. Reaching the bottom of the page: composer expands
+            timeline.positionViewAtEnd()
+            timeline.setProperty('followTail', True)
+            QTest.qWait(300)
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+            assert abs(composer.property('height') - composer.property('normalHeight')) < 2
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window is not None:
             window.close()
         studio.close()
         chat.close()

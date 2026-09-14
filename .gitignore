@@ -18,6 +18,7 @@ dist/
 build/
 releases/
 /VRProject/
+*.rar
 
 # Generated audit, benchmark and visual-review output.
 /reports/

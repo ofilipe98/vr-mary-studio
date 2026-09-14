@@ -10,17 +10,20 @@ Item {
     objectName: "vrTitleBar"
     property Window window: null
     property var chatPage: null
+    property var hubPage: null
     implicitHeight: 36
 
     readonly property bool isChatPage: typeof frontend !== "undefined" && frontend && frontend.currentPage === 1
     readonly property bool hasSidebar: isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760)
-        : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980)
+        : (root.hubPage ? root.hubPage.sidebarBorderOffset > 0 : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980))
     readonly property real sidebarWidth: isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760
-            ? root.chatPage.conversationSidebarWidth
+            ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : 264))
             : 0)
-        : (hasSidebar ? 260 : 0)
+        : (root.hubPage && root.hubPage.sidebarBorderOffset > 0
+            ? root.hubPage.sidebarBorderOffset
+            : (hasSidebar ? 264 : 0))
     readonly property real surfaceWidth: isChatPage
         ? (root.chatPage && root.chatPage.surfaceVisible && root.chatPage.width >= 1000
             ? (root.chatPage.surfaceBorderOffset > 0 ? root.chatPage.surfaceBorderOffset : root.chatPage.surfacePanelWidth + 4)
@@ -73,7 +76,7 @@ Item {
         anchors.right: surfacePanelBg.visible ? surfacePanelBg.left : parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        color: root.isChatPage ? Theme.palette.chatBackground : Theme.palette.background
+        color: Theme.palette.chatBackground
     }
 
 
@@ -360,7 +363,7 @@ Item {
                 Rectangle {
                     x: 0; y: 2
                     width: 7; height: 7
-                    color: maxHover.hovered ? Theme.palette.chatControl : (surfacePanelBg.visible ? Theme.palette.chatSidebar : (root.isChatPage ? Theme.palette.chatBackground : Theme.palette.background))
+                    color: maxHover.hovered ? Theme.palette.chatControl : (surfacePanelBg.visible ? Theme.palette.chatSidebar : Theme.palette.chatBackground)
                     border.width: 1
                     border.color: Theme.palette.text
                 }
