@@ -7,8 +7,9 @@ from unittest.mock import patch
 from visual_chat_review import (
     QApplication, QSettings, QObject, QTest, MarySettings, MaryDatabase,
     FrontendBridge, ChatBridge, StudioBridge, create_engine,
-    _apply_application_font, repaint_icons, find_items, Qt, QPoint,
+    _apply_application_font, repaint_icons, find_items,
 )
+from PySide6.QtCore import Qt, QPoint
 
 
 def main():

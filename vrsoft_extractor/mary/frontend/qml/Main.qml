@@ -3,9 +3,11 @@ import QtQuick.Controls
 import QtQuick.Window
 import "pages"
 import "theme"
+import "components"
 
 ApplicationWindow {
     id: window
+    flags: Qt.Window | Qt.FramelessWindowHint
 
     // QHD and 4K monitors: grow with the screen, capped for comfortable use.
     width: Math.max(minimumWidth, Math.min(Screen.desktopAvailableWidth * 0.88, 1760))
@@ -14,7 +16,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
     title: frontend.appName
-    color: Theme.palette.background
+    color: "transparent"
     font.family: Theme.fontFamily
     font.pixelSize: Theme.bodySize
 
@@ -49,46 +51,76 @@ ApplicationWindow {
         if (studio) studio.activatePage(frontend.currentPage)
     }
 
-    Loader {
-        id: chatLoader
+    Rectangle {
+        id: windowRoot
         anchors.fill: parent
-        active: window.chatVisited || frontend.currentPage === 1
-        visible: active && frontend.currentPage === 1
-        opacity: frontend.currentPage === 1 ? 1 : 0
-        sourceComponent: chatComponent
+        radius: (window.visibility === Window.Maximized || window.visibility === Window.FullScreen) ? 0 : 10
+        color: Theme.palette.background
+        border.width: (window.visibility === Window.Maximized || window.visibility === Window.FullScreen) ? 0 : 1
+        border.color: Theme.palette.chatBorder
+        clip: true
 
-        transform: Translate {
-            y: frontend.currentPage === 1 ? 0 : Theme.motionDistance
-            Behavior on y {
+        VrTitleBar {
+            id: titleBar
+            window: window
+            chatPage: chatLoader.item
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            z: 9999
+        }
+
+        Loader {
+            id: chatLoader
+            anchors.top: titleBar.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            active: window.chatVisited || frontend.currentPage === 1
+            visible: active && frontend.currentPage === 1
+            opacity: frontend.currentPage === 1 ? 1 : 0
+            sourceComponent: chatComponent
+
+            transform: Translate {
+                y: frontend.currentPage === 1 ? 0 : Theme.motionDistance
+                Behavior on y {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
                 enabled: !frontend.reduceMotion
                 NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
             }
         }
-        Behavior on opacity {
-            enabled: !frontend.reduceMotion
-            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+
+        Loader {
+            id: hubLoader
+            anchors.top: titleBar.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            active: window.hubVisited || frontend.currentPage !== 1
+            visible: active && frontend.currentPage !== 1
+            opacity: frontend.currentPage !== 1 ? 1 : 0
+            sourceComponent: settingsHubComponent
+
+            transform: Translate {
+                y: frontend.currentPage !== 1 ? 0 : Theme.motionDistance
+                Behavior on y {
+                    enabled: !frontend.reduceMotion
+                    NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+                }
+            }
+            Behavior on opacity {
+                enabled: !frontend.reduceMotion
+                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
+            }
         }
     }
 
-    Loader {
-        id: hubLoader
-        anchors.fill: parent
-        active: window.hubVisited || frontend.currentPage !== 1
-        visible: active && frontend.currentPage !== 1
-        opacity: frontend.currentPage !== 1 ? 1 : 0
-        sourceComponent: settingsHubComponent
-
-        transform: Translate {
-            y: frontend.currentPage !== 1 ? 0 : Theme.motionDistance
-            Behavior on y {
-                enabled: !frontend.reduceMotion
-                NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
-            }
-        }
-        Behavior on opacity {
-            enabled: !frontend.reduceMotion
-            NumberAnimation { duration: Theme.pageDuration; easing.type: Easing.OutCubic }
-        }
+    VrResizeBorders {
+        window: window
     }
 
     Popup {
@@ -96,7 +128,7 @@ ApplicationWindow {
         property string message: ""
         property string kind: "success"
         x: window.width - width - 24
-        y: 20
+        y: titleBar.height + 12
         width: Math.min(440, window.width - 48)
         height: toastText.implicitHeight + 28
         padding: 14

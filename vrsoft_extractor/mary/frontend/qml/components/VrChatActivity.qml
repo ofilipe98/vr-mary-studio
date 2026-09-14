@@ -78,16 +78,23 @@ Rectangle {
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
-
-
             }
 
             HoverHandler { id: activityHover }
             TapHandler { onTapped: root.toggleRequested() }
         }
 
+        // Horizontal hairline separator below header (target: T3 Code)
+        Rectangle {
+            visible: (root.expanded || root.running) && root.items && root.items.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: Theme.palette.chatBorder
+            opacity: 0.6
+        }
+
         ColumnLayout {
-            visible: root.expanded
+            visible: root.expanded || (root.running && root.items && root.items.length > 0)
             Layout.fillWidth: true
             Layout.leftMargin: 7
             spacing: 3
@@ -108,7 +115,7 @@ Rectangle {
             }
 
             Rectangle {
-                visible: root.hiddenCount > 0
+                visible: root.hiddenCount > 0 && root.expanded
                 Layout.fillWidth: true
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
@@ -226,31 +233,33 @@ Rectangle {
                     border.width: activeFocus ? 1 : 0
                     border.color: Theme.palette.focus
                     Layout.fillWidth: true
-                    Layout.leftMargin: 10
+                    Layout.leftMargin: 6
                     Layout.preferredHeight: 27
                     radius: 7
                     color: actionHover.hovered ? Theme.palette.hover : "transparent"
+                    clip: true
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 2
-                        anchors.rightMargin: 2
+                        anchors.leftMargin: 4
+                        anchors.rightMargin: 4
                         spacing: 8
 
                         VrLineIcon {
-                            Layout.preferredWidth: 13
-                            Layout.preferredHeight: 13
+                            Layout.preferredWidth: 14
+                            Layout.preferredHeight: 14
                             kind: root.itemIcon(actionRoot.modelData)
                             foreground: actionRoot.modelData.state === "running"
-                                ? Theme.palette.brandOrange : Theme.palette.mutedText
+                                ? Theme.palette.text : Theme.palette.mutedText
                         }
 
                         Text {
                             Layout.fillWidth: true
                             text: String(actionRoot.modelData.text || "Atividade")
-                            color: Theme.palette.mutedText
+                            color: actionRoot.modelData.state === "running"
+                                ? Theme.palette.text : Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.captionSize
+                            font.pixelSize: Theme.fontSize(12)
                             font.weight: actionRoot.modelData.state === "running"
                                 ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
@@ -262,6 +271,40 @@ Rectangle {
                             Layout.preferredHeight: 11
                             kind: actionRoot.detailExpanded ? "chevronDown" : "chevronRight"
                             foreground: Theme.palette.mutedText
+                        }
+                    }
+
+                    // Specular highlight shimmer animation on running tool call (target: T3 Code)
+                    Rectangle {
+                        id: specularShimmer
+                        anchors.fill: parent
+                        radius: parent.radius
+                        clip: true
+                        color: "transparent"
+                        visible: actionRoot.modelData.state === "running"
+
+                        Rectangle {
+                            id: shimmerBeam
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: Math.max(120, parent.width * 0.4)
+                            x: -width
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "transparent" }
+                                GradientStop { position: 0.35; color: Qt.rgba(255, 255, 255, 0.0) }
+                                GradientStop { position: 0.5; color: Qt.rgba(255, 255, 255, 0.28) }
+                                GradientStop { position: 0.65; color: Qt.rgba(255, 255, 255, 0.0) }
+                                GradientStop { position: 1.0; color: "transparent" }
+                            }
+                            NumberAnimation on x {
+                                running: actionRoot.modelData.state === "running"
+                                from: -shimmerBeam.width
+                                to: specularShimmer.width + shimmerBeam.width
+                                duration: 1500
+                                loops: Animation.Infinite
+                                easing.type: Easing.Linear
+                            }
                         }
                     }
 
@@ -322,35 +365,35 @@ Rectangle {
 
     function headerText() {
         if (root.running) {
-            var st = (root.statusText && root.statusText !== "Pronto" ? root.statusText : "Trabalhando")
-            var count = root.items ? root.items.length : 0
-            return st + (count > 0 ? " (" + count + ")" : "") + " · " + root.elapsedLabel
+            return "Working for " + root.elapsedLabel
         }
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
-        var base = "Trabalhou por " + root.elapsedLabel
-        if (root.items && root.items.length > 0) {
-            var count = root.items.length
-            return base + " (" + count + (count === 1 ? " ação" : " ações") + ")"
-        }
-        return base
+        return "Worked for " + root.elapsedLabel
     }
 
     function itemIcon(item) {
         if (item.state === "error" || item.state === "failed") return "close"
         if (item.state === "completed" || item.state === "success") return "check"
         var itemType = String(item.itemType || "")
-        if (itemType === "commandExecution") return "terminal"
-        if (itemType === "webSearch" || itemType === "web_search") return "search"
-        if (itemType === "fileChange") return "edit"
+        var text = String(item.text || "").toLowerCase()
+        if (itemType === "commandExecution" || text.indexOf("command") >= 0 || text.indexOf("terminal") >= 0) return "terminal"
+        if (itemType === "webSearch" || itemType === "web_search" || text.indexOf("search") >= 0) return "search"
+        if (itemType === "fileChange" || text.indexOf("edit") >= 0 || text.indexOf("write") >= 0) return "edit"
+        if (itemType === "fileRead" || text.indexOf("view") >= 0 || text.indexOf("read") >= 0 || text.indexOf(".qml") >= 0 || text.indexOf(".py") >= 0 || text.indexOf(".json") >= 0) return "eye"
         if (String(item.kind || "") === "status") return "task"
-        return "auto"
+        return "eye"
     }
 
     function visibleItems() {
         if (root.logExpanded || root.items.length <= root.recentCount)
             return root.items
+        if (!root.expanded && root.running) {
+            var runningItems = root.items.filter(function(i) { return i.state === "running" })
+            if (runningItems.length > 0) return runningItems
+            return root.items.slice(-1)
+        }
         return root.items.slice(root.items.length - root.recentCount)
     }
 }

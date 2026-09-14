@@ -180,7 +180,7 @@ def synthesize_palette_from_seed(canvas: str, accent: str, appearance: str) -> d
         "chatComposer": surface_col.name() if is_dark else "#ffffff",
         "chatControl": raised_col.name(),
         "chatBorder": border_col.name(),
-        "chatDivider": surface_col.name(),
+        "chatDivider": border_col.name(),
         "messageSurface": surface_col.name(),
         "codeSurface": canvas_col.darker(110).name() if is_dark else surface_col.name(),
         "codeHeader": surface_col.name(),

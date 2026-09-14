@@ -21,10 +21,13 @@ Button {
         return "auto"
     }
 
-    implicitHeight: Theme.compactControlHeight
-    implicitWidth: Math.max(106, compactRow.implicitWidth + 14)
-    leftPadding: 7
-    rightPadding: 7
+    property bool compact: false
+    implicitHeight: compact ? 26 : Theme.compactControlHeight
+    implicitWidth: compact
+        ? (compactRow.implicitWidth + leftPadding + rightPadding)
+        : Math.max(106, compactRow.implicitWidth + 14)
+    leftPadding: compact ? 6 : 7
+    rightPadding: compact ? 6 : 7
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
@@ -38,29 +41,31 @@ Button {
 
     contentItem: RowLayout {
         id: compactRow
-        spacing: 7
+        spacing: control.compact ? 5 : 7
         VrLineIcon {
-            Layout.preferredWidth: 16
-            Layout.preferredHeight: 16
+            Layout.preferredWidth: control.compact ? 13 : 16
+            Layout.preferredHeight: control.compact ? 13 : 16
             kind: control.permissionIconKind(control.currentItem.value)
             foreground: Theme.palette.mutedText
         }
         Text {
             text: control.currentItem.label || "Auto"
-            color: Theme.palette.text
+            color: control.compact
+                ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
+                : Theme.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(13)
         }
         VrLineIcon {
-            Layout.preferredWidth: 13
-            Layout.preferredHeight: 13
+            Layout.preferredWidth: control.compact ? 10 : 13
+            Layout.preferredHeight: control.compact ? 10 : 13
             kind: "chevronDown"
             foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
-        radius: 8
+        radius: control.compact ? 6 : 8
         color: control.down || control.hovered || optionsPopup.opened
             ? Theme.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0

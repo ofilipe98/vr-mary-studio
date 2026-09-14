@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 import "../theme"
+import "../settings/appearance"
 
 Item {
     id: root
@@ -27,421 +28,343 @@ Item {
         contentWidth: availableWidth
         topPadding: 4
         rightPadding: 12
-        bottomPadding: 20
+        bottomPadding: 24
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-        ColumnLayout {
+        Item {
             width: settingsScroll.availableWidth
-            spacing: 16
+            implicitHeight: vrUltraColumn.implicitHeight
 
-            // Header
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                spacing: 12
+            ColumnLayout {
+                id: vrUltraColumn
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(848, parent.width)
+                spacing: 24
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusSmall
-                    color: Theme.palette.codeSurface
-                    border.width: 1
-                    border.color: Theme.palette.chatBorder
-
-                    VrLineIcon {
-                        anchors.centerIn: parent
-                        width: 18
-                        height: 18
-                        kind: "models"
-                        foreground: Theme.palette.brandOrange
-                    }
-                }
-
-                ColumnLayout {
+                VrRetrievalSettings {
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    spacing: 2
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: "VR Ultra · Agentes Especialistas"
-                        color: Theme.palette.headingText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(16)
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: "Modelos dos pesquisadores base, perfil especialista sênior e contexto de código para o Ultra."
-                        color: Theme.palette.subtleText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: Text.WordWrap
-                    }
+                    bridge: chat.retrievalSettings
                 }
-            }
 
-            VrRetrievalSettings {
-                Layout.fillWidth: true
-                bridge: chat.retrievalSettings
-            }
-
-            // Orchestrator banner
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                implicitHeight: 42
-                radius: Theme.radiusSmall
-                color: Theme.palette.codeSurface
-                border.width: 1
-                border.color: Theme.palette.chatBorder
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Theme.spaceMd
-                    anchors.rightMargin: Theme.spaceMd
-                    spacing: Theme.spaceSm
-
-                    VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
-                        kind: "models"
-                        foreground: Theme.palette.brandOrange
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: "Orquestrador: definido pelo seletor de provedor/modelo no compositor do Chat VR"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        elide: Text.ElideRight
-                    }
-                }
-            }
-
-            // Section 1: Perfil especialista sênior
-            VrProviderSection {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                title: "Perfil Especialista Sênior"
-            }
-
-            Rectangle {
-                objectName: "vrUltraSeniorProfileCard"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                implicitHeight: vrUltraSeniorProfileCardContent.implicitHeight
-                color: "transparent"
-                border.width: 0
-
-                ColumnLayout {
-                    id: vrUltraSeniorProfileCardContent
-                    anchors.fill: parent
-                    spacing: 12
-
-                    VrSettingsRow {
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 3
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Ativar perfil especialista sênior"
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Aplica diretrizes de nível sênior em suporte, treinamento e implantação VR."
-                                color: Theme.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        VrSwitch {
-                            subdued: true
-                            Layout.alignment: Qt.AlignRight
-                            objectName: "vrUltraSeniorProfileToggle"
-                            Accessible.name: "Ativar perfil especialista sênior"
-                            checked: chat.seniorProfileEnabled
-                            onToggled: chat.setSeniorProfileEnabled(checked)
-                        }
-                    }
+                // Orchestrator banner
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 46
+                    radius: 14
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
 
                     RowLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 8
-                        enabled: chat.seniorProfileEnabled
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 12
+
+                        VrLineIcon {
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            kind: "models"
+                            foreground: Theme.palette.brandOrange
+                        }
 
                         Text {
-                            text: "Modo"
-                            color: chat.seniorProfileEnabled ? Theme.palette.headingText : Theme.palette.mutedText
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: "Orquestrador: definido pelo seletor de provedor/modelo no compositor do Chat VR"
+                            color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: Font.DemiBold
-                            Layout.preferredWidth: 60
+                            font.pixelSize: Theme.fontSize(12)
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                // Section 1: Perfil especialista sênior
+                Text {
+                    text: "Perfil especialista sênior"
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
+                }
+
+                Rectangle {
+                    objectName: "vrUltraSeniorProfileCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    implicitHeight: vrUltraSeniorProfileCardContent.implicitHeight + 2
+                    radius: 14
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
+
+                    ColumnLayout {
+                        id: vrUltraSeniorProfileCardContent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 1
+                        spacing: 0
+
+                        AppearanceRow {
+                            title: "Ativar perfil especialista sênior"
+                            description: "Aplica diretrizes de nível sênior em suporte, treinamento e implantação VR."
+                            divider: true
+
+                            VrSwitch {
+                                subdued: true
+                                objectName: "vrUltraSeniorProfileToggle"
+                                Accessible.name: "Ativar perfil especialista sênior"
+                                checked: chat.seniorProfileEnabled
+                                onToggled: chat.setSeniorProfileEnabled(checked)
+                            }
                         }
 
-                        VrComboBox {
-                            id: vrResponseModePicker
-                            objectName: "vrUltraResponseModePicker"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: 38
-                            enabled: chat.seniorProfileEnabled
-                            model: [
-                                { "label": "Automático — detecta a melhor abordagem pelo contexto", "value": "auto" },
-                                { "label": "Treinamento — foco didático, passo a passo e regras de negócio", "value": "training" },
-                                { "label": "Suporte — diagnóstico ágil, causa raiz e ação corretiva", "value": "support" },
-                                { "label": "Implantação — homologação, pré-requisitos e validações", "value": "implementation" }
-                            ]
-                            textRole: "label"
-                            currentIndex: {
-                                var current = chat.vrResponseMode
-                                for (var index = 0; index < model.length; ++index) {
-                                    if (model[index].value === current) return index
+                        AppearanceRow {
+                            title: "Modo de resposta"
+                            description: "Direcionamento comportamental das respostas do especialista."
+                            divider: false
+
+                            VrComboBox {
+                                id: vrResponseModePicker
+                                objectName: "vrUltraResponseModePicker"
+                                Layout.preferredWidth: 320
+                                implicitHeight: 34
+                                enabled: chat.seniorProfileEnabled
+                                model: [
+                                    { "label": "Automático — detecta a melhor abordagem pelo contexto", "value": "auto" },
+                                    { "label": "Treinamento — foco didático, passo a passo e regras de negócio", "value": "training" },
+                                    { "label": "Suporte — diagnóstico ágil, causa raiz e ação corretiva", "value": "support" },
+                                    { "label": "Implantação — homologação, pré-requisitos e validações", "value": "implementation" }
+                                ]
+                                textRole: "label"
+                                currentIndex: {
+                                    var current = chat.vrResponseMode
+                                    for (var index = 0; index < model.length; ++index) {
+                                        if (model[index].value === current) return index
+                                    }
+                                    return 0
                                 }
-                                return 0
-                            }
-                            onActivated: index => {
-                                if (index >= 0 && index < model.length)
-                                    chat.setVrResponseMode(model[index].value)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Section 2: Pool de pesquisadores
-            VrProviderSection {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                title: "Pool de Pesquisadores"
-            }
-
-            Rectangle {
-                objectName: "vrUltraAgentPool"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                implicitHeight: vrUltraAgentPoolContent.implicitHeight
-                color: "transparent"
-                border.width: 0
-
-                ColumnLayout {
-                    id: vrUltraAgentPoolContent
-                    anchors.fill: parent
-                    spacing: 12
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 10
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 2
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Pool de pesquisadores"
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "A mesma escolha é usada pelos três pesquisadores base e pelo worker opcional de código."
-                                color: Theme.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.preferredWidth: 84
-                            Layout.preferredHeight: 26
-                            radius: Theme.radiusSmall
-                            color: Qt.rgba(1.0, 0.45, 0.0, 0.12)
-                            border.width: 1
-                            border.color: Qt.rgba(1.0, 0.45, 0.0, 0.3)
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: chat.codeAnalysisEnabled ? "4 agentes" : "3 agentes"
-                                color: Theme.palette.brandOrange
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                font.weight: Font.DemiBold
-                            }
-                        }
-                    }
-
-                    VrModelPicker {
-                        id: agentModelPicker
-                        objectName: "vrUltraAgentModelPicker"
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        implicitHeight: 42
-                        outlined: true
-                        popupAbove: false
-                        model: chat.modelItems
-                        currentIndex: root.selectedModelIndex
-                        onActivated: index => chat.setResearchModels([chat.modelItems[index].key])
-                        onFavoriteToggled: index => chat.toggleModelFavorite(index)
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: chat.researchModelKeys.length
-                            ? "Os agentes usarão " + (agentModelPicker.currentItem.displayName
-                                || agentModelPicker.currentItem.label || "o modelo selecionado") + "."
-                            : "Selecione o modelo dos agentes do VR Ultra."
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: Text.WordWrap
-                    }
-                }
-            }
-
-            // Section 3: Contexto de Código e Aplicativo no VR Ultra
-            VrProviderSection {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                title: "Contexto de Código no VR Ultra"
-            }
-
-            Rectangle {
-                objectName: "vrUltraCodeAnalysisCard"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                implicitHeight: vrUltraCodeAnalysisCardContent.implicitHeight
-                color: "transparent"
-                border.width: 0
-
-                ColumnLayout {
-                    id: vrUltraCodeAnalysisCardContent
-                    anchors.fill: parent
-                    spacing: 12
-
-                    VrSettingsRow {
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 3
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Análise de código JAR"
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Consulta os aplicativos, versões e origens selecionados após os outros agentes delimitarem o escopo."
-                                color: Theme.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        VrSwitch {
-                            subdued: true
-                            Layout.alignment: Qt.AlignRight
-                            objectName: "vrUltraCodeAnalysisToggle"
-                            Accessible.name: "Análise de código JAR"
-                            checked: chat.codeAnalysisEnabled
-                            enabled: checked || chat.ultraApplicationContextsReady
-                            onToggled: chat.setCodeAnalysisEnabled(checked)
-                        }
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: chat.ultraApplicationContexts.length ? "Aplicativos incluídos na próxima análise:" : "Selecione uma versão, variante e origem em Aplicativos e versões e clique em Usar no Ultra."
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: Text.WordWrap
-                    }
-                    Repeater {
-                        model: chat.ultraApplicationContexts
-                        delegate: ColumnLayout {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            Text {
-                                Layout.fillWidth: true
-                                text: modelData.label
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                wrapMode: Text.WrapAnywhere
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                visible: text.length > 0
-                                text: modelData.warning
-                                color: Theme.palette.warning
-                                font.family: Theme.fontFamily
-                                wrapMode: Text.WordWrap
-                            }
-                            VrButton {
-                                text: "Remover do contexto"
-                                variant: "secondary"
-                                onClicked: chat.removeApplicationContext(modelData.app_id)
-                            }
-                        }
-                    }
-                    VrButton {
-                        objectName: "vrUltraManageAppsButton"
-                        text: "Gerenciar aplicativos…"
-                        variant: "secondary"
-                        onClicked: {
-                            root.openApplicationsRequested()
-                            var p = root.parent
-                            while (p) {
-                                if (p.hasOwnProperty("tabIndex") || p.tabIndex !== undefined) {
-                                    p.tabIndex = 3
-                                    break
+                                onActivated: index => {
+                                    if (index >= 0 && index < model.length)
+                                        chat.setVrResponseMode(model[index].value)
                                 }
-                                p = p.parent
+                                background: Rectangle {
+                                    radius: 8
+                                    color: Theme.palette.codeSurface
+                                    border.width: vrResponseModePicker.activeFocus ? 2 : 1
+                                    border.color: vrResponseModePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
+                                }
                             }
                         }
                     }
-
                 }
-            }
 
-            Item { Layout.preferredHeight: 16 }
+                // Section 2: Pool de pesquisadores
+                Text {
+                    text: "Pool de pesquisadores"
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
+                }
+
+                Rectangle {
+                    objectName: "vrUltraAgentPool"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    implicitHeight: vrUltraAgentPoolContent.implicitHeight + 2
+                    radius: 14
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
+
+                    ColumnLayout {
+                        id: vrUltraAgentPoolContent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 1
+                        spacing: 0
+
+                        AppearanceRow {
+                            title: "Modelo dos pesquisadores"
+                            description: chat.researchModelKeys.length
+                                ? "Os agentes usarão " + (agentModelPicker.currentItem.displayName || agentModelPicker.currentItem.label || "o modelo selecionado") + "."
+                                : "A mesma escolha é usada pelos três pesquisadores base e pelo worker opcional de código."
+                            divider: false
+
+                            RowLayout {
+                                spacing: 8
+                                Layout.alignment: Qt.AlignRight
+
+                                Rectangle {
+                                    Layout.preferredWidth: 84
+                                    Layout.preferredHeight: 28
+                                    radius: 8
+                                    color: Qt.rgba(1.0, 0.45, 0.0, 0.12)
+                                    border.width: 1
+                                    border.color: Qt.rgba(1.0, 0.45, 0.0, 0.3)
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: chat.codeAnalysisEnabled ? "4 agentes" : "3 agentes"
+                                        color: Theme.palette.brandOrange
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSize(12)
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+
+                                VrModelPicker {
+                                    id: agentModelPicker
+                                    objectName: "vrUltraAgentModelPicker"
+                                    Layout.preferredWidth: 260
+                                    implicitHeight: 34
+                                    outlined: true
+                                    popupAbove: false
+                                    model: chat.modelItems
+                                    currentIndex: root.selectedModelIndex
+                                    onActivated: index => chat.setResearchModels([chat.modelItems[index].key])
+                                    onFavoriteToggled: index => chat.toggleModelFavorite(index)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 3: Contexto de Código e Aplicativo no VR Ultra
+                Text {
+                    text: "Contexto de código no VR Ultra"
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
+                }
+
+                Rectangle {
+                    objectName: "vrUltraCodeAnalysisCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    implicitHeight: vrUltraCodeAnalysisCardContent.implicitHeight + 2
+                    radius: 14
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
+
+                    ColumnLayout {
+                        id: vrUltraCodeAnalysisCardContent
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 1
+                        spacing: 0
+
+                        AppearanceRow {
+                            title: "Análise de código JAR"
+                            description: "Consulta os aplicativos, versões e origens selecionados após os outros agentes delimitarem o escopo."
+                            divider: true
+
+                            VrSwitch {
+                                subdued: true
+                                objectName: "vrUltraCodeAnalysisToggle"
+                                Accessible.name: "Análise de código JAR"
+                                checked: chat.codeAnalysisEnabled
+                                enabled: checked || chat.ultraApplicationContextsReady
+                                onToggled: chat.setCodeAnalysisEnabled(checked)
+                            }
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                            implicitHeight: contextCol.implicitHeight + 24
+
+                            ColumnLayout {
+                                id: contextCol
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                anchors.topMargin: 12
+                                anchors.bottomMargin: 12
+                                spacing: 12
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: chat.ultraApplicationContexts.length ? "Aplicativos incluídos na próxima análise:" : "Selecione uma versão, variante e origem em Aplicativos e versões e clique em Usar no Ultra."
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Repeater {
+                                    model: chat.ultraApplicationContexts
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        spacing: 10
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 2
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.label
+                                                color: Theme.palette.headingText
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize(13)
+                                                font.weight: Font.Medium
+                                                wrapMode: Text.WrapAnywhere
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                visible: text.length > 0
+                                                text: modelData.warning
+                                                color: Theme.palette.warning
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize(11)
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+
+                                        VrButton {
+                                            text: "Remover"
+                                            variant: "ghost"
+                                            implicitHeight: 28
+                                            onClicked: chat.removeApplicationContext(modelData.app_id)
+                                        }
+                                    }
+                                }
+
+                                VrButton {
+                                    objectName: "vrUltraManageAppsButton"
+                                    text: "Gerenciar aplicativos…"
+                                    variant: "secondary"
+                                    implicitHeight: 32
+                                    onClicked: {
+                                        root.openApplicationsRequested()
+                                        var p = root.parent
+                                        while (p) {
+                                            if (p.hasOwnProperty("tabIndex") || p.tabIndex !== undefined) {
+                                                p.tabIndex = 3
+                                                break
+                                            }
+                                            p = p.parent
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Item { Layout.preferredHeight: 16 }
+            }
         }
     }
 

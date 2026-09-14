@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
 import "../theme"
+import "../settings/appearance"
 
 Item {
     id: root
@@ -64,69 +65,23 @@ Item {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-        ColumnLayout {
+        Item {
             width: appsScroll.availableWidth
-            spacing: 16
+            implicitHeight: appsColumn.implicitHeight
 
-            // Header Section
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                spacing: 12
+            ColumnLayout {
+                id: appsColumn
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: root.navigationLevel >= 2 ? parent.width : Math.min(848, parent.width)
+                spacing: 24
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusSmall
-                    color: Theme.palette.codeSurface
-                    border.width: 1
-                    border.color: Theme.palette.chatBorder
-
-                    VrLineIcon {
-                        anchors.centerIn: parent
-                        width: 18
-                        height: 18
-                        kind: "files"
-                        foreground: Theme.palette.brandOrange
-                    }
-                }
-
-                ColumnLayout {
+                Text {
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    spacing: 2
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: "Aplicativos e versões"
-                        color: Theme.palette.headingText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(16)
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        text: "Catálogo de aplicativos VR, histórico de versões, pacotes de origem, descompilação e comparação de bytecode."
-                        color: Theme.palette.subtleText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: Text.WordWrap
-                    }
+                    text: chat.applicationsCatalogError
+                    visible: text.length > 0
+                    color: Theme.palette.danger
+                    wrapMode: Text.Wrap
                 }
-            }
-
-            // Top Action Toolbar (Importation & Directory options)
-            Text {
-                Layout.fillWidth: true
-                text: chat.applicationsCatalogError
-                visible: text.length > 0
-                color: Theme.palette.danger
-                wrapMode: Text.Wrap
-            }
             // Refined Application Import Preview Card
             Rectangle {
                 id: importPreviewCard
@@ -682,136 +637,123 @@ Item {
                     }
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.navigationLevel === 0
+                spacing: 8
+
+                Text {
+                    text: "Importação de pacotes e JARs"
+                    Layout.leftMargin: 16
+                    Layout.fillWidth: true
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
+                }
+
+                VrButton {
+                    objectName: "globalDecompileConfigHeaderButton"
+                    text: "Configurações de descompilação"
+                    variant: "ghost"
+                    implicitHeight: 28
+                    enabled: !chat.codeProcessingRunning
+                    onClicked: globalDecompileConfigDialog.open()
+                }
+
+                VrButton {
+                    text: "Atualizar"
+                    variant: "ghost"
+                    implicitHeight: 28
+                    onClicked: chat.refreshApplicationsCatalog()
+                }
+            }
+
             Rectangle {
+                id: appsImportCard
                 objectName: "appsImportCard"
                 visible: root.navigationLevel === 0
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                implicitHeight: importActionsLayout.implicitHeight + 24
-                radius: Theme.radiusSmall
-                color: Theme.palette.codeSurface
+                implicitHeight: importActionsLayout.implicitHeight + 2
+                radius: 14
+                color: Theme.palette.background
                 border.width: 1
-                border.color: Theme.palette.chatBorder
+                border.color: Theme.palette.border
 
                 ColumnLayout {
                     id: importActionsLayout
                     objectName: "vrUltraJarDirectoryCard"
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 1
+                    spacing: 0
 
-                    GridLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        columns: root.width < 800 ? 1 : 3
-                        rowSpacing: 8
-                        columnSpacing: 8
+                    AppearanceRow {
+                        title: "Importação direta"
+                        description: "Importe pacotes compactados, JARs avulsos ou pastas já descompiladas para o catálogo."
+                        divider: true
 
-                        Text {
-                            text: "Importação de Pacotes e JARs"
-                            color: Theme.palette.headingText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: Font.DemiBold
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                        }
+                        Flow {
+                            spacing: 8
+                            Layout.alignment: Qt.AlignRight
 
-                        VrButton {
-                            text: "Importar pacote VR"
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                            variant: "primary"
-                            implicitHeight: 32
-                            onClicked: {
-                                var res = chat.selectAndImportPackage();
-                                if (res) {
-                                    chat.refreshApplicationsCatalog();
+                            VrButton {
+                                text: "Importar pacote VR"
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                variant: "primary"
+                                implicitHeight: 32
+                                onClicked: {
+                                    var res = chat.selectAndImportPackage();
+                                    if (res) {
+                                        chat.refreshApplicationsCatalog();
+                                    }
                                 }
                             }
-                        }
 
-                        VrButton {
-                            text: "Importar JAR avulso"
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                            variant: "secondary"
-                            implicitHeight: 32
-                            onClicked: {
-                                var res = chat.selectAndImportSingleJar();
-                                if (res) {
-                                    chat.refreshApplicationsCatalog();
+                            VrButton {
+                                text: "Importar JAR avulso"
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                variant: "secondary"
+                                implicitHeight: 32
+                                onClicked: {
+                                    var res = chat.selectAndImportSingleJar();
+                                    if (res) {
+                                        chat.refreshApplicationsCatalog();
+                                    }
                                 }
                             }
-                        }
 
-                        VrButton {
-                            text: "Importar código descompilado"
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                            variant: "secondary"
-                            implicitHeight: 32
-                            onClicked: {
-                                var det = chat.detectDecompiledDirectory("");
-                                if (det && det.is_valid) {
-                                    root.decompiledDetectionResult = det;
-                                    decompiledImportDialog.open();
+                            VrButton {
+                                text: "Importar código descompilado"
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                variant: "secondary"
+                                implicitHeight: 32
+                                onClicked: {
+                                    var det = chat.detectDecompiledDirectory("");
+                                    if (det && det.is_valid) {
+                                        root.decompiledDetectionResult = det;
+                                        decompiledImportDialog.open();
+                                    }
                                 }
                             }
-                        }
-
-                        VrButton {
-                            objectName: "globalDecompileConfigHeaderButton"
-                            text: "Configurações de Descompilação"
-                            enabled: !chat.codeProcessingRunning
-                            variant: "secondary"
-                            implicitHeight: 32
-                            onClicked: globalDecompileConfigDialog.open()
-                        }
-
-                        VrButton {
-                            text: "Atualizar"
-                            variant: "ghost"
-                            implicitHeight: 32
-                            onClicked: chat.refreshApplicationsCatalog()
                         }
                     }
 
-                    // Directory picker and scope
-                    VrSettingsRow {
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 3
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Diretório padrão dos JARs"
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Pasta raiz onde as compilações e bibliotecas JAR estão armazenadas."
-                                color: Theme.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                wrapMode: Text.WordWrap
-                            }
-                        }
+                    AppearanceRow {
+                        title: "Diretório padrão dos JARs"
+                        description: "Pasta raiz onde as compilações e bibliotecas JAR estão armazenadas."
+                        divider: true
 
                         RowLayout {
-                            Layout.alignment: Qt.AlignRight
                             spacing: 8
 
                             VrComboBox {
                                 id: jarSourcePicker
                                 objectName: "vrUltraJarDirectoryPicker"
                                 Layout.preferredWidth: 240
-                                implicitHeight: 38
+                                implicitHeight: 34
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 model: chat.codeAnalysisJarSourceItems
                                 textRole: "label"
@@ -826,52 +768,34 @@ Item {
                                     if (index < chat.codeAnalysisJarSourceItems.length)
                                         chat.setCodeAnalysisJarSource(chat.codeAnalysisJarSourceItems[index].value)
                                 }
+                                background: Rectangle {
+                                    radius: 8
+                                    color: Theme.palette.codeSurface
+                                    border.width: jarSourcePicker.activeFocus ? 2 : 1
+                                    border.color: jarSourcePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
+                                }
                             }
 
                             VrButton {
                                 text: "Escolher pasta…"
                                 variant: "secondary"
-                                implicitHeight: 38
+                                implicitHeight: 34
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 onClicked: chat.selectCustomJarDirectory()
                             }
                         }
                     }
 
-                    VrSettingsRow {
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 3
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Escopo da análise"
-                                color: Theme.palette.headingText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: "Indexar todos os componentes da release ou isolar um único JAR."
-                                color: Theme.palette.mutedText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                wrapMode: Text.WordWrap
-                            }
-                        }
+                    AppearanceRow {
+                        title: "Escopo da análise"
+                        description: "Indexar todos os componentes da release ou isolar um único JAR."
+                        divider: true
 
                         VrComboBox {
-                            Layout.alignment: Qt.AlignRight
                             id: jarScopePicker
                             objectName: "vrUltraJarScopePicker"
                             Layout.preferredWidth: 260
-                            implicitHeight: 38
+                            implicitHeight: 34
                             enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                             model: [
                                 { "label": "Pacote completo ou parcial", "value": "full_release" },
@@ -882,12 +806,21 @@ Item {
                             onActivated: index => chat.setCodeAnalysisSnapshotScope(
                                 index === 1 ? "single_jar" : "full_release"
                             )
+                            background: Rectangle {
+                                radius: 8
+                                color: Theme.palette.codeSurface
+                                border.width: jarScopePicker.activeFocus ? 2 : 1
+                                border.color: jarScopePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
+                            }
                         }
                     }
 
                     Text {
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 0
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 8
                         text: {
                             var index = jarSourcePicker.currentIndex
                             if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
@@ -906,65 +839,88 @@ Item {
                         wrapMode: Text.WordWrap
                     }
 
-                    RowLayout {
-                        objectName: "vrUltraSingleJarRow"
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
+                    AppearanceRow {
                         visible: chat.codeAnalysisSnapshotScope === "single_jar"
-                        spacing: 8
+                        title: "JAR selecionado"
+                        description: "Arquivo JAR específico a ser analisado."
+                        divider: true
 
-                        VrTextField {
-                            objectName: "vrUltraSingleJarPath"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: 38
-                            readOnly: true
-                            text: chat.codeAnalysisSingleJarPath
-                            placeholderText: "Nenhum JAR selecionado"
-                        }
+                        RowLayout {
+                            objectName: "vrUltraSingleJarRow"
+                            spacing: 8
+                            Layout.preferredWidth: Math.min(340, importActionsLayout.width - 32)
 
-                        VrButton {
-                            objectName: "vrUltraSelectSingleJarButton"
-                            text: "Escolher JAR…"
-                            implicitHeight: 34
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                            onClicked: chat.selectCodeAnalysisSingleJar()
+                            VrTextField {
+                                objectName: "vrUltraSingleJarPath"
+                                Layout.fillWidth: true
+                                implicitHeight: 34
+                                readOnly: true
+                                text: chat.codeAnalysisSingleJarPath
+                                placeholderText: "Nenhum JAR selecionado"
+                                background: Rectangle {
+                                    radius: 8
+                                    color: Theme.palette.codeSurface
+                                    border.width: 1
+                                    border.color: Theme.palette.border
+                                }
+                            }
+
+                            VrButton {
+                                objectName: "vrUltraSelectSingleJarButton"
+                                text: "Escolher JAR…"
+                                implicitHeight: 34
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                onClicked: chat.selectCodeAnalysisSingleJar()
+                            }
                         }
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 8
+                    AppearanceRow {
+                        title: "Preparação de release"
+                        description: "Identificador da release e geração da prévia de componentes."
+                        divider: false
 
-                        VrTextField {
-                            id: releaseIdField
-                            objectName: "vrUltraReleaseIdField"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: 38
-                            placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
-                                ? "Automático: aplicação e versão do vr*.properties"
-                                : "ID automático; informe somente se quiser personalizar"
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                            onAccepted: chat.previewConfiguredImport(text.trim())
-                        }
+                        RowLayout {
+                            spacing: 8
+                            Layout.preferredWidth: Math.min(340, importActionsLayout.width - 32)
 
-                        VrButton {
-                            objectName: "vrUltraAddReleaseButton"
-                            text: chat.releaseSnapshotRunning ? "Detectando…" : "Preparar prévia"
-                            variant: "primary"
-                            implicitHeight: 34
-                            enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                                && (chat.codeAnalysisSnapshotScope !== "single_jar" || chat.codeAnalysisSingleJarPath.length > 0)
-                            onClicked: chat.previewConfiguredImport(releaseIdField.text.trim())
+                            VrTextField {
+                                id: releaseIdField
+                                objectName: "vrUltraReleaseIdField"
+                                Layout.fillWidth: true
+                                implicitHeight: 34
+                                placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
+                                    ? "Automático: aplicação e versão do vr*.properties"
+                                    : "ID automático; informe somente se quiser personalizar"
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                onAccepted: chat.previewConfiguredImport(text.trim())
+                                background: Rectangle {
+                                    radius: 8
+                                    color: Theme.palette.codeSurface
+                                    border.width: releaseIdField.activeFocus ? 2 : 1
+                                    border.color: releaseIdField.activeFocus ? Theme.palette.focus : Theme.palette.border
+                                }
+                            }
+
+                            VrButton {
+                                objectName: "vrUltraAddReleaseButton"
+                                text: chat.releaseSnapshotRunning ? "Detectando…" : "Preparar prévia"
+                                variant: "primary"
+                                implicitHeight: 34
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                    && (chat.codeAnalysisSnapshotScope !== "single_jar" || chat.codeAnalysisSingleJarPath.length > 0)
+                                onClicked: chat.previewConfiguredImport(releaseIdField.text.trim())
+                            }
                         }
                     }
 
                     Text {
                         objectName: "vrUltraReleaseSnapshotStatus"
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 0
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 8
                         visible: text.length > 0
                         text: chat.releaseSnapshotStatus
                         color: text.indexOf("Não foi possível") === 0 ? Theme.palette.warning : Theme.palette.mutedText
@@ -979,11 +935,11 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                implicitHeight: 38
-                radius: Theme.radiusSmall
-                color: Theme.palette.chatBackground
+                implicitHeight: 42
+                radius: 14
+                color: Theme.palette.background
                 border.width: 1
-                border.color: Theme.palette.chatBorder
+                border.color: Theme.palette.border
                 visible: root.navigationLevel > 0
 
                 RowLayout {
@@ -1049,9 +1005,13 @@ Item {
                 spacing: 16
                 visible: root.navigationLevel === 0
 
-                VrProviderSection {
-                    Layout.fillWidth: true
-                    title: "Aplicativos Detectados"
+                Text {
+                    text: "Aplicativos detectados"
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
                 }
 
                 Text {
@@ -1086,8 +1046,8 @@ Item {
                 Rectangle {
                     objectName: "appsBatchActionCard"
                     Layout.fillWidth: true
-                    implicitHeight: 48
-                    radius: Theme.radiusSmall
+                    implicitHeight: 52
+                    radius: 14
                     color: Qt.rgba(1.0, 0.45, 0.0, 0.08)
                     border.width: 1
                     border.color: Theme.palette.brandOrange
@@ -1146,8 +1106,8 @@ Item {
                 Rectangle {
                     objectName: "appsBatchProcessingStatusCard"
                     Layout.fillWidth: true
-                    implicitHeight: liveBatchLayout.implicitHeight + 20
-                    radius: Theme.radiusSmall
+                    implicitHeight: liveBatchLayout.implicitHeight + 24
+                    radius: 14
                     color: Theme.palette.codeSurface
                     border.width: 1
                     border.color: Theme.palette.brandOrange
@@ -1220,9 +1180,13 @@ Item {
 
 
                 // Packages List Section
-                VrProviderSection {
-                    Layout.fillWidth: true
-                    title: "Pacotes de Origem Importados"
+                Text {
+                    text: "Pacotes de origem importados"
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
                 }
 
                 Text {
@@ -1240,11 +1204,11 @@ Item {
                     delegate: Rectangle {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        implicitHeight: pkgCardLayout.implicitHeight + 16
-                        radius: Theme.radiusSmall
-                        color: Theme.palette.codeSurface
+                        implicitHeight: pkgCardLayout.implicitHeight + 20
+                        radius: 14
+                        color: Theme.palette.background
                         border.width: 1
-                        border.color: Theme.palette.chatBorder
+                        border.color: Theme.palette.border
 
                         RowLayout {
                             id: pkgCardLayout
@@ -1327,9 +1291,13 @@ Item {
                 spacing: 16
                 visible: root.navigationLevel === 1
 
-                VrProviderSection {
-                    Layout.fillWidth: true
-                    title: "Histórico de Versões: " + (root.activeAppId ? root.activeAppId.toUpperCase() : "")
+                Text {
+                    text: "Histórico de versões: " + (root.activeAppId ? root.activeAppId.toUpperCase() : "")
+                    Layout.leftMargin: 16
+                    color: Theme.palette.text
+                    opacity: 0.7
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(14)
                 }
 
                 // Versions Repeater
@@ -1339,10 +1307,10 @@ Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitHeight: verCardLayout.implicitHeight + 20
-                        radius: Theme.radiusSmall
-                        color: Theme.palette.codeSurface
+                        radius: 14
+                        color: Theme.palette.background
                         border.width: 1
-                        border.color: Theme.palette.chatBorder
+                        border.color: Theme.palette.border
 
                         RowLayout {
                             id: verCardLayout
@@ -2371,6 +2339,7 @@ Item {
             }
         }
     }
+}
 
     Dialog {
         id: cleanOrphansDialog

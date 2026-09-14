@@ -72,6 +72,14 @@ Canvas {
             ctx.quadraticCurveTo(20.5, 7, 18.5, 7); ctx.lineTo(11, 7)
             ctx.lineTo(9, 4.8); ctx.lineTo(5.5, 4.8)
             ctx.quadraticCurveTo(3.5, 4.8, 3.5, 7.5); ctx.stroke()
+        } else if (kind === "folderPlus") {
+            ctx.beginPath(); ctx.moveTo(3.5, 7.5); ctx.lineTo(3.5, 18)
+            ctx.quadraticCurveTo(3.5, 20, 5.5, 20); ctx.lineTo(18.5, 20)
+            ctx.quadraticCurveTo(20.5, 20, 20.5, 18); ctx.lineTo(20.5, 9)
+            ctx.quadraticCurveTo(20.5, 7, 18.5, 7); ctx.lineTo(11, 7)
+            ctx.lineTo(9, 4.8); ctx.lineTo(5.5, 4.8)
+            ctx.quadraticCurveTo(3.5, 4.8, 3.5, 7.5); ctx.stroke()
+            line(12, 10.5, 12, 16.5); line(9, 13.5, 15, 13.5)
         } else if (kind === "context") {
             ctx.beginPath(); ctx.moveTo(4, 5); ctx.quadraticCurveTo(8, 3.5, 11, 5); ctx.lineTo(11, 20); ctx.quadraticCurveTo(8, 18.2, 4, 20); ctx.closePath(); ctx.stroke()
             ctx.beginPath(); ctx.moveTo(20, 5); ctx.quadraticCurveTo(16, 3.5, 13, 5); ctx.lineTo(13, 20); ctx.quadraticCurveTo(16, 18.2, 20, 20); ctx.closePath(); ctx.stroke()
@@ -208,6 +216,21 @@ Canvas {
             ctx.lineTo(16.8, 4.2); ctx.lineTo(19.8, 7.2)
             ctx.lineTo(10, 17); ctx.closePath(); ctx.stroke()
             line(5, 19, 10, 17)
+        } else if (kind === "eye") {
+            ctx.beginPath()
+            ctx.moveTo(3, 12)
+            ctx.bezierCurveTo(7, 5.5, 17, 5.5, 21, 12)
+            ctx.bezierCurveTo(17, 18.5, 7, 18.5, 3, 12)
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.arc(12, 12, 3, 0, Math.PI * 2)
+            ctx.stroke()
+        } else if (kind === "branch") {
+            ctx.beginPath(); ctx.arc(6.5, 6.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(6.5, 17.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(17.5, 9.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            line(6.5, 9, 6.5, 15)
+            ctx.beginPath(); ctx.moveTo(6.5, 14.5); ctx.bezierCurveTo(6.5, 11.5, 17.5, 13, 17.5, 12); ctx.stroke()
         } else if (kind === "auto") {
             function sparkle(cx, cy, horizontal, vertical) {
                 ctx.beginPath()

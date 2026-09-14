@@ -11,6 +11,7 @@ Button {
     property var model: []
     property int currentIndex: 0
     property string popupObjectName: ""
+    property bool compact: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
@@ -36,46 +37,83 @@ Button {
         return true
     }
 
-    implicitHeight: Theme.compactControlHeight
-    leftPadding: 8
-    rightPadding: 8
+    implicitWidth: compact ? 26 : -1
+    implicitHeight: compact ? 24 : Theme.compactControlHeight
+    leftPadding: compact ? 0 : 8
+    rightPadding: compact ? 0 : 8
+    topPadding: 0
+    bottomPadding: 0
     hoverEnabled: true
-    focusPolicy: Qt.StrongFocus
+    focusPolicy: compact ? Qt.NoFocus : Qt.StrongFocus
     onClicked: selectorPopup.opened ? selectorPopup.close() : selectorPopup.open()
 
-    contentItem: RowLayout {
-        spacing: 7
+    ToolTip.visible: compact && hovered
+    ToolTip.text: currentIndex > 0 && currentItem.label
+        ? ("Projeto: " + currentItem.label) : "Filtrar chats por projeto"
+    Accessible.name: compact ? ToolTip.text : (currentItem.label || "Todos os projetos")
+
+    contentItem: Item {
+        implicitWidth: control.compact ? 26 : -1
+        implicitHeight: control.compact ? 24 : -1
+
         VrLineIcon {
-            Layout.preferredWidth: 15
-            Layout.preferredHeight: 15
+            visible: control.compact
+            anchors.centerIn: parent
+            width: 14
+            height: 14
             kind: "folder"
-            foreground: Theme.palette.mutedText
+            foreground: control.currentIndex > 0 ? Theme.palette.brandOrange
+                : (control.hovered ? Theme.palette.text : Theme.palette.mutedText)
             strokeWidth: 1.55
         }
-        Text {
-            Layout.fillWidth: true
-            text: control.currentItem.label || "Todos os projetos"
-            color: Theme.palette.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(11)
-            font.weight: Font.DemiBold
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
+
+        Rectangle {
+            visible: control.compact && control.currentIndex > 0
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 4
+            width: 5
+            height: 5
+            radius: 2.5
+            color: Theme.palette.brandOrange
         }
-        VrLineIcon {
-            Layout.preferredWidth: 12
-            Layout.preferredHeight: 12
-            kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
-            foreground: Theme.palette.mutedText
-            strokeWidth: 1.45
+
+        RowLayout {
+            visible: !control.compact
+            anchors.fill: parent
+            spacing: 7
+            VrLineIcon {
+                Layout.preferredWidth: 15
+                Layout.preferredHeight: 15
+                kind: "folder"
+                foreground: Theme.palette.mutedText
+                strokeWidth: 1.55
+            }
+            Text {
+                Layout.fillWidth: true
+                text: control.currentItem.label || "Todos os projetos"
+                color: Theme.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSize(11)
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+            }
+            VrLineIcon {
+                Layout.preferredWidth: 12
+                Layout.preferredHeight: 12
+                kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
+                foreground: Theme.palette.mutedText
+                strokeWidth: 1.45
+            }
         }
     }
 
     background: Rectangle {
-        radius: Theme.radiusSmall
+        radius: control.compact ? 4 : Theme.radiusSmall
         color: control.down || control.hovered || selectorPopup.opened
-            ? Theme.palette.chatControl : Theme.palette.surfaceRaised
-        border.width: 1
+            ? (control.compact ? Qt.rgba(255, 255, 255, 0.1) : Theme.palette.chatControl) : (control.compact ? "transparent" : Theme.palette.surfaceRaised)
+        border.width: control.compact ? (control.activeFocus ? 1 : 0) : 1
         border.color: control.activeFocus
             ? Theme.palette.focus : Theme.palette.border
     }
@@ -84,9 +122,9 @@ Button {
         id: selectorPopup
         objectName: control.popupObjectName
         parent: control
-        x: 0
-        y: 0
-        width: control.width
+        x: control.compact ? Math.min(0, control.width - 240) : 0
+        y: control.height + 4
+        width: control.compact ? 240 : control.width
         height: Math.min(6, control.model.length) * 33 + 8
         padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
