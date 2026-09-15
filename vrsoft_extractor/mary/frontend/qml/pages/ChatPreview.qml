@@ -221,7 +221,8 @@ Item {
             // Crisp 1px hairline divider
             Rectangle {
                 id: chatCenterLine
-                anchors.centerIn: parent
+                objectName: "chatCenterLine"
+                anchors.horizontalCenter: parent.horizontalCenter
                 width: 1
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom

@@ -168,7 +168,8 @@ Item {
             // Crisp 1px hairline divider
             Rectangle {
                 id: centerLine
-                anchors.centerIn: parent
+                objectName: "hubCenterLine"
+                anchors.horizontalCenter: parent.horizontalCenter
                 width: 1
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom

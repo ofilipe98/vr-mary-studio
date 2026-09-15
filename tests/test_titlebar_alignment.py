@@ -44,6 +44,11 @@ def test_titlebar_and_settings_hub_divider_pixel_alignment(tmp_path):
             tb_divider_x = tb_sidebar_w - 1
             hub_divider_x = nav_w + 3
             assert tb_divider_x == hub_divider_x
+
+            hub_center_line = window.findChild(QObject, "hubCenterLine")
+            assert hub_center_line is not None
+            assert hub_center_line.property("height") > 0
+            assert hub_center_line.property("width") == 1
     finally:
         if window is not None:
             window.close()
@@ -85,6 +90,11 @@ def test_titlebar_and_chat_sidebar_divider_pixel_alignment(tmp_path):
             tb_divider_x = tb_sidebar_w - 1
             chat_divider_x = sb_w + 3
             assert tb_divider_x == chat_divider_x
+
+            chat_center_line = window.findChild(QObject, "chatCenterLine")
+            assert chat_center_line is not None
+            assert chat_center_line.property("height") > 0
+            assert chat_center_line.property("width") == 1
     finally:
         if window is not None:
             window.close()
