@@ -42,7 +42,7 @@ from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
 from ..provider_cli import INSTALLERS, INSTALL_DOCS, InstallCancelled, install_cli, resolve_cli, verify_cli
 from ..antigravity import AntigravityAuthManager
-from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account
+from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account, SESSION_TIMEOUT
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -324,6 +324,32 @@ class StudioBridge(QObject):
         if not getattr(self, "_closed", False):
             self._antigravityAuthChanged.emit()
 
+    def _open_browser_url(self, url: str) -> bool:
+        """Robustly opens an authorization URL in the user's browser."""
+        if not url:
+            return False
+        # 1. Try QDesktopServices
+        try:
+            if QDesktopServices.openUrl(QUrl(url)):
+                return True
+        except Exception:
+            pass
+        # 2. Try Python's standard webbrowser
+        try:
+            import webbrowser
+            if webbrowser.open(url):
+                return True
+        except Exception:
+            pass
+        # 3. Fallback to Windows os.startfile
+        if os.name == "nt":
+            try:
+                os.startfile(url)
+                return True
+            except Exception:
+                pass
+        return False
+
     @Slot()
     def _refresh_antigravity_auth(self) -> None:
         if not self._closed:
@@ -332,8 +358,11 @@ class StudioBridge(QObject):
             if (attempt and attempt.state == "waiting" and attempt.validated_auth
                     and self._agy_opened_attempt != attempt.attempt_id):
                 self._agy_opened_attempt = attempt.attempt_id
-                if not QDesktopServices.openUrl(QUrl(attempt.validated_auth.authorization_url)):
+                if not self._open_browser_url(attempt.validated_auth.authorization_url):
                     self.toastRequested.emit("Não foi possível abrir o navegador. Use Abrir no navegador ou Copiar link.", "warning")
+            elif attempt and attempt.state == "succeeded":
+                if not getattr(self, "_agy_check_running", False):
+                    self.validateAntigravityAccount()
 
     @Slot()
     def restoreAntigravityAccount(self) -> None:
@@ -1888,17 +1917,34 @@ class StudioBridge(QObject):
 
     @Slot()
     def openAntigravityLogin(self) -> None:
+        self.startAntigravityLogin(force=False)
+
+    @Slot()
+    def reconnectAntigravityAccount(self) -> None:
+        self.startAntigravityLogin(force=True)
+
+    @Slot(bool)
+    def startAntigravityLogin(self, force: bool = False) -> None:
         if getattr(self, "_agy_check_running", False) or self._closed:
             return
+        attempt = self._antigravity_auth.active_attempt
+        if not force and attempt and attempt.state == "waiting" and attempt.validated_auth:
+            self._open_browser_url(attempt.validated_auth.authorization_url)
+            return
+
         try:
             command = resolve_acp()
             if not command:
-                QDesktopServices.openUrl(QUrl("https://antigravity.google/docs/cli/install/"))
+                self._open_browser_url("https://antigravity.google/docs/cli/install/")
                 return
-            attempt = self._antigravity_auth.start_login()
+            should_force = force or (self._antigravity_auth.account_state != "authenticated")
+            attempt = self._antigravity_auth.start_login(force=should_force)
             if attempt.state == "waiting" and attempt.validated_auth:
                 self._agy_opened_attempt = attempt.attempt_id
-                QDesktopServices.openUrl(QUrl(attempt.validated_auth.authorization_url))
+                self._open_browser_url(attempt.validated_auth.authorization_url)
+            elif attempt.state == "succeeded":
+                if not getattr(self, "_agy_check_running", False):
+                    self.validateAntigravityAccount()
             self.refreshProviders()
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
@@ -1952,12 +1998,12 @@ class StudioBridge(QObject):
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
             client.start()
-            client.request("authenticate", {"methodId": "oauth-personal"})
+            client.request("authenticate", {"methodId": "oauth-personal"}, timeout=SESSION_TIMEOUT)
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
             # Authentication is already confirmed even if session/new fails.
             self._antigravity_auth.mark_authenticated_from_validation("Conta Google autenticada pelo Antigravity.")
-            return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []})
+            return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
         finally:
             client.close()
             self._agy_check_client = None

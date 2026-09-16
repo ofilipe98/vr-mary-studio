@@ -19,7 +19,7 @@ from .. import __version__
 from .antigravity_auth import AuthStreamParser
 from .provider_cli import native_cli_path
 
-HEALTH_TIMEOUT = 45.0
+HEALTH_TIMEOUT = 60.0
 AUTH_TIMEOUT = 300.0
 SESSION_TIMEOUT = 90.0
 MAX_PROTOCOL_LINE = 8 * 1024 * 1024

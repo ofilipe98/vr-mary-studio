@@ -460,18 +460,36 @@ class AntigravityAuthManager:
                 "isStarting": attempt_state == "starting",
             }
 
-    def start_login(self) -> LoginAttempt:
+    def start_login(self, force: bool = False) -> LoginAttempt:
         """Starts a new login attempt or returns the existing active attempt (double-click safe)."""
         with self._lock:
-            if self._active_attempt and self._active_attempt.state in ("starting", "waiting", "verifying"):
+            if not force and self._active_attempt and self._active_attempt.state in ("starting", "waiting", "verifying"):
                 # Reuse the active attempt without spawning a new OAuth process
                 return self._active_attempt
+
+            if force and self._active_attempt and self._active_attempt.state in ("starting", "waiting", "verifying"):
+                self._cancel_timers()
+                old_attempt = self._active_attempt
+                old_attempt.state = "cancelled"
+                if old_attempt.client:
+                    threading.Thread(target=old_attempt.client.close, daemon=True).start()
+                else:
+                    self._stop_process(old_attempt.process)
 
             command = self._command_resolver()
             if not command:
                 self._account_status_label = "Instale o Antigravity CLI primeiro"
                 self._notify_changed()
                 raise FileNotFoundError("Antigravity CLI não encontrado.")
+
+            if force:
+                from .antigravity_acp import profile_path
+                token_file = profile_path() / "antigravity-acp" / "acp_token.json"
+                if token_file.is_file():
+                    try:
+                        token_file.unlink()
+                    except OSError:
+                        pass
 
             attempt_id = uuid.uuid4().hex
             attempt = LoginAttempt(attempt_id=attempt_id, state="starting")

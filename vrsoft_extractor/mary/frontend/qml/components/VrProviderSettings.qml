@@ -879,6 +879,14 @@ Item {
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                             onClicked: studio.validateAntigravityAccount()
                                         }
+                                        VrProviderAction {
+                                            visible: root.authenticated
+                                            text: "Trocar conta"
+                                            variant: "ghost"
+                                            implicitHeight: 32
+                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
+                                            onClicked: studio.reconnectAntigravityAccount()
+                                        }
                                     }
 
                                     ColumnLayout {
