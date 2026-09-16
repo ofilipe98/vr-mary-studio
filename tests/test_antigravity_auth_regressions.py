@@ -350,3 +350,13 @@ def test_refresh_antigravity_auth_succeeded_triggers_validation(bridge):
     with patch.object(result, "validateAntigravityAccount") as mock_validate:
         result._refresh_antigravity_auth()
         mock_validate.assert_called_once()
+
+def test_open_antigravity_login_forces_even_when_authenticated(bridge):
+    result, _ = bridge
+    result._antigravity_auth._account_state = "authenticated"
+    with patch.object(result._antigravity_auth, "start_login") as mock_start, \
+         patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="agy"):
+        mock_start.return_value = LoginAttempt("test-id", state="starting")
+        result.openAntigravityLogin()
+        mock_start.assert_called_once_with(force=True)
+

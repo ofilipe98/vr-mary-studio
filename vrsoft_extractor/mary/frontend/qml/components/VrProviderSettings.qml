@@ -32,7 +32,7 @@ Item {
     readonly property bool hasCallback: isWaiting && authUrl.length > 0
     readonly property bool validating: isVerifying || account.indexOf("Validando") === 0
     readonly property bool authenticated: accountState === "authenticated" || account.indexOf("Conta Google validada") === 0
-    readonly property bool loginPending: isWaiting || isStarting || account.indexOf("Conclua o login") === 0
+    readonly property bool loginPending: isWaiting || isStarting || isVerifying || account.indexOf("Conclua o login") === 0
     readonly property bool authError: google && (attemptState === "failed" || account.indexOf("Não foi possível") === 0 || accountState === "unauthenticated")
     onIsWaitingChanged: { if (!isWaiting) manualCallbackField.text = "" }
     onSelectedProviderChanged: manualCallbackField.text = ""
@@ -806,15 +806,15 @@ Item {
                                             objectName: "providerAccountStatus"
                                             text: root.validating ? "Validando conta\u2026"
                                                 : root.isWaiting ? "Aguardando autoriza\u00e7\u00e3o no navegador\u2026"
+                                                : (root.isStarting || root.isVerifying) ? "Preparando login Google\u2026"
                                                 : root.authenticated ? "Conta autenticada"
                                                 : root.authError ? "Falha na valida\u00e7\u00e3o"
-                                                : root.isStarting ? "Preparando login Google\u2026"
                                                 : "Conta n\u00e3o verificada"
-                                            tone: root.authenticated ? "success"
+                                            tone: (root.validating || root.isWaiting || root.isStarting || root.isVerifying) ? "warning"
+                                                : root.authenticated ? "success"
                                                 : root.authError ? "danger"
-                                                : (root.validating || root.isWaiting) ? "warning"
                                                 : "muted"
-                                            busy: root.validating || root.isStarting
+                                            busy: root.validating || root.isStarting || root.isVerifying
                                         }
                                     }
 
@@ -838,13 +838,13 @@ Item {
 
                                         VrProviderAction {
                                             objectName: "providerGoogleLogin"
-                                            text: root.openingLogin || root.isStarting ? "Abrindo login\u2026"
+                                            text: root.openingLogin || root.isStarting || root.isVerifying ? "Abrindo login\u2026"
                                                 : root.hasCallback ? "Abrir no navegador"
-                                                : root.authenticated ? "Verificar login"
+                                                : root.authenticated && !root.authError ? "Verificar login"
                                                 : "Entrar com Google"
                                             variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
                                             implicitHeight: 32
-                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
+                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isVerifying && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
                                             onClicked: {
                                                 root.openingLogin = true
                                                 loginTimer.start()

@@ -1917,14 +1917,20 @@ class StudioBridge(QObject):
 
     @Slot()
     def openAntigravityLogin(self) -> None:
-        self.startAntigravityLogin(force=False)
+        attempt = self._antigravity_auth.active_attempt
+        if attempt and attempt.state == "waiting" and attempt.validated_auth:
+            self._open_browser_url(attempt.validated_auth.authorization_url)
+            return
+        if attempt and attempt.state in ("starting", "verifying"):
+            return
+        self.startAntigravityLogin(force=True)
 
     @Slot()
     def reconnectAntigravityAccount(self) -> None:
         self.startAntigravityLogin(force=True)
 
     @Slot(bool)
-    def startAntigravityLogin(self, force: bool = False) -> None:
+    def startAntigravityLogin(self, force: bool = True) -> None:
         if getattr(self, "_agy_check_running", False) or self._closed:
             return
         attempt = self._antigravity_auth.active_attempt
@@ -1937,8 +1943,7 @@ class StudioBridge(QObject):
             if not command:
                 self._open_browser_url("https://antigravity.google/docs/cli/install/")
                 return
-            should_force = force or (self._antigravity_auth.account_state != "authenticated")
-            attempt = self._antigravity_auth.start_login(force=should_force)
+            attempt = self._antigravity_auth.start_login(force=force)
             if attempt.state == "waiting" and attempt.validated_auth:
                 self._agy_opened_attempt = attempt.attempt_id
                 self._open_browser_url(attempt.validated_auth.authorization_url)
