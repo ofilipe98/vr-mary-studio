@@ -212,6 +212,7 @@ class ConversationsDomain:
             "text": content,
             "attachments": attachments,
             "savedAt": datetime.now().astimezone().isoformat(),
+            "vr_mode": self._vr_mode,
         }
         row = self._database.get_conversation(conversation_id)
         has_messages = bool(self._database.messages(conversation_id))
@@ -256,6 +257,9 @@ class ConversationsDomain:
                 except Exception:
                     pass
         elif is_current:
+            self._vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
+                "vr" if bool(row["vr_enabled"]) else "off"
+            )
             self._sync_selected_turn_state()
             self._reload_selected_messages()
 
@@ -344,6 +348,11 @@ class ConversationsDomain:
             self._vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
                 "vr" if bool(row["vr_enabled"]) else "off"
             )
+            if draft_record is not None and draft_record.get("vr_mode"):
+                self._vr_mode = (
+                    self._normalize_vr_mode(draft_record.get("vr_mode"))
+                    or self._vr_mode
+                )
             self._remember_current_chat_options()
         if changing_conversation:
             self._restore_activity_from_history(str(selected["conversationId"]))

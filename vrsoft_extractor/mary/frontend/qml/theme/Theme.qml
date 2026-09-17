@@ -5,10 +5,11 @@ import QtQuick
 QtObject {
     // Convert the Python QVariantMap once per theme change, not per hover.
     readonly property var palette: frontend.palette
-    readonly property string fontFamily: frontend.interfaceFontFamily
+    readonly property string fontFamily: (frontend && frontend.effectiveInterfaceFontFamily) ? frontend.effectiveInterfaceFontFamily : ((frontend && frontend.interfaceFontFamily) ? frontend.interfaceFontFamily : "Segoe UI")
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property string promptFontFamily: frontend.promptFontFamily
     readonly property string terminalFontFamily: frontend.terminalFontFamily
+    readonly property int textRenderType: Text.NativeRendering
 
     readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120

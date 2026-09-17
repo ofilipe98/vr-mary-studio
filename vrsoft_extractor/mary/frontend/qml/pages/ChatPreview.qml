@@ -294,9 +294,9 @@ Item {
                 Item {
                     id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 30
-                    Layout.minimumHeight: 30
-                    Layout.maximumHeight: 30
+                    Layout.preferredHeight: 32
+                    Layout.minimumHeight: 32
+                    Layout.maximumHeight: 32
                     Layout.fillHeight: false
 
                     RowLayout {
@@ -314,7 +314,10 @@ Item {
                                 leftPadding: 26
                                 rightPadding: 8
                                 placeholderText: "Pesquisar conversas"
-                                font.pixelSize: Theme.fontSize(12)
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(14)
+                                font.weight: Font.Medium
+                                renderType: Text.NativeRendering
                                 color: Theme.palette.text
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
@@ -492,8 +495,9 @@ Item {
                                     text: conversationItem.projectLabel
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
-                                    font.weight: Font.Normal
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.Medium
+                                    renderType: Text.NativeRendering
                                     elide: Text.ElideRight
                                     Layout.preferredWidth: Math.min(implicitWidth, Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 90))
                                 }
@@ -562,8 +566,9 @@ Item {
                                         : root.relativeAge(conversationItem.updatedAt)
                                     color: conversationItem.running ? "#18A8E8" : Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
-                                    font.weight: conversationItem.running ? Font.DemiBold : Font.Normal
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: conversationItem.running ? Font.DemiBold : Font.Medium
+                                    renderType: Text.NativeRendering
                                 }
                                 VrIconButton {
                                     id: discardDraftButton
@@ -594,10 +599,11 @@ Item {
                                 objectName: "conversationTitle"
                                 Layout.fillWidth: true
                                 text: conversationItem.title
-                                color: Theme.palette.text
+                                color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: Theme.fontSize(14)
+                                font.weight: Font.Medium
+                                renderType: Text.NativeRendering
                                 elide: Text.ElideRight
                             }
                             RowLayout {
@@ -608,8 +614,9 @@ Item {
                                     text: conversationItem.modelName
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
-                                    font.weight: Font.Normal
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.Medium
+                                    renderType: Text.NativeRendering
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
@@ -754,11 +761,11 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
-                anchors.bottom: taskBar.visible ? taskBar.top : parent.bottom
+                anchors.bottom: parent.bottom
                 anchors.leftMargin: chatMain.width < 600 ? 14 : 24
                 anchors.rightMargin: chatMain.width < 600 ? 14 : 24
                 anchors.topMargin: 20
-                anchors.bottomMargin: taskBar.visible ? 10 : (root.expertStripHeight + 36 + composerCard.normalHeight + 10)
+                anchors.bottomMargin: 0
                 visible: count > 0
                 clip: true
                 // Keep actual message geometry stable across the entire history.
@@ -820,6 +827,11 @@ Item {
                                 }
                             }
                         }
+                    }
+                    Item {
+                        id: messageBottomSpacer
+                        width: parent.width
+                        height: composerCard.normalHeight + root.expertStripHeight + (taskBar.visible ? taskBar.height + 24 : 48)
                     }
                 }
                 // Follow only while pinned; dragging/scrolling back detaches the reader.
@@ -939,9 +951,15 @@ Item {
                         leftPadding: 0
                         rightPadding: 0
                         variant: "ghost"
+                        showFocusRing: false
                         property string projectLabel: root.chatBridge.currentProjectIndex > 0
                             && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
                             ? root.chatBridge.projectItems[root.chatBridge.currentProjectIndex].label : ""
+                        // O clique que fecha o menu via CloseOnPressOutside chega ao botão
+                        // depois do fechamento; sem este debounce o onClicked reabriria
+                        // o menu e o segundo clique nunca fecharia.
+                        property double menuClosedAt: 0
+                        property bool menuJustToggleClosed: false
                         text: projectLabel.length ? "Como posso ajudar no projeto " + projectLabel + "?"
                             : "Como posso ajudar no seu projeto?"
                         Accessible.name: text
@@ -958,10 +976,21 @@ Item {
                             horizontalAlignment: Text.AlignLeft
                             wrapMode: Text.WordWrap
                         }
-                        onClicked: landingProjectMenu.open()
+                        onClicked: {
+                            if (landingProjectMenu.opened) {
+                                landingProjectMenu.close()
+                                menuJustToggleClosed = true
+                            } else if (menuJustToggleClosed) {
+                                menuJustToggleClosed = false
+                                landingProjectMenu.open()
+                            } else if (Date.now() - menuClosedAt > 250) {
+                                landingProjectMenu.open()
+                            }
+                        }
                         Menu {
                             id: landingProjectMenu
                             objectName: "landingProjectMenu"
+                            onClosed: landingProjectButton.menuClosedAt = Date.now()
                             x: 0
                             y: parent.height + 6
                             width: Math.min(260, Overlay.overlay.width - 16)
@@ -1101,6 +1130,7 @@ Item {
             Item {
                 id: expertProfileStrip
                 objectName: "expertProfileStrip"
+                z: 20
                 visible: root.expertReveal > 0.001
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 y: composerCard.y + composerCard.height

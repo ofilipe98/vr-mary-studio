@@ -1710,7 +1710,11 @@ class ChatBridge(QObject):
             vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
                 "vr" if bool(row["vr_enabled"]) else "off"
             )
-            if editing and conversation_id == selected_id:
+            if (
+                editing
+                and conversation_id == selected_id
+                and not self._database.messages(conversation_id)
+            ):
                 vr_mode = self._vr_mode
             vr_enabled = vr_mode != "off"
             conversations.append(
@@ -1967,7 +1971,7 @@ class ChatBridge(QObject):
         )
         self._preferences.sync()
         conversation_id = str(self._selected.get("conversationId") or "")
-        if conversation_id:
+        if conversation_id and not self._database.messages(conversation_id):
             try:
                 self._orchestrator.update_vr_mode(conversation_id, resolved)
             except Exception as exc:

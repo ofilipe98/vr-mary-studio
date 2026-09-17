@@ -38,11 +38,13 @@ Rectangle {
         onTriggered: root.copied = false
     }
 
-    radius: 8
+    radius: 12
     clip: true
     color: Theme.palette.codeSurface
     border.width: 1
-    border.color: Theme.palette.chatBorder
+    border.color: Theme.palette.appearance === "light"
+        ? Qt.alpha(Theme.palette.border, 0.6)
+        : Qt.rgba(255, 255, 255, 0.08)
     implicitHeight: layout.implicitHeight
 
     Column {
@@ -52,39 +54,46 @@ Rectangle {
         Rectangle {
             id: headerRow
             width: parent.width
-            height: 30
-            color: Theme.palette.codeHeader
-            radius: 8
+            height: 32
+            radius: root.radius
+            color: Theme.palette.appearance === "light"
+                ? Qt.darker(Theme.palette.codeSurface, 1.05)
+                : Qt.darker(Theme.palette.codeSurface, 1.08)
 
+            // Fill the bottom corners to keep the bottom of header flush
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.top: parent.verticalCenter
-                height: parent.height / 2
+                anchors.bottom: parent.bottom
+                height: parent.radius
                 color: parent.color
             }
 
             Rectangle {
-                id: languageBadge
                 anchors.left: parent.left
-                anchors.leftMargin: 10
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(badgeLabel.implicitWidth + 14, Math.max(0, wrapButton.x - x - 8))
-                height: 18
-                radius: 4
-                color: "transparent"
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.palette.appearance === "light"
+                    ? Qt.alpha(Theme.palette.border, 0.4)
+                    : Qt.rgba(255, 255, 255, 0.06)
+            }
 
-                Text {
-                    id: badgeLabel
-                    anchors.centerIn: parent
-                    width: Math.max(0, parent.width - 14)
-                    elide: Text.ElideRight
-                    text: root.language
-                    color: frontend.themeId === "dark_orange" ? "#C9C9D3" : "#3F3F46"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
-                    font.weight: Font.DemiBold
-                }
+            Text {
+                id: badgeLabel
+                anchors.left: parent.left
+                anchors.leftMargin: 12
+                anchors.right: wrapButton.left
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
+                text: root.language
+                color: Theme.palette.subtleText || Theme.palette.mutedText || "#8f9ca8"
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSize(11.5)
+                font.weight: Font.Normal
+                renderType: Text.NativeRendering
+                verticalAlignment: Text.AlignVCenter
             }
 
             VrIconButton {
@@ -93,16 +102,17 @@ Rectangle {
                 anchors.right: copyButton.left
                 anchors.rightMargin: 4
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: 24
-                implicitHeight: 24
+                implicitWidth: 26
+                implicitHeight: 26
+                iconSize: 13
+                iconKind: "wrapText"
                 checkable: true
                 checked: frontend.wordWrap
-                iconKind: ""
-                symbol: "↵"
                 foreground: checked
-                    ? Theme.palette.text : Theme.palette.mutedText
+                    ? (Theme.palette.headingText || "#FFFFFF")
+                    : (hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
                 ToolTip.visible: hovered || activeFocus
-                ToolTip.text: checked ? "Não quebrar linhas" : "Quebrar linhas"
+                ToolTip.text: checked ? "Desativar quebra de linhas" : "Quebrar linhas"
             }
 
             VrIconButton {
@@ -111,15 +121,15 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: 24
-                implicitHeight: 24
+                implicitWidth: 26
+                implicitHeight: 26
                 iconSize: 13
-                iconKind: root.copied ? "" : "copy"
-                symbol: root.copied ? "✓" : ""
+                iconKind: root.copied ? "check" : "copy"
                 foreground: root.copied
-                    ? Theme.palette.success : Theme.palette.mutedText
+                    ? (Theme.palette.success || "#34d399")
+                    : (hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
                 ToolTip.visible: hovered || activeFocus
-                ToolTip.text: root.copied ? "Copiado" : "Copiar código"
+                ToolTip.text: root.copied ? "Copiado!" : "Copiar código"
                 onClicked: root.copyCode()
             }
         }
@@ -128,8 +138,8 @@ Rectangle {
             id: codeViewport
             objectName: "codeViewport"
             width: parent.width
-            height: codeBody.paintedHeight + 24 + (contentWidth > width ? 8 : 0)
-            contentWidth: wrapButton.checked ? width : Math.max(width, codeBody.paintedWidth + 24)
+            height: codeBody.paintedHeight + 20 + (contentWidth > width ? 8 : 0)
+            contentWidth: wrapButton.checked ? width : Math.max(width, codeBody.paintedWidth + 28)
             contentHeight: height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -139,13 +149,17 @@ Rectangle {
                 id: codeBody
                 objectName: "codeBlockBody"
                 width: codeViewport.width
-                padding: 12
+                leftPadding: 14
+                rightPadding: 14
+                topPadding: 10
+                bottomPadding: 10
                 text: root.code
                 textFormat: TextEdit.PlainText
                 readOnly: true
                 selectByMouse: true
                 persistentSelection: true
                 activeFocusOnPress: true
+                renderType: TextEdit.NativeRendering
                 wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
                 color: Theme.palette.text
                 selectionColor: Theme.palette.selection

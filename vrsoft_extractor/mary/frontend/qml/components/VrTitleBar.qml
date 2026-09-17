@@ -139,6 +139,7 @@ Item {
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(13)
             font.weight: Font.Bold
+            renderType: Text.NativeRendering
         }
 
         Rectangle {
@@ -157,6 +158,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(9)
                 font.weight: Font.Medium
+                renderType: Text.NativeRendering
             }
         }
 
@@ -177,6 +179,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(10)
                 font.weight: Font.Medium
+                renderType: Text.NativeRendering
             }
         }
     }
@@ -211,6 +214,7 @@ Item {
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(12)
             font.weight: Font.DemiBold
+            renderType: Text.NativeRendering
             elide: Text.ElideRight
             Layout.maximumWidth: 160
         }
@@ -220,6 +224,7 @@ Item {
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(12)
+            renderType: Text.NativeRendering
         }
 
         Text {
@@ -229,6 +234,7 @@ Item {
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(12)
             font.weight: Font.DemiBold
+            renderType: Text.NativeRendering
             elide: Text.ElideRight
             Layout.maximumWidth: Math.max(120, root.width - 680)
         }

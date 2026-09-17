@@ -52,22 +52,23 @@ Button {
             text: control.currentItem.label || "Auto"
             color: control.compact
                 ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
-                : Theme.palette.text
+                : (control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(13)
+            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            renderType: Text.NativeRendering
         }
         VrLineIcon {
-            Layout.preferredWidth: control.compact ? 10 : 13
-            Layout.preferredHeight: control.compact ? 10 : 13
+            Layout.preferredWidth: control.compact ? 10 : 11
+            Layout.preferredHeight: control.compact ? 10 : 11
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: control.compact ? 6 : 8
+        radius: control.compact ? 6 : 6
         color: control.down || control.hovered || optionsPopup.opened
-            ? Theme.palette.chatControl : "transparent"
+            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: Theme.palette.focus
         Behavior on color {

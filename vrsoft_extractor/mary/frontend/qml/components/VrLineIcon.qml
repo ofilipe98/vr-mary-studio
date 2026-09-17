@@ -50,6 +50,15 @@ Canvas {
 
         if (kind === "check") {
             ctx.beginPath(); ctx.moveTo(5, 12); ctx.lineTo(10, 17); ctx.lineTo(19, 7); ctx.stroke()
+        } else if (kind === "wrapText") {
+            line(4, 7, 20, 7)
+            line(4, 17, 13, 17)
+            ctx.beginPath(); ctx.moveTo(4, 12); ctx.lineTo(16, 12)
+            ctx.quadraticCurveTo(19, 12, 19, 14.5)
+            ctx.quadraticCurveTo(19, 17, 16, 17)
+            ctx.lineTo(11, 17)
+            ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(13.5, 14.5); ctx.lineTo(11, 17); ctx.lineTo(13.5, 19.5); ctx.stroke()
         } else if (kind === "external") {
             line(10, 14, 20, 4); line(14, 4, 20, 4); line(20, 4, 20, 10)
             ctx.beginPath(); ctx.moveTo(10, 5); ctx.lineTo(5, 5); ctx.lineTo(5, 19); ctx.lineTo(19, 19); ctx.lineTo(19, 14); ctx.stroke()

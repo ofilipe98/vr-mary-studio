@@ -3891,6 +3891,105 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn('text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"', chat_preview_qml)
             self.assertIn("Theme.palette.accessibleOrange", chat_preview_qml)
 
+    def test_vr_mode_tag_stays_fixed_until_question_sent_with_different_mode(self):
+        with TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            cid = database.create_conversation(
+                "VR Chat", "codex", "modelo", settings.root, vr_enabled=True, vr_mode="vr"
+            )
+            database.add_message(cid, "user", "Pergunta em VR")
+            database.add_message(cid, "assistant", "Resposta em VR")
+
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = ChatBridge(settings, database, preferences)
+
+            item = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item["vrMode"], "vr")
+            self.assertTrue(item["vrEnabled"])
+
+            bridge.selectConversationId(cid)
+            self.assertEqual(bridge.vrMode, "vr")
+
+            # 1. Changing composer mode to ultra must NOT change the conversation item's tag
+            bridge.setVrMode("ultra")
+            self.assertEqual(bridge.vrMode, "ultra")
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "vr")
+
+            item_during_edit = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_during_edit["vrMode"], "vr")
+            self.assertTrue(item_during_edit["vrEnabled"])
+
+            # 2. Saving a draft in ultra mode must also NOT change the conversation item's tag
+            bridge.saveCurrentDraft("Rascunho no modo ultra")
+            item_with_draft = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_with_draft["vrMode"], "vr")
+
+            # 3. Sending another question with ultra mode now changes the tag to 'ultra'
+            from tests.test_mary_orchestration import FakeProvider
+            fake_provider = FakeProvider("codex")
+            bridge._orchestrator.providers["codex"] = fake_provider
+            bridge.sendMessage("Pergunta enviada no modo ultra")
+            for _ in range(400):
+                status = str(database.get_conversation(cid)["status"] or "idle")
+                if status != "running":
+                    break
+                self.application.processEvents()
+                QTest.qWait(50)
+            bridge._finalize_terminal_state("turn_completed")
+
+            item_after_ultra = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_after_ultra["vrMode"], "ultra")
+            self.assertTrue(item_after_ultra["vrEnabled"])
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "ultra")
+
+            # 4. Changing composer mode to off must keep tag at 'ultra' until question is sent
+            bridge.setVrMode("off")
+            self.assertEqual(bridge.vrMode, "off")
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "ultra")
+
+            # 5. Sending question in off mode now changes the tag to off
+            bridge.sendMessage("Pergunta enviada no modo off")
+            for _ in range(400):
+                status = str(database.get_conversation(cid)["status"] or "idle")
+                if status != "running":
+                    break
+                self.application.processEvents()
+                QTest.qWait(50)
+            bridge._finalize_terminal_state("turn_completed")
+
+            item_after_off = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_after_off["vrMode"], "off")
+            self.assertFalse(item_after_off["vrEnabled"])
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "off")
+            bridge.close()
+
+
     def test_context_uses_provider_model_metadata_and_hides_without_it(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

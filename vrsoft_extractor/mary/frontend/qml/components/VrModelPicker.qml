@@ -56,24 +56,25 @@ Button {
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
             color: control.compact
                 ? (control.hovered || pickerPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
-                : Theme.palette.text
+                : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(13)
+            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            renderType: Text.NativeRendering
             elide: control.compact ? Text.ElideNone : Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
         VrLineIcon {
-            Layout.preferredWidth: control.compact ? 10 : 13
-            Layout.preferredHeight: control.compact ? 10 : 13
+            Layout.preferredWidth: control.compact ? 10 : 11
+            Layout.preferredHeight: control.compact ? 10 : 11
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: control.compact ? 6 : 8
-        color: control.down || control.hovered || pickerPopup.opened || control.outlined
-            ? Theme.palette.chatControl : "transparent"
+        radius: control.compact ? 6 : 6
+        color: control.down || control.hovered || pickerPopup.opened
+            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
         border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
         border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {

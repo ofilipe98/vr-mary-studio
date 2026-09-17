@@ -14,6 +14,7 @@ TextField {
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily
     font.pixelSize: Theme.bodySize
+    renderType: Text.NativeRendering
     focusPolicy: Qt.StrongFocus
 
     background: Rectangle {

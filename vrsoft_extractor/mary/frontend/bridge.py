@@ -308,6 +308,16 @@ class FrontendBridge(QObject):
     def interfaceFontFamily(self) -> str:  # noqa: N802
         return self._theme_manager.interfaceFontFamily
 
+    @Property(str, notify=typographyChanged)
+    def effectiveInterfaceFontFamily(self) -> str:  # noqa: N802
+        fam = self._theme_manager.interfaceFontFamily
+        if fam in ("Segoe UI", "") and sys.platform == "win32":
+            from PySide6.QtGui import QFontDatabase
+
+            if "Segoe UI Variable Text" in set(QFontDatabase.families()):
+                return "Segoe UI Variable Text"
+        return fam or "Segoe UI"
+
     @Property(int, notify=typographyChanged)
     def interfaceFontSize(self) -> int:  # noqa: N802
         return self._theme_manager.interfaceFontSize

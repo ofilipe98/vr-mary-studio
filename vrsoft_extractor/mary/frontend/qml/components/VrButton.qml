@@ -7,6 +7,7 @@ Button {
 
     property string variant: "secondary"
     property int textAlignment: Text.AlignHCenter
+    property bool showFocusRing: true
 
     implicitHeight: Theme.controlHeight
     implicitWidth: Math.max(96, contentItem.implicitWidth + 28)
@@ -32,6 +33,7 @@ Button {
         horizontalAlignment: control.textAlignment
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
+        renderType: Text.NativeRendering
     }
 
     background: Rectangle {
@@ -48,8 +50,8 @@ Button {
                 return Theme.palette.hover
             return control.variant === "ghost" ? "transparent" : Theme.palette.surface
         }
-        border.width: control.activeFocus ? 2 : (control.variant === "ghost" ? 0 : 1)
-        border.color: control.activeFocus ? Theme.palette.focus
+        border.width: control.activeFocus && control.showFocusRing ? 2 : (control.variant === "ghost" ? 0 : 1)
+        border.color: control.activeFocus && control.showFocusRing ? Theme.palette.focus
             : control.variant === "danger" ? Theme.palette.danger
             : Theme.palette.border
 

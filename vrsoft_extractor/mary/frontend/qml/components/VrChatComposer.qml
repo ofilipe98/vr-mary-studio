@@ -24,8 +24,11 @@ Rectangle {
         if (!list || list.count === 0) return false
         return !isAtBottom
     }
+    readonly property bool hasComposerContent: (composerInput.text && composerInput.text.length > 0) || hasChips
     property bool isCompact: composerCard.page && composerCard.page.messageListHandle && composerCard.page.messageListHandle.count > 0
-        && (!isAtBottom || (composerCard.page.chatBridge.turnRunning && !composerInput.activeFocus))
+        && !composerInput.activeFocus
+        && !hasComposerContent
+        && (!isAtBottom || composerCard.page.chatBridge.turnRunning)
     readonly property bool hasChips: (composerCard.page.chatBridge.attachments.length > 0) || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
     readonly property bool hasImageAttachments: {
         var list = composerCard.page.chatBridge.attachments || []
@@ -55,6 +58,7 @@ Rectangle {
     readonly property real compactHeight: 46
 
     objectName: "chatComposerCard"
+    z: 20
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: composerCard.page.messageListHandle.count > 0 ? parent.bottom : undefined
     anchors.bottomMargin: composerCard.page.messageListHandle.count > 0 ? (composerCard.page.expertStripHeight + 36) : 0
@@ -63,14 +67,23 @@ Rectangle {
             (parent.height + composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 24 - height - composerCard.page.expertStripHeight) / 2)
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: isCompact ? compactHeight : normalHeight
-    radius: Theme.composerRadius
+    radius: 16
     clip: true
-    color: Qt.alpha(Theme.palette.chatComposer, Theme.glassOpacity)
+    color: Theme.palette.chatComposer
+    readonly property bool vrActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode !== "off")
     border.width: 1
     border.color: composerCard.page.composerDropActive
         ? Theme.palette.brandOrange
-        : composerInput.activeFocus
-            ? Theme.palette.focus : Theme.palette.chatBorder
+        : vrActive
+            ? (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45))
+            : (composerInput.activeFocus
+                ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
+                : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
+
+    Behavior on border.color {
+        enabled: !composerCard.page.frontendBridge.reduceMotion
+        ColorAnimation { duration: Theme.fastDuration }
+    }
 
     Behavior on height {
         enabled: !composerCard.page.frontendBridge.reduceMotion
@@ -85,10 +98,6 @@ Rectangle {
         enabled: composerCard.isCompact && !composerCard.page.chatBridge.turnRunning
         onTapped: {
             composerInput.forceActiveFocus()
-            if (composerCard.page.messageListHandle) {
-                composerCard.page.messageListHandle.followTail = true
-                composerCard.page.messageListHandle.positionViewAtEnd()
-            }
         }
     }
 
@@ -264,10 +273,10 @@ Rectangle {
         property alias text: composerInput.text
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: 14
-        anchors.rightMargin: composerCard.isCompact ? 86 : 14
+        anchors.leftMargin: 16
+        anchors.rightMargin: composerCard.isCompact ? 86 : 16
         anchors.top: parent.top
-        anchors.topMargin: composerCard.isCompact ? 6 : (attachmentList.visible ? attachmentList.bottom.y + 6 : (attachmentThumbnailsList.visible ? 78 : 8))
+        anchors.topMargin: composerCard.isCompact ? 6 : (attachmentList.visible ? attachmentList.bottom.y + 6 : (attachmentThumbnailsList.visible ? 78 : 12))
         height: composerCard.isCompact ? 34 : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
             contentHeight + topPadding + bottomPadding))
         clip: true
@@ -294,17 +303,18 @@ Rectangle {
             objectName: "chatComposerInput"
             font.family: Theme.promptFontFamily
             font.pixelSize: Theme.promptFontSize(14)
+            renderType: TextEdit.NativeRendering
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: 2
+            bottomPadding: 2
             placeholderText: composerCard.page.chatMainHandle.width < 600 ? "Pergunte algo…" : "Pergunte algo…  @ arquivos · $ skills · / comandos"
+            placeholderTextColor: Theme.palette.subtleText || "#7d8b99"
             readOnly: composerCard.page.chatBridge.turnRunning
             verticalAlignment: composerCard.isCompact ? TextEdit.AlignVCenter : TextEdit.AlignTop
             background: Item { }
             onTextChanged: composerCard.page.composerAssistDelayHandle.restart()
-            onActiveFocusChanged: {
-                if (activeFocus && composerCard.isCompact && composerCard.page.messageListHandle) {
-                    composerCard.page.messageListHandle.followTail = true
-                    composerCard.page.messageListHandle.positionViewAtEnd()
-                }
-            }
+
             Keys.priority: Keys.BeforeItem
             Keys.onPressed: event => {
                 if (event.matches(StandardKey.Paste) && composerCard.page.chatBridge.pasteClipboardAttachment())
@@ -378,11 +388,11 @@ Rectangle {
         id: composerControls
         anchors.left: parent.left
         anchors.right: attachButton.left
-        anchors.top: composerScroll.bottom
-        anchors.topMargin: 8
-        anchors.leftMargin: 10
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 8
+        anchors.leftMargin: 12
         anchors.rightMargin: 8
-        height: 34
+        height: 32
         contentWidth: controlsRow.width
         contentHeight: height
         clip: true
@@ -395,72 +405,104 @@ Rectangle {
         flickableDirection: Flickable.HorizontalFlick
         boundsBehavior: Flickable.StopAtBounds
         RowLayout {
-        id: controlsRow
-        width: Math.max(implicitWidth, composerControls.width)
-        height: 34
-        spacing: 5
-        VrModelPicker {
-            id: modelSelector
-            objectName: "chatModelPicker"
-            model: composerCard.page.chatBridge.modelItems
-            currentIndex: composerCard.page.chatBridge.modelIndex
-            loading: composerCard.page.chatBridge.modelCatalogLoading
-            enabled: !composerCard.page.chatBridge.turnRunning
-            onActivated: index => composerCard.page.chatBridge.setModel(index)
-            onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
-        }
-        Rectangle {
-            visible: effortSelector.visible
-            Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder
-        }
-        VrReasoningPicker {
-            id: effortSelector
-            objectName: "chatReasoningPicker"
-            visible: composerCard.page.chatBridge.supportsReasoning
-            effortModel: composerCard.page.chatBridge.effortItems
-            tierModel: composerCard.page.chatBridge.serviceTierItems
-            currentEffortIndex: composerCard.page.chatBridge.effortIndex
-            currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
-            onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
-            onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
-        }
-        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatBorder }
-        VrPermissionPicker {
-            id: approvalSelector
-            objectName: "chatPermissionPicker"
-            model: composerCard.page.chatBridge.approvalItems
-            currentIndex: composerCard.page.chatBridge.approvalIndex
-            onActivated: index => composerCard.page.chatBridge.setApproval(index)
-        }
-        Item { Layout.fillWidth: true }
-        VrButton {
-            id: vrModeButton
-            objectName: "vrModeButton"
-            implicitWidth: composerCard.page.chatBridge.vrMode === "ultra" ? 104 : 58
-            implicitHeight: 32
-            leftPadding: 7; rightPadding: 7
-            text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-            variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
-            background: Rectangle {
-                radius: 10
-                color: composerCard.page.chatBridge.vrMode !== "off"
-                    ? Theme.palette.accessibleOrange
-                    : parent.hovered ? Theme.palette.chatControl : "transparent"
-                border.width: parent.activeFocus ? 1 : 0
-                border.color: parent.activeFocus ? Theme.palette.focus : "transparent"
+            id: controlsRow
+            width: Math.max(implicitWidth, composerControls.width)
+            height: 32
+            spacing: 6
+
+            VrModelPicker {
+                id: modelSelector
+                objectName: "chatModelPicker"
+                model: composerCard.page.chatBridge.modelItems
+                currentIndex: composerCard.page.chatBridge.modelIndex
+                loading: composerCard.page.chatBridge.modelCatalogLoading
+                enabled: !composerCard.page.chatBridge.turnRunning
+                onActivated: index => composerCard.page.chatBridge.setModel(index)
+                onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
             }
-            onClicked: composerCard.page.chatBridge.cycleVrMode()
-        }
-        VrContextButton {
-            id: contextUsageButton
-            objectName: "contextUsageButton"
-            implicitWidth: 30; implicitHeight: 30
-            visible: composerCard.page.chatBridge.hasContextWindow
-            fraction: composerCard.page.chatBridge.contextUsageFraction
-            usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
-            totalLabel: composerCard.page.chatBridge.totalProcessedLabel
-            note: composerCard.page.chatBridge.contextUsageNote
-        }
+
+            Rectangle {
+                visible: effortSelector.visible
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 14
+                Layout.alignment: Qt.AlignVCenter
+                color: Qt.rgba(255, 255, 255, 0.12)
+            }
+
+            VrReasoningPicker {
+                id: effortSelector
+                objectName: "chatReasoningPicker"
+                visible: composerCard.page.chatBridge.supportsReasoning
+                effortModel: composerCard.page.chatBridge.effortItems
+                tierModel: composerCard.page.chatBridge.serviceTierItems
+                currentEffortIndex: composerCard.page.chatBridge.effortIndex
+                currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
+                onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
+                onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
+            }
+
+            Rectangle {
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 14
+                Layout.alignment: Qt.AlignVCenter
+                color: Qt.rgba(255, 255, 255, 0.12)
+            }
+
+            VrPermissionPicker {
+                id: approvalSelector
+                objectName: "chatPermissionPicker"
+                model: composerCard.page.chatBridge.approvalItems
+                currentIndex: composerCard.page.chatBridge.approvalIndex
+                onActivated: index => composerCard.page.chatBridge.setApproval(index)
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Button {
+                id: vrModeButton
+                objectName: "vrModeButton"
+                property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
+                implicitWidth: vrModeContent.implicitWidth + 14
+                implicitHeight: 28
+                leftPadding: 6
+                rightPadding: 6
+                hoverEnabled: true
+                focusPolicy: Qt.StrongFocus
+                contentItem: Row {
+                    id: vrModeContent
+                    spacing: 4
+                    anchors.centerIn: parent
+                    Text {
+                        text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
+                        color: composerCard.page.chatBridge.vrMode !== "off"
+                            ? (Theme.palette.brandOrange || "#f59e0b")
+                            : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12.5)
+                        font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
+                        renderType: Text.NativeRendering
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+                background: Rectangle {
+                    radius: 6
+                    color: vrModeButton.down || vrModeButton.hovered
+                        ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
+                }
+                onClicked: composerCard.page.chatBridge.cycleVrMode()
+            }
+
+            VrContextButton {
+                id: contextUsageButton
+                objectName: "contextUsageButton"
+                implicitWidth: 28
+                implicitHeight: 28
+                visible: composerCard.page.chatBridge.hasContextWindow
+                fraction: composerCard.page.chatBridge.contextUsageFraction
+                usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
+                totalLabel: composerCard.page.chatBridge.totalProcessedLabel
+                note: composerCard.page.chatBridge.contextUsageNote
+            }
         }
     }
 
@@ -468,16 +510,16 @@ Rectangle {
         id: attachButton
         objectName: "chatAttachButton"
         anchors.right: sendButton.left
-        anchors.rightMargin: 6
+        anchors.rightMargin: 8
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 7
+        anchors.bottomMargin: 8
         width: 32
         height: 32
         implicitWidth: 32
         implicitHeight: 32
         iconKind: "attachment"
-        iconSize: 17
-        foreground: Theme.palette.mutedText
+        iconSize: 18
+        foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         enabled: !composerCard.page.chatBridge.turnRunning
         ToolTip.visible: hovered
         ToolTip.text: "Anexar arquivos"
@@ -490,7 +532,7 @@ Rectangle {
         anchors.right: parent.right
         anchors.rightMargin: 12
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 7
+        anchors.bottomMargin: 8
         width: 32
         height: 32
         implicitWidth: 32
@@ -515,7 +557,7 @@ Rectangle {
                 : (parent.down
                     ? Theme.palette.brandOrange
                     : parent.hovered
-                        ? Qt.darker(Theme.palette.accessibleOrange, 1.08)
+                        ? Qt.lighter(Theme.palette.accessibleOrange, 1.12)
                         : Theme.palette.accessibleOrange)
             border.width: parent.activeFocus ? 2 : 0
             border.color: Theme.palette.focus
