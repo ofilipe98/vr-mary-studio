@@ -44,7 +44,7 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
     studio = StudioBridge(settings, db, prefs)
     window = None
     try:
-        with patch.object(chat, 'refreshModels'):
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
             engine = create_engine(frontend, chat, studio)
             window = engine.rootObjects()[0]
             window.setWidth(1366)
@@ -114,6 +114,145 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+@pytest.mark.parametrize('reduce_motion', [False, True])
+def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_motion):
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation('ExpandAtBottom', 'codex', 'test', settings.root)
+    for i in range(10):
+        db.add_message(cid, 'user' if i % 2 else 'assistant', ('Mensagem no historico.\n\n' * 5))
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    frontend.setReduceMotion(reduce_motion)
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            window.setWidth(1000)
+            window.setHeight(600)
+            QTest.qWait(350)
+            timeline = window.findChild(QObject, 'messageList')
+            composer = window.findChild(QObject, 'chatComposerCard')
+
+            timeline.setProperty('followTail', True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(300)
+            compact_height = composer.property('compactHeight')
+            normal_height = composer.property('normalHeight')
+            assert abs(composer.height() - normal_height) < 1
+            heights = []
+            composer.heightChanged.connect(lambda: heights.append(composer.height()))
+
+            max_y = timeline.property('contentHeight') - timeline.property('height')
+            timeline.setProperty('followTail', False)
+            timeline.setProperty('contentY', max_y - 60)
+            QTest.qWait(300)
+            assert not composer.property('isAtBottom')
+            assert composer.property('isCompact')
+            assert abs(composer.height() - compact_height) < 1
+            assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
+            assert all(a >= b for a, b in zip(heights, heights[1:]))
+            assert abs(timeline.property('contentY') - (max_y - 60)) < 1
+
+            heights.clear()
+            timeline.positionViewAtEnd()
+            timeline.setProperty('followTail', True)
+            QTest.qWait(300)
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+            assert abs(composer.height() - normal_height) < 1
+            assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
+            assert all(a <= b for a, b in zip(heights, heights[1:]))
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window is not None:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_composer_expands_on_focus_while_scrolled_up_without_jumping_to_end(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation('ExpandInPlace', 'codex', 'test', settings.root)
+    for i in range(12):
+        db.add_message(cid, 'user' if i % 2 else 'assistant', ('Mensagem no historico.\\n\\n' * 6))
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    frontend.setReduceMotion(True)
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            window.setWidth(1000)
+            window.setHeight(600)
+            QTest.qWait(350)
+            timeline = window.findChild(QObject, 'messageList')
+            composer = window.findChild(QObject, 'chatComposerCard')
+            composer_input = window.findChild(QObject, 'chatComposerInput')
+
+            timeline.setProperty('followTail', True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(300)
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+
+            max_y = timeline.property('contentHeight') - timeline.property('height')
+            target_y = max_y - 120
+            timeline.setProperty('followTail', False)
+            timeline.setProperty('contentY', target_y)
+            QTest.qWait(300)
+            assert not composer.property('isAtBottom')
+            assert composer.property('isCompact')
+            compact_height = composer.property('compactHeight')
+            normal_height = composer.property('normalHeight')
+            assert abs(composer.height() - compact_height) < 1
+
+            composer_input.forceActiveFocus()
+            QTest.qWait(300)
+
+            assert composer_input.property('activeFocus')
+            assert not composer.property('isCompact')
+            assert abs(composer.height() - normal_height) < 1
+            assert abs(timeline.property('contentY') - target_y) < 1
+            assert not timeline.property('followTail')
+            assert not composer.property('isAtBottom')
+
+            timeline.forceActiveFocus()
+            QTest.qWait(300)
+            assert not composer_input.property('activeFocus')
+            assert composer.property('isCompact')
+            assert abs(composer.height() - compact_height) < 1
+            assert abs(timeline.property('contentY') - target_y) < 1
+
+            composer_input.setProperty('text', 'Ola Mary')
+            QTest.qWait(100)
+            assert not composer.property('isCompact')
+            assert abs(composer.height() - normal_height) < 1
+            assert abs(timeline.property('contentY') - target_y) < 1
+
+            pill = window.findChild(QObject, 'scrollToEndPill')
+            pill.jump()
+            QTest.qWait(300)
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+            assert timeline.property('followTail')
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window is not None:
             window.close()
         studio.close()
         chat.close()

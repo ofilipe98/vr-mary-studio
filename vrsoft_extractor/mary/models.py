@@ -412,6 +412,7 @@ class ConversationOptions:
     knowledge_context_path: str = ""
     vr_enabled: bool = False
     vr_mode: str = ""
+    tools_enabled: bool = True
 
     VALID_VR_MODES = ("off", "vr", "ultra")
 

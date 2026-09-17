@@ -190,7 +190,7 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         prompt = item(window, "chatComposerInput")
         assert prompt.property("font").family() == "Consolas"
         assert prompt.property("font").pixelSize() == 18
-        assert composer.property("color").alphaF() == pytest.approx(.6, abs=.01)
+        assert composer.property("color").alphaF() == 1.0
         frontend.setUiScale("150")
         QTest.qWait(20)
         assert prompt.property("font").pixelSize() == 27

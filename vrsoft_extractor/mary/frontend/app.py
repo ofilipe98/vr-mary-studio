@@ -118,11 +118,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_window_decorations(engine: QQmlApplicationEngine) -> None:
+    """Enable native Windows drop shadow and Aero Snap for frameless window."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        class MARGINS(ctypes.Structure):
+            _fields_ = [
+                ("cxLeftWidth", ctypes.c_int),
+                ("cxRightWidth", ctypes.c_int),
+                ("cyTopHeight", ctypes.c_int),
+                ("cyBottomHeight", ctypes.c_int),
+            ]
+
+        root_objects = engine.rootObjects()
+        if root_objects and hasattr(root_objects[0], "winId"):
+            hwnd = int(root_objects[0].winId())
+            margins = MARGINS(1, 1, 1, 1)
+            ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+            # Request Windows 11 DWM rounded corners (DWMWCP_ROUND = 2)
+            corner_pref = ctypes.c_int(2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref)
+            )
+    except Exception:
+        pass
+
+
 def create_engine(
     bridge: FrontendBridge,
     chat_bridge: ChatBridge,
     studio_bridge: StudioBridge | None = None,
 ) -> QQmlApplicationEngine:
+    QQuickWindow.setTextRenderType(QQuickWindow.TextRenderType.NativeTextRendering)
     engine = QQmlApplicationEngine()
     qml_warnings: list[object] = []
     engine.warnings.connect(qml_warnings.extend)
@@ -132,21 +162,37 @@ def create_engine(
     engine.rootContext().setContextProperty("studio", studio_bridge)
     engine.load(QUrl.fromLocalFile(str(MAIN_QML)))
     engine._qml_warnings = qml_warnings  # type: ignore[attr-defined]
+    _apply_window_decorations(engine)
     return engine
 
 
 def _apply_application_font(app: QApplication) -> None:
     """Match the current Studio typography and stabilize headless rendering."""
 
+    QQuickWindow.setTextRenderType(QQuickWindow.TextRenderType.NativeTextRendering)
+
     if sys.platform == "win32":
-        for candidate in (\
+        for candidate in (
+            Path(r"C:\Windows\Fonts\SegUIVar.ttf"),
             Path(r"C:\Windows\Fonts\segoeui.ttf"),
+            Path(r"C:\Windows\Fonts\seguisb.ttf"),
             Path(r"C:\Windows\Fonts\segoeuib.ttf"),
             Path(r"C:\Windows\Fonts\seguisym.ttf"),
         ):
             if candidate.exists():
                 QFontDatabase.addApplicationFont(str(candidate))
-        app.setFont(QFont("Segoe UI"))
+        primary_family = (
+            "Segoe UI Variable Text"
+            if "Segoe UI Variable Text" in set(QFontDatabase.families())
+            else "Segoe UI"
+        )
+        font = QFont(primary_family)
+        font.setFamilies([primary_family, "Segoe UI", "sans-serif"])
+        font.setStyleStrategy(
+            QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality
+        )
+        font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+        app.setFont(font)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -220,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = load_vr_settings(app_dir, args.vr_root)
     except ConfigError as exc:
-        print(f"Configuração inválida: {exc}", file=sys.stderr)
+        print(f"Configura\u00e7\u00e3o inv\u00e1lida: {exc}", file=sys.stderr)
         return 1
 
     install_crash_handlers(settings.logs_dir)
@@ -262,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):
             print(warning.toString(), file=sys.stderr)
-        print(f"Não foi possível carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
+        print(f"N\u00e3o foi poss\u00edvel carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
         shutdown()
         return 1
 

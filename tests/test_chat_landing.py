@@ -178,6 +178,22 @@ def test_app_opens_on_new_conversation_when_conversations_exist(tmp_path):
             composer_input = window.findChild(QObject, 'chatComposerInput')
             assert composer_input is not None
             assert composer_input.property('text') == ''
+            from test_chat_presentation import find_items
+            from PySide6.QtGui import QFont
+
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(200)
+            titles = find_items(window.contentItem(), 'conversationTitle')
+            assert len(titles) == 1
+            title = titles[0]
+            assert title.property('text') == 'Conversa Existente'
+            assert title.property('font').weight() == QFont.Weight.DemiBold
+            chat.selectConversationId(cid)
+            QTest.qWait(100)
+            title = find_items(window.contentItem(), 'conversationTitle')[0]
+            assert title.property('font').weight() == QFont.Weight.DemiBold
+            assert not engine._qml_warnings, [w.toString() for w in engine._qml_warnings]
     finally:
         if window:
             window.close()

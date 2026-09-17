@@ -457,6 +457,16 @@ class ChatOrchestrator:
             )
         if not use_vr:
             resolved_vr_mode = "off"
+        current_row_mode = str(conversation["vr_mode"] or "").strip().casefold()
+        if current_row_mode not in ConversationOptions.VALID_VR_MODES:
+            current_row_mode = "vr" if bool(conversation["vr_enabled"]) else "off"
+        if current_row_mode != resolved_vr_mode or bool(conversation["vr_enabled"]) != (resolved_vr_mode != "off"):
+            self.database.update_conversation(
+                conversation_id,
+                vr_mode=resolved_vr_mode,
+                vr_enabled=int(resolved_vr_mode != "off"),
+            )
+            conversation = self._conversation(conversation_id)
         options = replace(
             self._conversation_options(conversation_id, use_vr=use_vr),
             vr_mode=resolved_vr_mode,

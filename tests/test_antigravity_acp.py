@@ -106,6 +106,38 @@ def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, 
     assert "additionalDirectories" not in params
 
 
+@pytest.mark.parametrize("native", ["", "acp:native"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_research_mcp_registration_respects_tool_switch(fake_runtime, tmp_path, native, enabled):
+    provider = AntigravityProvider(tmp_path)
+    done, events = threading.Event(), []
+    def receive(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+    options = ConversationOptions(approval_profile="research_readonly", tools_enabled=enabled)
+    provider.send_message("conversation", native, "gemini-test", "auto", tmp_path, "Hello", receive, options)
+    assert done.wait(2)
+    assert not any(event.kind == "error" for event in events)
+    calls = FakeClient.instances[0].calls
+    params = next(params for method, params in calls if method in {"session/new", "session/resume"})
+    assert bool(params["mcpServers"]) is enabled
+    assert ("session/set_mode", {"sessionId": "native", "modeId": "default"}) in calls
+
+
+def test_disabled_tools_override_full_access():
+    client = MagicMock()
+    options = ConversationOptions(tools_enabled=False)
+    provider = AntigravityProvider()
+    provider._configure(client, "native", SESSION, "default", "auto", options)
+    client.request.assert_called_once_with("session/set_mode", {"sessionId": "native", "modeId": "default"})
+    provider._permission("chat", {"client": client, "options": options, "cancelled": False},
+                         lambda _: pytest.fail("Unexpected approval"), 7, "session/request_permission", {
+        "toolCall": {"kind": "read"}, "options": [{"kind": "allow_once", "optionId": "once"}],
+    })
+    client.respond.assert_called_once_with(7, {"outcome": {"outcome": "cancelled"}})
+
+
 def test_legacy_session_is_not_silently_resumed_with_another_account():
     with pytest.raises(ProviderError, match="histórico"):
         AntigravityProvider().resume_conversation("chat", "cli-session", "default", "auto", Path.cwd())
@@ -206,6 +238,61 @@ def test_full_access_auto_approves_tools_without_ui_prompt():
     })
     assert len(events) == 0, "No approval_requested event should be emitted in full_access"
     client.respond.assert_called_once_with(9, {"outcome": {"outcome": "selected", "optionId": "opt_always"}})
+
+
+@pytest.mark.parametrize("kind", ["read", "search"])
+def test_research_readonly_allows_one_read_or_search(kind):
+    provider = AntigravityProvider()
+    client, events = MagicMock(), []
+    state = {"client": client, "cancelled": False,
+             "options": ConversationOptions(approval_profile="research_readonly")}
+    provider._permission("chat", state, events.append, 7, "session/request_permission", {
+        "toolCall": {"title": "vr_search", "kind": kind},
+        "options": [{"kind": "allow_always", "optionId": "always"},
+                    {"kind": "allow_once", "optionId": "once"}],
+    })
+    client.respond.assert_called_once_with(7, {"outcome": {"outcome": "selected", "optionId": "once"}})
+    assert not events and not provider._approvals
+
+
+@pytest.mark.parametrize("kind", ["edit", "delete", "move", "execute", "fetch", "other", None])
+def test_research_readonly_rejects_non_read_tools_even_with_read_title(kind):
+    provider = AntigravityProvider()
+    client, events = MagicMock(), []
+    state = {"client": client, "cancelled": False,
+             "options": ConversationOptions(approval_profile="research_readonly")}
+    provider._permission("chat", state, events.append, 7, "session/request_permission", {
+        "toolCall": {"title": "vr_read", "kind": kind},
+        "options": [{"kind": "allow_once", "optionId": "once"}],
+    })
+    client.respond.assert_called_once_with(7, {"outcome": {"outcome": "cancelled"}})
+    assert not events and not provider._approvals
+
+
+@pytest.mark.parametrize("overrides,cancelled", [
+    ({"tools_enabled": False}, False), ({"collaboration_mode": "plan"}, False), ({}, True),
+])
+def test_disabled_cancelled_and_plan_research_reject_reads(overrides, cancelled):
+    provider = AntigravityProvider()
+    client = MagicMock()
+    state = {"client": client, "cancelled": cancelled,
+             "options": ConversationOptions(approval_profile="research_readonly", **overrides)}
+    provider._permission("chat", state, lambda _: pytest.fail("Unexpected approval"), 7,
+                         "session/request_permission", {
+        "toolCall": {"kind": "read"}, "options": [{"kind": "allow_once", "optionId": "once"}],
+    })
+    client.respond.assert_called_once_with(7, {"outcome": {"outcome": "cancelled"}})
+
+
+def test_research_readonly_does_not_grant_persistent_permission():
+    client = MagicMock()
+    state = {"client": client, "cancelled": False,
+             "options": ConversationOptions(approval_profile="research_readonly")}
+    AntigravityProvider()._permission("chat", state, lambda _: pytest.fail("Unexpected approval"), 7,
+                                    "session/request_permission", {
+        "toolCall": {"kind": "read"}, "options": [{"kind": "allow_always", "optionId": "always"}],
+    })
+    client.respond.assert_called_once_with(7, {"outcome": {"outcome": "cancelled"}})
 
 
 def test_plan_never_auto_approves_tools():

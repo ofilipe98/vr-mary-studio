@@ -50,6 +50,15 @@ Canvas {
 
         if (kind === "check") {
             ctx.beginPath(); ctx.moveTo(5, 12); ctx.lineTo(10, 17); ctx.lineTo(19, 7); ctx.stroke()
+        } else if (kind === "wrapText") {
+            line(4, 7, 20, 7)
+            line(4, 17, 13, 17)
+            ctx.beginPath(); ctx.moveTo(4, 12); ctx.lineTo(16, 12)
+            ctx.quadraticCurveTo(19, 12, 19, 14.5)
+            ctx.quadraticCurveTo(19, 17, 16, 17)
+            ctx.lineTo(11, 17)
+            ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(13.5, 14.5); ctx.lineTo(11, 17); ctx.lineTo(13.5, 19.5); ctx.stroke()
         } else if (kind === "external") {
             line(10, 14, 20, 4); line(14, 4, 20, 4); line(20, 4, 20, 10)
             ctx.beginPath(); ctx.moveTo(10, 5); ctx.lineTo(5, 5); ctx.lineTo(5, 19); ctx.lineTo(19, 19); ctx.lineTo(19, 14); ctx.stroke()
@@ -72,6 +81,14 @@ Canvas {
             ctx.quadraticCurveTo(20.5, 7, 18.5, 7); ctx.lineTo(11, 7)
             ctx.lineTo(9, 4.8); ctx.lineTo(5.5, 4.8)
             ctx.quadraticCurveTo(3.5, 4.8, 3.5, 7.5); ctx.stroke()
+        } else if (kind === "folderPlus") {
+            ctx.beginPath(); ctx.moveTo(3.5, 7.5); ctx.lineTo(3.5, 18)
+            ctx.quadraticCurveTo(3.5, 20, 5.5, 20); ctx.lineTo(18.5, 20)
+            ctx.quadraticCurveTo(20.5, 20, 20.5, 18); ctx.lineTo(20.5, 9)
+            ctx.quadraticCurveTo(20.5, 7, 18.5, 7); ctx.lineTo(11, 7)
+            ctx.lineTo(9, 4.8); ctx.lineTo(5.5, 4.8)
+            ctx.quadraticCurveTo(3.5, 4.8, 3.5, 7.5); ctx.stroke()
+            line(12, 10.5, 12, 16.5); line(9, 13.5, 15, 13.5)
         } else if (kind === "context") {
             ctx.beginPath(); ctx.moveTo(4, 5); ctx.quadraticCurveTo(8, 3.5, 11, 5); ctx.lineTo(11, 20); ctx.quadraticCurveTo(8, 18.2, 4, 20); ctx.closePath(); ctx.stroke()
             ctx.beginPath(); ctx.moveTo(20, 5); ctx.quadraticCurveTo(16, 3.5, 13, 5); ctx.lineTo(13, 20); ctx.quadraticCurveTo(16, 18.2, 20, 20); ctx.closePath(); ctx.stroke()
@@ -208,6 +225,21 @@ Canvas {
             ctx.lineTo(16.8, 4.2); ctx.lineTo(19.8, 7.2)
             ctx.lineTo(10, 17); ctx.closePath(); ctx.stroke()
             line(5, 19, 10, 17)
+        } else if (kind === "eye") {
+            ctx.beginPath()
+            ctx.moveTo(3, 12)
+            ctx.bezierCurveTo(7, 5.5, 17, 5.5, 21, 12)
+            ctx.bezierCurveTo(17, 18.5, 7, 18.5, 3, 12)
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.arc(12, 12, 3, 0, Math.PI * 2)
+            ctx.stroke()
+        } else if (kind === "branch") {
+            ctx.beginPath(); ctx.arc(6.5, 6.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(6.5, 17.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.arc(17.5, 9.5, 2.5, 0, Math.PI * 2); ctx.stroke()
+            line(6.5, 9, 6.5, 15)
+            ctx.beginPath(); ctx.moveTo(6.5, 14.5); ctx.bezierCurveTo(6.5, 11.5, 17.5, 13, 17.5, 12); ctx.stroke()
         } else if (kind === "auto") {
             function sparkle(cx, cy, horizontal, vertical) {
                 ctx.beginPath()
@@ -295,6 +327,24 @@ Canvas {
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, 0, 0, Math.PI * 2); ctx.stroke()
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, -Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
+        } else if (kind === "layers") {
+            ctx.beginPath()
+            ctx.moveTo(12, 3.5); ctx.lineTo(20.5, 8); ctx.lineTo(12, 12.5); ctx.lineTo(3.5, 8); ctx.closePath(); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(3.5, 12); ctx.lineTo(12, 16.5); ctx.lineTo(20.5, 12); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(3.5, 16); ctx.lineTo(12, 20.5); ctx.lineTo(20.5, 16); ctx.stroke()
+        } else if (kind === "database") {
+            ctx.beginPath(); ctx.ellipse(12, 5.5, 7, 2.8, 0, 0, Math.PI * 2); ctx.stroke()
+            line(5, 5.5, 5, 18.5); line(19, 5.5, 19, 18.5)
+            ctx.beginPath(); ctx.ellipse(12, 18.5, 7, 2.8, 0, 0, Math.PI); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 7, 2.8, 0, 0, Math.PI); ctx.stroke()
+        } else if (kind === "globe") {
+            ctx.beginPath(); ctx.arc(12, 12, 8, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 3.6, 8, 0, 0, Math.PI * 2); ctx.stroke()
+            line(4, 12, 20, 12)
+        } else if (kind === "code") {
+            ctx.beginPath(); ctx.moveTo(9.5, 8); ctx.lineTo(5.5, 12); ctx.lineTo(9.5, 16); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(14.5, 8); ctx.lineTo(18.5, 12); ctx.lineTo(14.5, 16); ctx.stroke()
+            line(13.2, 5.5, 10.8, 18.5)
         }
     }
 }

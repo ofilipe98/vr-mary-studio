@@ -54,22 +54,23 @@ Button {
         spacing: 7
         Text {
             text: control.compactLabel || "Medium"
-            color: Theme.palette.text
+            color: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: Theme.fontSize(12.5)
+            renderType: Text.NativeRendering
         }
         VrLineIcon {
-            Layout.preferredWidth: 13
-            Layout.preferredHeight: 13
+            Layout.preferredWidth: 11
+            Layout.preferredHeight: 11
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: 8
-        color: control.down || control.hovered || optionsPopup.opened || control.outlined
-            ? Theme.palette.chatControl : "transparent"
+        radius: 6
+        color: control.down || control.hovered || optionsPopup.opened
+            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
         border.width: control.outlined || control.activeFocus ? 1 : 0
         border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {

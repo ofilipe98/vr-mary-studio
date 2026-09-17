@@ -52,6 +52,7 @@ Item {
                 font.pixelSize: Theme.fontSize(16)
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.05
+                renderType: Text.NativeRendering
             }
             Row {
                 spacing: 6
@@ -62,6 +63,7 @@ Item {
                     font.pixelSize: Theme.fontSize(9)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 1.7
+                    renderType: Text.NativeRendering
                 }
                 Rectangle {
                     objectName: "environmentVersionPill"
@@ -72,6 +74,7 @@ Item {
                         id: stageLabel; anchors.centerIn: parent
                         text: frontend.appVersion + " " + frontend.environmentStage
                         color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: 9
+                        renderType: Text.NativeRendering
                     }
                 }
             }

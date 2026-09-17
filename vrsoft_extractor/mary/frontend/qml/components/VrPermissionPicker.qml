@@ -21,10 +21,13 @@ Button {
         return "auto"
     }
 
-    implicitHeight: Theme.compactControlHeight
-    implicitWidth: Math.max(106, compactRow.implicitWidth + 14)
-    leftPadding: 7
-    rightPadding: 7
+    property bool compact: false
+    implicitHeight: compact ? 26 : Theme.compactControlHeight
+    implicitWidth: compact
+        ? (compactRow.implicitWidth + leftPadding + rightPadding)
+        : Math.max(106, compactRow.implicitWidth + 14)
+    leftPadding: compact ? 6 : 7
+    rightPadding: compact ? 6 : 7
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
@@ -38,31 +41,34 @@ Button {
 
     contentItem: RowLayout {
         id: compactRow
-        spacing: 7
+        spacing: control.compact ? 5 : 7
         VrLineIcon {
-            Layout.preferredWidth: 16
-            Layout.preferredHeight: 16
+            Layout.preferredWidth: control.compact ? 13 : 16
+            Layout.preferredHeight: control.compact ? 13 : 16
             kind: control.permissionIconKind(control.currentItem.value)
             foreground: Theme.palette.mutedText
         }
         Text {
             text: control.currentItem.label || "Auto"
-            color: Theme.palette.text
+            color: control.compact
+                ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
+                : (control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            renderType: Text.NativeRendering
         }
         VrLineIcon {
-            Layout.preferredWidth: 13
-            Layout.preferredHeight: 13
+            Layout.preferredWidth: control.compact ? 10 : 11
+            Layout.preferredHeight: control.compact ? 10 : 11
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: 8
+        radius: control.compact ? 6 : 6
         color: control.down || control.hovered || optionsPopup.opened
-            ? Theme.palette.chatControl : "transparent"
+            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: Theme.palette.focus
         Behavior on color {

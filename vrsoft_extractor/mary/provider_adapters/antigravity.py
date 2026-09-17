@@ -94,7 +94,7 @@ class AntigravityProvider(AgentProvider):
             client.start()
             client.request("authenticate", {"methodId": "oauth-personal"})
             params = {"cwd": str(workspace.resolve()), "mcpServers": []}
-            if self.knowledge_root:
+            if self.knowledge_root and options.tools_enabled:
                 from ..knowledge_access import mcp_command
                 command = mcp_command(Path(self.knowledge_root), options.knowledge_context_path)
                 params["mcpServers"] = [{
@@ -155,7 +155,7 @@ class AntigravityProvider(AgentProvider):
             client.request("session/set_model", {"sessionId": session_id, "modelId": model})
         preset = approval_preset(options.approval_profile)
         requested_mode = "yolo" if preset.sandbox == "danger-full-access" else "auto_edit" if preset.id == "auto_edits" else "default"
-        if options.collaboration_mode == "plan" or preset.sandbox == "read-only":
+        if not options.tools_enabled or options.collaboration_mode == "plan" or preset.sandbox == "read-only":
             requested_mode = "default"
         available_modes = {m.get("id") for m in (session.get("modes") or {}).get("availableModes", [])}
         if requested_mode not in available_modes:
@@ -200,11 +200,17 @@ class AntigravityProvider(AgentProvider):
         options = state["options"]
         # ACP default mode asks permission. Plan always denies
         # tools here because this runtime does not advertise a native plan mode.
-        if state["cancelled"] or options.collaboration_mode == "plan" or options.approval_profile == "research_readonly":
+        if state["cancelled"] or not options.tools_enabled or options.collaboration_mode == "plan":
             client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
             return
         preset = approval_preset(options.approval_profile)
         choices = params.get("options", [])
+        if options.approval_profile == "research_readonly":
+            tool = params.get("toolCall") or {}
+            selected = next((x for x in choices if x.get("kind") == "allow_once"), None) if tool.get("kind") in {"read", "search"} else None
+            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
+            client.respond(request_id, {"outcome": outcome})
+            return
         if preset.sandbox == "danger-full-access":
             preferred = "allow_always"
             selected = next((x for x in choices if x.get("kind") == preferred), None)

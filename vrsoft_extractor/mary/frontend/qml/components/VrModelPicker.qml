@@ -25,10 +25,13 @@ Button {
     signal activated(int index)
     signal favoriteToggled(int index)
 
-    implicitWidth: 158
-    implicitHeight: Theme.compactControlHeight
-    leftPadding: 7
-    rightPadding: 7
+    property bool compact: false
+    implicitWidth: compact
+        ? (pickerContentRow.implicitWidth + leftPadding + rightPadding)
+        : Math.max(158, pickerContentRow.implicitWidth + leftPadding + rightPadding)
+    implicitHeight: compact ? 26 : Theme.compactControlHeight
+    leftPadding: compact ? 6 : 7
+    rightPadding: compact ? 6 : 7
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
     transformOrigin: Item.Center
@@ -41,33 +44,37 @@ Button {
     }
 
     contentItem: RowLayout {
-        spacing: 7
+        id: pickerContentRow
+        spacing: control.compact ? 5 : 7
         VrProviderIcon {
-            Layout.preferredWidth: 17
-            Layout.preferredHeight: 17
+            Layout.preferredWidth: control.compact ? 14 : 17
+            Layout.preferredHeight: control.compact ? 14 : 17
             provider: control.currentItem.provider || "codex"
         }
         Text {
-            Layout.fillWidth: true
+            Layout.fillWidth: !control.compact
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
-            color: Theme.palette.text
+            color: control.compact
+                ? (control.hovered || pickerPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
+                : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
-            elide: Text.ElideRight
+            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            renderType: Text.NativeRendering
+            elide: control.compact ? Text.ElideNone : Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
         VrLineIcon {
-            Layout.preferredWidth: 13
-            Layout.preferredHeight: 13
+            Layout.preferredWidth: control.compact ? 10 : 11
+            Layout.preferredHeight: control.compact ? 10 : 11
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: 8
-        color: control.down || control.hovered || pickerPopup.opened || control.outlined
-            ? Theme.palette.chatControl : "transparent"
+        radius: control.compact ? 6 : 6
+        color: control.down || control.hovered || pickerPopup.opened
+            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
         border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
         border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
         Behavior on color {

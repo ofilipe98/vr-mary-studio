@@ -170,10 +170,10 @@ Item {
     Rectangle {
         id: selectorBackground
         anchors.fill: parent
-        radius: Theme.radiusSmall
-        color: control.hovered || selectorPopup.opened ? Theme.palette.chatControl : Theme.palette.codeSurface
+        radius: 14
+        color: control.hovered || selectorPopup.opened ? Theme.palette.codeSurface : Theme.palette.background
         border.width: 1
-        border.color: selectorPopup.opened ? Theme.palette.brandOrange : (control.hovered ? Theme.palette.focus : Theme.palette.chatBorder)
+        border.color: selectorPopup.opened ? Theme.palette.brandOrange : (control.hovered ? Theme.palette.focus : Theme.palette.border)
 
         Behavior on color {
             ColorAnimation { duration: Theme.fastDuration }
@@ -383,10 +383,10 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
-            radius: Theme.radiusSmall
-            color: Theme.palette.chatComposer
+            radius: 14
+            color: Theme.palette.background
             border.width: 1
-            border.color: Theme.palette.chatBorder
+            border.color: Theme.palette.border
         }
 
         onOpened: {

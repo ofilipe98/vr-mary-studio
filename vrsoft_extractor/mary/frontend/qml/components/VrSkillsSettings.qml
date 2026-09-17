@@ -23,66 +23,47 @@ Item {
 
     Component.onCompleted: refresh()
 
-    ColumnLayout {
+    Item {
         anchors.fill: parent
         anchors.margins: 24
-        spacing: 16
 
-        // Page Header
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
+        ColumnLayout {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(848, parent.width)
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            spacing: 16
 
-            Rectangle {
-                Layout.preferredWidth: 36
-                Layout.preferredHeight: 36
-                radius: Theme.radiusSmall
-                color: Theme.palette.codeSurface
-                border.width: 1
-                border.color: Theme.palette.chatBorder
-
-                VrLineIcon {
-                    anchors.centerIn: parent
-                    width: 18
-                    height: 18
-                    kind: "check"
-                    foreground: Theme.palette.brandOrange
-                }
-            }
-
-            ColumnLayout {
+            // Page Header
+            RowLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: 12
 
                 Text {
-                    text: "Gerenciador de Skills"
+                    text: "Gerenciador de skills"
+                    Layout.leftMargin: 16
+                    Layout.fillWidth: true
                     color: Theme.palette.text
+                    opacity: 0.7
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(16)
-                    font.weight: Font.DemiBold
+                    font.pixelSize: Theme.fontSize(14)
                 }
 
-                Text {
-                    text: "Habilidades modulares descobertas nativamente para Codex, Claude, Antigravity e App."
-                    color: Theme.palette.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                VrButton {
+                    text: "Atualizar"
+                    variant: "ghost"
+                    implicitHeight: 28
+                    onClicked: root.refresh()
+                }
+
+                VrButton {
+                    objectName: "openNewSkillButton"
+                    text: "+ Nova Skill"
+                    variant: "primary"
+                    implicitHeight: 28
+                    onClicked: newSkillDialog.open()
                 }
             }
-
-            VrButton {
-                text: "Atualizar"
-                variant: "ghost"
-                onClicked: root.refresh()
-            }
-
-            VrButton {
-                objectName: "openNewSkillButton"
-                text: "+ Nova Skill"
-                variant: "primary"
-                onClicked: newSkillDialog.open()
-            }
-        }
 
         // Feedback Banner
         Rectangle {
@@ -121,7 +102,14 @@ Item {
             VrTextField {
                 id: searchInput
                 Layout.fillWidth: true
+                implicitHeight: 38
                 placeholderText: "Filtrar skills por nome ou descrição…"
+                background: Rectangle {
+                    radius: 10
+                    color: Theme.palette.background
+                    border.width: searchInput.activeFocus ? 2 : 1
+                    border.color: searchInput.activeFocus ? Theme.palette.focus : Theme.palette.border
+                }
                 onTextChanged: root.searchQuery = text.trim().toLowerCase()
             }
 
@@ -146,10 +134,10 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 8
-            color: Theme.palette.chatSidebar
+            radius: 14
+            color: Theme.palette.background
             border.width: 1
-            border.color: Theme.palette.chatBorder
+            border.color: Theme.palette.border
 
             ListView {
                 id: skillsListView
@@ -179,10 +167,10 @@ Item {
                     required property var modelData
                     width: skillsListView.width
                     implicitHeight: itemCol.implicitHeight + 16
-                    radius: 6
-                    color: Theme.palette.chatComposer
+                    radius: 10
+                    color: Theme.palette.codeSurface
                     border.width: 1
-                    border.color: Theme.palette.chatBorder
+                    border.color: Theme.palette.border
 
                     RowLayout {
                         id: itemCol
@@ -276,6 +264,7 @@ Item {
             }
         }
     }
+}
 
     // Dialog: Nova Skill
     Dialog {

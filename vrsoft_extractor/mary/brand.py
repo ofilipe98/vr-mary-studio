@@ -70,7 +70,7 @@ def brand_palette(theme_id: str) -> dict[str, str]:
         "chatComposer": "#1A1A1D" if dark else "#FFFFFF",
         "chatControl": "#252528" if dark else "#ECECF1",
         "chatBorder": "#2C2C30" if dark else "#D7D7DF",
-        "chatDivider": "#202023" if dark else "#E5E5EB",
+        "chatDivider": "#2C2C30" if dark else "#D7D7DF",
         "messageSurface": "#232326" if dark else "#E9E9EF",
         "codeSurface": "#161619" if dark else "#F6F6F8",
         "codeHeader": "#1D1D20" if dark else "#ECECF1",

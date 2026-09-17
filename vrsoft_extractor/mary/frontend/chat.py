@@ -1710,7 +1710,11 @@ class ChatBridge(QObject):
             vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
                 "vr" if bool(row["vr_enabled"]) else "off"
             )
-            if editing and conversation_id == selected_id:
+            if (
+                editing
+                and conversation_id == selected_id
+                and not self._database.messages(conversation_id)
+            ):
                 vr_mode = self._vr_mode
             vr_enabled = vr_mode != "off"
             conversations.append(
@@ -1774,6 +1778,32 @@ class ChatBridge(QObject):
     @Slot(int, result=str)
     def chooseProjectIcon(self, index: int) -> str:  # noqa: N802
         return self._Conversations_domain.chooseProjectIcon(index)
+
+    @Slot(int, str, result=bool)
+    def setProjectIconEmoji(self, index: int, emoji: str) -> bool:  # noqa: N802
+        return self._Conversations_domain.setProjectIconEmoji(index, emoji)
+
+    @Slot(int, str, result=bool)
+    def setProjectIconColor(self, index: int, color: str) -> bool:  # noqa: N802
+        return self._Conversations_domain.setProjectIconColor(index, color)
+
+    @Slot(int, str, result=bool)
+    def setProjectIconKind(self, index: int, kind: str) -> bool:  # noqa: N802
+        return self._Conversations_domain.setProjectIconKind(index, kind)
+
+    @Slot(int, str, result=bool)
+    def setProjectIconText(self, index: int, text: str) -> bool:  # noqa: N802
+        return self._Conversations_domain.setProjectIconText(index, text)
+
+    @Slot(int, str, str, str, str, result=bool)
+    def applyProjectIcon(  # noqa: N802
+        self, index: int, kind: str = "", color: str = "", emoji: str = "", text: str = ""
+    ) -> bool:
+        return self._Conversations_domain.applyProjectIcon(index, kind, color, emoji, text)
+
+    @Slot(int, result=bool)
+    def clearProjectIcon(self, index: int) -> bool:  # noqa: N802
+        return self._Conversations_domain.clearProjectIcon(index)
 
     @Slot(int, result=bool)
     def removeProject(self, index: int) -> bool:  # noqa: N802
@@ -1967,7 +1997,7 @@ class ChatBridge(QObject):
         )
         self._preferences.sync()
         conversation_id = str(self._selected.get("conversationId") or "")
-        if conversation_id:
+        if conversation_id and not self._database.messages(conversation_id):
             try:
                 self._orchestrator.update_vr_mode(conversation_id, resolved)
             except Exception as exc:

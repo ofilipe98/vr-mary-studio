@@ -103,6 +103,23 @@ class QmlFrontendTest(unittest.TestCase):
             archive.writestr("br/vr/App.class", marker)
         ErpReleaseCatalog(settings.root, expected_jar_count=1).import_release(release_id)
 
+    def test_application_font_resolves_real_semibold_on_windows(self):
+        import sys
+        from PySide6.QtGui import QFont, QFontInfo
+        from vrsoft_extractor.mary.frontend.app import _apply_application_font
+
+        if sys.platform != "win32" or not Path(r"C:\Windows\Fonts\seguisb.ttf").exists():
+            self.skipTest("Windows Segoe UI Semibold is unavailable")
+        previous_font = self.application.font()
+        try:
+            _apply_application_font(self.application)
+            font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+            resolved = QFontInfo(font)
+            self.assertEqual(resolved.styleName(), "Semibold")
+            self.assertEqual(resolved.weight(), QFont.Weight.DemiBold)
+        finally:
+            self.application.setFont(previous_font)
+
     def test_brand_palette_keeps_existing_vr_identity(self):
         light = brand.brand_palette("light")
         dark = brand.brand_palette("dark_orange")
@@ -975,6 +992,68 @@ class QmlFrontendTest(unittest.TestCase):
                 if item["path"] == str(project)
             )
             self.assertEqual(restored_item["label"], "Projeto Norte")
+
+    def test_chat_project_icon_modes_are_saved_and_restored(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertFalse(bridge.setProjectIconKind(0, "layers"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, kind="unknown_kind"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, color="nope"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, text="ABC"))
+
+            self.assertTrue(
+                bridge.applyProjectIcon(
+                    project_index, kind="layers", color="#D946EF", emoji="", text=""
+                )
+            )
+            item = bridge.projectItems[project_index]
+            self.assertEqual(item["iconKind"], "layers")
+            self.assertEqual(item["iconColor"], "#D946EF")
+
+            self.assertTrue(bridge.setProjectIconText(project_index, "ab"))
+            item = bridge.projectItems[project_index]
+            self.assertEqual(item["iconText"], "ab")
+            self.assertEqual(item["iconKind"], "")
+
+            restored = ChatBridge(settings, database, preferences)
+            restored_item = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(restored_item["iconText"], "ab")
+
+            self.assertTrue(restored.clearProjectIcon(project_index))
+            cleared = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(cleared["iconKind"], "")
+            self.assertEqual(cleared["iconText"], "")
+            self.assertEqual(cleared["iconColor"], "")
 
     def test_chat_project_can_be_removed_from_the_selector_and_added_again(self):
         with TemporaryDirectory() as temporary:
@@ -3873,6 +3952,105 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("required property bool vrEnabled", chat_preview_qml)
             self.assertIn('text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"', chat_preview_qml)
             self.assertIn("Theme.palette.accessibleOrange", chat_preview_qml)
+
+    def test_vr_mode_tag_stays_fixed_until_question_sent_with_different_mode(self):
+        with TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            cid = database.create_conversation(
+                "VR Chat", "codex", "modelo", settings.root, vr_enabled=True, vr_mode="vr"
+            )
+            database.add_message(cid, "user", "Pergunta em VR")
+            database.add_message(cid, "assistant", "Resposta em VR")
+
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = ChatBridge(settings, database, preferences)
+
+            item = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item["vrMode"], "vr")
+            self.assertTrue(item["vrEnabled"])
+
+            bridge.selectConversationId(cid)
+            self.assertEqual(bridge.vrMode, "vr")
+
+            # 1. Changing composer mode to ultra must NOT change the conversation item's tag
+            bridge.setVrMode("ultra")
+            self.assertEqual(bridge.vrMode, "ultra")
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "vr")
+
+            item_during_edit = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_during_edit["vrMode"], "vr")
+            self.assertTrue(item_during_edit["vrEnabled"])
+
+            # 2. Saving a draft in ultra mode must also NOT change the conversation item's tag
+            bridge.saveCurrentDraft("Rascunho no modo ultra")
+            item_with_draft = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_with_draft["vrMode"], "vr")
+
+            # 3. Sending another question with ultra mode now changes the tag to 'ultra'
+            from tests.test_mary_orchestration import FakeProvider
+            fake_provider = FakeProvider("codex")
+            bridge._orchestrator.providers["codex"] = fake_provider
+            bridge.sendMessage("Pergunta enviada no modo ultra")
+            for _ in range(400):
+                status = str(database.get_conversation(cid)["status"] or "idle")
+                if status != "running":
+                    break
+                self.application.processEvents()
+                QTest.qWait(50)
+            bridge._finalize_terminal_state("turn_completed")
+
+            item_after_ultra = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_after_ultra["vrMode"], "ultra")
+            self.assertTrue(item_after_ultra["vrEnabled"])
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "ultra")
+
+            # 4. Changing composer mode to off must keep tag at 'ultra' until question is sent
+            bridge.setVrMode("off")
+            self.assertEqual(bridge.vrMode, "off")
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "ultra")
+
+            # 5. Sending question in off mode now changes the tag to off
+            bridge.sendMessage("Pergunta enviada no modo off")
+            for _ in range(400):
+                status = str(database.get_conversation(cid)["status"] or "idle")
+                if status != "running":
+                    break
+                self.application.processEvents()
+                QTest.qWait(50)
+            bridge._finalize_terminal_state("turn_completed")
+
+            item_after_off = next(
+                bridge.conversations.item(i)
+                for i in range(bridge.conversationCount)
+                if bridge.conversations.item(i)["conversationId"] == cid
+            )
+            self.assertEqual(item_after_off["vrMode"], "off")
+            self.assertFalse(item_after_off["vrEnabled"])
+            self.assertEqual(database.get_conversation(cid)["vr_mode"], "off")
+            bridge.close()
+
 
     def test_context_uses_provider_model_metadata_and_hides_without_it(self):
         with TemporaryDirectory() as temporary:

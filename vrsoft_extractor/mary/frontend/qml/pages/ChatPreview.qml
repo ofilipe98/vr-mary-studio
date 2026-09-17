@@ -24,17 +24,58 @@ Item {
     required property var frontendBridge
     component ProjectMenuEntry: MenuItem {
         id: entry
-        implicitHeight: 34
-        contentItem: Text {
-            text: entry.text
-            color: Theme.palette.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.bodySize
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        property string iconPath: ""
+        property string iconKind: ""
+        property string iconEmoji: ""
+        property string iconColor: ""
+        property string iconText: ""
+        property bool isAll: false
+        property string subtitle: ""
+        implicitHeight: subtitle.length ? 44 : 36
+        contentItem: RowLayout {
+            spacing: 9
+            VrProjectIcon {
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                boxSize: 24
+                iconSize: 14
+                projectLabel: entry.text
+                iconPath: entry.iconPath
+                iconKind: entry.iconKind
+                iconEmoji: entry.iconEmoji
+                iconColor: entry.iconColor
+                iconText: entry.iconText
+                isAll: entry.isAll
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                spacing: 0
+                Text {
+                    Layout.fillWidth: true
+                    text: entry.text
+                    color: Theme.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(13)
+                    font.weight: Font.Medium
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+                Text {
+                    visible: entry.subtitle.length > 0
+                    Layout.fillWidth: true
+                    text: entry.subtitle
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(10)
+                    elide: Text.ElideMiddle
+                    maximumLineCount: 1
+                }
+            }
         }
         background: Rectangle {
-            radius: 6
+            radius: 7
             color: entry.highlighted ? Theme.palette.chatControl : "transparent"
         }
     }
@@ -80,7 +121,20 @@ Item {
     property string projectSettingsName: ""
     property string projectSettingsPath: ""
     property string projectSettingsIconPath: ""
-    property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 210 : 244) : 0
+    property string projectSettingsIconKind: ""
+    property string projectSettingsIconEmoji: ""
+    property string projectSettingsIconColor: ""
+    property string projectSettingsIconText: ""
+    property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 220 : 260) : 0
+    readonly property real sidebarBorderX: conversationSidebarVisible && conversationSidebar.visible
+        ? (conversationSidebar.width + 3)
+        : 0
+    readonly property real sidebarBorderOffset: conversationSidebarVisible && conversationSidebar.visible
+        ? (conversationSidebar.width + 4)
+        : 0
+    readonly property real surfaceBorderOffset: surfaceVisible && surfacePanel.visible
+        ? (surfacePanel.width + 4)
+        : 0
     property real surfacePanelWidth: surfaceVisible ? 430 : 0
     readonly property var addProjectSources: [
         { key: "local", title: "Local folder", description: "Browse a folder on disk", icon: "folder", enabled: true, badge: "" },
@@ -212,7 +266,8 @@ Item {
             // Crisp 1px hairline divider
             Rectangle {
                 id: chatCenterLine
-                anchors.centerIn: parent
+                objectName: "chatCenterLine"
+                anchors.horizontalCenter: parent.horizontalCenter
                 width: 1
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -220,8 +275,8 @@ Item {
                     ? Theme.palette.brandOrange
                     : SplitHandle.hovered
                         ? Theme.palette.focus
-                        : Theme.palette.chatDivider
-                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 0.55
+                        : Theme.palette.chatBorder
+                opacity: SplitHandle.pressed ? 1.0 : SplitHandle.hovered ? 0.9 : 1.0
 
                 Behavior on color {
                     enabled: !root.frontendBridge.reduceMotion
@@ -274,143 +329,158 @@ Item {
                 enabled: !root.frontendBridge.reduceMotion
                 NumberAnimation { duration: Theme.motionDuration; easing.type: Easing.OutCubic }
             }
-            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatDivider; visible: root.width < 760 }
+            Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 1; color: Theme.palette.chatBorder; visible: root.width < 760 }
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
+                anchors.margins: 10
+                spacing: 6
 
-                VrBrandHeader {
+                Item {
+                    id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    showToggle: false
-                    onBrandActivated: root.frontendBridge.setCurrentPage(1)
-                }
+                    Layout.preferredHeight: 32
+                    Layout.minimumHeight: 32
+                    Layout.maximumHeight: 32
+                    Layout.fillHeight: false
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 5
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 6
 
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 36
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 0
 
-                        VrTextField {
-                            id: conversationSearch
-                            objectName: "conversationSearch"
-                            anchors.fill: parent
-                            leftPadding: 31
-                            rightPadding: 25
-                            placeholderText: "Pesquisar conversas"
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: conversationSearch.hovered
-                                    || conversationSearch.activeFocus
-                                    ? Theme.palette.chatControl
-                                    : Theme.palette.surfaceRaised
-                                border.width: 1
-                                border.color: conversationSearch.activeFocus
-                                    ? Theme.palette.focus : Theme.palette.border
+                            VrTextField {
+                                id: conversationSearch
+                                objectName: "conversationSearch"
+                                anchors.fill: parent
+                                leftPadding: 30
+                                rightPadding: 6
+                                placeholderText: "Pesquisar"
+                                ToolTip.visible: hovered && !activeFocus
+                                ToolTip.delay: 600
+                                ToolTip.text: "Pesquisar conversas"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(14)
+                                font.weight: Font.Medium
+                                renderType: Text.NativeRendering
+                                color: Theme.palette.text
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: conversationSearch.activeFocus
+                                        ? Theme.palette.chatControl
+                                        : (conversationSearch.hovered
+                                            ? Qt.rgba(255, 255, 255, 0.04)
+                                            : "transparent")
+                                    border.width: 1
+                                    border.color: conversationSearch.activeFocus
+                                        ? Theme.palette.focus
+                                        : (conversationSearch.hovered
+                                            ? Qt.rgba(255, 255, 255, 0.08)
+                                            : "transparent")
+
+                                    Behavior on color {
+                                        ColorAnimation { duration: Theme.fastDuration }
+                                    }
+                                    Behavior on border.color {
+                                        ColorAnimation { duration: Theme.fastDuration }
+                                    }
+                                }
+                                onTextChanged: searchDelay.restart()
                             }
-                            onTextChanged: searchDelay.restart()
+                            VrLineIcon {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 7
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 16
+                                height: 16
+                                kind: "search"
+                                foreground: conversationSearch.activeFocus
+                                    ? Theme.palette.text : Theme.palette.mutedText
+                            }
                         }
-                        VrLineIcon {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 15
-                            height: 15
-                            kind: "search"
-                            foreground: Theme.palette.mutedText
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 9
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "/"
-                            color: Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(10)
-                        }
-                    }
-                    VrIconButton {
-                        objectName: "newChatButton"
-                        implicitWidth: 32
-                        implicitHeight: 32
-                        iconKind: "newChat"
-                        foreground: Theme.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Nova conversa"
-                        Accessible.name: "Nova conversa"
-                        onClicked: {
-                            root.projectSettingsVisible = false
-                            conversationSearch.clear()
-                            root.chatBridge.saveCurrentDraft(composerInput.text)
-                            root.chatBridge.startNewChat()
-                            composerInput.clear()
-                            Qt.callLater(function() {
-                                newChatProjectPopup.open()
-                            })
-                        }
-                        background: Rectangle {
+
+                        // Grouped actions for folder / chat (transparent, like T3)
+                        Rectangle {
+                            id: folderActionsCapsule
+                            Layout.preferredHeight: 32
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: folderActionsRow.implicitWidth + 4
                             radius: 8
-                            color: parent.down || parent.hovered
-                                ? Theme.palette.chatControl : "transparent"
-                        }
-                    }
-                }
+                            color: "transparent"
+                            border.width: 0
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    VrProjectSelector {
-                        id: projectSelector
-                        objectName: "projectSelector"
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 34
-                        model: root.chatBridge.projectItems
-                        currentIndex: root.chatBridge.currentProjectIndex
-                        popupObjectName: "projectSelectorMenu"
-                        onActivated: index => {
-                            root.projectSettingsVisible = false
-                            root.chatBridge.setProject(index)
-                        }
-                        onSettingsRequested: index => root.openProjectSettings(index)
-                    }
-                    VrIconButton {
-                        id: addProjectButton
-                        objectName: "addProjectButton"
-                        implicitWidth: 34
-                        implicitHeight: 34
-                        iconKind: "plus"
-                        foreground: Theme.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Adicionar projeto"
-                        onClicked: {
-                            root.addProjectView = "sources"
-                            addProjectSearch.clear()
-                            addProjectPopup.open()
-                        }
-                    }
-                }
+                            RowLayout {
+                                id: folderActionsRow
+                                anchors.centerIn: parent
+                                spacing: 4
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 3
-                    Layout.bottomMargin: -2
-                    spacing: 7
-                    Text {
-                        text: "Chats"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
-                    }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.palette.chatDivider
-                        opacity: 0.6
+                                VrProjectSelector {
+                                    id: projectSelector
+                                    objectName: "projectSelector"
+                                    compact: true
+                                    model: root.chatBridge.projectItems
+                                    currentIndex: root.chatBridge.currentProjectIndex
+                                    popupObjectName: "projectSelectorMenu"
+                                    onActivated: index => {
+                                        root.projectSettingsVisible = false
+                                        root.chatBridge.setProject(index)
+                                    }
+                                    onSettingsRequested: index => root.openProjectSettings(index)
+                                    onNewProjectRequested: {
+                                        root.addProjectView = "sources"
+                                        addProjectSearch.clear()
+                                        addProjectPopup.open()
+                                    }
+                                }
+
+                                VrIconButton {
+                                    id: addProjectButton
+                                    objectName: "addProjectButton"
+                                    implicitWidth: 32
+                                    implicitHeight: 32
+                                    iconSize: 16
+                                    iconKind: "folderPlus"
+                                    focusPolicy: Qt.NoFocus
+                                    foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Criar novo projeto"
+                                    Accessible.name: "Criar novo projeto"
+                                    onClicked: {
+                                        root.addProjectView = "sources"
+                                        addProjectSearch.clear()
+                                        addProjectPopup.open()
+                                    }
+                                }
+
+                                VrIconButton {
+                                    id: newChatButton
+                                    objectName: "newChatButton"
+                                    implicitWidth: 32
+                                    implicitHeight: 32
+                                    iconSize: 16
+                                    iconKind: "newChat"
+                                    focusPolicy: Qt.NoFocus
+                                    foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Nova conversa"
+                                    Accessible.name: "Nova conversa"
+                                    onClicked: {
+                                        root.projectSettingsVisible = false
+                                        conversationSearch.clear()
+                                        root.chatBridge.saveCurrentDraft(composerInput.text)
+                                        root.chatBridge.startNewChat()
+                                        composerInput.clear()
+                                        Qt.callLater(function() {
+                                            newChatProjectPopup.open()
+                                        })
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -418,28 +488,14 @@ Item {
                     id: conversationList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.topMargin: 2
                     clip: true
                     reuseItems: true
                     cacheBuffer: 240
-                    spacing: 3
+                    spacing: 4
                     model: root.chatBridge.conversations
                     currentIndex: root.chatBridge.selectedIndex
                     ScrollBar.vertical: VrScrollBar { }
-                    section.property: "section"
-                    section.criteria: ViewSection.FullString
-                    section.delegate: Rectangle {
-                        id: conversationSection
-                        required property string section
-                        width: conversationList.width
-                        height: 26
-                        color: "transparent"
-                        RowLayout {
-                            anchors.fill: parent
-                            spacing: 7
-                            Text { text: conversationSection.section; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); font.weight: Font.DemiBold }
-                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider; opacity: 0.6 }
-                        }
-                    }
                     delegate: Rectangle {
                         id: conversationItem
                         objectName: "conversationItem"
@@ -462,6 +518,10 @@ Item {
                         radius: 8
                         color: root.chatBridge.selectedIndex === index ? Theme.palette.selection
                             : itemHover.hovered ? Theme.palette.chatControl : "transparent"
+                        border.width: 1
+                        border.color: root.chatBridge.selectedIndex === index
+                            ? Qt.rgba(255, 255, 255, 0.08)
+                            : (itemHover.hovered ? Qt.rgba(255, 255, 255, 0.04) : "transparent")
                         ColumnLayout {
                             anchors.left: parent.left
                             anchors.right: parent.right
@@ -477,8 +537,8 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 5
                                 VrLineIcon {
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     kind: conversationItem.editing ? "edit" : "folder"
                                     foreground: conversationItem.editing
                                         ? "#F3C74E" : Theme.palette.mutedText
@@ -488,16 +548,25 @@ Item {
                                     text: conversationItem.projectLabel
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(9)
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.Medium
+                                    renderType: Text.NativeRendering
                                     elide: Text.ElideRight
-                                    Layout.preferredWidth: Math.min(implicitWidth, Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 90))
+                                    maximumLineCount: 1
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 30
+                                    Layout.preferredWidth: Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 118)
+                                    ToolTip.visible: projectLabelHover.hovered
+                                    ToolTip.delay: 500
+                                    ToolTip.text: conversationItem.projectLabel
+                                    HoverHandler { id: projectLabelHover }
                                 }
                                 Rectangle {
                                     id: conversationVrBadge
                                     objectName: "conversationVrBadge"
                                     visible: conversationItem.vrEnabled && conversationItem.vrMode !== "off"
                                     Layout.alignment: Qt.AlignVCenter
-                                    implicitHeight: 14
+                                    implicitHeight: 16
                                     implicitWidth: conversationVrBadgeText.implicitWidth + 8
                                     radius: 4
                                     color: Theme.palette.accessibleOrange
@@ -508,7 +577,7 @@ Item {
                                         text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"
                                         color: "#FFFFFF"
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(8)
+                                        font.pixelSize: Theme.fontSize(9)
                                         font.weight: Font.DemiBold
                                     }
 
@@ -525,15 +594,15 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: 13
-                                    Layout.preferredHeight: 13
+                                    Layout.preferredWidth: 14
+                                    Layout.preferredHeight: 14
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
                                 Item {
                                     visible: conversationItem.running
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     Canvas {
                                         anchors.fill: parent
                                         onPaint: {
@@ -557,8 +626,9 @@ Item {
                                         : root.relativeAge(conversationItem.updatedAt)
                                     color: conversationItem.running ? "#18A8E8" : Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(9)
-                                    font.weight: conversationItem.running ? Font.DemiBold : Font.Normal
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: conversationItem.running ? Font.DemiBold : Font.Medium
+                                    renderType: Text.NativeRendering
                                 }
                                 VrIconButton {
                                     id: discardDraftButton
@@ -586,12 +656,14 @@ Item {
                                 }
                             }
                             Text {
+                                objectName: "conversationTitle"
                                 Layout.fillWidth: true
                                 text: conversationItem.title
-                                color: Theme.palette.text
+                                color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
-                                font.weight: Font.DemiBold
+                                font.pixelSize: Theme.fontSize(14)
+                                font.weight: Font.Medium
+                                renderType: Text.NativeRendering
                                 elide: Text.ElideRight
                             }
                             RowLayout {
@@ -602,7 +674,9 @@ Item {
                                     text: conversationItem.modelName
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(9)
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.Medium
+                                    renderType: Text.NativeRendering
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
@@ -615,8 +689,8 @@ Item {
                                         : Theme.palette.success
                                 }
                                 VrProviderIcon {
-                                    Layout.preferredWidth: 13
-                                    Layout.preferredHeight: 13
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     provider: conversationItem.provider.toLowerCase()
                                 }
                             }
@@ -687,25 +761,24 @@ Item {
             SplitView.minimumWidth: 320
             SplitView.fillWidth: true
 
-            VrChatHeader {
+            Item {
                 id: chatHeader
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                sidebarVisible: root.conversationSidebarVisible
-                panelVisible: root.surfaceVisible
-                hasMessages: messageList.count > 0
-                title: root.chatBridge.selectedTitle
-                projectLabel: root.chatBridge.currentProjectIndex > 0 && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
+                height: 0
+                visible: false
+                property bool sidebarVisible: root.conversationSidebarVisible
+                property bool panelVisible: root.surfaceVisible
+                property bool hasMessages: messageList.count > 0
+                property string title: root.chatBridge.selectedTitle
+                property string projectLabel: root.chatBridge.currentProjectIndex > 0 && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
                     ? root.chatBridge.projectItems[root.chatBridge.currentProjectIndex].label : "Projeto"
-                agentCount: root.chatBridge.agentItems.length
-                onToggleSidebar: root.conversationSidebarVisible = !root.conversationSidebarVisible
-                onCopyConversation: root.chatBridge.copyConversation()
-                onShowAgents: {
-                    root.openSurface(5)
-                    if (root.selectedAgentIndex < 0) root.selectedAgentIndex = 0
-                }
-                onShowPanel: root.surfaceVisible = true
+                property int agentCount: root.chatBridge.agentItems.length
+                signal toggleSidebar()
+                signal copyConversation()
+                signal showAgents()
+                signal showPanel()
             }
 
             Flickable {
@@ -748,11 +821,11 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
-                anchors.bottom: taskBar.visible ? taskBar.top : composerCard.top
+                anchors.bottom: parent.bottom
                 anchors.leftMargin: chatMain.width < 600 ? 14 : 24
                 anchors.rightMargin: chatMain.width < 600 ? 14 : 24
                 anchors.topMargin: 20
-                anchors.bottomMargin: 10
+                anchors.bottomMargin: 0
                 visible: count > 0
                 clip: true
                 // Keep actual message geometry stable across the entire history.
@@ -815,13 +888,26 @@ Item {
                             }
                         }
                     }
+                    Item {
+                        id: messageBottomSpacer
+                        width: parent.width
+                        height: composerCard.normalHeight + root.expertStripHeight + (taskBar.visible ? taskBar.height + 24 : 48)
+                    }
                 }
                 // Follow only while pinned; dragging/scrolling back detaches the reader.
-                onMovementStarted: beginManualScroll()
+                onMovementStarted: {
+                    if (composerCard.composerInputItem && composerCard.composerInputItem.activeFocus) {
+                        root.forceActiveFocus()
+                    }
+                    beginManualScroll()
+                }
                 onMovementEnded: followTail = atYEnd
                 onContentYChanged: {
                     if (holdingReader && !followTail && contentY !== readerY)
                         Qt.callLater(restoreReader)
+                    if (!followTail && (atYEnd || (contentHeight - height - contentY) <= 4)) {
+                        followTail = true
+                    }
                 }
                 onContentHeightChanged: {
                     if (followTail && !moving) tailTimer.restart()
@@ -835,7 +921,12 @@ Item {
                     property: "contentY"
                     duration: 120
                     easing.type: Easing.OutCubic
-                    onFinished: messageList.followTail = messageList.atYEnd
+                    onFinished: {
+                        if (messageList.atYEnd || (messageList.contentHeight - messageList.height - messageList.contentY) <= 4) {
+                            messageList.followTail = true
+                            messageList.positionViewAtEnd()
+                        }
+                    }
                 }
                 WheelHandler {
                     target: null
@@ -846,15 +937,21 @@ Item {
                         var delta = precise ? event.pixelDelta.y
                             : event.angleDelta.y / 120 * lines * Theme.bodySize * 1.6
                         if (delta === 0) { event.accepted = false; return }
+                        if (composerCard.composerInputItem && composerCard.composerInputItem.activeFocus) {
+                            root.forceActiveFocus()
+                        }
                         var start = !precise && wheelAnimation.running ? wheelAnimation.to : messageList.contentY
                         messageList.beginManualScroll()
                         messageList.cancelFlick()
                         var top = messageList.originY
                         var bottom = top + Math.max(0, messageList.contentHeight - messageList.height)
                         var destination = Math.max(top, Math.min(bottom, start - delta))
+                        if (destination >= bottom - 4) {
+                            messageList.followTail = true
+                        }
                         if (precise) {
                             messageList.contentY = destination
-                            messageList.followTail = messageList.atYEnd
+                            if (destination < bottom - 4) messageList.followTail = false
                         } else {
                             wheelAnimation.from = messageList.contentY
                             wheelAnimation.to = destination
@@ -867,8 +964,14 @@ Item {
                     id: messageScrollBar
                     objectName: "messageScrollBar"
                     onPressedChanged: {
-                        if (pressed) messageList.beginManualScroll()
-                        else messageList.followTail = messageList.atYEnd
+                        if (pressed) {
+                            if (composerCard.composerInputItem && composerCard.composerInputItem.activeFocus) {
+                                root.forceActiveFocus()
+                            }
+                            messageList.beginManualScroll()
+                        } else {
+                            messageList.followTail = messageList.atYEnd
+                        }
                     }
                 }
             }
@@ -908,9 +1011,15 @@ Item {
                         leftPadding: 0
                         rightPadding: 0
                         variant: "ghost"
+                        showFocusRing: false
                         property string projectLabel: root.chatBridge.currentProjectIndex > 0
                             && root.chatBridge.currentProjectIndex < root.chatBridge.projectItems.length
                             ? root.chatBridge.projectItems[root.chatBridge.currentProjectIndex].label : ""
+                        // O clique que fecha o menu via CloseOnPressOutside chega ao botão
+                        // depois do fechamento; sem este debounce o onClicked reabriria
+                        // o menu e o segundo clique nunca fecharia.
+                        property double menuClosedAt: 0
+                        property bool menuJustToggleClosed: false
                         text: projectLabel.length ? "Como posso ajudar no projeto " + projectLabel + "?"
                             : "Como posso ajudar no seu projeto?"
                         Accessible.name: text
@@ -927,25 +1036,44 @@ Item {
                             horizontalAlignment: Text.AlignLeft
                             wrapMode: Text.WordWrap
                         }
-                        onClicked: landingProjectMenu.open()
+                        onClicked: {
+                            if (landingProjectMenu.opened) {
+                                landingProjectMenu.close()
+                                menuJustToggleClosed = true
+                            } else if (menuJustToggleClosed) {
+                                menuJustToggleClosed = false
+                                landingProjectMenu.open()
+                            } else if (Date.now() - menuClosedAt > 250) {
+                                landingProjectMenu.open()
+                            }
+                        }
                         Menu {
                             id: landingProjectMenu
                             objectName: "landingProjectMenu"
+                            onClosed: landingProjectButton.menuClosedAt = Date.now()
                             x: 0
                             y: parent.height + 6
-                            width: Math.min(260, Overlay.overlay.width - 16)
+                            width: Math.min(300, Overlay.overlay.width - 16)
                             margins: 8
                             padding: 5
                             background: Rectangle {
-                                radius: 10
+                                radius: 12
                                 color: Theme.palette.chatSidebar
                                 border.color: Theme.palette.chatBorder
+                                border.width: 1
                             }
                             Instantiator {
                                 model: root.filteredProjects("")
                                 delegate: ProjectMenuEntry {
                                     required property var modelData
                                     text: modelData.label
+                                    subtitle: modelData.path
+                                    iconPath: modelData.icon
+                                    iconKind: modelData.iconKind
+                                    iconEmoji: modelData.iconEmoji
+                                    iconColor: modelData.iconColor
+                                    iconText: modelData.iconText
+                                    isAll: String(modelData.path || "").length === 0
                                     onTriggered: root.chatBridge.setProject(Number(modelData.sourceIndex))
                                 }
                                 onObjectAdded: (index, object) => landingProjectMenu.insertItem(index, object)
@@ -953,8 +1081,24 @@ Item {
                             }
                             MenuSeparator { }
                             ProjectMenuEntry {
+                                objectName: "landingNewProject"
+                                text: "New project"
+                                subtitle: ""
+                                iconPath: ""
+                                iconEmoji: "➕"
+                                iconColor: ""
+                                isAll: false
+                                onTriggered: {
+                                    root.addProjectView = "sources"
+                                    addProjectSearch.clear()
+                                    addProjectPopup.open()
+                                }
+                            }
+                            ProjectMenuEntry {
                                 objectName: "landingChooseFolder"
                                 text: "Escolher pasta do projeto…"
+                                subtitle: ""
+                                isAll: true
                                 onTriggered: {
                                     root.addProjectView = "folder"
                                     root.chatBridge.beginProjectFolderBrowse()
@@ -1004,52 +1148,64 @@ Item {
                 id: scrollToEndPill
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
-                Accessible.name: "Ir para o fim da conversa"
-                function jump() { messageList.followTail = true; messageList.positionViewAtEnd() }
-                Keys.onReturnPressed: jump()
-                Keys.onSpacePressed: jump()
+                Accessible.name: "Rolar para o final"
+                function jump() {
+                    messageList.followTail = true
+                    messageList.positionViewAtEnd()
+                }
+                Keys.onReturnPressed: scrollToEndPill.jump()
+                Keys.onSpacePressed: scrollToEndPill.jump()
                 objectName: "scrollToEndPill"
-                visible: messageList.visible
+                property bool shouldShow: messageList.visible
                     && messageList.count > 0
-                    && !messageList.atYEnd
+                    && !messageList.followTail
+                    && (messageList.contentHeight - messageList.height - messageList.contentY > 4)
+                visible: opacity > 0.001
+                opacity: shouldShow ? 1.0 : 0.0
+                scale: shouldShow ? 1.0 : 0.88
+                Behavior on opacity {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                }
+                Behavior on scale {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                }
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
                 anchors.bottomMargin: taskBar.visible ? taskBar.height + 16 : 10
                 z: 25
-                radius: height / 2
-                width: pillRow.implicitWidth + 26
-                height: 30
-                color: Theme.palette.chatComposer
+                radius: 13
+                width: pillRow.implicitWidth + 22
+                height: 26
+                color: pillHover.hovered ? Theme.palette.chatControl : Theme.palette.chatComposer
                 border.width: 1
-                border.color: pillHover.hovered
-                    ? Theme.palette.focus : Theme.palette.chatBorder
+                border.color: Theme.palette.chatBorder
 
                 Row {
                     id: pillRow
                     anchors.centerIn: parent
                     spacing: 6
+                    VrLineIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 10
+                        height: 10
+                        kind: "chevronDown"
+                        foreground: Theme.palette.mutedText
+                    }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "Ir para o fim"
+                        text: "Rolar para o final"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(11)
                     }
-                    VrLineIcon {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 12
-                        height: 12
-                        kind: "chevronDown"
-                        foreground: Theme.palette.mutedText
-                    }
                 }
 
-                HoverHandler { id: pillHover }
+                HoverHandler { id: pillHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler {
-                    onTapped: {
-                        messageList.followTail = true
-                        messageList.positionViewAtEnd()
-                    }
+                    cursorShape: Qt.PointingHandCursor
+                    onTapped: scrollToEndPill.jump()
                 }
             }
 
@@ -1058,6 +1214,7 @@ Item {
             Item {
                 id: expertProfileStrip
                 objectName: "expertProfileStrip"
+                z: 20
                 visible: root.expertReveal > 0.001
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 y: composerCard.y + composerCard.height
@@ -1117,6 +1274,57 @@ Item {
                                     expertChip.modelData.key)
                             }
                         }
+                    }
+                }
+            }
+
+            // Bottom bar beneath compact composer containing ONLY the marked fields: Model & Permission selectors
+            Item {
+                id: compactBottomBar
+                objectName: "compactBottomBar"
+                visible: opacity > 0.001
+                anchors.horizontalCenter: composerCard.horizontalCenter
+                anchors.top: composerCard.bottom
+                anchors.topMargin: 4
+                width: composerCard.width
+                height: 30
+                z: 15
+                opacity: composerCard.isCompact && root.expertReveal <= 0.001 && messageList.count > 0 ? 1.0 : 0.0
+                scale: composerCard.isCompact ? 1.0 : 0.94
+                Behavior on opacity {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                }
+                Behavior on scale {
+                    enabled: !root.frontendBridge.reduceMotion
+                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                }
+
+                RowLayout {
+                    id: compactButtonsRow
+                    anchors.centerIn: parent
+                    spacing: 6
+
+                    VrModelPicker {
+                        id: compactModelPicker
+                        objectName: "compactModelPicker"
+                        compact: true
+                        model: root.chatBridge.modelItems
+                        currentIndex: root.chatBridge.modelIndex
+                        loading: root.chatBridge.modelCatalogLoading
+                        enabled: !root.chatBridge.turnRunning
+                        popupAbove: true
+                        onActivated: index => root.chatBridge.setModel(index)
+                        onFavoriteToggled: index => root.chatBridge.toggleModelFavorite(index)
+                    }
+
+                    VrPermissionPicker {
+                        id: compactPermissionPicker
+                        objectName: "compactPermissionPicker"
+                        compact: true
+                        model: root.chatBridge.approvalItems
+                        currentIndex: root.chatBridge.approvalIndex
+                        onActivated: index => root.chatBridge.setApproval(index)
                     }
                 }
             }
@@ -1200,6 +1408,10 @@ Item {
                 projectName: root.projectSettingsName
                 projectPath: root.projectSettingsPath
                 projectIconPath: root.projectSettingsIconPath
+                projectIconKind: root.projectSettingsIconKind
+                projectIconEmoji: root.projectSettingsIconEmoji
+                projectIconColor: root.projectSettingsIconColor
+                projectIconText: root.projectSettingsIconText
                 threadCount: root.chatBridge.conversationCount
                 onCloseRequested: root.projectSettingsVisible = false
                 onSaveRequested: name => {
@@ -1207,6 +1419,23 @@ Item {
                         root.projectSettingsName = name
                 }
                 onIconRequested: root.chatBridge.chooseProjectIcon(root.projectSettingsIndex)
+                onIconCustomized: (kind, color, emoji, text) => {
+                    if (root.chatBridge.applyProjectIcon(root.projectSettingsIndex, kind, color, emoji, text)) {
+                        root.projectSettingsIconKind = kind
+                        root.projectSettingsIconColor = color
+                        root.projectSettingsIconEmoji = emoji
+                        root.projectSettingsIconText = text
+                    }
+                }
+                onIconCleared: {
+                    if (root.chatBridge.clearProjectIcon(root.projectSettingsIndex)) {
+                        root.projectSettingsIconPath = ""
+                        root.projectSettingsIconKind = ""
+                        root.projectSettingsIconEmoji = ""
+                        root.projectSettingsIconColor = ""
+                        root.projectSettingsIconText = ""
+                    }
+                }
                 onOpenFolderRequested: root.chatBridge.openProjectFolder(root.projectSettingsIndex)
                 onCopyPathRequested: root.chatBridge.copyProjectPath(root.projectSettingsIndex)
                 onRemoveRequested: {
@@ -1230,8 +1459,14 @@ Item {
             SplitView.preferredWidth: root.surfacePanelWidth
             SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
             color: Theme.palette.chatSidebar
-            border.width: 1
-            border.color: Theme.palette.chatDivider
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                color: Theme.palette.chatBorder
+                visible: root.width < 1000
+            }
             transform: Translate {
                 x: root.surfaceVisible ? 0 : Theme.motionDistance
                 Behavior on x {
@@ -1988,7 +2223,7 @@ Item {
         anchors.centerIn: parent
         width: Math.min(560, parent.width - 48)
         height: Math.min(parent.height - 80,
-            Math.max(220, 117 + Math.min(6,
+            Math.max(264, 163 + Math.min(6,
                 root.filteredProjects(newChatProjectSearch.text).length) * 56))
         padding: 0
         modal: true
@@ -2100,11 +2335,18 @@ Item {
                         anchors.leftMargin: 8
                         anchors.rightMargin: 9
                         spacing: 9
-                        VrLineIcon {
-                            Layout.preferredWidth: 17
-                            Layout.preferredHeight: 17
-                            kind: "folder"
-                            foreground: Theme.palette.mutedText
+                        VrProjectIcon {
+                            Layout.preferredWidth: 30
+                            Layout.preferredHeight: 30
+                            boxSize: 30
+                            iconSize: 17
+                            projectLabel: String(newProjectItem.modelData.label || "")
+                            iconPath: String(newProjectItem.modelData.icon || "")
+                            iconKind: String(newProjectItem.modelData.iconKind || "")
+                            iconEmoji: String(newProjectItem.modelData.iconEmoji || "")
+                            iconColor: String(newProjectItem.modelData.iconColor || "")
+                            iconText: String(newProjectItem.modelData.iconText || "")
+                            isAll: String(newProjectItem.modelData.path || "").length === 0
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2155,6 +2397,51 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                 }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 4
+                Layout.bottomMargin: 2
+                radius: 7
+                color: newChatNewHover.hovered ? Theme.palette.chatControl : "transparent"
+                border.width: 1
+                border.color: Theme.palette.chatBorder
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 9
+                    VrLineIcon {
+                        Layout.preferredWidth: 15
+                        Layout.preferredHeight: 15
+                        kind: "plus"
+                        foreground: Theme.palette.brandOrange
+                        strokeWidth: 1.6
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "New project"
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                        font.weight: Font.DemiBold
+                    }
+                }
+                HoverHandler { id: newChatNewHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    onTapped: {
+                        newChatProjectPopup.close()
+                        root.addProjectView = "sources"
+                        addProjectSearch.clear()
+                        addProjectPopup.open()
+                    }
+                }
+                Accessible.role: Accessible.Button
+                Accessible.name: "New project"
             }
 
             Rectangle {
@@ -2707,6 +2994,7 @@ Item {
     function filteredProjects(query) {
         var source = root.chatBridge.projectItems || []
         var needle = String(query || "").trim().toLowerCase()
+        if (needle.normalize) needle = needle.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
         var result = []
         var hasConcreteProject = false
         for (var sourceIndex = 0; sourceIndex < source.length; ++sourceIndex) {
@@ -2720,11 +3008,19 @@ Item {
             var label = String(item.label || "")
             var path = String(item.path || "")
             if (hasConcreteProject && !path.length) continue
-            if (needle.length && (label + " " + path).toLowerCase().indexOf(needle) < 0)
-                continue
+            if (needle.length) {
+                var hay = (label + " " + path).toLowerCase()
+                if (hay.normalize) hay = hay.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                if (hay.indexOf(needle) < 0) continue
+            }
             result.push({
                 label: label,
                 path: path,
+                icon: String(item.icon || ""),
+                iconKind: String(item.iconKind || item.icon_kind || ""),
+                iconEmoji: String(item.iconEmoji || item.icon_emoji || ""),
+                iconColor: String(item.iconColor || item.icon_color || ""),
+                iconText: String(item.iconText || item.icon_text || ""),
                 sourceIndex: index,
                 shortcut: result.length < 9 ? "Ctrl+" + (result.length + 1) : ""
             })
@@ -2772,6 +3068,10 @@ Item {
         root.projectSettingsPath = String(item.path || "")
         root.projectSettingsName = String(item.label || "")
         root.projectSettingsIconPath = String(item.icon || "")
+        root.projectSettingsIconKind = String(item.iconKind || item.icon_kind || "")
+        root.projectSettingsIconEmoji = String(item.iconEmoji || item.icon_emoji || "")
+        root.projectSettingsIconColor = String(item.iconColor || item.icon_color || "")
+        root.projectSettingsIconText = String(item.iconText || item.icon_text || "")
         root.projectSettingsVisible = true
         Qt.callLater(function() {
             projectSettingsPage.forceActiveFocus()
@@ -2787,6 +3087,10 @@ Item {
             root.projectSettingsIndex = index
             root.projectSettingsName = String(source[index].label || "")
             root.projectSettingsIconPath = String(source[index].icon || "")
+            root.projectSettingsIconKind = String(source[index].iconKind || source[index].icon_kind || "")
+            root.projectSettingsIconEmoji = String(source[index].iconEmoji || source[index].icon_emoji || "")
+            root.projectSettingsIconColor = String(source[index].iconColor || source[index].icon_color || "")
+            root.projectSettingsIconText = String(source[index].iconText || source[index].icon_text || "")
             return
         }
         root.projectSettingsVisible = false
