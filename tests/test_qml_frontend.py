@@ -103,6 +103,23 @@ class QmlFrontendTest(unittest.TestCase):
             archive.writestr("br/vr/App.class", marker)
         ErpReleaseCatalog(settings.root, expected_jar_count=1).import_release(release_id)
 
+    def test_application_font_resolves_real_semibold_on_windows(self):
+        import sys
+        from PySide6.QtGui import QFont, QFontInfo
+        from vrsoft_extractor.mary.frontend.app import _apply_application_font
+
+        if sys.platform != "win32" or not Path(r"C:\Windows\Fonts\seguisb.ttf").exists():
+            self.skipTest("Windows Segoe UI Semibold is unavailable")
+        previous_font = self.application.font()
+        try:
+            _apply_application_font(self.application)
+            font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+            resolved = QFontInfo(font)
+            self.assertEqual(resolved.styleName(), "Semibold")
+            self.assertEqual(resolved.weight(), QFont.Weight.DemiBold)
+        finally:
+            self.application.setFont(previous_font)
+
     def test_brand_palette_keeps_existing_vr_identity(self):
         light = brand.brand_palette("light")
         dark = brand.brand_palette("dark_orange")

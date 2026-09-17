@@ -119,7 +119,8 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
         chat.close()
 
 
-def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path):
+@pytest.mark.parametrize('reduce_motion', [False, True])
+def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_motion):
     _app = QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
     prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
@@ -128,6 +129,7 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path):
     for i in range(10):
         db.add_message(cid, 'user' if i % 2 else 'assistant', ('Mensagem no historico.\n\n' * 5))
     frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    frontend.setReduceMotion(reduce_motion)
     chat = ChatBridge(settings, db, prefs)
     studio = StudioBridge(settings, db, prefs)
     window = None
@@ -141,22 +143,35 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path):
             timeline = window.findChild(QObject, 'messageList')
             composer = window.findChild(QObject, 'chatComposerCard')
 
-            # 1. Scrolled up (e.g. 50px before bottom): composer must remain compact
+            timeline.setProperty('followTail', True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(300)
+            compact_height = composer.property('compactHeight')
+            normal_height = composer.property('normalHeight')
+            assert abs(composer.height() - normal_height) < 1
+            heights = []
+            composer.heightChanged.connect(lambda: heights.append(composer.height()))
+
             max_y = timeline.property('contentHeight') - timeline.property('height')
             timeline.setProperty('followTail', False)
             timeline.setProperty('contentY', max_y - 60)
-            QTest.qWait(100)
+            QTest.qWait(300)
             assert not composer.property('isAtBottom')
             assert composer.property('isCompact')
-            assert abs(composer.property('height') - composer.property('compactHeight')) < 1
+            assert abs(composer.height() - compact_height) < 1
+            assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
+            assert all(a >= b for a, b in zip(heights, heights[1:]))
+            assert abs(timeline.property('contentY') - (max_y - 60)) < 1
 
-            # 2. Reaching the bottom of the page: composer expands
+            heights.clear()
             timeline.positionViewAtEnd()
             timeline.setProperty('followTail', True)
             QTest.qWait(300)
             assert composer.property('isAtBottom')
             assert not composer.property('isCompact')
-            assert abs(composer.property('height') - composer.property('normalHeight')) < 2
+            assert abs(composer.height() - normal_height) < 1
+            assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
+            assert all(a <= b for a, b in zip(heights, heights[1:]))
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window is not None:

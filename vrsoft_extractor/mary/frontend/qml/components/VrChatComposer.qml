@@ -74,8 +74,6 @@ Rectangle {
 
     Behavior on height {
         enabled: !composerCard.page.frontendBridge.reduceMotion
-            && composerCard.isAtBottom
-            && !composerCard.isCompact
         NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
     }
     Behavior on y {
@@ -276,20 +274,14 @@ Rectangle {
 
         Behavior on height {
             enabled: !composerCard.page.frontendBridge.reduceMotion
-                && composerCard.isAtBottom
-                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         Behavior on anchors.topMargin {
             enabled: !composerCard.page.frontendBridge.reduceMotion
-                && composerCard.isAtBottom
-                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         Behavior on anchors.rightMargin {
             enabled: !composerCard.page.frontendBridge.reduceMotion
-                && composerCard.isAtBottom
-                && !composerCard.isCompact
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
         ScrollBar.vertical: VrScrollBar {
@@ -398,8 +390,6 @@ Rectangle {
         opacity: composerCard.isCompact ? 0.0 : 1.0
         Behavior on opacity {
             enabled: !composerCard.page.frontendBridge.reduceMotion
-                && composerCard.isAtBottom
-                && !composerCard.isCompact
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
         flickableDirection: Flickable.HorizontalFlick

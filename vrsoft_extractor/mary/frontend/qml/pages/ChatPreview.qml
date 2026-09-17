@@ -591,12 +591,13 @@ Item {
                                 }
                             }
                             Text {
+                                objectName: "conversationTitle"
                                 Layout.fillWidth: true
                                 text: conversationItem.title
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(13)
-                                font.weight: root.chatBridge.selectedIndex === index ? Font.DemiBold : Font.Medium
+                                font.weight: Font.DemiBold
                                 elide: Text.ElideRight
                             }
                             RowLayout {

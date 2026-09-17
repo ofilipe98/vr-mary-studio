@@ -171,6 +171,7 @@ def _apply_application_font(app: QApplication) -> None:
     if sys.platform == "win32":
         for candidate in (
             Path(r"C:\Windows\Fonts\segoeui.ttf"),
+            Path(r"C:\Windows\Fonts\seguisb.ttf"),
             Path(r"C:\Windows\Fonts\segoeuib.ttf"),
             Path(r"C:\Windows\Fonts\seguisym.ttf"),
         ):

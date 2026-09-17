@@ -405,7 +405,8 @@ def _apply_message_document_style(
     heading_color = QColor(palette["headingText"])
     muted_color = QColor(palette["mutedText"])
     link_color = QColor(palette["link"])
-    code_text = text_color
+    code_text = QColor(text_color)
+    text_color.setAlphaF(0.8)
     code_background = QColor(palette["inlineCodeSurface"])
     quote_background = QColor(palette["quoteSurface"])
     rule_color = QColor(palette["chatDivider"])

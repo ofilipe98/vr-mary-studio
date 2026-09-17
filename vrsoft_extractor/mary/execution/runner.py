@@ -351,6 +351,10 @@ class ExecutionRunner:
                 if self.repository:
                     self.repository.update_run_status(run_id, "running", budget_snapshot=context.budget.to_dict(), owner_token=context.metadata["_owner_token"])
 
+        def current_evidence_ids() -> tuple[str, ...]:
+            captured = self.collect_evidence(run_id) if self.collect_evidence is not None else ()
+            return tuple(dict.fromkeys((*allowed_ids, *(c.evidence_id for c in captured))))
+
         def research_one(module: str, index: int) -> ModuleResearch:
             stagger_delay = RESEARCH_STAGGER_SECONDS * index
             if stagger_delay > 0:
@@ -407,7 +411,7 @@ class ExecutionRunner:
                             worker_id=worker_id,
                             worker_name=f"Pesquisador {module}",
                             module=module,
-                            allowed_evidence_ids=allowed_ids,
+                            allowed_evidence_ids=current_evidence_ids(),
                         )
                         if reused_result.succeeded and reused_result.report is not None:
                             claims = [claim.text for claim in reused_result.report.findings]
@@ -487,7 +491,7 @@ class ExecutionRunner:
                         worker_id=worker_id,
                         worker_name=f"Pesquisador {module}",
                         module=module,
-                        allowed_evidence_ids=allowed_ids,
+                        allowed_evidence_ids=current_evidence_ids(),
                     )
                     if result.succeeded and result.report is not None:
                         claims = [claim.text for claim in result.report.findings]
@@ -826,7 +830,7 @@ Retorne somente JSON:
         try:
             # Disable interactive tools in synthesis so the model consolidates evidence
             # without triggering unauthorized background tool calls that get rejected.
-            synthesis_options = replace(options, mcp_tools=(), dynamic_tools=())
+            synthesis_options = replace(options, mcp_tools=(), dynamic_tools=(), tools_enabled=False)
             raw_draft, started_payload, completed_payload = self.run_buffered_main_turn(
                 cid,
                 native_id,
