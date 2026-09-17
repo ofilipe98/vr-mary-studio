@@ -993,6 +993,68 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(restored_item["label"], "Projeto Norte")
 
+    def test_chat_project_icon_modes_are_saved_and_restored(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+            project_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if item["path"] == str(project)
+            )
+
+            self.assertFalse(bridge.setProjectIconKind(0, "layers"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, kind="unknown_kind"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, color="nope"))
+            self.assertFalse(bridge.applyProjectIcon(project_index, text="ABC"))
+
+            self.assertTrue(
+                bridge.applyProjectIcon(
+                    project_index, kind="layers", color="#D946EF", emoji="", text=""
+                )
+            )
+            item = bridge.projectItems[project_index]
+            self.assertEqual(item["iconKind"], "layers")
+            self.assertEqual(item["iconColor"], "#D946EF")
+
+            self.assertTrue(bridge.setProjectIconText(project_index, "ab"))
+            item = bridge.projectItems[project_index]
+            self.assertEqual(item["iconText"], "ab")
+            self.assertEqual(item["iconKind"], "")
+
+            restored = ChatBridge(settings, database, preferences)
+            restored_item = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(restored_item["iconText"], "ab")
+
+            self.assertTrue(restored.clearProjectIcon(project_index))
+            cleared = next(
+                item
+                for item in restored.projectItems
+                if item["path"] == str(project)
+            )
+            self.assertEqual(cleared["iconKind"], "")
+            self.assertEqual(cleared["iconText"], "")
+            self.assertEqual(cleared["iconColor"], "")
+
     def test_chat_project_can_be_removed_from_the_selector_and_added_again(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

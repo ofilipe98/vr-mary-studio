@@ -327,6 +327,24 @@ Canvas {
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, 0, 0, Math.PI * 2); ctx.stroke()
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
             ctx.beginPath(); ctx.ellipse(12, 12, 8, 3.2, -Math.PI / 3, 0, Math.PI * 2); ctx.stroke()
+        } else if (kind === "layers") {
+            ctx.beginPath()
+            ctx.moveTo(12, 3.5); ctx.lineTo(20.5, 8); ctx.lineTo(12, 12.5); ctx.lineTo(3.5, 8); ctx.closePath(); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(3.5, 12); ctx.lineTo(12, 16.5); ctx.lineTo(20.5, 12); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(3.5, 16); ctx.lineTo(12, 20.5); ctx.lineTo(20.5, 16); ctx.stroke()
+        } else if (kind === "database") {
+            ctx.beginPath(); ctx.ellipse(12, 5.5, 7, 2.8, 0, 0, Math.PI * 2); ctx.stroke()
+            line(5, 5.5, 5, 18.5); line(19, 5.5, 19, 18.5)
+            ctx.beginPath(); ctx.ellipse(12, 18.5, 7, 2.8, 0, 0, Math.PI); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 7, 2.8, 0, 0, Math.PI); ctx.stroke()
+        } else if (kind === "globe") {
+            ctx.beginPath(); ctx.arc(12, 12, 8, 0, Math.PI * 2); ctx.stroke()
+            ctx.beginPath(); ctx.ellipse(12, 12, 3.6, 8, 0, 0, Math.PI * 2); ctx.stroke()
+            line(4, 12, 20, 12)
+        } else if (kind === "code") {
+            ctx.beginPath(); ctx.moveTo(9.5, 8); ctx.lineTo(5.5, 12); ctx.lineTo(9.5, 16); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(14.5, 8); ctx.lineTo(18.5, 12); ctx.lineTo(14.5, 16); ctx.stroke()
+            line(13.2, 5.5, 10.8, 18.5)
         }
     }
 }

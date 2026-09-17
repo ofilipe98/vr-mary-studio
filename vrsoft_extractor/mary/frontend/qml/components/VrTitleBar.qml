@@ -193,12 +193,63 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         spacing: 7
 
-        VrLineIcon {
-            Layout.preferredWidth: 14
-            Layout.preferredHeight: 14
-            kind: "folder"
-            foreground: Theme.palette.mutedText
-            strokeWidth: 1.5
+        VrProjectIcon {
+            Layout.preferredWidth: 20
+            Layout.preferredHeight: 20
+            boxSize: 20
+            iconSize: 12
+            projectLabel: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var bridge = root.chatPage.chatBridge
+                var idx = bridge.currentProjectIndex
+                var items = bridge.projectItems
+                if (idx > 0 && idx < items.length) return items[idx].label
+                return ""
+            }
+            iconPath: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var b2 = root.chatPage.chatBridge
+                var i2 = b2.currentProjectIndex
+                var list2 = b2.projectItems
+                if (i2 > 0 && i2 < list2.length) return String(list2[i2].icon || "")
+                return ""
+            }
+            iconEmoji: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var b3 = root.chatPage.chatBridge
+                var i3 = b3.currentProjectIndex
+                var list3 = b3.projectItems
+                if (i3 > 0 && i3 < list3.length) return String(list3[i3].iconEmoji || list3[i3].icon_emoji || "")
+                return ""
+            }
+            iconKind: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var b5 = root.chatPage.chatBridge
+                var i5 = b5.currentProjectIndex
+                var list5 = b5.projectItems
+                if (i5 > 0 && i5 < list5.length) return String(list5[i5].iconKind || list5[i5].icon_kind || "")
+                return ""
+            }
+            iconText: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var b6 = root.chatPage.chatBridge
+                var i6 = b6.currentProjectIndex
+                var list6 = b6.projectItems
+                if (i6 > 0 && i6 < list6.length) return String(list6[i6].iconText || list6[i6].icon_text || "")
+                return ""
+            }
+            iconColor: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return ""
+                var b4 = root.chatPage.chatBridge
+                var i4 = b4.currentProjectIndex
+                var list4 = b4.projectItems
+                if (i4 > 0 && i4 < list4.length) return String(list4[i4].iconColor || list4[i4].icon_color || "")
+                return ""
+            }
+            isAll: {
+                if (!root.chatPage || !root.chatPage.chatBridge) return true
+                return !(root.chatPage.chatBridge.currentProjectIndex > 0)
+            }
         }
 
         Text {

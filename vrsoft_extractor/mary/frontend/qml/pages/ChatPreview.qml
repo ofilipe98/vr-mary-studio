@@ -24,17 +24,58 @@ Item {
     required property var frontendBridge
     component ProjectMenuEntry: MenuItem {
         id: entry
-        implicitHeight: 34
-        contentItem: Text {
-            text: entry.text
-            color: Theme.palette.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.bodySize
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+        property string iconPath: ""
+        property string iconKind: ""
+        property string iconEmoji: ""
+        property string iconColor: ""
+        property string iconText: ""
+        property bool isAll: false
+        property string subtitle: ""
+        implicitHeight: subtitle.length ? 44 : 36
+        contentItem: RowLayout {
+            spacing: 9
+            VrProjectIcon {
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                boxSize: 24
+                iconSize: 14
+                projectLabel: entry.text
+                iconPath: entry.iconPath
+                iconKind: entry.iconKind
+                iconEmoji: entry.iconEmoji
+                iconColor: entry.iconColor
+                iconText: entry.iconText
+                isAll: entry.isAll
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                spacing: 0
+                Text {
+                    Layout.fillWidth: true
+                    text: entry.text
+                    color: Theme.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(13)
+                    font.weight: Font.Medium
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+                Text {
+                    visible: entry.subtitle.length > 0
+                    Layout.fillWidth: true
+                    text: entry.subtitle
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(10)
+                    elide: Text.ElideMiddle
+                    maximumLineCount: 1
+                }
+            }
         }
         background: Rectangle {
-            radius: 6
+            radius: 7
             color: entry.highlighted ? Theme.palette.chatControl : "transparent"
         }
     }
@@ -80,6 +121,10 @@ Item {
     property string projectSettingsName: ""
     property string projectSettingsPath: ""
     property string projectSettingsIconPath: ""
+    property string projectSettingsIconKind: ""
+    property string projectSettingsIconEmoji: ""
+    property string projectSettingsIconColor: ""
+    property string projectSettingsIconText: ""
     property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 220 : 260) : 0
     readonly property real sidebarBorderX: conversationSidebarVisible && conversationSidebar.visible
         ? (conversationSidebar.width + 3)
@@ -306,14 +351,18 @@ Item {
                         Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
+                            Layout.minimumWidth: 0
 
                             VrTextField {
                                 id: conversationSearch
                                 objectName: "conversationSearch"
                                 anchors.fill: parent
-                                leftPadding: 26
-                                rightPadding: 8
-                                placeholderText: "Pesquisar conversas"
+                                leftPadding: 30
+                                rightPadding: 6
+                                placeholderText: "Pesquisar"
+                                ToolTip.visible: hovered && !activeFocus
+                                ToolTip.delay: 600
+                                ToolTip.text: "Pesquisar conversas"
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(14)
                                 font.weight: Font.Medium
@@ -344,31 +393,30 @@ Item {
                             }
                             VrLineIcon {
                                 anchors.left: parent.left
-                                anchors.leftMargin: 6
+                                anchors.leftMargin: 7
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: 14
-                                height: 14
+                                width: 16
+                                height: 16
                                 kind: "search"
                                 foreground: conversationSearch.activeFocus
                                     ? Theme.palette.text : Theme.palette.mutedText
                             }
                         }
 
-                        // Grouped capsule container for folder / chat actions
+                        // Grouped actions for folder / chat (transparent, like T3)
                         Rectangle {
                             id: folderActionsCapsule
-                            Layout.preferredHeight: 28
+                            Layout.preferredHeight: 32
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: folderActionsRow.implicitWidth + 8
-                            radius: 6
-                            color: Theme.palette.chatControl
-                            border.width: 1
-                            border.color: Qt.rgba(255, 255, 255, 0.08)
+                            implicitWidth: folderActionsRow.implicitWidth + 4
+                            radius: 8
+                            color: "transparent"
+                            border.width: 0
 
                             RowLayout {
                                 id: folderActionsRow
                                 anchors.centerIn: parent
-                                spacing: 2
+                                spacing: 4
 
                                 VrProjectSelector {
                                     id: projectSelector
@@ -382,14 +430,19 @@ Item {
                                         root.chatBridge.setProject(index)
                                     }
                                     onSettingsRequested: index => root.openProjectSettings(index)
+                                    onNewProjectRequested: {
+                                        root.addProjectView = "sources"
+                                        addProjectSearch.clear()
+                                        addProjectPopup.open()
+                                    }
                                 }
 
                                 VrIconButton {
                                     id: addProjectButton
                                     objectName: "addProjectButton"
-                                    implicitWidth: 26
-                                    implicitHeight: 24
-                                    iconSize: 14
+                                    implicitWidth: 32
+                                    implicitHeight: 32
+                                    iconSize: 16
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -406,9 +459,9 @@ Item {
                                 VrIconButton {
                                     id: newChatButton
                                     objectName: "newChatButton"
-                                    implicitWidth: 26
-                                    implicitHeight: 24
-                                    iconSize: 14
+                                    implicitWidth: 32
+                                    implicitHeight: 32
+                                    iconSize: 16
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -484,8 +537,8 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 5
                                 VrLineIcon {
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     kind: conversationItem.editing ? "edit" : "folder"
                                     foreground: conversationItem.editing
                                         ? "#F3C74E" : Theme.palette.mutedText
@@ -499,7 +552,14 @@ Item {
                                     font.weight: Font.Medium
                                     renderType: Text.NativeRendering
                                     elide: Text.ElideRight
-                                    Layout.preferredWidth: Math.min(implicitWidth, Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 90))
+                                    maximumLineCount: 1
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 30
+                                    Layout.preferredWidth: Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 118)
+                                    ToolTip.visible: projectLabelHover.hovered
+                                    ToolTip.delay: 500
+                                    ToolTip.text: conversationItem.projectLabel
+                                    HoverHandler { id: projectLabelHover }
                                 }
                                 Rectangle {
                                     id: conversationVrBadge
@@ -534,15 +594,15 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: 13
-                                    Layout.preferredHeight: 13
+                                    Layout.preferredWidth: 14
+                                    Layout.preferredHeight: 14
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
                                 Item {
                                     visible: conversationItem.running
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     Canvas {
                                         anchors.fill: parent
                                         onPaint: {
@@ -629,8 +689,8 @@ Item {
                                         : Theme.palette.success
                                 }
                                 VrProviderIcon {
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     provider: conversationItem.provider.toLowerCase()
                                 }
                             }
@@ -993,19 +1053,27 @@ Item {
                             onClosed: landingProjectButton.menuClosedAt = Date.now()
                             x: 0
                             y: parent.height + 6
-                            width: Math.min(260, Overlay.overlay.width - 16)
+                            width: Math.min(300, Overlay.overlay.width - 16)
                             margins: 8
                             padding: 5
                             background: Rectangle {
-                                radius: 10
+                                radius: 12
                                 color: Theme.palette.chatSidebar
                                 border.color: Theme.palette.chatBorder
+                                border.width: 1
                             }
                             Instantiator {
                                 model: root.filteredProjects("")
                                 delegate: ProjectMenuEntry {
                                     required property var modelData
                                     text: modelData.label
+                                    subtitle: modelData.path
+                                    iconPath: modelData.icon
+                                    iconKind: modelData.iconKind
+                                    iconEmoji: modelData.iconEmoji
+                                    iconColor: modelData.iconColor
+                                    iconText: modelData.iconText
+                                    isAll: String(modelData.path || "").length === 0
                                     onTriggered: root.chatBridge.setProject(Number(modelData.sourceIndex))
                                 }
                                 onObjectAdded: (index, object) => landingProjectMenu.insertItem(index, object)
@@ -1013,8 +1081,24 @@ Item {
                             }
                             MenuSeparator { }
                             ProjectMenuEntry {
+                                objectName: "landingNewProject"
+                                text: "New project"
+                                subtitle: ""
+                                iconPath: ""
+                                iconEmoji: "➕"
+                                iconColor: ""
+                                isAll: false
+                                onTriggered: {
+                                    root.addProjectView = "sources"
+                                    addProjectSearch.clear()
+                                    addProjectPopup.open()
+                                }
+                            }
+                            ProjectMenuEntry {
                                 objectName: "landingChooseFolder"
                                 text: "Escolher pasta do projeto…"
+                                subtitle: ""
+                                isAll: true
                                 onTriggered: {
                                     root.addProjectView = "folder"
                                     root.chatBridge.beginProjectFolderBrowse()
@@ -1324,6 +1408,10 @@ Item {
                 projectName: root.projectSettingsName
                 projectPath: root.projectSettingsPath
                 projectIconPath: root.projectSettingsIconPath
+                projectIconKind: root.projectSettingsIconKind
+                projectIconEmoji: root.projectSettingsIconEmoji
+                projectIconColor: root.projectSettingsIconColor
+                projectIconText: root.projectSettingsIconText
                 threadCount: root.chatBridge.conversationCount
                 onCloseRequested: root.projectSettingsVisible = false
                 onSaveRequested: name => {
@@ -1331,6 +1419,23 @@ Item {
                         root.projectSettingsName = name
                 }
                 onIconRequested: root.chatBridge.chooseProjectIcon(root.projectSettingsIndex)
+                onIconCustomized: (kind, color, emoji, text) => {
+                    if (root.chatBridge.applyProjectIcon(root.projectSettingsIndex, kind, color, emoji, text)) {
+                        root.projectSettingsIconKind = kind
+                        root.projectSettingsIconColor = color
+                        root.projectSettingsIconEmoji = emoji
+                        root.projectSettingsIconText = text
+                    }
+                }
+                onIconCleared: {
+                    if (root.chatBridge.clearProjectIcon(root.projectSettingsIndex)) {
+                        root.projectSettingsIconPath = ""
+                        root.projectSettingsIconKind = ""
+                        root.projectSettingsIconEmoji = ""
+                        root.projectSettingsIconColor = ""
+                        root.projectSettingsIconText = ""
+                    }
+                }
                 onOpenFolderRequested: root.chatBridge.openProjectFolder(root.projectSettingsIndex)
                 onCopyPathRequested: root.chatBridge.copyProjectPath(root.projectSettingsIndex)
                 onRemoveRequested: {
@@ -2118,7 +2223,7 @@ Item {
         anchors.centerIn: parent
         width: Math.min(560, parent.width - 48)
         height: Math.min(parent.height - 80,
-            Math.max(220, 117 + Math.min(6,
+            Math.max(264, 163 + Math.min(6,
                 root.filteredProjects(newChatProjectSearch.text).length) * 56))
         padding: 0
         modal: true
@@ -2230,11 +2335,18 @@ Item {
                         anchors.leftMargin: 8
                         anchors.rightMargin: 9
                         spacing: 9
-                        VrLineIcon {
-                            Layout.preferredWidth: 17
-                            Layout.preferredHeight: 17
-                            kind: "folder"
-                            foreground: Theme.palette.mutedText
+                        VrProjectIcon {
+                            Layout.preferredWidth: 30
+                            Layout.preferredHeight: 30
+                            boxSize: 30
+                            iconSize: 17
+                            projectLabel: String(newProjectItem.modelData.label || "")
+                            iconPath: String(newProjectItem.modelData.icon || "")
+                            iconKind: String(newProjectItem.modelData.iconKind || "")
+                            iconEmoji: String(newProjectItem.modelData.iconEmoji || "")
+                            iconColor: String(newProjectItem.modelData.iconColor || "")
+                            iconText: String(newProjectItem.modelData.iconText || "")
+                            isAll: String(newProjectItem.modelData.path || "").length === 0
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -2285,6 +2397,51 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                 }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Layout.topMargin: 4
+                Layout.bottomMargin: 2
+                radius: 7
+                color: newChatNewHover.hovered ? Theme.palette.chatControl : "transparent"
+                border.width: 1
+                border.color: Theme.palette.chatBorder
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 9
+                    VrLineIcon {
+                        Layout.preferredWidth: 15
+                        Layout.preferredHeight: 15
+                        kind: "plus"
+                        foreground: Theme.palette.brandOrange
+                        strokeWidth: 1.6
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "New project"
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                        font.weight: Font.DemiBold
+                    }
+                }
+                HoverHandler { id: newChatNewHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    onTapped: {
+                        newChatProjectPopup.close()
+                        root.addProjectView = "sources"
+                        addProjectSearch.clear()
+                        addProjectPopup.open()
+                    }
+                }
+                Accessible.role: Accessible.Button
+                Accessible.name: "New project"
             }
 
             Rectangle {
@@ -2837,6 +2994,7 @@ Item {
     function filteredProjects(query) {
         var source = root.chatBridge.projectItems || []
         var needle = String(query || "").trim().toLowerCase()
+        if (needle.normalize) needle = needle.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
         var result = []
         var hasConcreteProject = false
         for (var sourceIndex = 0; sourceIndex < source.length; ++sourceIndex) {
@@ -2850,11 +3008,19 @@ Item {
             var label = String(item.label || "")
             var path = String(item.path || "")
             if (hasConcreteProject && !path.length) continue
-            if (needle.length && (label + " " + path).toLowerCase().indexOf(needle) < 0)
-                continue
+            if (needle.length) {
+                var hay = (label + " " + path).toLowerCase()
+                if (hay.normalize) hay = hay.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                if (hay.indexOf(needle) < 0) continue
+            }
             result.push({
                 label: label,
                 path: path,
+                icon: String(item.icon || ""),
+                iconKind: String(item.iconKind || item.icon_kind || ""),
+                iconEmoji: String(item.iconEmoji || item.icon_emoji || ""),
+                iconColor: String(item.iconColor || item.icon_color || ""),
+                iconText: String(item.iconText || item.icon_text || ""),
                 sourceIndex: index,
                 shortcut: result.length < 9 ? "Ctrl+" + (result.length + 1) : ""
             })
@@ -2902,6 +3068,10 @@ Item {
         root.projectSettingsPath = String(item.path || "")
         root.projectSettingsName = String(item.label || "")
         root.projectSettingsIconPath = String(item.icon || "")
+        root.projectSettingsIconKind = String(item.iconKind || item.icon_kind || "")
+        root.projectSettingsIconEmoji = String(item.iconEmoji || item.icon_emoji || "")
+        root.projectSettingsIconColor = String(item.iconColor || item.icon_color || "")
+        root.projectSettingsIconText = String(item.iconText || item.icon_text || "")
         root.projectSettingsVisible = true
         Qt.callLater(function() {
             projectSettingsPage.forceActiveFocus()
@@ -2917,6 +3087,10 @@ Item {
             root.projectSettingsIndex = index
             root.projectSettingsName = String(source[index].label || "")
             root.projectSettingsIconPath = String(source[index].icon || "")
+            root.projectSettingsIconKind = String(source[index].iconKind || source[index].icon_kind || "")
+            root.projectSettingsIconEmoji = String(source[index].iconEmoji || source[index].icon_emoji || "")
+            root.projectSettingsIconColor = String(source[index].iconColor || source[index].icon_color || "")
+            root.projectSettingsIconText = String(source[index].iconText || source[index].icon_text || "")
             return
         }
         root.projectSettingsVisible = false

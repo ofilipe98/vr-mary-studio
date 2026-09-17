@@ -87,6 +87,49 @@ class ConversationsDomain:
         self.messageCopied.emit(path)
 
 
+    #: Nomes de ícone aceitos no seletor (devem existir em VrLineIcon.qml).
+    PROJECT_ICON_KINDS = frozenset(
+        {
+            "folder",
+            "folderPlus",
+            "files",
+            "file",
+            "browser",
+            "globe",
+            "terminal",
+            "code",
+            "database",
+            "layers",
+            "cube",
+            "models",
+            "image",
+            "context",
+            "agents",
+            "task",
+            "listTodo",
+            "branch",
+            "star",
+            "eye",
+            "lock",
+            "archive",
+            "gauge",
+            "trendUp",
+            "auto",
+            "paintbrush",
+            "react",
+            "attachment",
+            "search",
+            "settings",
+            "pin",
+            "plus",
+            "check",
+            "edit",
+            "copy",
+            "external",
+            "newChat",
+        }
+    )
+
     def chooseProjectIcon(self, index: int) -> str:  # noqa: N802
         if index <= 0 or index >= len(self._projects):
             return ""
@@ -105,6 +148,9 @@ class ConversationsDomain:
             raw_path = str(item.get("path") or "").strip()
             if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
                 item["icon"] = icon_path
+                item["iconKind"] = ""
+                item["iconEmoji"] = ""
+                item["iconText"] = ""
                 break
         else:
             values.append(
@@ -112,11 +158,205 @@ class ConversationsDomain:
                     "path": str(project_path),
                     "label": self._projects[index]["label"],
                     "icon": icon_path,
+                    "iconKind": "",
+                    "iconEmoji": "",
+                    "iconText": "",
                 }
             )
         self._store_project_entries(values)
         self._refresh_projects()
         return icon_path
+
+
+    def setProjectIconEmoji(self, index: int, emoji: str) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        value = str(emoji or "").strip()
+        # Aceita um único grapheme (emoji pode ter 2+ codepoints: família, bandeira, ZWJ).
+        if len(value) > 12:
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["iconEmoji"] = value
+                if value:
+                    item["icon"] = ""
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "icon": "",
+                    "iconEmoji": value,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    def setProjectIconColor(self, index: int, color: str) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        raw = str(color or "").strip()
+        if raw and not self._is_valid_icon_color(raw):
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["iconColor"] = raw
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "iconColor": raw,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    def clearProjectIcon(self, index: int) -> bool:  # noqa: N802
+        """Volta ao ícone automático estilo T3 Code (monograma derivado do nome)."""
+        if index <= 0 or index >= len(self._projects):
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["icon"] = ""
+                item["iconKind"] = ""
+                item["iconEmoji"] = ""
+                item["iconColor"] = ""
+                item["iconText"] = ""
+                break
+        else:
+            return True
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    def setProjectIconKind(self, index: int, kind: str) -> bool:  # noqa: N802
+        if index <= 0 or index >= len(self._projects):
+            return False
+        value = str(kind or "").strip()
+        if value and value not in self.PROJECT_ICON_KINDS:
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["iconKind"] = value
+                if value:
+                    item["icon"] = ""
+                    item["iconEmoji"] = ""
+                    item["iconText"] = ""
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "iconKind": value,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    def setProjectIconText(self, index: int, text: str) -> bool:  # noqa: N802
+        """Monograma personalizado (1-2 caracteres); vazio volta a derivar do nome."""
+        if index <= 0 or index >= len(self._projects):
+            return False
+        value = " ".join(str(text or "").split())
+        if len(value) > 2:
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["iconText"] = value
+                if value:
+                    item["icon"] = ""
+                    item["iconKind"] = ""
+                    item["iconEmoji"] = ""
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "iconText": value,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    def applyProjectIcon(  # noqa: N802
+        self, index: int, kind: str = "", color: str = "", emoji: str = "", text: str = ""
+    ) -> bool:
+        """Aplica o resultado do seletor de ícones de uma vez (vazio limpa o campo)."""
+        if index <= 0 or index >= len(self._projects):
+            return False
+        clean_kind = str(kind or "").strip()
+        clean_color = str(color or "").strip()
+        clean_emoji = str(emoji or "").strip()
+        clean_text = " ".join(str(text or "").split())
+        if clean_kind and clean_kind not in self.PROJECT_ICON_KINDS:
+            return False
+        if clean_color and not self._is_valid_icon_color(clean_color):
+            return False
+        if len(clean_emoji) > 12 or len(clean_text) > 2:
+            return False
+        project_path = Path(self._projects[index]["path"]).resolve(strict=False)
+        values = self._stored_project_entries()
+        for item in values:
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["iconKind"] = clean_kind
+                item["iconColor"] = clean_color
+                item["iconEmoji"] = clean_emoji
+                item["iconText"] = clean_text
+                break
+        else:
+            values.append(
+                {
+                    "path": str(project_path),
+                    "label": self._projects[index]["label"],
+                    "iconKind": clean_kind,
+                    "iconColor": clean_color,
+                    "iconEmoji": clean_emoji,
+                    "iconText": clean_text,
+                }
+            )
+        self._store_project_entries(values)
+        self._refresh_projects()
+        return True
+
+
+    @staticmethod
+    def _is_valid_icon_color(value: str) -> bool:
+        raw = value.strip()
+        if len(raw) == 4 and raw.startswith("#"):
+            return all(c in "0123456789abcdefABCDEF" for c in raw[1:])
+        if len(raw) == 7 and raw.startswith("#"):
+            return all(c in "0123456789abcdefABCDEF" for c in raw[1:])
+        return False
 
 
     def removeProject(self, index: int) -> bool:  # noqa: N802
@@ -494,12 +734,30 @@ class ConversationsDomain:
                 path = str(value.get("path") or "").strip()
                 label = str(value.get("label") or "").strip()
                 icon = str(value.get("icon") or "").strip()
+                icon_kind = str(value.get("iconKind") or value.get("icon_kind") or "").strip()
+                icon_emoji = str(value.get("iconEmoji") or value.get("icon_emoji") or "").strip()
+                icon_color = str(value.get("iconColor") or value.get("icon_color") or "").strip()
+                icon_text = str(value.get("iconText") or value.get("icon_text") or "").strip()
             else:
                 path = str(value or "").strip()
                 label = ""
                 icon = ""
+                icon_kind = ""
+                icon_emoji = ""
+                icon_color = ""
+                icon_text = ""
             if path:
-                entries.append({"path": path, "label": label, "icon": icon})
+                entries.append(
+                    {
+                        "path": path,
+                        "label": label,
+                        "icon": icon,
+                        "iconKind": icon_kind,
+                        "iconEmoji": icon_emoji,
+                        "iconColor": icon_color,
+                        "iconText": icon_text,
+                    }
+                )
         return entries
 
 
@@ -658,9 +916,21 @@ class ConversationsDomain:
         candidates: list[Path] = []
         custom_labels: dict[Path, str] = {}
         custom_icons: dict[Path, str] = {}
+        custom_kinds: dict[Path, str] = {}
+        custom_emoji: dict[Path, str] = {}
+        custom_colors: dict[Path, str] = {}
+        custom_texts: dict[Path, str] = {}
         hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
 
-        def include(value: object, label: object = "", icon: object = "") -> None:
+        def include(
+            value: object,
+            label: object = "",
+            icon: object = "",
+            icon_kind: object = "",
+            icon_emoji: object = "",
+            icon_color: object = "",
+            icon_text: object = "",
+        ) -> None:
             raw = str(value or "").strip()
             if not raw:
                 return
@@ -675,6 +945,18 @@ class ConversationsDomain:
             custom_icon = str(icon or "").strip()
             if candidate.is_dir() and custom_icon:
                 custom_icons[candidate] = custom_icon
+            kind = str(icon_kind or "").strip()
+            if candidate.is_dir() and kind:
+                custom_kinds[candidate] = kind
+            emoji = str(icon_emoji or "").strip()
+            if candidate.is_dir() and emoji:
+                custom_emoji[candidate] = emoji
+            color = str(icon_color or "").strip()
+            if candidate.is_dir() and color:
+                custom_colors[candidate] = color
+            text = " ".join(str(icon_text or "").split())
+            if candidate.is_dir() and text:
+                custom_texts[candidate] = text
 
         include(self._settings.root)
 
@@ -690,10 +972,15 @@ class ConversationsDomain:
                 values = []
             for value in values:
                 if isinstance(value, dict):
+                    customized = key == "chat/projects"
                     include(
                         value.get("path", ""),
-                        value.get("label", "") if key == "chat/projects" else "",
-                        value.get("icon", "") if key == "chat/projects" else "",
+                        value.get("label", "") if customized else "",
+                        value.get("icon", "") if customized else "",
+                        (value.get("iconKind", value.get("icon_kind", ""))) if customized else "",
+                        (value.get("iconEmoji", value.get("icon_emoji", ""))) if customized else "",
+                        (value.get("iconColor", value.get("icon_color", ""))) if customized else "",
+                        (value.get("iconText", value.get("icon_text", ""))) if customized else "",
                     )
                 else:
                     include(value)
@@ -703,12 +990,26 @@ class ConversationsDomain:
             if not is_managed_conversation_workspace(self._settings, workspace):
                 include(workspace)
 
-        self._projects = [{"label": "Todos os projetos", "path": "", "icon": ""}]
+        self._projects = [
+            {
+                "label": "Todos os projetos",
+                "path": "",
+                "icon": "",
+                "iconKind": "",
+                "iconEmoji": "",
+                "iconColor": "",
+                "iconText": "",
+            }
+        ]
         self._projects.extend(
             {
                 "label": custom_labels.get(path) or path.name or str(path),
                 "path": str(path),
                 "icon": custom_icons.get(path, ""),
+                "iconKind": custom_kinds.get(path, ""),
+                "iconEmoji": custom_emoji.get(path, ""),
+                "iconColor": custom_colors.get(path, ""),
+                "iconText": custom_texts.get(path, ""),
             }
             for path in candidates[:32]
         )

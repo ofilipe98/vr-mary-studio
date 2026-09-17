@@ -54,7 +54,7 @@ Rectangle {
 
     readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + 54
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22
     readonly property real compactHeight: 46
 
     objectName: "chatComposerCard"
@@ -392,7 +392,7 @@ Rectangle {
         anchors.bottomMargin: 8
         anchors.leftMargin: 12
         anchors.rightMargin: 8
-        height: 32
+        height: Theme.compactControlHeight
         contentWidth: controlsRow.width
         contentHeight: height
         clip: true
@@ -407,7 +407,7 @@ Rectangle {
         RowLayout {
             id: controlsRow
             width: Math.max(implicitWidth, composerControls.width)
-            height: 32
+            height: Theme.compactControlHeight
             spacing: 6
 
             VrModelPicker {
