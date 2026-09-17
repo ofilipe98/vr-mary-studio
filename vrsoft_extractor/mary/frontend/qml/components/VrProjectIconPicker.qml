@@ -315,7 +315,6 @@ Popup {
                         height: 24
                         kind: iconCell.modelData.kind
                         foreground: iconCell.selected ? root.selColor : Theme.palette.mutedText
-                        strokeWidth: 1.55
                     }
                     ToolTip.visible: cellHover.hovered
                     ToolTip.delay: 400

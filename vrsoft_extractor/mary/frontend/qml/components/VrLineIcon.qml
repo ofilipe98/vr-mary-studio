@@ -6,7 +6,9 @@ Canvas {
 
     property string kind: ""
     property color foreground: Theme.palette.mutedText
-    property real strokeWidth: 1.7
+    // 2.0 on the 24-unit grid matches Lucide's 2px stroke; at 16-20px render
+    // sizes the effective stroke stays ~1.4-1.7px instead of ~1.1px.
+    property real strokeWidth: 2.0
 
     implicitWidth: 20
     implicitHeight: 20

@@ -185,11 +185,10 @@ Button {
                 maximumLineCount: 1
             }
             VrLineIcon {
-                Layout.preferredWidth: 12
-                Layout.preferredHeight: 12
+                Layout.preferredWidth: 13
+                Layout.preferredHeight: 13
                 kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
                 foreground: Theme.palette.mutedText
-                strokeWidth: 1.45
             }
         }
     }
@@ -400,7 +399,6 @@ Button {
                             Layout.preferredHeight: 14
                             kind: "check"
                             foreground: Theme.palette.brandOrange
-                            strokeWidth: 1.6
                         }
                     }
 
@@ -460,7 +458,6 @@ Button {
                         Layout.preferredHeight: 16
                         kind: "plus"
                         foreground: Theme.palette.mutedText
-                        strokeWidth: 1.6
                     }
                     Text {
                         Layout.fillWidth: true

@@ -27,6 +27,7 @@ Item {
             persistentSelection: true
             wrapMode: TextEdit.Wrap
             color: Theme.palette.text
+            renderType: Theme.textRenderType
             selectionColor: Theme.palette.selection
             font.family: Theme.fontFamily
             font.pixelSize: Theme.bodySize

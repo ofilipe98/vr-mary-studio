@@ -14,7 +14,7 @@ TextEdit {
     persistentSelection: true
     wrapMode: TextEdit.Wrap
     color: Theme.palette.text
-    renderType: TextEdit.NativeRendering
+    renderType: Theme.textRenderType
     selectionColor: Theme.palette.selection
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily

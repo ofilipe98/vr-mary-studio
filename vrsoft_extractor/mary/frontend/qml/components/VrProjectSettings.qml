@@ -345,7 +345,7 @@ Item {
                     Item {
                         Layout.preferredWidth: 26
                         Layout.preferredHeight: 26
-                        VrLineIcon { anchors.centerIn: parent; width: 15; height: 15; kind: "copy"; foreground: copyMouse.containsMouse ? Theme.palette.text : Theme.palette.mutedText; strokeWidth: 1.5 }
+                        VrLineIcon { anchors.centerIn: parent; width: 15; height: 15; kind: "copy"; foreground: copyMouse.containsMouse ? Theme.palette.text : Theme.palette.mutedText }
                         MouseArea { id: copyMouse; anchors.fill: parent; hoverEnabled: true; onClicked: control.copyPathRequested() }
                         ToolTip.visible: copyMouse.containsMouse
                         ToolTip.text: "Copiar caminho"
@@ -487,8 +487,8 @@ Item {
                             contentItem: RowLayout {
                                 spacing: 7
                                 Item { Layout.fillWidth: true }
-                                VrLineIcon { Layout.preferredWidth: 15; Layout.preferredHeight: 15; kind: "trash"; foreground: Theme.palette.danger; strokeWidth: 1.55 }
-                                Text { text: "Remove project"; color: Theme.palette.danger; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
+                                VrLineIcon { Layout.preferredWidth: 15; Layout.preferredHeight: 15; kind: "trash"; foreground: Theme.palette.danger }
+                                Text { text: "Remove project"; color: Theme.palette.danger; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                                 Item { Layout.fillWidth: true }
                             }
                             background: Rectangle {

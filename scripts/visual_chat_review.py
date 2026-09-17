@@ -199,11 +199,17 @@ Entregue o resultado e as evidências de validação.
             activity.setProperty("expanded", False)
             activity.setProperty("statusText", "Pronto")
             chat.messages.update_last(content=reference_markdown, displayContent=reference_markdown)
+            # P3 density matrix: standard + narrow widths, both themes and the
+            # full 100/125/150 scale range. Filenames sort alphabetically so a
+            # reviewer can compare scale steps side by side (or against T3
+            # Code captures taken at the same sizes).
+            captures = []
+            matrix = []
             for theme, width, height, scale in [
-                ("dark_orange", 1920, 1080, "100"),
-                ("dark_orange", 390, 844, "100"),
-                ("light", 1366, 900, "100"),
-                ("dark_orange", 1366, 900, "150"),
+                (theme, width, height, scale)
+                for theme in ("dark_orange", "light")
+                for width, height in ((1366, 900), (390, 844))
+                for scale in ("100", "125", "150")
             ]:
                 frontend.setTheme(theme)
                 frontend.setUiScale(scale)
@@ -214,20 +220,30 @@ Entregue o resultado e as evidências de validação.
                 QTest.qWait(100)
                 prefix = f"output-{theme}-{width}-{scale}"
                 window.grabWindow().save(str(output / f"{prefix}-tables.png"))
+                captures.append(f"{prefix}-tables.png")
                 table = find_items(window.contentItem(), "tableBlock")[0]
                 table.setProperty("expanded", True)
                 QTest.qWait(100)
                 window.grabWindow().save(str(output / f"{prefix}-expanded.png"))
+                captures.append(f"{prefix}-expanded.png")
                 table.setProperty("expanded", False)
                 timeline.positionViewAtEnd()
                 QTest.qWait(150)
                 window.grabWindow().save(str(output / f"{prefix}-code.png"))
+                captures.append(f"{prefix}-code.png")
+                matrix.append({"theme": theme, "width": width, "height": height, "scale": scale})
             frontend.setUiScale("100")
             chat.startNewChat()
             QTest.qWait(150)
             window.grabWindow().save(str(output / "chat-empty.png"))
             errors = [w.toString() for w in engine._qml_warnings]
             (output / "qml-warnings.txt").write_text("\n".join(errors), encoding="utf-8")
+            import json
+            (output / "results.json").write_text(json.dumps({
+                "captures": captures,
+                "density_matrix": matrix,
+                "qml_warnings": len(errors),
+            }, indent=2), encoding="utf-8")
             print("QML warnings:", len(errors))
             print("Evidence:", output.resolve())
             window.close()

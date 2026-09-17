@@ -116,7 +116,6 @@ Item {
             height: root.iconSize
             kind: "folder"
             foreground: Theme.palette.mutedText
-            strokeWidth: 1.55
         }
 
         Image {
@@ -148,7 +147,6 @@ Item {
             height: Math.round(root.boxSize * 0.72)
             kind: String(root.iconKind || "")
             foreground: root.resolvedColor
-            strokeWidth: 1.6
         }
 
         Text {

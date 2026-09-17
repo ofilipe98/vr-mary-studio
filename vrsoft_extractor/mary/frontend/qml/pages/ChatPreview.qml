@@ -68,7 +68,7 @@ Item {
                     text: entry.subtitle
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSize(11)
                     elide: Text.ElideMiddle
                     maximumLineCount: 1
                 }
@@ -366,7 +366,7 @@ Item {
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(14)
                                 font.weight: Font.Medium
-                                renderType: Text.NativeRendering
+                                renderType: Theme.textRenderType
                                 color: Theme.palette.text
                                 background: Rectangle {
                                     radius: Theme.radiusSmall
@@ -550,7 +550,7 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     font.weight: Font.Medium
-                                    renderType: Text.NativeRendering
+                                    renderType: Theme.textRenderType
                                     elide: Text.ElideRight
                                     maximumLineCount: 1
                                     Layout.fillWidth: true
@@ -577,7 +577,7 @@ Item {
                                         text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"
                                         color: "#FFFFFF"
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(9)
+                                        font.pixelSize: Theme.fontSize(10)
                                         font.weight: Font.DemiBold
                                     }
 
@@ -594,8 +594,8 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: 14
-                                    Layout.preferredHeight: 14
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
@@ -628,7 +628,7 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     font.weight: conversationItem.running ? Font.DemiBold : Font.Medium
-                                    renderType: Text.NativeRendering
+                                    renderType: Theme.textRenderType
                                 }
                                 VrIconButton {
                                     id: discardDraftButton
@@ -663,7 +663,7 @@ Item {
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(14)
                                 font.weight: Font.Medium
-                                renderType: Text.NativeRendering
+                                renderType: Theme.textRenderType
                                 elide: Text.ElideRight
                             }
                             RowLayout {
@@ -676,7 +676,7 @@ Item {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     font.weight: Font.Medium
-                                    renderType: Text.NativeRendering
+                                    renderType: Theme.textRenderType
                                     elide: Text.ElideRight
                                 }
                                 Rectangle {
@@ -1188,8 +1188,8 @@ Item {
                     spacing: 6
                     VrLineIcon {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 10
-                        height: 10
+                        width: 12
+                        height: 12
                         kind: "chevronDown"
                         foreground: Theme.palette.mutedText
                     }
@@ -1198,7 +1198,7 @@ Item {
                         text: "Rolar para o final"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(11)
+                        font.pixelSize: Theme.fontSize(12)
                     }
                 }
 
@@ -1545,8 +1545,8 @@ Item {
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
-                                            Layout.preferredWidth: 13
-                                            Layout.preferredHeight: 13
+                                            Layout.preferredWidth: 14
+                                            Layout.preferredHeight: 14
                                             kind: "close"
                                             foreground: Theme.palette.mutedText
                                             visible: surfaceTab.hovered || surfaceTab.selected
@@ -1926,8 +1926,8 @@ Item {
                                     spacing: 5
                                     VrLineIcon {
                                         visible: fileTreeRow.modelData.isDirectory === true
-                                        Layout.preferredWidth: 11
-                                        Layout.preferredHeight: 11
+                                        Layout.preferredWidth: 12
+                                        Layout.preferredHeight: 12
                                         kind: root.expandedFileFolders[fileTreeRow.modelData.label]
                                             ? "chevronDown" : "chevronRight"
                                         foreground: Theme.palette.mutedText
@@ -2038,7 +2038,7 @@ Item {
                                     anchors.margins: 8
                                     spacing: 3
                                     Text { width: parent.width; text: contextChoice.modelData.title + " · " + contextChoice.modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); lineHeight: Theme.denseLineHeight; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
                                 TapHandler { onTapped: root.insertReference(contextChoice.modelData.reference) }
@@ -2063,7 +2063,8 @@ Item {
                                 : "Nenhum agente nesta conversa. As tarefas delegadas aparecerão aqui."
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(11)
+                            font.pixelSize: Theme.fontSize(12)
+                            lineHeight: Theme.bodyLineHeight
                             wrapMode: Text.WordWrap
                         }
                         ListView {
@@ -2416,11 +2417,10 @@ Item {
                     anchors.rightMargin: 10
                     spacing: 9
                     VrLineIcon {
-                        Layout.preferredWidth: 15
-                        Layout.preferredHeight: 15
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
                         kind: "plus"
                         foreground: Theme.palette.brandOrange
-                        strokeWidth: 1.6
                     }
                     Text {
                         Layout.fillWidth: true

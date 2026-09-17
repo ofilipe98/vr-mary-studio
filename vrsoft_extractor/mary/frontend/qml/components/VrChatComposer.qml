@@ -237,8 +237,8 @@ Rectangle {
                 anchors.rightMargin: 4
                 spacing: 5
                 VrLineIcon {
-                    width: 13
-                    height: 13
+                    width: 14
+                    height: 14
                     anchors.verticalCenter: parent.verticalCenter
                     kind: "file"
                     foreground: Theme.palette.brandOrange
@@ -251,14 +251,14 @@ Rectangle {
                     elide: Text.ElideMiddle
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSize(12)
                 }
                 VrIconButton {
                     width: 22
                     height: 22
                     anchors.verticalCenter: parent.verticalCenter
                     iconKind: "close"
-                    iconSize: 10
+                    iconSize: 12
                     foreground: Theme.palette.mutedText
                     onClicked: composerCard.page.chatBridge.removeAttachment(attachmentChip.index)
                 }
@@ -303,7 +303,7 @@ Rectangle {
             objectName: "chatComposerInput"
             font.family: Theme.promptFontFamily
             font.pixelSize: Theme.promptFontSize(14)
-            renderType: TextEdit.NativeRendering
+            renderType: Theme.textRenderType
             leftPadding: 0
             rightPadding: 0
             topPadding: 2
@@ -368,7 +368,7 @@ Rectangle {
                     elide: Text.ElideMiddle
                     color: Theme.palette.brandOrange
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.DemiBold
                 }
                 VrIconButton {
@@ -376,7 +376,7 @@ Rectangle {
                     height: 22
                     anchors.verticalCenter: parent.verticalCenter
                     iconKind: "close"
-                    iconSize: 11
+                    iconSize: 12
                     foreground: Theme.palette.mutedText
                     onClicked: composerCard.page.chatBridge.removeActiveSkill(skillChip.index)
                 }

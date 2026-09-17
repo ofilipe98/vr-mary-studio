@@ -113,7 +113,7 @@ def main():
 
             tab_names = ["0_geral", "1_provedores", "2_vr_ultra", "3_aplicativos", "4_aparencia", "5_browser", "6_arquivados", "7_skills"]
 
-            scenarios = [(1280, 820, "100"), (1920, 1080, "100"), (768, 1024, "100"), (390, 844, "100"), (1280, 820, "150")]
+            scenarios = [(1280, 820, "100"), (1280, 820, "125"), (1920, 1080, "100"), (768, 1024, "100"), (390, 844, "100"), (390, 844, "125"), (1280, 820, "150")]
             captures = []
             for theme in ["dark_orange", "light"]:
                 frontend.setTheme(theme)
@@ -158,7 +158,7 @@ def main():
             assert len(chat.appVersions) == 2
             for theme in ["dark_orange", "light"]:
                 frontend.setTheme(theme)
-                for width, scale in [(1280, "100"), (390, "100"), (1280, "150")]:
+                for width, scale in [(1280, "100"), (1280, "125"), (390, "100"), (1280, "150")]:
                     window.setWidth(width)
                     window.setHeight(900)
                     frontend.setUiScale(scale)
