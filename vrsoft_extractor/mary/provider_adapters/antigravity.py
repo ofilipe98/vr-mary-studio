@@ -114,12 +114,22 @@ class AntigravityProvider(AgentProvider):
         return items
 
     def list_models(self):
-        if not self.available() or not has_saved_account():
+        if not has_saved_account():
             return []
         with self._lock:
             if self._catalog and time.monotonic() - self._catalog_time < 60:
                 return list(self._catalog)
-        client = spawn_acp_client()
+        # Single shared resolution per spawn: resolve once, then spawn with
+        # the same runtime_info. IncompleteRuntimeError stays controlled.
+        try:
+            runtime_info = resolve_acp_runtime()
+        except IncompleteRuntimeError:
+            return []
+        except Exception:
+            return []
+        if runtime_info is None:
+            return []
+        client = spawn_acp_client(runtime_info=runtime_info)
         try:
             client.start()
             client.request("authenticate", {"methodId": "oauth-personal"})

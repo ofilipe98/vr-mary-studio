@@ -740,7 +740,7 @@ def test_35_provider_ready_after_full_login_flow():
         attempt = manager.start_login()
         assert manager.provider_readiness == "validating"
         deadline = time.monotonic() + 3.0
-        while attempt.state == "starting" and time.monotonic() < deadline:
+        while attempt.state in ("starting", "verifying") and time.monotonic() < deadline:
             time.sleep(0.01)
         assert attempt.state == "succeeded"
         assert manager.account_state == "authenticated"

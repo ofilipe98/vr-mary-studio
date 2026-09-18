@@ -330,6 +330,7 @@ class StudioBridge(QObject):
             env_factory=acp_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
             on_catalog_discovered=self._on_antigravity_catalog_discovered,
+            runtime_resolver=lambda: resolve_acp_runtime(),
         )
         self._agy_check_running = False
         self._agy_check_cancel = threading.Event()
@@ -2083,6 +2084,19 @@ class StudioBridge(QObject):
                 client.request("authenticate", {"methodId": "oauth-personal"}, timeout=SESSION_TIMEOUT)
             except TypeError:
                 client.request("authenticate", {"methodId": "oauth-personal"})
+            # Silent validation shares the interactive rule: authenticate OK
+            # proves the credential (authenticated/validating); only
+            # session/new + non-empty catalog proves readiness. This preserves
+            # authenticated + degraded when the session fails, instead of
+            # collapsing to unknown/failed.
+            if self._agy_check_cancel.is_set():
+                raise RuntimeError("Validação cancelada.")
+            try:
+                self._antigravity_auth.mark_credentials_authenticated(
+                    "Verificando acesso e carregando modelos…"
+                )
+            except Exception:
+                pass
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
             try:

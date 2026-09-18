@@ -350,6 +350,37 @@ def map_acp_error_to_ui_message(exc: Exception, phase: str = "") -> tuple[str, b
     return "Não foi possível concluir a autenticação Google. Tente novamente.", False
 
 
+def validate_session_and_catalog(client: Any, cwd: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Shared session/new + catalog validation for login and restore flows.
+
+    Calls ``session/new`` in the given client, validates ``sessionId`` and
+    requires a non-empty model catalog via ``extract_acp_models``.
+
+    Returns ``(session, models)`` on success. Raises :class:`AcpError` when
+    the session id is missing/invalid or when the catalog is empty, so both
+    interactive login and silent validation map the failure to
+    ``accountState=authenticated`` + ``providerReadiness=degraded`` (the
+    credential itself was already validated by ``authenticate``).
+    """
+    from .antigravity_acp import AcpError
+
+    try:
+        session = client.request(
+            "session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=SESSION_TIMEOUT
+        )
+    except TypeError:
+        session = client.request("session/new", {"cwd": str(cwd), "mcpServers": []})
+    session_id = session.get("sessionId") if isinstance(session, dict) else None
+    if not isinstance(session_id, str) or not session_id:
+        raise AcpError("session/new")
+    from .antigravity_acp import extract_acp_models
+
+    models = extract_acp_models(session)
+    if not isinstance(models, list) or not models:
+        raise AcpError("session/new", message="empty model catalog")
+    return session, models
+
+
 class AuthStreamParser:
     """Incremental UTF-8 stream decoder and OAuth line parser.
 
@@ -448,13 +479,15 @@ class AntigravityAuthManager:
 
     def __init__(
         self,
-        command_resolver: Callable[[], str | None],
-        env_factory: Callable[..., dict[str, str]],
+        command_resolver: Callable[[], Any] | None = None,
+        env_factory: Callable[..., dict[str, str]] | None = None,
         on_state_changed: Callable[[], None] | None = None,
         on_catalog_discovered: Callable[[list[dict[str, Any]]], None] | None = None,
+        runtime_resolver: Callable[[], Any] | None = None,
     ):
         self._command_resolver = command_resolver
-        self._env_factory = env_factory
+        self._runtime_resolver = runtime_resolver
+        self._env_factory = env_factory if env_factory is not None else (lambda **kwargs: {})
         self._on_state_changed = on_state_changed
         self._on_catalog_discovered = on_catalog_discovered
 
@@ -526,11 +559,36 @@ class AntigravityAuthManager:
                 else:
                     self._stop_process(old_attempt.process)
 
-            command = self._command_resolver()
-            if not command:
-                self._account_status_label = "Runtime Antigravity ACP não encontrado"
-                self._notify_changed()
-                raise FileNotFoundError("Runtime Antigravity ACP não encontrado.")
+            # Single resolution per spawn: prefer an AcpRuntimeInfo resolver so
+            # the executable/harness pair is resolved exactly once. The legacy
+            # command_resolver (string) is kept for backward compatibility and
+            # is resolved exactly once inside _run_login.
+            runtime_or_command: Any = None
+            if self._runtime_resolver is not None:
+                try:
+                    runtime_or_command = self._runtime_resolver()
+                except Exception as exc:
+                    from .antigravity_acp import IncompleteRuntimeError as _Incomplete
+
+                    if isinstance(exc, _Incomplete):
+                        self._provider_readiness = "failed"
+                        self._account_status_label = str(exc)
+                        self._notify_changed()
+                    raise
+                if runtime_or_command is None:
+                    self._account_status_label = "Runtime Antigravity ACP não encontrado"
+                    self._notify_changed()
+                    raise FileNotFoundError("Runtime Antigravity ACP não encontrado.")
+            else:
+                if self._command_resolver is None:
+                    self._account_status_label = "Runtime Antigravity ACP não encontrado"
+                    self._notify_changed()
+                    raise FileNotFoundError("Runtime Antigravity ACP não encontrado.")
+                runtime_or_command = self._command_resolver()
+                if runtime_or_command is None or (isinstance(runtime_or_command, str) and not runtime_or_command):
+                    self._account_status_label = "Runtime Antigravity ACP não encontrado"
+                    self._notify_changed()
+                    raise FileNotFoundError("Runtime Antigravity ACP não encontrado.")
 
             if force:
                 from .antigravity_acp import profile_path
@@ -548,17 +606,23 @@ class AntigravityAuthManager:
             self._account_status_label = "Iniciando autenticação Google…"
             self._notify_changed()
 
-        threading.Thread(target=self._run_login, args=(attempt, command), daemon=True).start()
+        threading.Thread(target=self._run_login, args=(attempt, runtime_or_command), daemon=True).start()
         return attempt
 
-    def _run_login(self, attempt: LoginAttempt, command: str) -> None:
+    def _validate_session_and_catalog(self, client: Any, cwd: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Shared session/new + catalog check used by login and restore paths."""
+        return validate_session_and_catalog(client, cwd)
+
+    def _run_login(self, attempt: LoginAttempt, runtime_or_command: Any) -> None:
         from .antigravity_acp import (
             AcpError,
+            AcpClient,
             BrowserHelperError,
             IncompleteRuntimeError,
-            extract_acp_models,
+            acp_environment,
             prepare_profile,
             preflight_browser_helper,
+            resolve_acp_runtime,
             spawn_acp_client,
         )
 
@@ -577,11 +641,48 @@ class AntigravityAuthManager:
             # 3. Single shared runtime resolution for this spawn: executable,
             # harness, version and environment always describe the same
             # installation. IncompleteRuntimeError propagates untouched.
-            client = spawn_acp_client(
-                command=command,
-                env_factory=self._env_factory,
-                on_auth_url=lambda url: self._on_auth_url_received(attempt.attempt_id, url),
-            )
+            # AcpRuntimeInfo is reused without further discovery; a legacy
+            # command string is resolved exactly once here.
+            on_auth = lambda url: self._on_auth_url_received(attempt.attempt_id, url)
+            if runtime_or_command is not None and hasattr(runtime_or_command, "executable_path"):
+                client = spawn_acp_client(
+                    runtime_info=runtime_or_command,
+                    env_factory=self._env_factory,
+                    on_auth_url=on_auth,
+                )
+            elif isinstance(runtime_or_command, str):
+                # Exactly one discovery for the legacy string path.
+                runtime_info = resolve_acp_runtime(runtime_or_command)
+                if runtime_info is not None:
+                    client = spawn_acp_client(
+                        runtime_info=runtime_info,
+                        env_factory=self._env_factory,
+                        on_auth_url=on_auth,
+                    )
+                else:
+                    # No complete pair for the explicit string. Build the
+                    # client directly so offline fakes keep working without a
+                    # second discovery; a real miss fails in start().
+                    try:
+                        env = self._env_factory(runtime_info=None)
+                    except TypeError:
+                        try:
+                            env = self._env_factory()
+                        except Exception:
+                            env = None
+                    if env is None:
+                        env = acp_environment(runtime_info=None)
+                    client = AcpClient(
+                        command=runtime_or_command,
+                        env=env,
+                        on_auth_url=on_auth,
+                    )
+            else:
+                client = spawn_acp_client(
+                    runtime_info=None,
+                    env_factory=self._env_factory,
+                    on_auth_url=on_auth,
+                )
             with self._lock:
                 if not self._is_active(attempt.attempt_id):
                     return
@@ -603,7 +704,8 @@ class AntigravityAuthManager:
                 attempt.process = client.process
             self._notify_changed()
 
-            # 4. Authenticate via OAuth
+            # 4. Authenticate via OAuth. A success only proves the credential;
+            # readiness stays "validating" until session/new + catalog succeed.
             phase = "authenticate"
             try:
                 client.request("authenticate", {"methodId": "oauth-personal"}, timeout=OAUTH_TIMEOUT_SECONDS)
@@ -615,43 +717,50 @@ class AntigravityAuthManager:
                     return
                 self._cancel_timers()
                 attempt.state = "verifying"
+                # Semantic transition (same as mark_credentials_authenticated):
+                # credential valid, provider still validating.
                 self._account_state = "authenticated"
+                self._provider_readiness = "validating"
                 self._account_status_label = "Verificando acesso e carregando modelos…"
             self._notify_changed()
 
-            # 5. Session/new in the SAME ACP process to discover models
+            # 5. Session/new in the SAME ACP process to discover models.
+            # Shared rule with silent validation: valid sessionId + non-empty
+            # catalog is required for readiness. Empty catalog is degraded,
+            # never ready.
             phase = "session/new"
-            try:
-                session = client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
-            except TypeError:
-                session = client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []})
+            session, available_models = self._validate_session_and_catalog(client, Path.home())
             with self._lock:
                 if not self._is_active(attempt.attempt_id):
                     return
-                session_id = session.get("sessionId") if isinstance(session, dict) else None
-                if not isinstance(session_id, str) or not session_id:
-                    raise AcpError("session/new")
-
-                available_models = extract_acp_models(session)
-                n_models = len(available_models) if isinstance(available_models, list) else 0
-                models_label = f" · {n_models} modelos disponíveis" if n_models > 0 else ""
-                success_message = f"Conta Google autenticada{models_label}."
-
+                n_models = len(available_models)
+                success_message = f"Conta Google autenticada · {n_models} modelos disponíveis."
                 self._account_state = "authenticated"
                 self._provider_readiness = "ready"
-                self._discovered_catalog = available_models
-                if self._on_catalog_discovered and isinstance(available_models, list):
-                    try:
-                        self._on_catalog_discovered(available_models)
-                    except Exception:
-                        pass
+                self._discovered_catalog = list(available_models)
+                catalog_copy = list(available_models)
                 self._finish_attempt("succeeded", success_message)
+            if self._on_catalog_discovered:
+                try:
+                    self._on_catalog_discovered(catalog_copy)
+                except Exception:
+                    pass
             self._notify_changed()
 
         except Exception as exc:
             with self._lock:
                 if self._is_active(attempt.attempt_id):
                     user_msg, is_authenticated = map_acp_error_to_ui_message(exc, phase)
+                    # Empty catalog shares the degraded semantics: credential is
+                    # valid (authenticate already succeeded), provider is not.
+                    is_empty_catalog = (
+                        phase == "session/new"
+                        and isinstance(exc, AcpError)
+                        and "empty" in (exc.raw_message or "").lower()
+                    )
+                    if is_empty_catalog:
+                        user_msg = "Conta Google autenticada, mas não foi possível carregar os modelos."
+                        is_authenticated = True
                     if is_authenticated:
                         # Credentials are valid but the provider cannot serve
                         # models: authenticated account, NOT a ready provider.
@@ -748,12 +857,67 @@ class AntigravityAuthManager:
             self._notify_changed()
             raise RuntimeError("Não foi possível entregar o retorno do login ao Antigravity. Inicie o login novamente.") from None
 
-    def mark_authenticated_from_validation(self, message: str = "Conta Google validada com uma resposta real") -> None:
-        """Updates account state upon successful verification turn."""
+    def mark_credentials_authenticated(
+        self, message: str = "Conta Google autenticada. Verificando acesso e carregando modelos…"
+    ) -> None:
+        """Marks the credential as valid without marking the provider ready.
+
+        Semantics: ``accountState=authenticated`` + ``providerReadiness=validating``.
+        Call after ``authenticate`` success, before ``session/new`` + catalog.
+        Never marks ``ready``: only :meth:`mark_provider_ready` does that.
+        """
+        with self._lock:
+            self._account_state = "authenticated"
+            self._provider_readiness = "validating"
+            self._account_status_label = message
+        self._notify_changed()
+
+    def mark_provider_ready(
+        self, message: str = "Conta Google autenticada.", models: list[dict[str, Any]] | None = None
+    ) -> None:
+        """Marks the provider ready after session/new + non-empty catalog.
+
+        Semantics: ``accountState=authenticated`` + ``providerReadiness=ready``.
+        Publishes a valid non-empty catalog when provided; never publishes an
+        empty catalog as ready (callers must validate before calling).
+        """
+        catalog_copy: list[dict[str, Any]] | None = None
         with self._lock:
             self._account_state = "authenticated"
             self._provider_readiness = "ready"
             self._account_status_label = message
+            if models is not None:
+                self._discovered_catalog = list(models)
+                catalog_copy = list(models)
+        if catalog_copy is not None and self._on_catalog_discovered:
+            try:
+                self._on_catalog_discovered(catalog_copy)
+            except Exception:
+                pass
+        self._notify_changed()
+
+    def mark_provider_degraded(
+        self, message: str = "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos."
+    ) -> None:
+        """Marks a valid credential with an unusable provider.
+
+        Semantics: ``accountState=authenticated`` + ``providerReadiness=degraded``.
+        Never clears the token nor flips to ``unauthenticated``.
+        """
+        with self._lock:
+            self._account_state = "authenticated"
+            self._provider_readiness = "degraded"
+            self._account_status_label = message
+        self._notify_changed()
+
+    def mark_authenticated_from_validation(self, message: str = "Conta Google validada com uma resposta real") -> None:
+        """Updates account state upon successful verification turn.
+
+        Kept for backward compatibility; delegates to :meth:`mark_provider_ready`
+        (ready requires a valid catalog, validated by the caller).
+        """
+        self.mark_provider_ready(message)
+        with self._lock:
             if self._active_attempt:
                 self._finish_attempt("succeeded", message)
                 self._stop_process(self._active_attempt.process)
