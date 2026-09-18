@@ -4796,5 +4796,33 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertNotIn('fill="#A1261D"', stop_svg)
 
 
+    def test_vr_app_icon_resolves_bundled_asset_path_without_external_failure(self):
+        from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+
+        engine = QQmlApplicationEngine()
+        component_path = MAIN_QML.parent / "components" / "VrAppIcon.qml"
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(component_path)))
+        item = component.create()
+        self.assertIsNotNone(item, f"Failed to create VrAppIcon: {component.errors()}")
+        try:
+            item.setProperty("appName", "VRAdm")
+            self.application.processEvents()
+
+            canonical = item.property("canonical")
+            asset_path = item.property("assetPath")
+            active_source = item.property("activeSource")
+            official_path = item.property("officialPath")
+
+            self.assertEqual(canonical, "VRAdm")
+            self.assertTrue(asset_path.endswith("assets/app_icons/VRAdm.ico"))
+            self.assertFalse(asset_path.startswith("file:///D:/Codex/4.5.95_com_PDV"))
+            self.assertEqual(active_source, asset_path)
+            self.assertEqual(official_path, asset_path)
+            self.assertTrue(item.property("hasIcon"))
+            self.assertFalse(item.property("imageFailed"))
+        finally:
+            item.deleteLater()
+
+
 if __name__ == "__main__":
     unittest.main()
