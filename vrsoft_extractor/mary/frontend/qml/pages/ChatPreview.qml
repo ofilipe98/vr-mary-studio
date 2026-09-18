@@ -1073,7 +1073,7 @@ Item {
                             onClosed: landingProjectButton.menuClosedAt = Date.now()
                             x: 0
                             y: parent.height + 6
-                            width: Math.min(300, Overlay.overlay.width - 16)
+                            width: Math.min(260, Overlay.overlay.width - 16)
                             margins: 8
                             padding: 5
                             background: Rectangle {
@@ -1087,7 +1087,7 @@ Item {
                                 delegate: ProjectMenuEntry {
                                     required property var modelData
                                     text: modelData.label
-                                    subtitle: modelData.path
+                                    subtitle: ""
                                     iconPath: modelData.icon
                                     iconKind: modelData.iconKind
                                     iconEmoji: modelData.iconEmoji

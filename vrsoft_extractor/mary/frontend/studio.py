@@ -43,7 +43,19 @@ from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
 from ..provider_cli import INSTALLERS, INSTALL_DOCS, InstallCancelled, install_cli, resolve_cli, verify_cli
 from ..antigravity import AntigravityAuthManager
-from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account, SESSION_TIMEOUT, prepare_profile, AcpError
+from ..antigravity_acp import (
+    AcpClient,
+    AcpError,
+    AcpTimeoutError,
+    IncompleteRuntimeError,
+    INIT_TIMEOUT_SECONDS,
+    SESSION_TIMEOUT,
+    acp_environment,
+    extract_acp_models,
+    has_saved_account,
+    prepare_profile,
+    resolve_acp,
+)
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -161,7 +173,7 @@ class BoundedTextListModel(QAbstractListModel):
 
 class _TaskSignals(QObject):
     finished = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object)
     progress = Signal(str)
 
 
@@ -176,7 +188,7 @@ class _Task(QRunnable):
         try:
             result = self.operation()
         except Exception as exc:  # pragma: no cover - service integration
-            self.signals.failed.emit(str(exc))
+            self.signals.failed.emit(exc)
         else:
             self.signals.finished.emit(result)
 
@@ -311,7 +323,7 @@ class StudioBridge(QObject):
         self._syncProgressReceived.connect(self._apply_sync_progress)
         self._antigravityAuthChanged.connect(self._refresh_antigravity_auth, Qt.QueuedConnection)
         self._antigravity_auth = AntigravityAuthManager(
-            command_resolver=resolve_acp,
+            command_resolver=lambda: resolve_acp(),
             env_factory=acp_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
             on_catalog_discovered=self._on_antigravity_catalog_discovered,
@@ -321,26 +333,23 @@ class StudioBridge(QObject):
         self._agy_check_process = None
         self._agy_check_client = None
         self._agy_opened_attempt = None
+        self.refreshProviders()
 
-    def _on_antigravity_catalog_discovered(self, catalog: list[dict[str, Any]]) -> None:
+    def _publish_antigravity_catalog(self, catalog: list[dict[str, Any]]) -> None:
+        if not catalog:
+            return
         if self._conversation_orchestrator and hasattr(self._conversation_orchestrator, "providers"):
             provider = self._conversation_orchestrator.providers.get("antigravity")
-            if provider and hasattr(provider, "_catalog"):
-                with getattr(provider, "_lock", threading.RLock()):
-                    items = []
-                    for item in catalog:
-                        model_id = item.get("modelId")
-                        if isinstance(model_id, str) and model_id:
-                            items.append({
-                                "id": model_id,
-                                "model": model_id,
-                                "displayName": item.get("name") or model_id,
-                                "description": item.get("description") or "",
-                                "isDefault": False,
-                            })
-                    if items:
-                        provider._catalog = items
+            if provider:
+                if hasattr(provider, "update_catalog"):
+                    provider.update_catalog(catalog)
+                elif hasattr(provider, "_catalog"):
+                    with getattr(provider, "_lock", threading.RLock()):
+                        provider._catalog = list(catalog)
                         provider._catalog_time = time.monotonic()
+
+    def _on_antigravity_catalog_discovered(self, catalog: list[dict[str, Any]]) -> None:
+        self._publish_antigravity_catalog(catalog)
 
     def _on_antigravity_auth_state_changed(self) -> None:
         if not getattr(self, "_closed", False):
@@ -386,8 +395,13 @@ class StudioBridge(QObject):
 
     @Slot()
     def restoreAntigravityAccount(self) -> None:
-        if has_saved_account():
-            self.validateAntigravityAccount()
+        try:
+            if has_saved_account():
+                self.validateAntigravityAccount()
+        except IncompleteRuntimeError:
+            pass
+        except Exception:
+            pass
 
     @Property("QVariantList", notify=dashboardChanged)
     def dashboardSources(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1795,7 +1809,17 @@ class StudioBridge(QObject):
         self._providers = []
         for provider in labels:
             enabled = self._stored_bool(self._preferences.value(f"providers/{provider}/enabled", True), True)
-            command = resolve_acp() if provider == "antigravity" else resolve_cli(provider)
+            incomplete_err = ""
+            if provider == "antigravity":
+                try:
+                    command = resolve_acp()
+                except IncompleteRuntimeError as err:
+                    command = None
+                    incomplete_err = str(err)
+                except Exception:
+                    command = None
+            else:
+                command = resolve_cli(provider)
             available = command is not None
             if available and provider not in self._provider_installs:
                 if self._provider_install_status.get(provider, {}).get('runtimeState') in {'error', 'cancelled'}:
@@ -1805,6 +1829,13 @@ class StudioBridge(QObject):
             checking = provider == "antigravity" and getattr(self, "_agy_check_running", False)
             if checking:
                 account_status = "Validando conta Google…"
+            elif incomplete_err:
+                account_status = incomplete_err
+
+            install_extra = {}
+            if provider == "antigravity" and incomplete_err:
+                install_extra = {"runtimeState": "incomplete", "installMessage": incomplete_err}
+
             self._providers.append({
                 "id": provider,
                 "name": str(self._preferences.value(f"providers/{provider}/displayName", labels[provider])),
@@ -1816,15 +1847,18 @@ class StudioBridge(QObject):
                 "expiresAt": auth_info.get("expiresAt", ""),
                 "errorDetail": auth_info.get("errorDetail", ""),
                 "isWaiting": auth_info.get("isWaiting", False),
-                "isVerifying": checking or auth_info.get("isVerifying", False),
+                "isVerifying": bool(auth_info.get("isVerifying", False) or checking),
+                "isValidating": checking,
+                "checking": checking,
                 "isStarting": auth_info.get("isStarting", False),
                 "description": descriptions[provider],
                 "enabled": enabled,
                 "available": available,
                 "installSupported": provider in INSTALLERS,
                 "installDocs": INSTALL_DOCS.get(provider, ""),
+                **install_extra,
                 **self._provider_install_status.get(provider, {}),
-                "status": "● Desativado para novas conversas" if not enabled else "● Disponível localmente" if available else "● Não encontrado no PATH",
+                "status": "● Desativado para novas conversas" if not enabled else "● Disponível localmente" if available else ("● Runtime incompleto" if incomplete_err else "● Não encontrado no PATH"),
             })
         self.providersChanged.emit()
 
@@ -1959,16 +1993,14 @@ class StudioBridge(QObject):
             return
 
         try:
-            command = resolve_acp()
-            if not command:
-                self._open_browser_url("https://antigravity.google/docs/cli/install/")
-                return
             attempt = self._antigravity_auth.start_login(force=force)
             if attempt.state == "waiting" and attempt.validated_auth:
                 self._agy_opened_attempt = attempt.attempt_id
                 self._open_browser_url(attempt.validated_auth.authorization_url)
 
             self.refreshProviders()
+        except FileNotFoundError:
+            self._open_browser_url("https://antigravity.google/docs/cli/install/")
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
 
@@ -1994,7 +2026,8 @@ class StudioBridge(QObject):
             self._tasks.discard(task)
             if self._closed:
                 return
-            self.toastRequested.emit(f"Falha ao validar retorno OAuth: {exc}", "error")
+            err_msg = redact_sensitive_text(str(exc))
+            self.toastRequested.emit(f"Falha ao validar retorno OAuth: {err_msg}", "error")
             self.refreshProviders()
         def finish_success(_):
             self._tasks.discard(task)
@@ -2021,13 +2054,21 @@ class StudioBridge(QObject):
         try:
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
-            client.start()
-            client.request("authenticate", {"methodId": "oauth-personal"}, timeout=SESSION_TIMEOUT)
+            try:
+                client.start(timeout=INIT_TIMEOUT_SECONDS)
+            except TypeError:
+                client.start()
+            try:
+                client.request("authenticate", {"methodId": "oauth-personal"}, timeout=SESSION_TIMEOUT)
+            except TypeError:
+                client.request("authenticate", {"methodId": "oauth-personal"})
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
-            # Authentication is already confirmed even if session/new fails.
             self._antigravity_auth.mark_authenticated_from_validation("Conta Google autenticada pelo Antigravity.")
-            return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
+            try:
+                return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
+            except TypeError:
+                return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []})
         finally:
             client.close()
             self._agy_check_client = None
@@ -2039,10 +2080,13 @@ class StudioBridge(QObject):
         attempt = self._antigravity_auth.active_attempt
         if attempt and attempt.state in ("starting", "waiting", "verifying"):
             return
-        command = resolve_acp()
-        if not command:
-            self.toastRequested.emit("Instale o Antigravity CLI primeiro.", "warning")
+        try:
+            command = resolve_acp() or "antigravity"
+        except IncompleteRuntimeError as err:
+            self.toastRequested.emit(str(err), "warning")
             return
+        except Exception:
+            command = "antigravity" 
         self._agy_check_running = True
         self._agy_check_cancel.clear()
         checked_attempt = self._antigravity_auth.active_attempt
@@ -2051,13 +2095,13 @@ class StudioBridge(QObject):
         self.refreshProviders()
         def check():
             result = self._run_antigravity_check(command)
-            models = (result.get("models") or {}).get("availableModels", [])
+            models = extract_acp_models(result)
             if not result.get("sessionId") or not models:
                 raise RuntimeError("Não foi possível carregar os modelos da conta.")
-            return f"Conta Google autenticada. Conexão validada e {len(models)} modelos disponíveis."
+            return models
         task = _Task(check)
         self._tasks.add(task)
-        def finish_success(message):
+        def finish_success(models):
             self._tasks.discard(task)
             self._agy_check_running = False
             if self._closed or self._agy_check_cancel.is_set() or self._antigravity_auth.active_attempt is not checked_attempt:
@@ -2067,9 +2111,12 @@ class StudioBridge(QObject):
             if checked_attempt and checked_attempt.state in ("cancelled", "failed") and checked_attempt.state != checked_phase:
                 self.refreshProviders()
                 return
-            self._agy_account_status = str(message)
+            self._publish_antigravity_catalog(models)
+            msg = f"Conta Google autenticada. Conexão validada e {len(models)} modelos disponíveis."
+            self._agy_account_status = msg
             if hasattr(self, "_antigravity_auth"):
-                self._antigravity_auth.mark_authenticated_from_validation(str(message))
+                self._antigravity_auth.mark_authenticated_from_validation(msg)
+                self._antigravity_auth._discovered_catalog = models
             self.refreshProviders()
         def finish_error(exc):
             self._tasks.discard(task)
@@ -2083,10 +2130,26 @@ class StudioBridge(QObject):
                 return
             if isinstance(exc, AcpError) and exc.method == "authenticate" and exc.code == -32000:
                 self._antigravity_auth.mark_credentials_rejected()
+                self._agy_account_status = "Login necessário"
+            elif isinstance(exc, AcpTimeoutError) or getattr(exc, "timed_out", False):
+                method = getattr(exc, "method", "")
+                if method == "initialize":
+                    self._agy_account_status = "Tempo limite de inicialização do runtime excedido."
+                elif method == "authenticate":
+                    self._agy_account_status = "Tempo limite de confirmação do Antigravity excedido."
+                elif method == "session/new":
+                    self._agy_account_status = "Tempo limite de criação da sessão excedido."
+                else:
+                    self._agy_account_status = "Tempo limite da operação excedido."
+                self._antigravity_auth.mark_session_or_model_error(self._agy_account_status)
+            elif isinstance(exc, AcpError) and exc.method == "session/new" and exc.code == -32603:
+                self._agy_account_status = "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos."
+                self._antigravity_auth.mark_session_or_model_error(self._agy_account_status)
+            elif "cancelad" in str(exc).lower():
+                self._agy_account_status = "Validação cancelada."
             else:
-                self._antigravity_auth.mark_session_or_model_error(
-                    "Não foi possível verificar a conta. Entre com Google ou tente validar novamente."
-                )
+                self._agy_account_status = "Não foi possível verificar a conta. Entre com Google ou tente validar novamente."
+                self._antigravity_auth.mark_session_or_model_error(self._agy_account_status)
             self.refreshProviders()
         task.signals.finished.connect(finish_success)
         task.signals.failed.connect(finish_error)

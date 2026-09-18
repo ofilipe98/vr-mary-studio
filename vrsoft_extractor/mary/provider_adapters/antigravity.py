@@ -7,8 +7,16 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
-from ..antigravity_acp import AcpClient, AcpError, has_saved_account, resolve_acp
+from ..antigravity_acp import (
+    AcpClient,
+    AcpError,
+    IncompleteRuntimeError,
+    extract_acp_models,
+    has_saved_account,
+    resolve_acp,
+)
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 from .base import AgentProvider, ProviderError, _token_breakdown
 
@@ -28,20 +36,21 @@ class AntigravityProvider(AgentProvider):
         self._model_variants = {}
 
     def available(self):
-        return resolve_acp() is not None
+        try:
+            return resolve_acp() is not None
+        except IncompleteRuntimeError:
+            return False
+        except Exception:
+            return False
+
+    def update_catalog(self, items: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._catalog = list(items)
+            self._catalog_time = time.monotonic()
 
     def _read_catalog(self, session):
-        state = session.get("models") or {}
-        default = state.get("currentModelId")
-        items = []
-        for item in state.get("availableModels", []):
-            model_id = item.get("modelId")
-            if isinstance(model_id, str) and model_id:
-                items.append({"id": model_id, "model": model_id, "displayName": item.get("name") or model_id,
-                              "description": item.get("description") or "", "isDefault": model_id == default})
-        with self._lock:
-            self._catalog = items
-            self._catalog_time = time.monotonic()
+        items = extract_acp_models(session)
+        self.update_catalog(items)
         return items
 
     def list_models(self):
@@ -148,115 +157,148 @@ class AntigravityProvider(AgentProvider):
             callback(RuntimeEvent(cid, "turn_completed", payload={"exit_code": 1 if failed else 0, "cancelled": state["cancelled"]}))
 
     def _configure(self, client, session_id, session, model, effort, options):
-        models = {x.get("modelId") for x in (session.get("models") or {}).get("availableModels", [])}
-        if model and model != "default":
-            if model not in models:
-                raise ProviderError("O modelo selecionado não está disponível na conta Antigravity conectada. Atualize o catálogo.")
-            client.request("session/set_model", {"sessionId": session_id, "modelId": model})
-        preset = approval_preset(options.approval_profile)
-        requested_mode = "yolo" if preset.sandbox == "danger-full-access" else "auto_edit" if preset.id == "auto_edits" else "default"
-        if not options.tools_enabled or options.collaboration_mode == "plan" or preset.sandbox == "read-only":
-            requested_mode = "default"
-        available_modes = {m.get("id") for m in (session.get("modes") or {}).get("availableModes", [])}
-        if requested_mode not in available_modes:
-            raise ProviderError("O runtime não oferece o modo de permissões solicitado.")
-        client.request("session/set_mode", {"sessionId": session_id, "modeId": requested_mode})
-        if effort and effort != "auto":
-            for config in session.get("configOptions", []):
-                if config.get("category") == "thought_level":
-                    values = {x.get("value") for x in config.get("options", []) if isinstance(x, dict)}
-                    if effort in values:
-                        client.request("session/set_config_option", {"sessionId": session_id, "configId": config["id"], "value": effort})
-                    break
+        config_options = session.get("configOptions", [])
+        model_opt = next((opt for opt in config_options if opt.get("id") == "model" or opt.get("category") == "model"), None)
+        if model_opt and model:
+            client.notify("session/configure", {"sessionId": session_id, "options": {"model": model}})
+        if effort:
+            effort_opt = next((opt for opt in config_options if opt.get("id") == "thinking" or opt.get("id") == "reasoningEffort"), None)
+            if effort_opt:
+                client.notify("session/configure", {"sessionId": session_id, "options": {effort_opt["id"]: effort}})
+
+        mode = "default"
+        if options and options.tools_enabled is False:
+            mode = "default"
+        elif options and options.approval_profile:
+            profile_to_mode = {
+                "supervised": "default",
+                "auto_edits": "auto_edit",
+                "full_access": "yolo",
+                "research_readonly": "default",
+            }
+            mode = profile_to_mode.get(options.approval_profile, "default")
+        client.request("session/set_mode", {"sessionId": session_id, "modeId": mode})
+
+    def cancel_conversation(self, conversation_id):
+        with self._lock:
+            state = self._active.get(conversation_id)
+        if state:
+            state["cancelled"] = True
+            if state["client"]:
+                state["client"].close()
+            return True
+        return False
 
     def _update(self, cid, state, callback, method, params):
-        if method != "session/update" or state.get("replaying") or state["cancelled"]:
-            return
-        if state["session"] and params.get("sessionId") != state["session"]:
+        if method != "session/update" or params.get("sessionId") != state["session"] or state["cancelled"]:
             return
         update = params.get("update", {})
         kind = update.get("sessionUpdate")
-        content = update.get("content") or {}
-        if kind in ("agent_message_chunk", "agent_thought_chunk") and isinstance(content, dict) and content.get("type") == "text":
-            text = content.get("text") or ""
-            if kind == "agent_message_chunk":
-                state["text"] = state["text"] or bool(text.strip())
-            callback(RuntimeEvent(cid, "assistant_delta" if kind == "agent_message_chunk" else "reasoning_delta", text))
-        elif kind in ("tool_call", "tool_call_update"):
-            callback(RuntimeEvent(cid, "tool_event", str(update.get("title") or "Ferramenta"), update))
-        elif kind == "plan":
-            callback(RuntimeEvent(cid, "task_plan_updated", payload={"plan": update.get("entries")}))
+        if kind == "agent_message_chunk":
+            content = update.get("content", {})
+            text = content.get("text", "")
+            if text:
+                state["text"] = True
+                callback(RuntimeEvent(cid, "assistant_delta", text))
+        elif kind == "thought":
+            thought = update.get("thought", "")
+            if thought:
+                callback(RuntimeEvent(cid, "thought_delta", thought))
+        elif kind == "tool_call":
+            tc = update.get("toolCall", {})
+            title = tc.get("name") or "Ferramenta externa"
+            callback(RuntimeEvent(cid, "tool_call_started", title, payload=tc))
+        elif kind == "tool_result":
+            tr = update.get("toolResult", {})
+            title = tr.get("name") or "Resultado"
+            callback(RuntimeEvent(cid, "tool_call_completed", title, payload=tr))
         elif kind == "usage_update":
-            # ACP reports context occupancy, not cumulative billed tokens.
-            breakdown = _token_breakdown(total_tokens=update.get("used"))
-            callback(RuntimeEvent(cid, "token_usage", payload={"tokenUsage": {
-                "last": breakdown, "modelContextWindow": update.get("size"), "contextOnly": True}}))
+            used = update.get("used", 0)
+            size = update.get("size", 0)
+            payload = {
+                "tokenUsage": {
+                    "contextOnly": True,
+                    "last": {"totalTokens": used},
+                    "modelContextWindow": size,
+                }
+            }
+            callback(RuntimeEvent(cid, "usage_delta", payload=payload))
 
     def _permission(self, cid, state, callback, request_id, method, params):
-        client = state["client"]
         if method != "session/request_permission":
-            client._send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Unsupported client method"}})
             return
-        options = state["options"]
-        # ACP default mode asks permission. Plan always denies
-        # tools here because this runtime does not advertise a native plan mode.
-        if state["cancelled"] or not options.tools_enabled or options.collaboration_mode == "plan":
-            client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
+        client = state.get("client")
+        cancelled = state.get("cancelled", False)
+        options = state.get("options") or ConversationOptions()
+        tool_call = params.get("toolCall") or {}
+        available_opts = params.get("options") or []
+
+        if cancelled or not options.tools_enabled or options.collaboration_mode == "plan":
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
             return
-        preset = approval_preset(options.approval_profile)
-        choices = params.get("options", [])
-        if options.approval_profile == "research_readonly":
-            tool = params.get("toolCall") or {}
-            selected = next((x for x in choices if x.get("kind") == "allow_once"), None) if tool.get("kind") in {"read", "search"} else None
-            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-            client.respond(request_id, {"outcome": outcome})
+
+        profile = options.approval_profile
+        if profile == "full_access":
+            opt = next((o for o in available_opts if o.get("kind") == "allow_always"), None)
+            if not opt:
+                opt = next((o for o in available_opts if o.get("kind") == "allow_once"), None)
+            option_id = opt.get("optionId") if opt else "approve"
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "selected", "optionId": option_id}})
             return
-        if preset.sandbox == "danger-full-access":
-            preferred = "allow_always"
-            selected = next((x for x in choices if x.get("kind") == preferred), None)
-            if not selected:
-                selected = next((x for x in choices if x.get("kind") == "allow_once"), None)
-            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-            client.respond(request_id, {"outcome": outcome})
+
+        if profile == "research_readonly":
+            kind = tool_call.get("kind")
+            if kind in ("read", "search"):
+                opt = next((o for o in available_opts if o.get("kind") == "allow_once"), None)
+                if opt and client:
+                    client.respond(request_id, {"outcome": {"outcome": "selected", "optionId": opt.get("optionId")}})
+                    return
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
             return
-        key = uuid.uuid4().hex
-        with self._lock:
-            self._approvals[key] = (client, request_id, choices)
-        tool = params.get("toolCall") or {}
-        callback(RuntimeEvent(cid, "approval_requested", str(tool.get("title") or "Permitir ferramenta Antigravity?"),
-                              {"request_id": key, "method": method, **params}))
 
-    def approve_action(self, request_id, approved, session=False, request=None):
+        title = tool_call.get("title") or params.get("permission", {}).get("description", "Acesso solicitado")
+        action_id = uuid.uuid4().hex
         with self._lock:
-            pending = self._approvals.pop(str(request_id), None)
-        if not pending:
-            raise ProviderError("Esta solicitação de aprovação já foi encerrada.")
-        client, native_id, choices = pending
-        preferred = "allow_always" if session else "allow_once"
-        selected = next((x for x in choices if x.get("kind") == preferred), None) if approved else None
-        if approved and not selected:
-            selected = next((x for x in choices if x.get("kind") == "allow_once"), None)
-        outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-        client.respond(native_id, {"outcome": outcome})
+            self._approvals[action_id] = (client, request_id, available_opts)
+        callback(RuntimeEvent(cid, "approval_requested", title,
+                              payload={"request_id": action_id, "options": available_opts,
+                                       "tool_call": tool_call, "description": title}))
 
-    def interrupt(self, conversation_id):
+    def resolve_action(self, action_id, approved):
+        self.approve_action(action_id, approved)
+        return True
+
+    def interrupt(self, conversation_id: str) -> None:
+        self.cancel_conversation(conversation_id)
+
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
         with self._lock:
-            state = self._active.get(conversation_id)
-            if not state:
-                return
-            state["cancelled"] = True
-        try:
-            if state["session"]:
-                state["client"].notify("session/cancel", {"sessionId": state["session"]})
-        except AcpError:
-            pass
-        state["client"].close()
+            pair = self._approvals.pop(request_id, None)
+        if not pair:
+            return
+        client, r_id, available_opts = pair
+        if approved:
+            opt = next((o for o in available_opts if o.get("optionId") == "approve"), None)
+            if not opt:
+                kind_target = "allow_always" if session else "allow_once"
+                opt = next((o for o in available_opts if o.get("kind") == kind_target), None)
+            if not opt and available_opts:
+                opt = available_opts[0]
+            opt_id = opt.get("optionId", "approve") if opt else "approve"
+            client.respond(r_id, {"outcome": {"outcome": "selected", "optionId": opt_id}})
+        else:
+            client.respond(r_id, {"outcome": {"outcome": "cancelled"}})
 
-    def release_conversation(self, conversation_id, native_id, *, delete_native=False):
-        self.interrupt(conversation_id)
-
-    def close(self):
+    def close(self) -> None:
         with self._lock:
-            active = list(self._active)
-        for cid in active:
-            self.interrupt(cid)
+            for cid in list(self._active.keys()):
+                self.cancel_conversation(cid)

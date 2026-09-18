@@ -672,12 +672,12 @@ def test_33_ui_buttons_enabled_disabled_state():
         item = next(x for x in items if x["id"] == "antigravity")
         assert item["available"] is True
 
-    # When starting, login should not be allowed again without force
-    with patch.object(bridge._antigravity_auth, "_run_login"):
-        attempt = bridge._antigravity_auth.start_login()
-        assert bridge._antigravity_auth.active_attempt.state == "starting"
-        # Re-calling start_login without force reuses attempt (button effectively idempotent)
-        assert bridge._antigravity_auth.start_login() is attempt
+        # When starting, login should not be allowed again without force
+        with patch.object(bridge._antigravity_auth, "_run_login"):
+            attempt = bridge._antigravity_auth.start_login()
+            assert bridge._antigravity_auth.active_attempt.state == "starting"
+            # Re-calling start_login without force reuses attempt (button effectively idempotent)
+            assert bridge._antigravity_auth.start_login() is attempt
 
 
 # 34. 100% offline, deterministic, self-contained test execution
