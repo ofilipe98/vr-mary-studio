@@ -180,7 +180,7 @@ def test_scenario_07_size_change_detected_in_preflight(tmp_path):
     with jar_file.open("ab") as f:
         f.write(b"appended_extra_bytes")
 
-    with pytest.raises(ErpReleaseError, match="mudou após a prévia"):
+    with pytest.raises(ErpReleaseError, match="mudaram após a prévia"):
         validate_preview_fingerprint(source, preview["fingerprint"], single=False)
 
 
@@ -197,7 +197,7 @@ def test_scenario_08_mtime_change_detected_in_preflight(tmp_path):
     new_mtime = st.st_mtime_ns + 5_000_000_000
     os.utime(jar_file, ns=(new_mtime, new_mtime))
 
-    with pytest.raises(ErpReleaseError, match="mudou após a prévia"):
+    with pytest.raises(ErpReleaseError, match="mudaram após a prévia"):
         validate_preview_fingerprint(source, preview["fingerprint"], single=False)
 
 
@@ -895,7 +895,7 @@ def test_scenario_28_single_jar_cases(tmp_path):
     with jar.open("r+b") as handle:
         handle.seek(0)
         handle.write(b"ZZ")
-    with pytest.raises(ErpReleaseError, match="mudou após a prévia"):
+    with pytest.raises(ErpReleaseError, match="mudaram após a prévia"):
         validate_preview_fingerprint(str(jar), preview["fingerprint"], single=True)
 
     # Restaura bytes originais p/ testar tamper com size+mtime preservados.

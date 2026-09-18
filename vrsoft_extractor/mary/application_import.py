@@ -34,11 +34,11 @@ def validate_preview_fingerprint(
         st = candidate.stat()
         if "size_bytes" in fp and st.st_size != int(fp["size_bytes"]):
             raise ErpReleaseError(
-                f"O JAR {candidate.name} mudou após a prévia. Gere uma nova prévia antes de importar."
+                "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
             )
         if "modified_ns" in fp and st.st_mtime_ns != int(fp["modified_ns"]):
             raise ErpReleaseError(
-                f"O JAR {candidate.name} mudou após a prévia. Gere uma nova prévia antes de importar."
+                "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
             )
         return
 
@@ -79,16 +79,16 @@ def validate_preview_fingerprint(
         jar_path = candidate / rel_path
         if not jar_path.is_file():
             raise ErpReleaseError(
-                f"O JAR {jar_path.name} mudou após a prévia. Gere uma nova prévia antes de importar."
+                "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
             )
         st = jar_path.stat()
         if "size_bytes" in fp and st.st_size != int(fp["size_bytes"]):
             raise ErpReleaseError(
-                f"O JAR {jar_path.name} mudou após a prévia. Gere uma nova prévia antes de importar."
+                "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
             )
         if "modified_ns" in fp and st.st_mtime_ns != int(fp["modified_ns"]):
             raise ErpReleaseError(
-                f"O JAR {jar_path.name} mudou após a prévia. Gere uma nova prévia antes de importar."
+                "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
             )
 
 
