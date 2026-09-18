@@ -221,14 +221,6 @@ Item {
                 anchors.margins: 12
                 spacing: 6
 
-                VrBrandHeader {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    primaryColor: Theme.palette.navText
-                    toggleColor: Theme.palette.navMuted
-                    onBrandActivated: frontend.setCurrentPage(1)
-                }
-
                 Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
