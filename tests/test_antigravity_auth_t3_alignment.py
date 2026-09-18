@@ -587,17 +587,47 @@ def test_28_strict_secret_redaction():
     assert "accounts.google.com" not in mapped
 
 
-# 29. Per-process isolated temporary directory creation and cleanup
-def test_29_acp_client_temp_dir_isolation_and_cleanup(tmp_path):
-    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path):
-        client = AcpClient(command="dummy")
-        temp_dir = client._temp_dir
-        assert temp_dir is not None
-        assert Path(temp_dir).is_dir()
-        assert str(tmp_path) in str(temp_dir)
+# 29. Per-process isolated temporary directory: exactly one proc-* per ACP
+# process, owned at start(), deterministic cleanup at close().
+def test_29_acp_client_temp_dir_single_proc_dir_lifecycle(tmp_path):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    profile = tmp_path / "profile"
+    script = tmp_path / "acp_init_fixture.py"
+    script.write_text(
+        "import sys, json\n"
+        "for line in sys.stdin:\n"
+        "    req = json.loads(line)\n"
+        "    sys.stdout.write(json.dumps({'jsonrpc': '2.0', 'id': req['id'], 'result': {"
+        "'protocolVersion': 1, 'agentCapabilities': {}, 'authMethods': [{'id': 'oauth-personal'}]}}) + '\\n')\n"
+        "    sys.stdout.flush()\n",
+        encoding="utf-8",
+    )
+    real_popen = subprocess.Popen
+    launched = {}
 
-        client.close()
-        assert not Path(temp_dir).exists()
+    def launch(command, **kwargs):
+        launched.update(kwargs.get("env", {}))
+        return real_popen([sys.executable, "-u", str(script)], **kwargs)
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile):
+        client = AcpClient(command="dummy", env={})
+        # A constructed-but-never-started client owns nothing on disk.
+        assert client._temp_dir is None
+        with patch.object(acp_module.subprocess, "Popen", side_effect=launch):
+            client.start()
+            temp_dir = client._temp_dir
+            assert temp_dir is not None
+            temp_path = Path(temp_dir)
+            assert temp_path.parent == profile / "antigravity-acp" / "tmp"
+            assert temp_path.name.startswith("proc-")
+            # Exactly one owned directory, wired into TEMP/TMP/TMPDIR alike.
+            assert [p for p in temp_path.parent.glob("proc-*") if p.is_dir()] == [temp_path]
+            assert launched.get("TEMP") == temp_dir
+            assert launched.get("TMP") == temp_dir
+            assert launched.get("TMPDIR") == temp_dir
+            client.close()
+        assert not temp_path.exists()
+        assert [p for p in temp_path.parent.glob("proc-*") if p.exists()] == []
 
 
 # 30. Clean shutdown on external process termination
@@ -680,7 +710,235 @@ def test_33_ui_buttons_enabled_disabled_state():
             assert bridge._antigravity_auth.start_login() is attempt
 
 
-# 34. 100% offline, deterministic, self-contained test execution
-def test_34_total_coverage_no_external_network_dependencies():
-    # Verify environment has no live network calls
-    assert True
+# 35. Provider readiness tracks the account/provider split end to end.
+def test_35_provider_ready_after_full_login_flow():
+    calls = []
+
+    class MockClient:
+        def __init__(self, **kwargs):
+            self.process = MagicMock()
+
+        def start(self):
+            calls.append("start")
+
+        def request(self, method, params, timeout=None):
+            calls.append(method)
+            if method == "session/new":
+                return {"sessionId": "s", "models": {
+                    "availableModels": [{"modelId": "m", "name": "M"}]}}
+            return {}
+
+        def close(self):
+            calls.append("close")
+
+    manager = AntigravityAuthManager(lambda: "agy_acp", lambda: {})
+    with patch("vrsoft_extractor.mary.antigravity_acp.prepare_profile"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.preflight_browser_helper"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime", return_value=None), \
+         patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", MockClient):
+        assert manager.provider_readiness == "unknown"
+        attempt = manager.start_login()
+        assert manager.provider_readiness == "validating"
+        deadline = time.monotonic() + 3.0
+        while attempt.state == "starting" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert attempt.state == "succeeded"
+        assert manager.account_state == "authenticated"
+        assert manager.provider_readiness == "ready"
+        snapshot = manager.get_ui_snapshot()
+        assert snapshot["providerReadiness"] == "ready"
+        assert snapshot["accountState"] == "authenticated"
+
+
+def test_35b_readiness_failed_on_rejected_credentials():
+    class RejectionClient:
+        def __init__(self, **kwargs):
+            self.process = MagicMock()
+        def start(self): pass
+        def request(self, method, params, timeout=None):
+            if method == "authenticate":
+                raise AcpError("authenticate", -32000, "Google rejected")
+            return {}
+        def close(self): pass
+
+    manager = AntigravityAuthManager(lambda: "agy_acp", lambda: {})
+    with patch("vrsoft_extractor.mary.antigravity_acp.prepare_profile"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.preflight_browser_helper"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime", return_value=None), \
+         patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", RejectionClient):
+        attempt = manager.start_login()
+        deadline = time.monotonic() + 3.0
+        while attempt.state == "starting" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert attempt.state == "failed"
+        assert manager.account_state == "unauthenticated"
+        assert manager.provider_readiness == "failed"
+        assert manager.get_ui_snapshot()["providerReadiness"] == "failed"
+
+
+def test_35c_readiness_degraded_when_session_fails_after_auth():
+    class SessionFailClient:
+        def __init__(self, **kwargs):
+            self.process = MagicMock()
+        def start(self): pass
+        def request(self, method, params, timeout=None):
+            if method == "authenticate":
+                return {}
+            if method == "session/new":
+                raise AcpError("session/new", -32603, "Internal model failure")
+            return {}
+        def close(self): pass
+
+    manager = AntigravityAuthManager(lambda: "agy_acp", lambda: {})
+    with patch("vrsoft_extractor.mary.antigravity_acp.prepare_profile"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.preflight_browser_helper"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime", return_value=None), \
+         patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", SessionFailClient):
+        attempt = manager.start_login()
+        deadline = time.monotonic() + 3.0
+        while attempt.state in ("starting", "verifying") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert attempt.state == "failed"
+        # Authenticated account, provider NOT ready.
+        assert manager.account_state == "authenticated"
+        assert manager.provider_readiness == "degraded"
+        assert manager.get_ui_snapshot()["providerReadiness"] == "degraded"
+
+
+# 25b. The real init-timeout mechanism fires against a blocking initialize.
+def test_25b_init_timeout_fires_against_blocking_initialize(monkeypatch):
+    import vrsoft_extractor.mary.antigravity_auth as auth_module
+    monkeypatch.setattr(auth_module, "INIT_TIMEOUT_SECONDS", 0.2)
+    released = threading.Event()
+
+    class BlockingClient:
+        def __init__(self, **kwargs):
+            self.process = MagicMock()
+
+        def start(self, timeout=None):
+            released.wait(5)
+
+        def request(self, method, params, timeout=None):
+            raise AssertionError("no request may run after the init timeout")
+
+        def close(self):
+            released.set()
+
+    manager = AntigravityAuthManager(lambda: "agy_acp", lambda: {})
+    with patch("vrsoft_extractor.mary.antigravity_acp.prepare_profile"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.preflight_browser_helper"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime", return_value=None), \
+         patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", BlockingClient):
+        started = time.monotonic()
+        attempt = manager.start_login()
+        deadline = time.monotonic() + 5.0
+        while attempt.state == "starting" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        elapsed = time.monotonic() - started
+    assert attempt.state == "failed"
+    assert "inicialização" in attempt.error_detail
+    assert elapsed < 4.0
+    assert manager.provider_readiness == "failed"
+
+
+# 8b. Validation without a runtime aborts: no subprocess, no browser, no
+# account-state change, and the exact not-found message.
+def test_08b_validate_aborts_without_runtime_and_preserves_state():
+    from vrsoft_extractor.mary.antigravity_acp import IncompleteRuntimeError
+    from vrsoft_extractor.mary.frontend.studio import StudioBridge
+    bridge = StudioBridge(settings=MagicMock(), database=MagicMock())
+    toasts = []
+    bridge.toastRequested.connect(lambda message, kind="": toasts.append((message, kind)))
+
+    with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp_runtime", return_value=None), \
+         patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client") as spawn:
+        bridge.validateAntigravityAccount()
+        spawn.assert_not_called()
+    assert any("Runtime Antigravity ACP não encontrado" in message for message, _ in toasts)
+    assert bridge._agy_check_running is False
+    assert bridge._antigravity_auth.account_state == "unknown"
+    assert bridge._antigravity_auth.provider_readiness == "unknown"
+    item = next(x for x in bridge.providerItems if x["id"] == "antigravity")
+    assert item["providerReadiness"] == "unknown"
+
+    toasts.clear()
+    with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp_runtime",
+               side_effect=IncompleteRuntimeError("Runtime Antigravity incompleto: sem harness.")), \
+         patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client") as spawn:
+        bridge.validateAntigravityAccount()
+        spawn.assert_not_called()
+    assert any("incompleto" in message for message, _ in toasts)
+    assert bridge._agy_check_running is False
+
+
+# 34. Offline execution proof: the offline surface (URL validation, catalog
+# extraction, environment build, fake-dir discovery, manager snapshot) runs
+# with every non-loopback egress blocked instead of asserting True.
+def test_34_offline_execution_blocks_non_loopback_egress(monkeypatch, tmp_path):
+    import socket
+
+    blocked = []
+    real_connect = socket.socket.connect
+    real_create_connection = socket.create_connection
+
+    def guarded_connect(sock, address):
+        host = address[0] if isinstance(address, (tuple, list)) else address
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            blocked.append(str(host))
+            raise OSError(f"network egress blocked in offline test: {host!r}")
+        return real_connect(sock, address)
+
+    def guarded_create_connection(address, *args, **kwargs):
+        host = address[0] if isinstance(address, (tuple, list)) else address
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            blocked.append(str(host))
+            raise OSError(f"network egress blocked in offline test: {host!r}")
+        return real_create_connection(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "create_connection", guarded_create_connection)
+
+    # Strict URL validation and callback contract without network.
+    auth = validate_authorization_url(sample_auth_url())
+    code, _ = validate_callback_url(
+        "http://127.0.0.1:45678/?code=offline-code&state=secret-state-xyz", auth
+    )
+    assert code == "offline-code"
+
+    # Catalog extraction prefers configOptions over models.availableModels.
+    from vrsoft_extractor.mary.antigravity_acp import extract_acp_models
+
+    session = {
+        "configOptions": [{
+            "id": "model",
+            "type": "select",
+            "currentValue": "m-b",
+            "options": [{"value": "m-a", "name": "A"}, {"value": "m-b", "name": "B"}],
+        }],
+        "models": {"currentModelId": "m-a", "availableModels": [{"modelId": "m-a"}]},
+    }
+    catalog = extract_acp_models(session)
+    assert [m["id"] for m in catalog] == ["m-a", "m-b"]
+    assert next(m for m in catalog if m["id"] == "m-b")["isDefault"] is True
+
+    # Discovery against fake dirs and environment build without network.
+    exe = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
+    harness = "localharness_external.exe" if os.name == "nt" else "localharness_external"
+    version_dir = tmp_path / "agy" / "bin" / "acp" / "9.9.9"
+    version_dir.mkdir(parents=True)
+    (version_dir / exe).write_text("dummy", encoding="utf-8")
+    (version_dir / harness).write_text("dummy", encoding="utf-8")
+    info = resolve_acp_runtime(str(version_dir / exe))
+    assert info.version == "9.9.9"
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path):
+        env = acp_environment(info)
+    assert env["ANTIGRAVITY_HARNESS_PATH"] == info.harness_path
+
+    # Manager snapshot transitions without spawning anything.
+    manager = AntigravityAuthManager(lambda: "agy_acp", lambda: {})
+    assert manager.get_ui_snapshot()["providerReadiness"] == "unknown"
+    manager.mark_credentials_rejected()
+    assert manager.account_state == "unauthenticated"
+    assert manager.provider_readiness == "failed"
+
+    assert blocked == []

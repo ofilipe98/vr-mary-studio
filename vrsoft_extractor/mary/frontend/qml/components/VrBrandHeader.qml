@@ -14,18 +14,6 @@ Item {
 
     implicitHeight: 32
 
-    // Compatibility anchors for environment identification
-    Rectangle {
-        objectName: "environmentArtwork"
-        visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "artwork"
-        width: 0; height: 0
-    }
-    Rectangle {
-        objectName: "environmentVersionPill"
-        visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
-        width: 0; height: 0
-    }
-
     RowLayout {
         anchors.fill: parent
         spacing: 6
@@ -44,7 +32,6 @@ Item {
             Accessible.name: "Voltar para o Chat VR"
             onClicked: {
                 root.toggleRequested()
-                root.brandActivated()
             }
         }
 

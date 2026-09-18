@@ -24,6 +24,7 @@ Item {
     readonly property string account: String(selected.accountStatus || "")
     readonly property string attemptState: String(selected.attemptState || "idle")
     readonly property string accountState: String(selected.accountState || "unknown")
+    readonly property string providerReadiness: String(selected.providerReadiness || "unknown")
     readonly property string authUrl: String(selected.authUrl || "")
     readonly property string expiresAt: String(selected.expiresAt || "")
     readonly property bool isWaiting: Boolean(selected.isWaiting)
@@ -56,6 +57,23 @@ Item {
         if (p.isValidating || p.checking || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
         if (p.isWaiting) return {text: "Aguardando navegador…", tone: "warning"}
         if (p.isStarting) return {text: "Iniciando…", tone: "warning", busy: true}
+        // Provider readiness outranks the bare account state: an
+        // authenticated account with a degraded provider is not ready.
+        if (p.providerReadiness === "degraded") {
+            if (p.accountState === "authenticated") {
+                return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}
+            }
+            return {text: "Falha na validação", tone: "danger"}
+        }
+        if (p.providerReadiness === "failed") {
+            if (p.accountState === "unauthenticated") {
+                return {text: "Login necessário", tone: "warning"}
+            }
+            if (p.accountState === "authenticated") {
+                return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}
+            }
+            return {text: "Falha na validação", tone: "danger"}
+        }
         if (p.attemptState === "failed") {
             if (p.accountState === "authenticated") {
                 return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}

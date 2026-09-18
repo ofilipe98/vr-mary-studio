@@ -10,17 +10,77 @@ from pathlib import Path
 from typing import Any
 
 from ..antigravity_acp import (
-    AcpClient,
     AcpError,
     IncompleteRuntimeError,
+    RUNTIME_NOT_FOUND_MESSAGE,
     extract_acp_models,
     has_saved_account,
     resolve_acp,
+    resolve_acp_runtime,
+    spawn_acp_client,
 )
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 from .base import AgentProvider, ProviderError, _token_breakdown
 
 NATIVE_PREFIX = "acp:"
+
+# RuntimeEvent kinds are a stable Studio contract shared with the
+# orchestrator, persistence and the frontend. Antigravity session updates are
+# normalized onto them; no provider-specific kinds are introduced here.
+ASSISTANT_CHUNK_UPDATES = ("agent_message_chunk",)
+REASONING_UPDATES = ("agent_thought_chunk", "thought")
+TOOL_UPDATES = ("tool_call", "tool_call_update", "tool_result")
+
+# The provider-default alias never sends an identifier: it keeps the agent's
+# current model instead of replacing the selection.
+DEFAULT_MODEL_ALIASES = {"", "default"}
+
+
+def _chunk_text(content):
+    """Extracts plain text from an ACP message chunk content block."""
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) and text else ""
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+def _config_option_by_id(config_options, *ids):
+    wanted = {str(i).lower() for i in ids}
+    for opt in config_options or []:
+        if not isinstance(opt, dict):
+            continue
+        opt_id = str(opt.get("id") or "").lower()
+        category = str(opt.get("category") or "").lower()
+        if opt_id in wanted or (not opt_id and category in wanted):
+            return opt
+    # Fall back to a category match (e.g. category == "model").
+    for opt in config_options or []:
+        if isinstance(opt, dict) and str(opt.get("category") or "").lower() in wanted:
+            return opt
+    return None
+
+
+def _option_values(opt):
+    """Allowed values advertised by a select config option (may be empty)."""
+    values = []
+    options = opt.get("options") if isinstance(opt, dict) else None
+    if isinstance(options, list):
+        for entry in options:
+            if isinstance(entry, dict):
+                value = entry.get("value", entry.get("id", entry.get("modelId")))
+            else:
+                value = entry
+            if isinstance(value, str) and value and value not in values:
+                values.append(value)
+    return values
 
 
 class AntigravityProvider(AgentProvider):
@@ -59,7 +119,7 @@ class AntigravityProvider(AgentProvider):
         with self._lock:
             if self._catalog and time.monotonic() - self._catalog_time < 60:
                 return list(self._catalog)
-        client = AcpClient()
+        client = spawn_acp_client()
         try:
             client.start()
             client.request("authenticate", {"methodId": "oauth-personal"})
@@ -79,14 +139,23 @@ class AntigravityProvider(AgentProvider):
     def send_message(self, conversation_id, native_id, model, effort, workspace,
                      message, callback, options=None, skills=None, image_paths=None):
         if not self.available():
-            raise ProviderError("Servidor Antigravity ACP não encontrado. Atualize o Antigravity CLI.")
+            raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         if not has_saved_account():
             raise ProviderError("Entre com Google em Configurações → Provedores → Antigravity.")
+        try:
+            runtime_info = resolve_acp_runtime()
+        except IncompleteRuntimeError as exc:
+            raise ProviderError(str(exc)) from None
+        if runtime_info is None:
+            raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         self.resume_conversation(conversation_id, native_id, model, effort, workspace, options)
         options = options or ConversationOptions(model=model, effort=effort)
         state = {"client": None, "session": "", "cancelled": False, "text": False, "options": options}
-        client = AcpClient(on_notification=lambda method, params: self._update(conversation_id, state, callback, method, params),
-                           on_request=lambda request_id, method, params: self._permission(conversation_id, state, callback, request_id, method, params))
+        client = spawn_acp_client(
+            runtime_info=runtime_info,
+            on_notification=lambda method, params: self._update(conversation_id, state, callback, method, params),
+            on_request=lambda request_id, method, params: self._permission(conversation_id, state, callback, request_id, method, params),
+        )
         state["client"] = client
         with self._lock:
             if conversation_id in self._active:
@@ -157,14 +226,12 @@ class AntigravityProvider(AgentProvider):
             callback(RuntimeEvent(cid, "turn_completed", payload={"exit_code": 1 if failed else 0, "cancelled": state["cancelled"]}))
 
     def _configure(self, client, session_id, session, model, effort, options):
-        config_options = session.get("configOptions", [])
-        model_opt = next((opt for opt in config_options if opt.get("id") == "model" or opt.get("category") == "model"), None)
-        if model_opt and model:
-            client.notify("session/configure", {"sessionId": session_id, "options": {"model": model}})
-        if effort:
-            effort_opt = next((opt for opt in config_options if opt.get("id") == "thinking" or opt.get("id") == "reasoningEffort"), None)
-            if effort_opt:
-                client.notify("session/configure", {"sessionId": session_id, "options": {effort_opt["id"]: effort}})
+        session = session if isinstance(session, dict) else {}
+        config_options = session.get("configOptions") or []
+        if not isinstance(config_options, list):
+            config_options = []
+        self._apply_model_selection(client, session_id, config_options, model)
+        self._apply_effort_selection(client, session_id, config_options, effort)
 
         mode = "default"
         if options and options.tools_enabled is False:
@@ -178,6 +245,60 @@ class AntigravityProvider(AgentProvider):
             }
             mode = profile_to_mode.get(options.approval_profile, "default")
         client.request("session/set_mode", {"sessionId": session_id, "modeId": mode})
+
+    def _apply_model_selection(self, client, session_id, config_options, model):
+        """Applies the requested model through the negotiated ACP mechanism.
+
+        Never sends the invented ``session/configure`` method. When the
+        session negotiates a ``model`` config option, the model is validated
+        against the account's catalog and applied with
+        ``session/set_config_option``. Otherwise the unstable
+        ``session/set_model`` is used when the runtime supports it
+        (``-32601`` means unsupported and is tolerated).
+        """
+        if not model or str(model) in DEFAULT_MODEL_ALIASES:
+            return
+        model_opt = _config_option_by_id(config_options, "model")
+        if model_opt is not None:
+            option_id = str(model_opt.get("id") or "model")
+            current = model_opt.get("currentValue")
+            allowed = _option_values(model_opt)
+            if allowed and model not in allowed:
+                raise ProviderError(
+                    f"Modelo '{model}' indisponível para esta conta Google. "
+                    "Selecione um modelo disponível."
+                )
+            if current is not None and model == current:
+                return
+            client.request(
+                "session/set_config_option",
+                {"sessionId": session_id, "configId": option_id, "value": model},
+            )
+            return
+        try:
+            client.request("session/set_model", {"sessionId": session_id, "modelId": model})
+        except AcpError as exc:
+            if exc.code != -32601:
+                raise
+
+    def _apply_effort_selection(self, client, session_id, config_options, effort):
+        """Applies thinking effort only through a negotiated option."""
+        if not effort:
+            return
+        effort_opt = _config_option_by_id(config_options, "thinking", "reasoningEffort")
+        if effort_opt is None:
+            return
+        option_id = str(effort_opt.get("id") or "thinking")
+        current = effort_opt.get("currentValue")
+        allowed = _option_values(effort_opt)
+        if allowed and effort not in allowed:
+            return
+        if current is not None and effort == current:
+            return
+        client.request(
+            "session/set_config_option",
+            {"sessionId": session_id, "configId": option_id, "value": effort},
+        )
 
     def cancel_conversation(self, conversation_id):
         with self._lock:
@@ -193,25 +314,57 @@ class AntigravityProvider(AgentProvider):
         if method != "session/update" or params.get("sessionId") != state["session"] or state["cancelled"]:
             return
         update = params.get("update", {})
+        if not isinstance(update, dict):
+            return
         kind = update.get("sessionUpdate")
-        if kind == "agent_message_chunk":
-            content = update.get("content", {})
-            text = content.get("text", "")
+        if kind in ASSISTANT_CHUNK_UPDATES:
+            text = _chunk_text(update.get("content"))
             if text:
                 state["text"] = True
                 callback(RuntimeEvent(cid, "assistant_delta", text))
-        elif kind == "thought":
-            thought = update.get("thought", "")
-            if thought:
-                callback(RuntimeEvent(cid, "thought_delta", thought))
-        elif kind == "tool_call":
-            tc = update.get("toolCall", {})
-            title = tc.get("name") or "Ferramenta externa"
-            callback(RuntimeEvent(cid, "tool_call_started", title, payload=tc))
+        elif kind in REASONING_UPDATES:
+            thought = update.get("thought")
+            text = thought if isinstance(thought, str) and thought else _chunk_text(update.get("content"))
+            if text:
+                callback(RuntimeEvent(cid, "reasoning_delta", text))
+        elif kind in ("tool_call", "tool_call_update"):
+            tool_call = update.get("toolCall") or {}
+            if not isinstance(tool_call, dict):
+                tool_call = {}
+            title = str(tool_call.get("title") or tool_call.get("name") or "Ferramenta externa")
+            status = str(update.get("status") or tool_call.get("status") or "")
+            callback(RuntimeEvent(cid, "tool_event", title, {
+                "sessionUpdate": kind,
+                "status": status,
+                "title": title,
+                "name": str(tool_call.get("name") or tool_call.get("title") or ""),
+                "toolCall": tool_call,
+                "item": {
+                    "id": str(tool_call.get("toolCallId") or ""),
+                    "type": "toolCall",
+                    "status": status,
+                    "title": title,
+                },
+            }))
         elif kind == "tool_result":
-            tr = update.get("toolResult", {})
-            title = tr.get("name") or "Resultado"
-            callback(RuntimeEvent(cid, "tool_call_completed", title, payload=tr))
+            result = update.get("toolResult") or {}
+            if not isinstance(result, dict):
+                result = {}
+            title = str(result.get("title") or result.get("name") or "Resultado")
+            status = str(update.get("status") or result.get("status") or "")
+            callback(RuntimeEvent(cid, "tool_event", title, {
+                "sessionUpdate": kind,
+                "status": status,
+                "title": title,
+                "name": str(result.get("name") or result.get("title") or ""),
+                "toolResult": result,
+                "item": {
+                    "id": str(result.get("toolCallId") or ""),
+                    "type": "toolResult",
+                    "status": status,
+                    "title": title,
+                },
+            }))
         elif kind == "usage_update":
             used = update.get("used", 0)
             size = update.get("size", 0)
@@ -222,7 +375,7 @@ class AntigravityProvider(AgentProvider):
                     "modelContextWindow": size,
                 }
             }
-            callback(RuntimeEvent(cid, "usage_delta", payload=payload))
+            callback(RuntimeEvent(cid, "token_usage", payload=payload))
 
     def _permission(self, cid, state, callback, request_id, method, params):
         if method != "session/request_permission":

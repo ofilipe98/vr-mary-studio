@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -56,9 +57,14 @@ class FakeClient:
 def fake_runtime():
     FakeClient.instances = []
     FakeClient.session_error = False
-    with patch("vrsoft_extractor.mary.provider_adapters.antigravity.AcpClient", FakeClient), \
+    with patch("vrsoft_extractor.mary.provider_adapters.antigravity.spawn_acp_client",
+               side_effect=lambda *args, **kwargs: FakeClient(**{
+                   key: kwargs[key] for key in ("on_notification", "on_request") if key in kwargs
+               })), \
             patch("vrsoft_extractor.mary.provider_adapters.antigravity.has_saved_account", return_value=True), \
-            patch("vrsoft_extractor.mary.provider_adapters.antigravity.resolve_acp", return_value="acp"):
+            patch("vrsoft_extractor.mary.provider_adapters.antigravity.resolve_acp", return_value="acp"), \
+            patch("vrsoft_extractor.mary.provider_adapters.antigravity.resolve_acp_runtime",
+                  return_value=SimpleNamespace(executable_path="acp", harness_path="harness")):
         yield
 
 
@@ -146,12 +152,12 @@ def test_legacy_session_is_not_silently_resumed_with_another_account():
 def test_no_saved_profile_does_not_start_implicit_oauth():
     with patch("vrsoft_extractor.mary.provider_adapters.antigravity.has_saved_account", return_value=False), \
             patch.object(AntigravityProvider, "available", return_value=True), \
-            patch("vrsoft_extractor.mary.provider_adapters.antigravity.AcpClient") as client:
+            patch("vrsoft_extractor.mary.provider_adapters.antigravity.spawn_acp_client") as spawn:
         provider = AntigravityProvider()
         assert provider.list_models() == []
         with pytest.raises(ProviderError, match="Entre com Google"):
             provider.send_message("chat", "", "default", "auto", Path.cwd(), "Hello", lambda _: None)
-    client.assert_not_called()
+    spawn.assert_not_called()
 
 
 def test_profile_is_shared_and_environment_is_sanitized(monkeypatch, tmp_path):
@@ -404,7 +410,8 @@ for line in sys.stdin:
         captured_env.update(kwargs.get("env", {}))
         return popen([sys.executable, "-u", str(script)], **kwargs)
 
-    client = AcpClient(command="fixture")
+    client = AcpClient(command="fixture", env={})
+    assert client._temp_dir is None
     with patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
         client.start()
         temp_dir = client._temp_dir
@@ -425,7 +432,279 @@ for line in sys.stdin:
 
 def test_failed_acp_launch_cleans_owned_directory(tmp_path, monkeypatch):
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    client = AcpClient(command=str(tmp_path / "missing-program.exe"))
-    with pytest.raises(OSError):
-        client.start()
-    assert list(tmp_path.glob("vr-acp-*")) == []
+    profile = tmp_path / "profile"
+    client = AcpClient(command=str(tmp_path / "missing-program.exe"), env={})
+    assert client._temp_dir is None
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile):
+        with pytest.raises(OSError):
+            client.start()
+    assert list((profile / "antigravity-acp" / "tmp").glob("proc-*")) == []
+    assert list(tmp_path.glob("proc-*")) == []
+
+
+# --- Discovery: %LOCALAPPDATA%/agy/bin/acp/<version>/ layout ---------------
+
+EXE_NAME = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
+HARNESS_NAME = "localharness_external.exe" if os.name == "nt" else "localharness_external"
+
+
+def _write_pair(directory, version=None, *, server=True, harness=True):
+    target = directory if version is None else directory / version
+    target.mkdir(parents=True, exist_ok=True)
+    server_path = harness_path = None
+    if server:
+        server_path = target / EXE_NAME
+        server_path.write_text("dummy", encoding="utf-8")
+    if harness:
+        harness_path = target / HARNESS_NAME
+        harness_path.write_text("dummy", encoding="utf-8")
+    return server_path, harness_path
+
+
+@pytest.fixture
+def isolated_discovery(tmp_path, monkeypatch):
+    """Neutralizes the real machine (PATH, LOCALAPPDATA, HOME) for discovery."""
+    fake = tmp_path / "machine"
+    (fake / "empty-path").mkdir(parents=True)
+    monkeypatch.setenv("LOCALAPPDATA", str(fake / "local"))
+    monkeypatch.setenv("PATH", str(fake / "empty-path"))
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(fake / "agy-home"))
+    monkeypatch.setenv("PROGRAMFILES", str(fake / "pf"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(fake / "pf86"))
+    monkeypatch.setenv("USERPROFILE", str(fake / "home"))
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+    return fake
+
+
+def test_localappdata_agy_version_layout_is_discovered(isolated_discovery):
+    from vrsoft_extractor.mary.antigravity_acp import resolve_acp_runtime
+    version_root = Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "acp"
+    server, harness = _write_pair(version_root, "1.1.1")
+    info = resolve_acp_runtime()
+    assert info is not None
+    assert Path(info.executable_path) == server
+    assert Path(info.harness_path) == harness
+    assert info.version == "1.1.1"
+    assert Path(info.runtime_dir) == version_root / "1.1.1"
+
+
+def test_version_selection_prefers_highest_complete_pair(isolated_discovery):
+    from vrsoft_extractor.mary.antigravity_acp import resolve_acp_runtime
+    version_root = Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "acp"
+    _write_pair(version_root, "1.1.1")
+    _write_pair(version_root, "1.3.0", harness=False)  # incomplete: skipped, never mixed
+    _, harness_120 = _write_pair(version_root, "1.2.0")
+    info = resolve_acp_runtime()
+    assert info is not None
+    assert info.version == "1.2.0"
+    assert Path(info.harness_path) == harness_120
+
+
+def test_cross_version_harness_is_never_mixed_explicit(tmp_path):
+    from vrsoft_extractor.mary.antigravity_acp import IncompleteRuntimeError, resolve_acp_runtime
+    server, _ = _write_pair(tmp_path / "acp", "1.1.1", harness=False)
+    _write_pair(tmp_path / "acp", "1.2.0", server=False, harness=True)
+    with pytest.raises(IncompleteRuntimeError):
+        resolve_acp_runtime(str(server))
+
+
+def test_incomplete_layout_without_complete_pair_fails(isolated_discovery):
+    from vrsoft_extractor.mary.antigravity_acp import IncompleteRuntimeError, resolve_acp_runtime
+    version_root = Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "acp"
+    _write_pair(version_root, "1.1.1", harness=False)
+    with pytest.raises(IncompleteRuntimeError):
+        resolve_acp_runtime()
+
+
+def test_main_cli_name_is_not_treated_as_acp_server(isolated_discovery):
+    from vrsoft_extractor.mary.antigravity_acp import resolve_acp_runtime
+    assert resolve_acp_runtime("antigravity") is None
+    assert resolve_acp_runtime("agy") is None
+
+
+def test_path_executable_beats_lower_version_layout(isolated_discovery):
+    from vrsoft_extractor.mary.antigravity_acp import resolve_acp_runtime
+    path_bin = Path(os.environ["PATH"])
+    path_server, path_harness = _write_pair(path_bin)
+    version_root = Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "acp"
+    _write_pair(version_root, "1.0.0")
+    info = resolve_acp_runtime()
+    assert info is not None
+    assert Path(info.executable_path) == path_server
+    assert Path(info.harness_path) == path_harness
+
+
+# --- Profile isolation and credential continuity -----------------------------
+
+def test_profile_path_ignores_external_gemini_home(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary.antigravity_acp import profile_path
+    monkeypatch.setenv("GEMINI_HOME", str(tmp_path / "external-profile"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    assert profile_path() == tmp_path / "home" / ".gemini" / "vr-norte-studio"
+
+
+def test_saved_token_continuity_in_studio_profile(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary.antigravity_acp import has_saved_account
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    token = tmp_path / "home" / ".gemini" / "vr-norte-studio" / "antigravity-acp" / "acp_token.json"
+    assert has_saved_account() is False
+    token.parent.mkdir(parents=True)
+    token.write_text("{}", encoding="utf-8")
+    assert has_saved_account() is True
+
+
+def test_child_environment_pins_fixed_profile_despite_external_home(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary.antigravity_acp import acp_environment
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("GEMINI_HOME", str(tmp_path / "external-profile"))
+    env = acp_environment(base_env=dict(os.environ))
+    assert env["GEMINI_HOME"] == str(tmp_path / "home" / ".gemini" / "vr-norte-studio")
+
+
+def test_spawn_uses_single_shared_resolution():
+    from vrsoft_extractor.mary.antigravity_acp import AcpRuntimeInfo, spawn_acp_client
+    info = AcpRuntimeInfo(executable_path="server-exe", harness_path="harness-exe", version="9.9.9")
+    seen = {}
+
+    def factory(*, runtime_info=None):
+        seen["runtime_info"] = runtime_info
+        return {"CUSTOM": "1"}
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime",
+               return_value=None) as resolve:
+        client = spawn_acp_client(env_factory=factory)
+        resolve.assert_called_once_with(None)
+        assert seen["runtime_info"] is None
+        assert client.command is None
+    with patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime",
+               return_value=info) as resolve:
+        client = spawn_acp_client(env_factory=factory)
+        resolve.assert_called_once_with(None)
+        assert seen["runtime_info"] is info
+        assert client.command == "server-exe"
+        assert client.runtime_info is info
+        assert client.env["ANTIGRAVITY_HARNESS_PATH"] == "harness-exe"
+
+
+def test_spawn_propagates_incomplete_runtime():
+    from vrsoft_extractor.mary.antigravity_acp import IncompleteRuntimeError, spawn_acp_client
+    with patch("vrsoft_extractor.mary.antigravity_acp.resolve_acp_runtime",
+               side_effect=IncompleteRuntimeError("incomplete")):
+        with pytest.raises(IncompleteRuntimeError):
+            spawn_acp_client()
+
+
+# --- Model selection through the negotiated ACP mechanism --------------------
+
+class RecordingClient:
+    def __init__(self, set_model_error=None):
+        self.calls = []
+        self.set_model_error = set_model_error
+
+    def request(self, method, params):
+        self.calls.append((method, params))
+        if method == "session/set_model" and self.set_model_error is not None:
+            raise self.set_model_error
+        return {}
+
+    def notify(self, method, params):
+        self.calls.append((method, params))
+
+
+CONFIG_SESSION = {
+    "sessionId": "s",
+    "configOptions": [
+        {"id": "model", "type": "select", "currentValue": "m-a",
+         "options": [{"value": "m-a", "name": "A"}, {"value": "m-b", "name": "B"}]},
+        {"id": "thinking", "type": "select", "currentValue": "low",
+         "options": [{"value": "low"}, {"value": "high"}]},
+    ],
+}
+
+
+def _configure_calls(session, model, effort=""):
+    provider = AntigravityProvider()
+    client = RecordingClient()
+    provider._configure(client, "s", session, model, effort, ConversationOptions())
+    return client.calls
+
+
+def test_model_selection_uses_negotiated_config_option():
+    calls = _configure_calls(CONFIG_SESSION, "m-b")
+    assert ("session/set_config_option", {"sessionId": "s", "configId": "model", "value": "m-b"}) in calls
+    assert ("session/set_mode", {"sessionId": "s", "modeId": "yolo"}) in calls
+    assert not [m for m, _ in calls if m == "session/configure"]
+
+
+def test_unknown_model_fails_before_any_invalid_request():
+    provider = AntigravityProvider()
+    client = RecordingClient()
+    with pytest.raises(ProviderError, match="indisponível"):
+        provider._configure(client, "s", CONFIG_SESSION, "m-ghost", "", ConversationOptions())
+    assert client.calls == []
+
+
+def test_current_model_is_left_alone():
+    calls = _configure_calls(CONFIG_SESSION, "m-a")
+    assert [m for m, _ in calls] == ["session/set_mode"]
+
+
+def test_default_alias_never_sends_a_model_request():
+    for alias in ("", "default"):
+        calls = _configure_calls(CONFIG_SESSION, alias)
+        assert [m for m, _ in calls] == ["session/set_mode"]
+        calls = _configure_calls(SESSION, alias)
+        assert [m for m, _ in calls] == ["session/set_mode"]
+
+
+def test_set_model_used_without_negotiated_option():
+    calls = _configure_calls(SESSION, "gemini-test")
+    assert ("session/set_model", {"sessionId": "s", "modelId": "gemini-test"}) in calls
+    assert not [m for m, _ in calls if m == "session/configure"]
+
+
+def test_unsupported_set_model_is_tolerated():
+    provider = AntigravityProvider()
+    client = RecordingClient(set_model_error=AcpError("session/set_model", -32601))
+    provider._configure(client, "s", SESSION, "gemini-test", "", ConversationOptions())
+    assert ("session/set_mode", {"sessionId": "s", "modeId": "yolo"}) in client.calls
+
+
+def test_effort_only_through_negotiated_option():
+    calls = _configure_calls(CONFIG_SESSION, "default", effort="high")
+    assert ("session/set_config_option", {"sessionId": "s", "configId": "thinking", "value": "high"}) in calls
+    calls = _configure_calls(SESSION, "default", effort="high")
+    assert [m for m, _ in calls] == ["session/set_mode"]
+
+
+# --- Chat update contract -----------------------------------------------------
+
+def test_chat_updates_use_studio_event_contract():
+    provider = AntigravityProvider()
+    events = []
+    state = {"session": "native", "cancelled": False, "text": False}
+    feed = [
+        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Hello"}},
+        {"sessionUpdate": "agent_thought_chunk", "thought": "plan"},
+        {"sessionUpdate": "thought", "thought": "more"},
+        {"sessionUpdate": "tool_call", "toolCall": {"toolCallId": "t1", "title": "Read", "status": "inProgress"}},
+        {"sessionUpdate": "tool_call_update", "toolCall": {"toolCallId": "t1", "title": "Read", "status": "inProgress"}},
+        {"sessionUpdate": "tool_result", "toolResult": {"toolCallId": "t1", "title": "Read", "status": "completed"}},
+        {"sessionUpdate": "usage_update", "used": 42, "size": 1000},
+    ]
+    for update in feed:
+        provider._update("chat", state, events.append, "session/update",
+                         {"sessionId": "native", "update": update})
+    kinds = [e.kind for e in events]
+    assert kinds == ["assistant_delta", "reasoning_delta", "reasoning_delta",
+                     "tool_event", "tool_event", "tool_event", "token_usage"]
+    assert not (set(kinds) & {"thought_delta", "tool_call_started", "tool_call_completed", "usage_delta"})
+    assert state["text"] is True
+    usage = next(e for e in events if e.kind == "token_usage").payload["tokenUsage"]
+    assert usage["last"]["totalTokens"] == 42
+    assert [e.text for e in events if e.kind == "assistant_delta"] == ["Hello"]
+    assert [e.text for e in events if e.kind == "reasoning_delta"] == ["plan", "more"]

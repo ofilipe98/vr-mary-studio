@@ -262,15 +262,18 @@ def test_saved_account_can_be_validated_after_failed_attempt(bridge):
 
 
 def test_cancel_during_validation_process_launch_reaps_process(bridge):
+    from vrsoft_extractor.mary.antigravity_acp import AcpRuntimeInfo
     result, _ = bridge
     client = MagicMock()
     def launch():
         result._agy_check_cancel.set()
     client.start.side_effect = launch
+    runtime = AcpRuntimeInfo(executable_path="agy_acp_server", harness_path="localharness_external")
     with patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
-            patch("vrsoft_extractor.mary.frontend.studio.AcpClient", return_value=client):
+            patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client", return_value=client) as spawn:
         with pytest.raises(RuntimeError):
-            result._run_antigravity_check("agy")
+            result._run_antigravity_check(runtime)
+    spawn.assert_called_once_with(runtime_info=runtime)
     client.close.assert_called_once()
     assert result._agy_check_client is None
 

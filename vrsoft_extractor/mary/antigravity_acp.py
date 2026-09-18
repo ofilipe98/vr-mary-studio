@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -96,148 +97,367 @@ class AcpRuntimeInfo:
     runtime_dir: str | None = None
 
 
+ACP_SERVER_STEM = "agy_acp_server"
+HARNESS_STEM = "localharness_external"
+
+RUNTIME_NOT_FOUND_MESSAGE = "Runtime Antigravity ACP não encontrado"
+
+# Basenames of the main Antigravity CLI: never mistake them for the ACP server.
+MAIN_CLI_STEMS = {"antigravity", "agy"}
+
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")
+
+
+def _platform_exe(stem: str) -> str:
+    return f"{stem}.exe" if os.name == "nt" else stem
+
+
+def _parse_runtime_version(text: str) -> tuple[int, int, int] | None:
+    """Parses a semantic version directory name (e.g. "1.1.1", "v1.2.0")."""
+    if not isinstance(text, str):
+        return None
+    match = _VERSION_RE.match(text.strip())
+    if not match:
+        return None
+    try:
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+
+
+def _version_from_parts(parts) -> str | None:
+    for part in parts:
+        if any(c.isdigit() for c in part) and ("." in part or "-" in part):
+            if not part.startswith("."):
+                return part
+    return None
+
+
 def find_acp_server(base: Path | str | None) -> Path | None:
+    """Locates the ACP server anchored at an install location.
+
+    Supports the real Antigravity layout where versioned servers nest next
+    to the native CLI (``<root>/bin/acp/<version>/agy_acp_server.exe``) as
+    well as flat sibling layouts. The anchor itself is only returned when it
+    already is the server binary: the main ``agy``/``antigravity`` CLI is
+    never mistaken for the ACP server.
+    """
     if not base:
         return None
-    p = Path(base)
-    candidates = [
-        p,
-        p / "agy_acp_server.exe",
-        p / "agy_acp_server",
-        p / "bin" / "agy_acp_server.exe",
-        p / "bin" / "agy_acp_server",
-    ]
-    for c in candidates:
+    server_name = _platform_exe(ACP_SERVER_STEM)
+    anchor = Path(base)
+    if anchor.is_file() and anchor.name == server_name:
+        return anchor
+    roots = [anchor if anchor.is_dir() else anchor.parent]
+    candidates: list[Path] = []
+    for root in roots:
+        candidates.extend([
+            root / server_name,
+            root / "bin" / server_name,
+        ])
+        versioned = root / "acp"
         try:
-            if c.is_file():
-                return c
+            if versioned.is_dir():
+                versioned_pairs = []
+                for child in versioned.iterdir():
+                    try:
+                        if not child.is_dir():
+                            continue
+                    except OSError:
+                        continue
+                    version = _parse_runtime_version(child.name)
+                    if version is None:
+                        continue
+                    server = child / server_name
+                    try:
+                        if server.is_file():
+                            versioned_pairs.append((version, server))
+                    except OSError:
+                        continue
+                versioned_pairs.sort(key=lambda item: item[0], reverse=True)
+                candidates.extend(server for _, server in versioned_pairs)
+        except OSError:
+            pass
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
         except OSError:
             pass
     return None
 
 
-def resolve_acp_runtime(command: str | None = None) -> AcpRuntimeInfo | None:
-    """Discovers and pairs the agy_acp_server executable with its mandatory localharness_external companion."""
-    server_candidate: Path | None = None
-    if command:
-        cmd_path = Path(command)
-        if cmd_path.is_file():
-            server_candidate = cmd_path
-        else:
-            w = shutil.which(command)
-            if w:
-                server_candidate = Path(w)
+def _pair_harness(server: Path) -> Path | None:
+    """Resolves the harness strictly inside the server's own installation.
 
-    if not server_candidate:
-        ext = ".exe" if os.name == "nt" else ""
-        binary_name = f"agy_acp_server{ext}"
-        w = shutil.which(binary_name)
-        if w:
-            server_candidate = Path(w)
+    A server at ``.../acp/<version>/agy_acp_server.exe`` only pairs with the
+    ``localharness_external`` living in that same installation. Harness
+    binaries from other versions are never mixed in: the caller raises
+    :class:`IncompleteRuntimeError` instead.
+    """
+    harness_name = _platform_exe(HARNESS_STEM)
+    server_dir = server.parent
+    candidates = [
+        server_dir / harness_name,
+        server_dir / "resources" / harness_name,
+        server_dir / "bin" / harness_name,
+    ]
+    if server_dir.name.lower() in ("bin", "resources"):
+        candidates.append(server_dir.parent / harness_name)
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
 
-    if not server_candidate:
-        ext = ".exe" if os.name == "nt" else ""
-        binary_name = f"agy_acp_server{ext}"
-        env_dirs = [
-            os.environ.get("ANTIGRAVITY_HOME"),
-            os.environ.get("LOCALAPPDATA"),
-            os.environ.get("PROGRAMFILES"),
-            os.environ.get("ProgramFiles(x86)"),
-        ]
-        search_roots = [Path(d) for d in env_dirs if d]
-        if os.name != "nt":
-            search_roots.extend([
-                Path.home() / ".antigravity",
-                Path.home() / ".local" / "bin",
-                Path("/usr/local/bin"),
-                Path("/usr/bin"),
-                Path("/opt/antigravity"),
-            ])
-        else:
-            search_roots.extend([
-                Path.home() / ".antigravity",
-                Path.home() / "AppData" / "Local" / "Programs" / "Antigravity",
-                Path.home() / "AppData" / "Local" / "Antigravity",
-            ])
 
-        for root in search_roots:
+def _complete_runtime(server: Path) -> AcpRuntimeInfo:
+    """Pairs ``server`` with its same-installation harness or fails fast."""
+    harness_name = _platform_exe(HARNESS_STEM)
+    try:
+        harness = _pair_harness(server)
+    except OSError:
+        harness = None
+    if harness is None or not harness.is_file():
+        raise IncompleteRuntimeError(
+            f"Runtime Antigravity incompleto: o executável '{server}' foi encontrado, "
+            f"mas o helper complementar '{harness_name}' não está presente na mesma instalação."
+        )
+    version = _version_from_parts(reversed(server.parts[:-1]))
+    return AcpRuntimeInfo(
+        executable_path=str(server.resolve()),
+        harness_path=str(harness.resolve()),
+        version=version,
+        runtime_dir=str(server.parent.resolve()),
+    )
+
+
+def _scan_agy_version_layout() -> tuple[AcpRuntimeInfo | None, IncompleteRuntimeError | None]:
+    """Scans the explicit ``%LOCALAPPDATA%/agy/bin/acp/<version>/`` layout.
+
+    Prefers the highest complete semantic version. An installation is only
+    valid when its ``server + harness`` pair is complete; incomplete version
+    directories are reported (never silently mixed across versions) without
+    a broad recursive search of ``%LOCALAPPDATA%``.
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return None, None
+    root = Path(base) / "agy" / "bin" / "acp"
+    try:
+        if not root.is_dir():
+            return None, None
+        children = list(root.iterdir())
+    except OSError:
+        return None, None
+    server_name = _platform_exe(ACP_SERVER_STEM)
+    harness_name = _platform_exe(HARNESS_STEM)
+    complete: list[tuple[tuple[int, int, int], Path, Path]] = []
+    incomplete: IncompleteRuntimeError | None = None
+    for child in sorted(children, key=lambda p: p.name):
+        try:
+            if not child.is_dir():
+                continue
+        except OSError:
+            continue
+        version = _parse_runtime_version(child.name)
+        if version is None:
+            continue
+        server = child / server_name
+        try:
+            if not server.is_file():
+                continue
+            if (child / harness_name).is_file():
+                complete.append((version, server, child / harness_name))
+            elif incomplete is None:
+                incomplete = IncompleteRuntimeError(
+                    f"Runtime Antigravity incompleto: o executável '{server}' foi encontrado, "
+                    f"mas o helper complementar '{harness_name}' não está presente na mesma instalação."
+                )
+        except OSError:
+            continue
+    if complete:
+        complete.sort(key=lambda item: item[0], reverse=True)
+        version, server, harness = complete[0]
+        return (
+            AcpRuntimeInfo(
+                executable_path=str(server.resolve()),
+                harness_path=str(harness.resolve()),
+                version=_version_dir_label(version, server),
+                runtime_dir=str(server.parent.resolve()),
+            ),
+            None,
+        )
+    return None, incomplete
+
+
+def _version_dir_label(version: tuple[int, int, int], server: Path) -> str:
+    """Keeps the on-disk version directory label (e.g. "1.1.1")."""
+    label = server.parent.name
+    if _parse_runtime_version(label) == version:
+        return label
+    return ".".join(str(part) for part in version)
+
+
+def _iter_layout_candidates() -> list[list[Path]]:
+    """Other compatible layouts, searched only after the explicit ones.
+
+    Roots keep their historical priority: the first root holding a complete
+    ``server + harness`` pair wins. Inside a root, semantic version outranks
+    anything else and mtime is only a tiebreaker, never the criterion.
+    """
+    server_name = _platform_exe(ACP_SERVER_STEM)
+    localappdata = os.environ.get("LOCALAPPDATA")
+    env_dirs = [
+        os.environ.get("ANTIGRAVITY_HOME"),
+        localappdata,
+        os.environ.get("PROGRAMFILES"),
+        os.environ.get("ProgramFiles(x86)"),
+    ]
+    search_roots = [Path(d) for d in env_dirs if d]
+    if os.name != "nt":
+        search_roots.extend([
+            Path.home() / ".antigravity",
+            Path.home() / ".local" / "bin",
+            Path("/usr/local/bin"),
+            Path("/usr/bin"),
+            Path("/opt/antigravity"),
+        ])
+    else:
+        search_roots.extend([
+            Path.home() / ".antigravity",
+            Path.home() / "AppData" / "Local" / "Programs" / "Antigravity",
+            Path.home() / "AppData" / "Local" / "Antigravity",
+        ])
+    patterns = (
+        server_name,
+        f"*/{server_name}",
+        f"bin/{server_name}",
+        f"antigravity-acp/{server_name}",
+        f"antigravity-acp/*/{server_name}",
+        f"antigravity-cli/{server_name}",
+        f"antigravity-cli/*/{server_name}",
+        f"versions/*/{server_name}",
+        f"versions/*/bin/{server_name}",
+    )
+
+    def sort_key(candidate: Path):
+        version = _version_from_parts(reversed(candidate.parts[:-1]))
+        parsed = _parse_runtime_version(version or "")
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        # Semantic version first; mtime is only a tiebreaker, never the criterion.
+        return (parsed or (0, 0, 0), mtime)
+
+    grouped: list[list[Path]] = []
+    for root in search_roots:
+        try:
             if not root.is_dir():
                 continue
-            for pattern in (
-                binary_name,
-                f"*/{binary_name}",
-                f"bin/{binary_name}",
-                f"antigravity-acp/{binary_name}",
-                f"antigravity-acp/*/{binary_name}",
-                f"antigravity-cli/{binary_name}",
-                f"antigravity-cli/*/{binary_name}",
-                f"versions/*/{binary_name}",
-                f"versions/*/bin/{binary_name}",
-            ):
-                matches = list(root.glob(pattern))
-                if matches:
-                    valid_matches = [m for m in matches if m.is_file()]
-                    if valid_matches:
-                        valid_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                        server_candidate = valid_matches[0]
-                        break
-            if server_candidate:
-                break
+        except OSError:
+            continue
+        found: list[Path] = []
+        for pattern in patterns:
+            try:
+                found.extend(m for m in root.glob(pattern) if m.is_file())
+            except OSError:
+                continue
+        # The explicit %LOCALAPPDATA%/agy/bin/acp/<version>/ layout is owned
+        # by the version scan; skip those copies here so generic results can
+        # never shadow or mix with the versioned installations.
+        if localappdata and root == Path(localappdata):
+            versioned = root / "agy" / "bin" / "acp"
+            found = [m for m in found if versioned not in m.parents]
+        found.sort(key=sort_key, reverse=True)
+        if found:
+            grouped.append(found)
+    return grouped
 
-    if not server_candidate or not server_candidate.is_file():
-        return None
 
-    harness_ext = ".exe" if os.name == "nt" else ""
-    harness_name = f"localharness_external{harness_ext}"
+def _is_main_cli_name(command: str) -> bool:
+    stem = Path(command).stem.lower()
+    return stem in MAIN_CLI_STEMS
 
-    server_dir = server_candidate.parent
-    potential_dirs = [
-        server_dir,
-        server_dir / "resources",
-        server_dir / "bin",
-        server_dir.parent,
-        server_dir.parent / "resources",
-        server_dir.parent / "bin",
-    ]
 
-    harness_candidate: Path | None = None
-    for d in potential_dirs:
-        cand = d / harness_name
+def resolve_acp_runtime(command: str | None = None) -> AcpRuntimeInfo | None:
+    """Discovers and pairs the agy_acp_server executable with its mandatory localharness_external companion.
+
+    Resolution order:
+    1. explicit path/command;
+    2. ``agy_acp_server`` on ``PATH``;
+    3. ``%LOCALAPPDATA%/agy/bin/acp/<version>/`` (highest complete semantic version);
+    4. other compatible layouts already supported;
+    5. generic fallbacks only afterwards.
+
+    The server and harness are never crossed between versions: an installation
+    is only valid when its own pair is complete, otherwise
+    :class:`IncompleteRuntimeError` is raised once no complete runtime exists.
+    """
+    incomplete: IncompleteRuntimeError | None = None
+
+    def pair_or_record(server: Path) -> AcpRuntimeInfo | None:
+        nonlocal incomplete
         try:
-            if cand.is_file():
-                harness_candidate = cand
-                break
+            return _complete_runtime(server)
+        except IncompleteRuntimeError as exc:
+            if incomplete is None:
+                incomplete = exc
+            return None
+        except OSError:
+            return None
+
+    # 1. Explicit path/command. An explicit installation fails fast so a
+    # server from one version is never paired with another version's harness.
+    if command and not _is_main_cli_name(command):
+        cmd_path = Path(command)
+        try:
+            if cmd_path.is_file():
+                return _complete_runtime(cmd_path)
+        except IncompleteRuntimeError:
+            raise
         except OSError:
             pass
+        found = shutil.which(command)
+        if found:
+            try:
+                return _complete_runtime(Path(found))
+            except IncompleteRuntimeError:
+                raise
+            except OSError:
+                pass
 
-    if not harness_candidate:
-        parent_runtime_dir = server_dir if (server_dir / "resources").is_dir() else server_dir.parent
-        matches = list(parent_runtime_dir.glob(f"**/{harness_name}"))
-        if matches:
-            valid = [m for m in matches if m.is_file()]
-            if valid:
-                valid.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                harness_candidate = valid[0]
+    # 2. Executable on PATH.
+    server_name = _platform_exe(ACP_SERVER_STEM)
+    on_path = shutil.which(server_name)
+    if on_path:
+        info = pair_or_record(Path(on_path))
+        if info is not None:
+            return info
 
-    if not harness_candidate or not harness_candidate.is_file():
-        raise IncompleteRuntimeError(
-            f"Runtime Antigravity incompleto: o executável '{server_candidate}' foi encontrado, "
-            f"mas o helper complementar '{harness_name}' não está presente na instalação."
-        )
+    # 3. Explicit %LOCALAPPDATA%/agy/bin/acp/<version>/ layout.
+    try:
+        layout_info, layout_incomplete = _scan_agy_version_layout()
+    except OSError:
+        layout_info, layout_incomplete = None, None
+    if layout_info is not None:
+        return layout_info
+    if layout_incomplete is not None and incomplete is None:
+        incomplete = layout_incomplete
 
-    version: str | None = None
-    for part in reversed(server_candidate.parts[:-1]):
-        if any(c.isdigit() for c in part) and ("." in part or "-" in part):
-            if not part.startswith("."):
-                version = part
-                break
+    # 4-5. Other compatible layouts, then generic fallbacks.
+    for group in _iter_layout_candidates():
+        for candidate in group:
+            info = pair_or_record(candidate)
+            if info is not None:
+                return info
 
-    return AcpRuntimeInfo(
-        executable_path=str(server_candidate.resolve()),
-        harness_path=str(harness_candidate.resolve()),
-        version=version,
-        runtime_dir=str(server_dir.resolve()),
-    )
+    if incomplete is not None:
+        raise incomplete
+    return None
 
 
 def resolve_acp() -> str | None:
@@ -250,20 +470,55 @@ def resolve_acp() -> str | None:
         return None
 
 
+def spawn_acp_client(
+    command: str | None = None,
+    runtime_info: AcpRuntimeInfo | None = None,
+    *,
+    env_factory=None,
+    base_env: dict[str, str] | None = None,
+    on_auth_url=None,
+    on_notification=None,
+    on_request=None,
+) -> "AcpClient":
+    """Creates one ACP client from a single shared runtime resolution.
+
+    Every spawn (interactive login, saved validation, model listing, chat
+    turns, probes) goes through this helper so the executable, the harness,
+    the version and the environment always describe the same installation::
+
+        runtime = resolve_acp_runtime()  # or a previously resolved runtime
+        client = spawn_acp_client(runtime_info=runtime)
+
+    ``IncompleteRuntimeError`` from the resolution propagates untouched.
+    """
+    info = runtime_info if runtime_info is not None else resolve_acp_runtime(command)
+    env = None
+    if env_factory is not None:
+        try:
+            env = env_factory(runtime_info=info)
+        except TypeError:
+            env = env_factory()
+    if env is None:
+        env = acp_environment(runtime_info=info, base_env=base_env)
+    return AcpClient(
+        command=(info.executable_path if info is not None else command),
+        runtime_info=info,
+        env=env,
+        on_auth_url=on_auth_url,
+        on_notification=on_notification,
+        on_request=on_request,
+    )
+
+
 def profile_path() -> Path:
-    base = os.environ.get("GEMINI_HOME")
-    if base:
-        return Path(base)
-    candidates = [
-        os.environ.get("APPDATA"),
-        os.environ.get("LOCALAPPDATA"),
-        str(Path.home() / "AppData/Roaming") if os.name == "nt" else None,
-        str(Path.home() / ".config"),
-    ]
-    for d in candidates:
-        if d and Path(d).is_dir():
-            return Path(d) / "vr-norte-studio"
-    return Path.home() / ".vr-norte-studio"
+    """Returns the Studio-owned isolated profile.
+
+    The profile is fixed at ``~/.gemini/vr-norte-studio``. An external
+    ``GEMINI_HOME`` is never honored as the Studio profile: reusing the global
+    Antigravity IDE/CLI profile would mix credentials and break isolation.
+    Child processes receive this fixed path via ``acp_environment`` instead.
+    """
+    return Path.home() / ".gemini" / "vr-norte-studio"
 
 
 def prepare_profile(profile_dir: Path | str | None = None) -> Path:
@@ -290,6 +545,15 @@ def has_saved_account() -> bool:
 
 
 def acp_environment(runtime_info: AcpRuntimeInfo | None = None, base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Builds the child-process environment for exactly one resolved runtime.
+
+    An external ``GEMINI_HOME`` is always stripped and then pinned to the
+    Studio-owned profile. The harness always comes from ``runtime_info`` (or
+    an explicit ``base_env`` override); this factory never runs an independent
+    runtime discovery, so a spawn cannot pair a server with another
+    installation's harness. Use :func:`spawn_acp_client` for one shared
+    resolution per spawn.
+    """
     source = os.environ if base_env is None else base_env
     env = {k: v for k, v in source.items() if k.upper() not in REMOVED_ENVIRONMENT_KEYS}
     env["GEMINI_HOME"] = str(profile_path())
@@ -300,13 +564,6 @@ def acp_environment(runtime_info: AcpRuntimeInfo | None = None, base_env: dict[s
         env["ANTIGRAVITY_HARNESS_PATH"] = str(runtime_info.harness_path)
     else:
         harness = source.get("ANTIGRAVITY_HARNESS_PATH")
-        if not harness:
-            try:
-                resolved = resolve_acp_runtime()
-                if resolved:
-                    harness = resolved.harness_path
-            except Exception:
-                pass
         if harness:
             env["ANTIGRAVITY_HARNESS_PATH"] = str(harness)
 
@@ -498,7 +755,11 @@ class AcpClient:
             self.runtime_info = runtime_info
             self.command = runtime_info.executable_path
         else:
-            self.command = command or resolve_acp()
+            # No independent discovery here: every spawn resolves exactly once
+            # through resolve_acp_runtime()/spawn_acp_client and passes the
+            # shared result in. A missing command fails deterministically in
+            # start() instead of pairing whatever happens to be on disk.
+            self.command = command
             self.runtime_info = None
         self.env = env if env is not None else acp_environment(runtime_info=self.runtime_info)
         if self.runtime_info is not None:
@@ -514,12 +775,10 @@ class AcpClient:
         self._closed = False
         self._readers = []
         self.capabilities = {}
-        prof_tmp = profile_path() / "antigravity-acp" / "tmp"
-        try:
-            prof_tmp.mkdir(parents=True, exist_ok=True)
-            self._temp_dir = tempfile.mkdtemp(prefix="proc-", dir=str(prof_tmp))
-        except Exception:
-            self._temp_dir = tempfile.mkdtemp(prefix="vr-acp-")
+        # The owned temporary directory is created exactly once in start(),
+        # never in __init__, so a constructed-but-never-started client owns
+        # nothing on disk.
+        self._temp_dir = None
 
     def __enter__(self):
         return self
@@ -532,7 +791,7 @@ class AcpClient:
             if self._closed:
                 raise AcpError("initialize")
             if not self.command:
-                raise RuntimeError("Servidor Antigravity ACP não encontrado. Atualize o Antigravity CLI.")
+                raise RuntimeError(RUNTIME_NOT_FOUND_MESSAGE)
 
             if self.process is not None:
                 raise AcpError("initialize")

@@ -49,12 +49,15 @@ from ..antigravity_acp import (
     AcpTimeoutError,
     IncompleteRuntimeError,
     INIT_TIMEOUT_SECONDS,
+    RUNTIME_NOT_FOUND_MESSAGE,
     SESSION_TIMEOUT,
     acp_environment,
     extract_acp_models,
     has_saved_account,
     prepare_profile,
     resolve_acp,
+    resolve_acp_runtime,
+    spawn_acp_client,
 )
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
@@ -1827,10 +1830,22 @@ class StudioBridge(QObject):
             auth_info = self._antigravity_auth.get_ui_snapshot() if (provider == "antigravity" and hasattr(self, "_antigravity_auth")) else {}
             account_status = auth_info.get("accountStatus", getattr(self, "_agy_account_status", "Conta Google ainda não verificada")) if provider == "antigravity" else "Autenticação gerenciada pelo CLI"
             checking = provider == "antigravity" and getattr(self, "_agy_check_running", False)
+            provider_readiness = auth_info.get("providerReadiness", "unknown") if provider == "antigravity" else "unknown"
+            # Visual priority: operation in progress first, then a degraded or
+            # failed provider (even with authenticated credentials), then the
+            # account state itself.
             if checking:
                 account_status = "Validando conta Google…"
             elif incomplete_err:
                 account_status = incomplete_err
+            elif provider == "antigravity" and provider_readiness in ("degraded", "failed"):
+                operation_active = auth_info.get("attemptState") in ("starting", "waiting", "verifying")
+                if not operation_active and account_status in ("Conta Google ainda não verificada", "Validando conta Google…"):
+                    account_status = (
+                        "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos."
+                        if auth_info.get("accountState") == "authenticated"
+                        else "Login necessário"
+                    )
 
             install_extra = {}
             if provider == "antigravity" and incomplete_err:
@@ -1843,6 +1858,7 @@ class StudioBridge(QObject):
                 "accountStatus": account_status,
                 "attemptState": auth_info.get("attemptState", "idle"),
                 "accountState": auth_info.get("accountState", "unknown"),
+                "providerReadiness": auth_info.get("providerReadiness", "unknown"),
                 "authUrl": auth_info.get("authUrl", ""),
                 "expiresAt": auth_info.get("expiresAt", ""),
                 "errorDetail": auth_info.get("errorDetail", ""),
@@ -2043,13 +2059,18 @@ class StudioBridge(QObject):
         if self._agy_check_client:
             self._agy_check_client.close()
 
-    def _run_antigravity_check(self, command: str):
+    def _run_antigravity_check(self, runtime_info):
         if not has_saved_account():
             raise RuntimeError("Entre com Google primeiro.")
         if self._agy_check_cancel.is_set():
             raise RuntimeError("Validação cancelada.")
         prepare_profile()
-        client = AcpClient(command=command)
+        # One shared resolution per spawn: executable, harness, version and
+        # environment describe the same installation. No on_auth_url handler
+        # is attached, so silent validation can never leave an invisible
+        # OAuth flow pending: an authorization URL fails pending requests
+        # with -32000 and closes the process instead.
+        client = spawn_acp_client(runtime_info=runtime_info)
         self._agy_check_client = client
         try:
             if self._agy_check_cancel.is_set():
@@ -2064,7 +2085,6 @@ class StudioBridge(QObject):
                 client.request("authenticate", {"methodId": "oauth-personal"})
             if self._agy_check_cancel.is_set():
                 raise RuntimeError("Validação cancelada.")
-            self._antigravity_auth.mark_authenticated_from_validation("Conta Google autenticada pelo Antigravity.")
             try:
                 return client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
             except TypeError:
@@ -2080,13 +2100,21 @@ class StudioBridge(QObject):
         attempt = self._antigravity_auth.active_attempt
         if attempt and attempt.state in ("starting", "waiting", "verifying"):
             return
+        # The main "antigravity" CLI is never a substitute for the ACP
+        # server: without a resolved runtime the validation aborts here. No
+        # subprocess is started, no browser is attempted, and the account
+        # state is left untouched.
         try:
-            command = resolve_acp() or "antigravity"
+            runtime_info = resolve_acp_runtime()
         except IncompleteRuntimeError as err:
             self.toastRequested.emit(str(err), "warning")
             return
         except Exception:
-            command = "antigravity" 
+            runtime_info = None
+        if runtime_info is None:
+            self.toastRequested.emit(RUNTIME_NOT_FOUND_MESSAGE, "warning")
+            self.refreshProviders()
+            return
         self._agy_check_running = True
         self._agy_check_cancel.clear()
         checked_attempt = self._antigravity_auth.active_attempt
@@ -2094,7 +2122,7 @@ class StudioBridge(QObject):
         self._agy_account_status = "Validando conta Google…"
         self.refreshProviders()
         def check():
-            result = self._run_antigravity_check(command)
+            result = self._run_antigravity_check(runtime_info)
             models = extract_acp_models(result)
             if not result.get("sessionId") or not models:
                 raise RuntimeError("Não foi possível carregar os modelos da conta.")

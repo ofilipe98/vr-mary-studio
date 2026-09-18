@@ -29,6 +29,7 @@ from .antigravity_auth import (
     LoginAttempt as LoginAttempt,
     OAuthCallbackError as OAuthCallbackError,
     OAuthValidationError as OAuthValidationError,
+    ProviderReadiness as ProviderReadiness,
     ValidatedAuthUrl as ValidatedAuthUrl,
     forward_callback_to_listener as forward_callback_to_listener,
     validate_authorization_url as validate_authorization_url,

@@ -40,6 +40,7 @@ MAX_AUTH_LINE_BYTES = 65536
 
 AccountState = Literal["unknown", "authenticated", "unauthenticated"]
 AttemptState = Literal["idle", "starting", "waiting", "verifying", "succeeded", "failed", "cancelled"]
+ProviderReadiness = Literal["unknown", "validating", "ready", "degraded", "failed"]
 
 
 class OAuthValidationError(ValueError):
@@ -460,6 +461,7 @@ class AntigravityAuthManager:
         self._lock = threading.RLock()
         self._active_attempt: LoginAttempt | None = None
         self._account_state: AccountState = "unknown"
+        self._provider_readiness: ProviderReadiness = "unknown"
         self._account_status_label: str = "Conta Google ainda não verificada"
         self._init_timer: threading.Timer | None = None
         self._oauth_timer: threading.Timer | None = None
@@ -476,6 +478,16 @@ class AntigravityAuthManager:
             return self._account_status_label
 
     @property
+    def provider_readiness(self) -> ProviderReadiness:
+        """Authenticated credentials are not provider readiness.
+
+        ``authenticated`` only means ``authenticate`` succeeded; the provider
+        is ``ready`` solely after ``session/new`` plus the model catalog.
+        """
+        with self._lock:
+            return self._provider_readiness
+
+    @property
     def active_attempt(self) -> LoginAttempt | None:
         with self._lock:
             return self._active_attempt
@@ -488,6 +500,7 @@ class AntigravityAuthManager:
             auth = attempt.validated_auth if attempt else None
             return {
                 "accountState": self._account_state,
+                "providerReadiness": self._provider_readiness,
                 "attemptState": attempt_state,
                 "authUrl": auth.authorization_url if auth else "",
                 "expiresAt": attempt.expires_at_label if attempt else "",
@@ -515,9 +528,9 @@ class AntigravityAuthManager:
 
             command = self._command_resolver()
             if not command:
-                self._account_status_label = "Instale o Antigravity CLI primeiro"
+                self._account_status_label = "Runtime Antigravity ACP não encontrado"
                 self._notify_changed()
-                raise FileNotFoundError("Antigravity CLI não encontrado.")
+                raise FileNotFoundError("Runtime Antigravity ACP não encontrado.")
 
             if force:
                 from .antigravity_acp import profile_path
@@ -531,6 +544,7 @@ class AntigravityAuthManager:
             attempt_id = uuid.uuid4().hex
             attempt = LoginAttempt(attempt_id=attempt_id, state="starting")
             self._active_attempt = attempt
+            self._provider_readiness = "validating"
             self._account_status_label = "Iniciando autenticação Google…"
             self._notify_changed()
 
@@ -539,15 +553,13 @@ class AntigravityAuthManager:
 
     def _run_login(self, attempt: LoginAttempt, command: str) -> None:
         from .antigravity_acp import (
-            AcpClient,
             AcpError,
             BrowserHelperError,
             IncompleteRuntimeError,
             extract_acp_models,
             prepare_profile,
             preflight_browser_helper,
-            profile_path as profile_path,
-            resolve_acp_runtime,
+            spawn_acp_client,
         )
 
         client = None
@@ -562,23 +574,12 @@ class AntigravityAuthManager:
             except Exception as exc:
                 raise BrowserHelperError(str(exc)) from exc
 
-            # 3. Resolve complete runtime bundle
-            try:
-                runtime_info = resolve_acp_runtime(command)
-            except IncompleteRuntimeError:
-                raise
-            except Exception:
-                runtime_info = None
-
-            try:
-                env = self._env_factory(runtime_info=runtime_info)
-            except TypeError:
-                env = self._env_factory()
-
-            client = AcpClient(
-                command=runtime_info.executable_path if runtime_info else command,
-                runtime_info=runtime_info,
-                env=env,
+            # 3. Single shared runtime resolution for this spawn: executable,
+            # harness, version and environment always describe the same
+            # installation. IncompleteRuntimeError propagates untouched.
+            client = spawn_acp_client(
+                command=command,
+                env_factory=self._env_factory,
                 on_auth_url=lambda url: self._on_auth_url_received(attempt.attempt_id, url),
             )
             with self._lock:
@@ -637,6 +638,7 @@ class AntigravityAuthManager:
                 success_message = f"Conta Google autenticada{models_label}."
 
                 self._account_state = "authenticated"
+                self._provider_readiness = "ready"
                 self._discovered_catalog = available_models
                 if self._on_catalog_discovered and isinstance(available_models, list):
                     try:
@@ -651,9 +653,15 @@ class AntigravityAuthManager:
                 if self._is_active(attempt.attempt_id):
                     user_msg, is_authenticated = map_acp_error_to_ui_message(exc, phase)
                     if is_authenticated:
+                        # Credentials are valid but the provider cannot serve
+                        # models: authenticated account, NOT a ready provider.
                         self._account_state = "authenticated"
+                        self._provider_readiness = "degraded"
                     elif phase == "authenticate" and (isinstance(exc, AcpError) and exc.code == -32000 or "rejected" in str(exc).lower()):
                         self._account_state = "unauthenticated"
+                        self._provider_readiness = "failed"
+                    else:
+                        self._provider_readiness = "failed"
                     self._finish_attempt("failed", user_msg)
             self._notify_changed()
         finally:
@@ -744,6 +752,7 @@ class AntigravityAuthManager:
         """Updates account state upon successful verification turn."""
         with self._lock:
             self._account_state = "authenticated"
+            self._provider_readiness = "ready"
             self._account_status_label = message
             if self._active_attempt:
                 self._finish_attempt("succeeded", message)
@@ -754,6 +763,7 @@ class AntigravityAuthManager:
         """Marks credentials as invalid/rejected, setting account state to unauthenticated."""
         with self._lock:
             self._account_state = "unauthenticated"
+            self._provider_readiness = "failed"
             self._account_status_label = message
         self._notify_changed()
 
@@ -764,8 +774,10 @@ class AntigravityAuthManager:
                 self._account_status_label = (
                     "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos."
                 )
+                self._provider_readiness = "degraded"
             else:
                 self._account_status_label = error_message
+                self._provider_readiness = "failed"
         self._notify_changed()
 
     def _drain_stream(self, attempt_id: str, stream, stream_name: str) -> None:
@@ -846,6 +858,7 @@ class AntigravityAuthManager:
             if not attempt or attempt.attempt_id != attempt_id or attempt.state not in phases:
                 return
             self._finish_attempt("failed", message)
+            self._provider_readiness = "failed"
             process = attempt.process
             client = attempt.client
         if client:
