@@ -173,9 +173,11 @@ def verify_cli(provider: str, cancel: threading.Event, *, cwd: Path | None = Non
         raise RuntimeError("O CLI instalado não informou sua versão.")
     harness = installed
     if provider == "antigravity":
-        harness = installed.with_name("agy_acp_server.exe" if os.name == "nt" else "agy_acp_server")
-        if not harness.is_file():
+        from .antigravity_acp import find_acp_server
+        server = find_acp_server(installed)
+        if not server or not server.is_file():
             raise RuntimeError("O CLI foi instalado, mas o servidor ACP necessário ao harness não foi encontrado. Consulte a instalação oficial.")
+        harness = server
         _verify_acp(str(harness), cancel)
     else:
         args = ["app-server", "--help"] if provider == "codex" else ["--help"]

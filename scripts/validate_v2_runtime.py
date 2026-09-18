@@ -9,7 +9,7 @@ from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')
-os.environ.setdefault('QSG_RHI_BACKEND', 'software')
+os.environ.setdefault('QT_QUICK_BACKEND', 'software')
 
 from PySide6.QtCore import QSettings, QObject, Qt, QPoint
 from PySide6.QtWidgets import QApplication

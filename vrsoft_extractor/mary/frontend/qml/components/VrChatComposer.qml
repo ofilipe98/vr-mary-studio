@@ -516,7 +516,7 @@ Rectangle {
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(12.5)
                         font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
-                        renderType: Text.NativeRendering
+                        renderType: Theme.textRenderType
                         verticalAlignment: Text.AlignVCenter
                     }
                 }

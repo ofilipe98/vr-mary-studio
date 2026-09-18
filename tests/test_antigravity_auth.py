@@ -112,11 +112,21 @@ class TestValidateAuthorizationUrl(unittest.TestCase):
 
 
 class TestAuthStreamParser(unittest.TestCase):
+    def _valid_url(self, extra=""):
+        """Builds a fully valid OAuth URL for parser tests."""
+        from urllib.parse import urlencode
+        return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+            "response_type": "code",
+            "client_id": "test-client.apps.googleusercontent.com",
+            "redirect_uri": "http://127.0.0.1:45678/",
+            "state": "parser_test_state",
+        }) + extra
+
     def test_parse_t3_json_marker_in_chunks(self):
         captured = []
         parser = AuthStreamParser(on_auth_url=captured.append)
 
-        url = "https://accounts.google.com/o/oauth2/v2/auth?test=1"
+        url = self._valid_url()
         line = f'{AUTH_MARKER_T3}{json.dumps(url)}\n'
         encoded = line.encode("utf-8")
 
@@ -130,7 +140,7 @@ class TestAuthStreamParser(unittest.TestCase):
         captured = []
         parser = AuthStreamParser(on_auth_url=captured.append)
 
-        url = "https://accounts.google.com/o/oauth2/v2/auth?test=2"
+        url = self._valid_url()
         line = f"Open the following link in your browser: {url}\r\n"
         parser.feed(line.encode("utf-8"))
         self.assertEqual(captured, [url])
@@ -139,7 +149,7 @@ class TestAuthStreamParser(unittest.TestCase):
         captured = []
         parser = AuthStreamParser(on_auth_url=captured.append)
 
-        url = "https://accounts.google.com/o/oauth2/v2/auth?test=3"
+        url = self._valid_url()
         line = f"Open the following link to authenticate the ACP server: {url}\n"
         parser.feed(line.encode("utf-8"))
         self.assertEqual(captured, [url])
@@ -187,6 +197,40 @@ class TestAuthStreamParser(unittest.TestCase):
         self.assertEqual(captured_lines, [])
         parser.finish()
         self.assertEqual(captured_lines, ["trailing line without newline"])
+
+    def test_ignore_account_chooser_and_promotional_urls(self):
+        captured_urls = []
+        captured_lines = []
+        parser = AuthStreamParser(
+            on_auth_url=captured_urls.append,
+            on_line=captured_lines.append,
+        )
+        line = '__VRSTUDIO_ANTIGRAVITY_AUTH_URL__"https://accounts.google.com/AccountChooser?Email=user@gmail.com&continue=https%3A%2F%2Fone.google.com%2Fai"\n'
+        parser.feed(line.encode("utf-8"))
+        self.assertEqual(captured_urls, [])
+        self.assertEqual(len(captured_lines), 1)
+
+    def test_is_oauth_authorization_url(self):
+        from vrsoft_extractor.mary.antigravity_auth import is_oauth_authorization_url
+        from urllib.parse import urlencode
+        # Full valid URL must be True
+        full = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+            "response_type": "code",
+            "client_id": "xyz",
+            "redirect_uri": "http://127.0.0.1:45678/",
+            "state": "test_state",
+        })
+        self.assertTrue(is_oauth_authorization_url(full))
+        # Incomplete URL (missing state, redirect_uri) must now be False
+        self.assertFalse(is_oauth_authorization_url("https://accounts.google.com/o/oauth2/v2/auth?client_id=xyz"))
+        # Legacy /o/oauth2/auth path is rejected by strict validator
+        self.assertFalse(is_oauth_authorization_url("https://accounts.google.com/o/oauth2/auth?client_id=xyz"))
+        # Non-OAuth URLs
+        self.assertFalse(is_oauth_authorization_url("https://accounts.google.com/AccountChooser?continue=https://one.google.com"))
+        self.assertFalse(is_oauth_authorization_url("https://one.google.com/ai"))
+        self.assertFalse(is_oauth_authorization_url("http://accounts.google.com/o/oauth2/v2/auth?client_id=xyz"))
+        self.assertFalse(is_oauth_authorization_url("https://malicious.com/o/oauth2/v2/auth"))
+        self.assertFalse(is_oauth_authorization_url(""))
 
 
 class TestCallbackValidationAndForwarding(unittest.TestCase):

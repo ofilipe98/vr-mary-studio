@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
-import pytest
-
-from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.models import (
     ConversationOptions,
@@ -18,8 +14,6 @@ from vrsoft_extractor.mary.models import (
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.supervision import (
-    FinalResponseValidation,
-    RefinementReason,
     ResponseContract,
     ResponseIntent,
 )
@@ -87,7 +81,6 @@ def test_validate_direct_response_preserves_code_investigation_output():
 
 
 def test_synthesis_disables_mcp_tools():
-    from vrsoft_extractor.mary.execution.runner import ExecutionRunner
     from dataclasses import replace
 
     opts = ConversationOptions(

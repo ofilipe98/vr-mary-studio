@@ -152,7 +152,17 @@ def create_engine(
     chat_bridge: ChatBridge,
     studio_bridge: StudioBridge | None = None,
 ) -> QQmlApplicationEngine:
-    QQuickWindow.setTextRenderType(QQuickWindow.TextRenderType.NativeTextRendering)
+    # Single rendering policy: global follows the stored fontSmoothing so it
+    # matches Theme.textRenderType from the first frame.
+    try:
+        smoothing = bool(getattr(bridge, "fontSmoothing", True))
+    except Exception:
+        smoothing = True
+    QQuickWindow.setTextRenderType(
+        QQuickWindow.TextRenderType.NativeTextRendering
+        if smoothing
+        else QQuickWindow.TextRenderType.QtTextRendering
+    )
     engine = QQmlApplicationEngine()
     qml_warnings: list[object] = []
     engine.warnings.connect(qml_warnings.extend)
@@ -227,7 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         use_software = not hw_accel
 
     if use_software:
-        os.environ["QSG_RHI_BACKEND"] = "software"
+        # Note: Qt 6 does not accept 'software' as a QSG_RHI_BACKEND key.
+        # Software rasterization is enabled via QT_QUICK_BACKEND="software".
         os.environ["QT_QUICK_BACKEND"] = "software"
         existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         if "--disable-gpu" not in existing_flags:

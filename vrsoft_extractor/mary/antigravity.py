@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 
 from .antigravity_auth import (
+    AUTH_MARKER_VRSTUDIO as AUTH_MARKER_VRSTUDIO,
     AUTH_MARKER_T3 as AUTH_MARKER_T3,
     AUTH_PREFIX_ACP as AUTH_PREFIX_ACP,
     AUTH_PREFIX_BROWSER as AUTH_PREFIX_BROWSER,
@@ -28,8 +29,12 @@ from .antigravity_auth import (
     LoginAttempt as LoginAttempt,
     OAuthCallbackError as OAuthCallbackError,
     OAuthValidationError as OAuthValidationError,
+    ProviderReadiness as ProviderReadiness,
     ValidatedAuthUrl as ValidatedAuthUrl,
     forward_callback_to_listener as forward_callback_to_listener,
+    is_oauth_authorization_url as is_oauth_authorization_url,
+    normalize_browser_url as normalize_browser_url,
+    try_validate_authorization_url as try_validate_authorization_url,
     validate_authorization_url as validate_authorization_url,
     validate_callback_url as validate_callback_url,
 )

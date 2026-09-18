@@ -57,7 +57,7 @@ Button {
             color: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSize(12.5)
-            renderType: Text.NativeRendering
+            renderType: Theme.textRenderType
         }
         VrLineIcon {
             Layout.preferredWidth: 11

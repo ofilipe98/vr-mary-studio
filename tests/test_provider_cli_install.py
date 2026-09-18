@@ -172,6 +172,56 @@ def test_new_acp_is_found_without_restarting(tmp_path):
         assert resolve_acp() == str(acp)
 
 
+def test_acp_in_nested_version_directory_is_resolved(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    binary = bin_dir / ("agy.exe" if os.name == "nt" else "agy")
+    binary.touch()
+    server_name = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
+    v1 = bin_dir / "acp" / "1.1.0" / server_name
+    v2 = bin_dir / "acp" / "1.1.1" / server_name
+    v1.parent.mkdir(parents=True)
+    v2.parent.mkdir(parents=True)
+    v1.touch()
+    v2.touch()
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.native_cli_path", return_value=binary), \
+         patch("vrsoft_extractor.mary.antigravity_acp.shutil.which", return_value=None):
+        assert resolve_acp() == str(v2)
+
+
+def test_verify_cli_antigravity_finds_nested_acp(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    binary = bin_dir / ("agy.exe" if os.name == "nt" else "agy")
+    binary.touch()
+    server_name = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
+    acp = bin_dir / "acp" / "1.1.1" / server_name
+    acp.parent.mkdir(parents=True)
+    acp.touch()
+
+    with patch.object(cli, "native_cli_path", return_value=binary), \
+         patch.object(cli, "_run", return_value="1.1.27"), \
+         patch.object(cli, "_verify_acp") as verify_acp:
+        result = cli.verify_cli("antigravity", threading.Event())
+        assert result == {"command": str(acp), "version": "1.1.27"}
+        assert verify_acp.call_count == 1
+        assert verify_acp.call_args.args[0] == str(acp)
+
+
+def test_bridge_clears_error_when_runtime_becomes_available(bridge):
+    bridge._provider_install_status["antigravity"] = {
+        "runtimeState": "error",
+        "installMessage": "O CLI foi instalado, mas o servidor ACP necessário ao harness não foi encontrado.",
+    }
+    with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="C:/fake/acp/agy_acp_server.exe"):
+        bridge.refreshProviders()
+    assert "runtimeState" not in bridge._provider_install_status.get("antigravity", {})
+    item = next(p for p in bridge.providerItems if p["id"] == "antigravity")
+    assert item["available"] is True
+    assert item.get("runtimeState") != "error"
+
+
 @pytest.mark.parametrize("runtime_class", [CodexProvider, ClaudeProvider])
 def test_existing_provider_instance_discovers_install(runtime_class):
     with patch(runtime_class.__module__ + ".resolve_cli", return_value=None):

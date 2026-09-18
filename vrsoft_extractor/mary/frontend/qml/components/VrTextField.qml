@@ -5,7 +5,7 @@ import "../theme"
 TextField {
     id: control
 
-    implicitHeight: Theme.controlHeight
+    implicitHeight: Theme.controlHeightCompact
     leftPadding: 13
     rightPadding: 13
     color: Theme.palette.text
@@ -13,7 +13,7 @@ TextField {
     selectionColor: Theme.palette.selection
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily
-    font.pixelSize: Theme.bodySize
+    font.pixelSize: Theme.controlSize
     renderType: Theme.textRenderType
     focusPolicy: Qt.StrongFocus
 

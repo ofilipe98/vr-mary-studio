@@ -79,6 +79,25 @@ Item {
             color: entry.highlighted ? Theme.palette.chatControl : "transparent"
         }
     }
+    // Atalhos estilo T3 Code (pills do rodapé do seletor de projetos).
+    component KbdHint: Rectangle {
+        property string label: ""
+        implicitWidth: Math.max(22, hintText.implicitWidth + 10)
+        implicitHeight: 20
+        radius: 5
+        color: Theme.palette.chatControl
+        border.width: 1
+        border.color: Theme.palette.chatBorder
+        Text {
+            id: hintText
+            anchors.centerIn: parent
+            text: parent.label
+            color: Theme.palette.text
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeMicro
+            font.weight: Font.DemiBold
+        }
+    }
     property bool conversationSidebarVisible: width >= 1000
     property bool surfaceVisible: false
     property int surfaceIndex: 0
@@ -1054,7 +1073,7 @@ Item {
                             onClosed: landingProjectButton.menuClosedAt = Date.now()
                             x: 0
                             y: parent.height + 6
-                            width: Math.min(300, Overlay.overlay.width - 16)
+                            width: Math.min(260, Overlay.overlay.width - 16)
                             margins: 8
                             padding: 5
                             background: Rectangle {
@@ -1068,7 +1087,7 @@ Item {
                                 delegate: ProjectMenuEntry {
                                     required property var modelData
                                     text: modelData.label
-                                    subtitle: modelData.path
+                                    subtitle: ""
                                     iconPath: modelData.icon
                                     iconKind: modelData.iconKind
                                     iconEmoji: modelData.iconEmoji
@@ -2220,6 +2239,7 @@ Item {
         padding: 0
         modal: true
         dim: true
+        Overlay.modal: Rectangle { color: Qt.alpha(Theme.palette.background, 0.85) }
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: Qt.callLater(function() { newChatProjectSearch.forceActiveFocus() })
@@ -2319,8 +2339,8 @@ Item {
                     height: 54
                     radius: 7
                     color: newChatProjectList.currentIndex === index
-                        || newProjectHover.hovered
-                        ? Theme.palette.chatControl : "transparent"
+                        ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
+                        : (newProjectHover.hovered ? Theme.palette.chatControl : "transparent")
 
                     RowLayout {
                         anchors.fill: parent
@@ -2438,19 +2458,37 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
+                radius: 12
                 color: Theme.palette.chatComposer
-                border.width: 1
-                border.color: Theme.palette.chatDivider
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 12
+                    color: Theme.palette.chatComposer
+                }
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: Theme.palette.chatDivider
+                }
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
-                    spacing: 12
-                    Text { text: "↑ ↓  Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
-                    Text { text: "Enter  Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
-                    Text { text: "Backspace  Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
+                    spacing: 6
+                    KbdHint { label: "↑" }
+                    KbdHint { label: "↓" }
+                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    KbdHint { label: "Enter" }
+                    Text { text: "Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    KbdHint { label: "Backspace" }
+                    Text { text: "Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                     Item { Layout.fillWidth: true }
-                    Text { text: "Esc  Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
+                    KbdHint { label: "Esc" }
+                    Text { text: "Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                 }
             }
         }
@@ -2472,6 +2510,7 @@ Item {
         padding: 0
         modal: true
         dim: true
+        Overlay.modal: Rectangle { color: Qt.alpha(Theme.palette.background, 0.85) }
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: Qt.callLater(function() {
@@ -2616,16 +2655,35 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
+                radius: 18
                 color: Theme.palette.chatComposer
-                border.width: 1
-                border.color: Theme.palette.chatDivider
-                Text {
-                    anchors.centerIn: parent
-                    text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
-                    color: Theme.palette.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSizeMicro
-                    font.weight: Theme.weightMedium
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 18
+                    color: Theme.palette.chatComposer
+                }
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: Theme.palette.chatDivider
+                }
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 6
+                    KbdHint { label: "↑" }
+                    KbdHint { label: "↓" }
+                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    KbdHint { label: "Enter" }
+                    Text { text: "Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
+                    Item { Layout.fillWidth: true }
+                    KbdHint { label: "Esc" }
+                    Text { text: "Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                 }
             }
             }
@@ -2766,14 +2824,14 @@ Item {
         id: approvalDialog
         objectName: "chatApprovalDialog"
         anchors.centerIn: parent
-        width: 510
+        width: Math.min(510, parent.width - 32)
         modal: true
         closePolicy: Popup.NoAutoClose
         title: "Aprovação necessária"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: 12
-            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; lineHeight: Theme.bodyLineHeight; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Negar"; onClicked: { approvalDialog.close(); root.chatBridge.decideApproval(false, false) } }
@@ -2842,7 +2900,7 @@ Item {
         id: conversationDeleteDialog
         objectName: "conversationDeleteDialog"
         anchors.centerIn: parent
-        width: 440
+        width: Math.min(440, parent.width - 32)
         modal: true
         dim: true
         padding: 0

@@ -41,6 +41,7 @@ Item {
                 text: root.description; color: Theme.palette.mutedText
                 font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13)
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
+                lineHeight: Theme.bodyLineHeight
             }
         }
         RowLayout {

@@ -9,7 +9,7 @@ Button {
     property int textAlignment: Text.AlignHCenter
     property bool showFocusRing: true
 
-    implicitHeight: Theme.controlHeight
+    implicitHeight: Theme.controlHeightCompact
     implicitWidth: Math.max(96, contentItem.implicitWidth + 28)
     leftPadding: 14
     rightPadding: 14

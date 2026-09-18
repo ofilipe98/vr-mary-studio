@@ -7,7 +7,7 @@ import pytest
 
 # Apply before test-module imports so individual QML files also work headlessly.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QSG_RHI_BACKEND", "software")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 

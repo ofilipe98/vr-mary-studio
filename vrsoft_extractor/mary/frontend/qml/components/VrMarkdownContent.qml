@@ -19,6 +19,8 @@ TextEdit {
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily
     font.pixelSize: Theme.bodySize
+    // Rhythm for Markdown blocks comes from frontend.styleMessageDocument
+    // (QTextDocument block line-height, T3 leading-relaxed equivalent).
     height: paintedHeight
     onLinkActivated: link => { if (studio) studio.openExternalUrl(link) }
     function applyStyle() {

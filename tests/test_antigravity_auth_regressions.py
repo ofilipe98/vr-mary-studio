@@ -262,15 +262,18 @@ def test_saved_account_can_be_validated_after_failed_attempt(bridge):
 
 
 def test_cancel_during_validation_process_launch_reaps_process(bridge):
+    from vrsoft_extractor.mary.antigravity_acp import AcpRuntimeInfo
     result, _ = bridge
     client = MagicMock()
     def launch():
         result._agy_check_cancel.set()
     client.start.side_effect = launch
+    runtime = AcpRuntimeInfo(executable_path="agy_acp_server", harness_path="localharness_external")
     with patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
-            patch("vrsoft_extractor.mary.frontend.studio.AcpClient", return_value=client):
+            patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client", return_value=client) as spawn:
         with pytest.raises(RuntimeError):
-            result._run_antigravity_check("agy")
+            result._run_antigravity_check(runtime)
+    spawn.assert_called_once_with(runtime_info=runtime)
     client.close.assert_called_once()
     assert result._agy_check_client is None
 
@@ -293,3 +296,70 @@ def test_cancelled_validation_cannot_publish_late_success(bridge):
             time.sleep(.005)
     assert not result._agy_check_running
     assert result._antigravity_auth.account_state == "unknown"
+
+
+def test_start_login_force_clears_token(tmp_path):
+    token_dir = tmp_path / "antigravity-acp"
+    token_dir.mkdir(parents=True)
+    token_file = token_dir / "acp_token.json"
+    token_file.write_text("{}", encoding="utf-8")
+    assert token_file.is_file()
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path):
+        manager = AntigravityAuthManager(
+            command_resolver=lambda: "dummy_agy",
+            env_factory=lambda: {},
+        )
+        with patch.object(manager, "_run_login"):
+            manager.start_login(force=True)
+            assert not token_file.exists()
+
+
+def test_open_browser_url_fallback(bridge):
+    result, _ = bridge
+    with patch("vrsoft_extractor.mary.frontend.studio.QDesktopServices.openUrl", side_effect=Exception("error")), \
+         patch("webbrowser.open", return_value=True) as mock_webbrowser:
+        opened = result._open_browser_url("https://accounts.google.com/test")
+        assert opened is True
+        mock_webbrowser.assert_called_once_with("https://accounts.google.com/test")
+
+
+def test_open_antigravity_login_forces_when_not_authenticated(bridge):
+    result, _ = bridge
+    assert result._antigravity_auth.account_state != "authenticated"
+    with patch.object(result._antigravity_auth, "start_login") as mock_start, \
+         patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="agy"):
+        mock_start.return_value = LoginAttempt("test-id", state="starting")
+        result.openAntigravityLogin()
+        mock_start.assert_called_once_with(force=True)
+
+
+def test_open_antigravity_login_reopens_waiting_url(bridge):
+    result, _ = bridge
+    attempt = LoginAttempt("waiting-test", state="waiting")
+    attempt.validated_auth = MagicMock(authorization_url="https://accounts.google.com/waiting")
+    result._antigravity_auth._active_attempt = attempt
+
+    with patch.object(result, "_open_browser_url") as mock_open:
+        result.openAntigravityLogin()
+        mock_open.assert_called_once_with("https://accounts.google.com/waiting")
+
+
+def test_refresh_antigravity_auth_succeeded_triggers_validation(bridge):
+    result, _ = bridge
+    attempt = LoginAttempt("succ-test", state="succeeded")
+    result._antigravity_auth._active_attempt = attempt
+
+    with patch.object(result, "validateAntigravityAccount") as mock_validate:
+        result._refresh_antigravity_auth()
+        mock_validate.assert_not_called()
+
+def test_open_antigravity_login_forces_even_when_authenticated(bridge):
+    result, _ = bridge
+    result._antigravity_auth._account_state = "authenticated"
+    with patch.object(result._antigravity_auth, "start_login") as mock_start, \
+         patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="agy"):
+        mock_start.return_value = LoginAttempt("test-id", state="starting")
+        result.openAntigravityLogin()
+        mock_start.assert_called_once_with(force=True)
+

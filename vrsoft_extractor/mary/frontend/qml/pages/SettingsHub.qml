@@ -219,36 +219,38 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 6
-
-                VrBrandHeader {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    primaryColor: Theme.palette.navText
-                    toggleColor: Theme.palette.navMuted
-                    onBrandActivated: frontend.setCurrentPage(1)
-                }
+                spacing: 4
 
                 Item {
+                    id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 36
+                    Layout.preferredHeight: 34
 
                     VrTextField {
                         id: settingsConversationSearch
                         objectName: "settingsConversationSearch"
                         anchors.fill: parent
-                        leftPadding: 31
-                        rightPadding: 30
+                        leftPadding: 35
+                        rightPadding: 32
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(13)
                         placeholderText: root.settingsActive
                             ? "Pesquisar configurações" : "Pesquisar conversas"
+                        placeholderTextColor: Theme.palette.navMuted
+                        color: Theme.palette.navText
                         background: Rectangle {
-                            radius: 8
-                            color: settingsConversationSearch.hovered
-                                || settingsConversationSearch.activeFocus
-                                ? Theme.palette.chatControl : "transparent"
-                            border.width: 1
+                            radius: 6
+                            color: settingsConversationSearch.activeFocus
+                                ? Theme.palette.chatControl
+                                : (settingsConversationSearch.hovered ? Theme.palette.navHover : "transparent")
+                            border.width: settingsConversationSearch.activeFocus ? 1 : 0
                             border.color: settingsConversationSearch.activeFocus
-                                ? Theme.palette.focus : Theme.palette.chatBorder
+                                ? Theme.palette.focus : "transparent"
+
+                            Behavior on color {
+                                enabled: !frontend.reduceMotion
+                                ColorAnimation { duration: Theme.fastDuration }
+                            }
                         }
                         onTextChanged: {
                             if (root.syncingSearch)
@@ -258,16 +260,64 @@ Item {
                             else
                                 chat.setSearch(text)
                         }
+                        Keys.onEscapePressed: {
+                            if (text.length > 0) {
+                                text = ""
+                            } else {
+                                focus = false
+                            }
+                        }
                     }
+
+                    Shortcut {
+                        sequence: "/"
+                        enabled: settingsNavigation.visible && !settingsConversationSearch.activeFocus
+                        onActivated: {
+                            settingsConversationSearch.forceActiveFocus()
+                            settingsConversationSearch.selectAll()
+                        }
+                    }
+
                     VrLineIcon {
                         anchors.left: parent.left
-                        anchors.leftMargin: 8
+                        anchors.leftMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 15
-                        height: 15
+                        width: 16
+                        height: 16
                         kind: "search"
-                        foreground: Theme.palette.mutedText
+                        foreground: settingsConversationSearch.activeFocus
+                            ? Theme.palette.navText : Theme.palette.navMuted
                     }
+
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: settingsConversationSearch.text.length === 0
+                        width: 18
+                        height: 18
+                        radius: 4
+                        color: Qt.rgba(255, 255, 255, 0.06)
+                        border.width: 1
+                        border.color: Qt.rgba(255, 255, 255, 0.1)
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "/"
+                            color: Theme.palette.navMuted
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                            renderType: Theme.textRenderType
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.IBeamCursor
+                            onClicked: settingsConversationSearch.forceActiveFocus()
+                        }
+                    }
+
                     VrIconButton {
                         anchors.right: parent.right
                         anchors.rightMargin: 4
@@ -292,18 +342,6 @@ Item {
                             root.syncSearchField()
                     }
                 }
-
-                Rectangle {
-                    visible: !root.settingsSearching
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 7
-                    Layout.rightMargin: 7
-                    Layout.topMargin: 4
-                    Layout.bottomMargin: 4
-                    implicitHeight: 1
-                    color: Theme.palette.navDivider
-                }
-
                 Repeater {
                     visible: !root.settingsSearching
                     model: root.sections

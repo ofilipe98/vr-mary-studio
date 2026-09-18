@@ -24,15 +24,16 @@ Item {
     readonly property string account: String(selected.accountStatus || "")
     readonly property string attemptState: String(selected.attemptState || "idle")
     readonly property string accountState: String(selected.accountState || "unknown")
+    readonly property string providerReadiness: String(selected.providerReadiness || "unknown")
     readonly property string authUrl: String(selected.authUrl || "")
     readonly property string expiresAt: String(selected.expiresAt || "")
     readonly property bool isWaiting: Boolean(selected.isWaiting)
     readonly property bool isVerifying: Boolean(selected.isVerifying)
     readonly property bool isStarting: Boolean(selected.isStarting)
     readonly property bool hasCallback: isWaiting && authUrl.length > 0
-    readonly property bool validating: isVerifying || account.indexOf("Validando") === 0
+    readonly property bool validating: account.indexOf("Validando") === 0 || Boolean(selected.isValidating || selected.checking)
     readonly property bool authenticated: accountState === "authenticated" || account.indexOf("Conta Google validada") === 0
-    readonly property bool loginPending: isWaiting || isStarting || account.indexOf("Conclua o login") === 0
+    readonly property bool loginPending: isWaiting || isStarting || isVerifying || account.indexOf("Conclua o login") === 0
     readonly property bool authError: google && (attemptState === "failed" || account.indexOf("Não foi possível") === 0 || accountState === "unauthenticated")
     onIsWaitingChanged: { if (!isWaiting) manualCallbackField.text = "" }
     onSelectedProviderChanged: manualCallbackField.text = ""
@@ -49,9 +50,43 @@ Item {
         if (!p.available) return {text: "Não instalado", tone: "warning"}
         if (p.id !== "antigravity") return {text: "CLI instalado", tone: "success"}
         var a = String(p.accountStatus || "")
-        if (p.isVerifying || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
-        if (p.isWaiting || p.isStarting || a.indexOf("Conclua o login") === 0) return {text: "Login em andamento", tone: "warning"}
-        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0) return {text: "Conta autenticada", tone: "success"}
+        if (p.isVerifying) {
+            var vText = a.indexOf("modelos") !== -1 ? "Carregando modelos…" : (a.indexOf("confirmação") !== -1 ? "Aguardando confirmação…" : "Verificando…")
+            return {text: vText, tone: "muted", busy: true}
+        }
+        if (p.isValidating || p.checking || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
+        if (p.isWaiting) return {text: "Aguardando navegador…", tone: "warning"}
+        if (p.isStarting) return {text: "Iniciando…", tone: "warning", busy: true}
+        // Provider readiness outranks the bare account state: an
+        // authenticated account with a degraded provider is not ready.
+        if (p.providerReadiness === "degraded") {
+            if (p.accountState === "authenticated") {
+                return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}
+            }
+            return {text: "Falha na validação", tone: "danger"}
+        }
+        if (p.providerReadiness === "failed") {
+            if (p.accountState === "unauthenticated") {
+                return {text: "Login necessário", tone: "warning"}
+            }
+            if (p.accountState === "authenticated") {
+                return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}
+            }
+            return {text: "Falha na validação", tone: "danger"}
+        }
+        if (p.attemptState === "failed") {
+            if (p.accountState === "authenticated") {
+                return {text: "Conta autenticada · falha ao carregar modelos", tone: "warning"}
+            }
+            if (p.accountState === "unauthenticated") {
+                return {text: "Login necessário", tone: "warning"}
+            }
+            return {text: "Falha na validação", tone: "danger"}
+        }
+        if (p.accountState === "unauthenticated") {
+            return {text: "Login necessário", tone: "warning"}
+        }
+        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0 || a.indexOf("Conta Google autenticada") === 0) return {text: "Conta autenticada", tone: "success"}
         if (p.attemptState === "idle" || p.attemptState === "cancelled") return {text: "Conta não verificada", tone: "warning"}
         if (!a || a.indexOf("Conta Google ainda") === 0) return {text: "Conta não verificada", tone: "warning"}
         return {text: "Falha na validação", tone: "danger"}
@@ -806,15 +841,20 @@ Item {
                                             objectName: "providerAccountStatus"
                                             text: root.validating ? "Validando conta\u2026"
                                                 : root.isWaiting ? "Aguardando autoriza\u00e7\u00e3o no navegador\u2026"
-                                                : root.authenticated ? "Conta autenticada"
+                                                : root.isStarting ? "Iniciando autentica\u00e7\u00e3o\u2026"
+                                                : root.isVerifying ? (root.account.indexOf("modelos") !== -1 ? "Carregando modelos\u2026" : "Verificando acesso\u2026")
+                                                : (root.attemptState === "failed" && root.accountState === "authenticated") ? "Falha ao carregar modelos"
+                                                : (root.accountState === "unauthenticated" || root.account.indexOf("Login necessário") !== -1) ? "Login necessário"
                                                 : root.authError ? "Falha na valida\u00e7\u00e3o"
-                                                : root.isStarting ? "Preparando login Google\u2026"
+                                                : root.authenticated ? "Conta autenticada"
                                                 : "Conta n\u00e3o verificada"
-                                            tone: root.authenticated ? "success"
+                                            tone: (root.validating || root.isWaiting || root.isStarting || root.isVerifying) ? "warning"
+                                                : (root.attemptState === "failed" && root.accountState === "authenticated") ? "warning"
+                                                : (root.accountState === "unauthenticated" || root.account.indexOf("Login necessário") !== -1) ? "warning"
                                                 : root.authError ? "danger"
-                                                : (root.validating || root.isWaiting) ? "warning"
+                                                : root.authenticated ? "success"
                                                 : "muted"
-                                            busy: root.validating || root.isStarting
+                                            busy: root.validating || root.isStarting || root.isVerifying
                                         }
                                     }
 
@@ -838,13 +878,13 @@ Item {
 
                                         VrProviderAction {
                                             objectName: "providerGoogleLogin"
-                                            text: root.openingLogin || root.isStarting ? "Abrindo login\u2026"
+                                            text: root.openingLogin || root.isStarting || root.isVerifying ? "Abrindo login\u2026"
                                                 : root.hasCallback ? "Abrir no navegador"
-                                                : root.authenticated ? "Verificar login"
+                                                : root.authenticated && !root.authError ? "Verificar login"
                                                 : "Entrar com Google"
                                             variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
                                             implicitHeight: 32
-                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
+                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isVerifying && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
                                             onClicked: {
                                                 root.openingLogin = true
                                                 loginTimer.start()
@@ -878,6 +918,14 @@ Item {
                                             implicitHeight: 32
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                             onClicked: studio.validateAntigravityAccount()
+                                        }
+                                        VrProviderAction {
+                                            visible: root.authenticated
+                                            text: "Trocar conta"
+                                            variant: "ghost"
+                                            implicitHeight: 32
+                                            enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
+                                            onClicked: studio.reconnectAntigravityAccount()
                                         }
                                     }
 

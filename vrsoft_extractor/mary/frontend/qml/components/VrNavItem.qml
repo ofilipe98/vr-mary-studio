@@ -1,19 +1,18 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 import "../theme"
 
 Item {
     id: root
 
-    required property string title
-    required property url iconSource
+    property string title: ""
+    property var iconSource: ""
     property bool selected: false
     property bool compact: false
     signal activated()
 
-    implicitHeight: 42
-    implicitWidth: compact ? 42 : navLabel.implicitWidth + 70
+    implicitHeight: 34
+    implicitWidth: compact ? 34 : navLabel.implicitWidth + 50
     focus: false
     activeFocusOnTab: true
     transformOrigin: Item.Center
@@ -31,11 +30,14 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: Theme.radiusControl
-        color: root.selected ? Theme.palette.accessibleOrange
-            : pointer.hovered || root.activeFocus ? Theme.palette.navHover : "transparent"
-        border.width: root.activeFocus ? 2 : 0
-        border.color: Theme.palette.brandYellow
+        radius: 6
+        color: root.selected
+            ? Theme.palette.chatControl
+            : (pointer.hovered || root.activeFocus ? Theme.palette.navHover : "transparent")
+        border.width: root.activeFocus ? 1 : (root.selected ? 1 : 0)
+        border.color: root.activeFocus
+            ? Theme.palette.focus
+            : (root.selected ? Qt.rgba(255, 255, 255, 0.08) : "transparent")
 
         Behavior on color {
             enabled: !frontend.reduceMotion
@@ -45,47 +47,41 @@ Item {
 
     Row {
         anchors.fill: parent
-        anchors.leftMargin: root.compact ? 0 : 13
-        spacing: 11
+        anchors.leftMargin: root.compact ? 0 : 10
+        anchors.rightMargin: root.compact ? 0 : 10
+        spacing: 9
 
         Item {
-            width: root.compact ? parent.width : Theme.iconSize
+            width: root.compact ? parent.width : 18
             height: parent.height
 
             Image {
-                id: navIconSource
-                visible: false
+                id: navIcon
+                visible: root.iconSource ? true : false
                 anchors.centerIn: parent
-                width: Theme.iconSize
-                height: Theme.iconSize
+                width: 16
+                height: 16
                 source: root.iconSource
-                sourceSize.width: Theme.iconSize
-                sourceSize.height: Theme.iconSize
+                sourceSize.width: 32
+                sourceSize.height: 32
                 fillMode: Image.PreserveAspectFit
-            }
-            MultiEffect {
-                anchors.centerIn: parent
-                width: Theme.iconSize
-                height: Theme.iconSize
-                source: navIconSource
-                colorization: 1.0
-                colorizationColor: root.selected ? "#FFFFFF" : Theme.palette.navText
-                opacity: root.selected ? 1 : 0.88
+                opacity: root.selected ? 1.0 : (pointer.hovered ? 0.95 : 0.72)
             }
         }
 
         Text {
             id: navLabel
             visible: !root.compact
-            width: Math.max(0, parent.width - Theme.iconSize - 36)
+            width: Math.max(0, parent.width - 27)
             height: parent.height
             text: root.title
             color: root.selected ? "#FFFFFF" : Theme.palette.navText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(14)
-            font.weight: root.selected ? Font.DemiBold : Font.Medium
+            font.pixelSize: Theme.fontSize(13)
+            font.weight: root.selected ? Font.Medium : Font.Normal
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
+            renderType: Theme.textRenderType
         }
     }
 

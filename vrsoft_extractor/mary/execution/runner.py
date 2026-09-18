@@ -478,6 +478,18 @@ class ExecutionRunner:
                     raise
                 except Exception as exc:
                     outcome = ModuleResearch(module=module, raw_error=str(exc))
+                    # ACP -32000 means real authentication is needed — this is
+                    # not a transient error; retrying would just repeat the
+                    # failure.  Break immediately and propagate.
+                    _is_auth_required = (
+                        hasattr(exc, "code") and getattr(exc, "code", None) == -32000
+                    ) or "ACP -32000" in str(exc)
+                    if _is_auth_required:
+                        LOGGER.warning(
+                            "Pesquisador %s: autenticação necessária (não-retriável).",
+                            module,
+                        )
+                        break
                     LOGGER.warning(
                         "Pesquisador %s falhou (tentativa %s/%s): %s",
                         module,

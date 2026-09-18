@@ -32,7 +32,7 @@ with archive.open('rb') as stream:
 report.update(archive_sha256=digest.hexdigest(), archive_bytes=archive.stat().st_size,
               extracted_bytes=sum(p.stat().st_size for p in extracted.rglob('*') if p.is_file()))
 exe = extracted/'VRNorteStudio/VRNorteStudio.exe'
-env = dict(os.environ, QT_QPA_PLATFORM='offscreen', QSG_RHI_BACKEND='software', QT_QUICK_CONTROLS_STYLE='Basic')
+env = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', QT_QUICK_CONTROLS_STYLE='Basic')
 for theme, page, tab in [('dark_orange','Chat VR',-1),('light','Configurações',2)]:
     suffix = '-final' if args.final else ''
     app_dir = output/f'portable-data-{theme}{suffix}'

@@ -9,10 +9,12 @@ QtObject {
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property string promptFontFamily: frontend.promptFontFamily
     readonly property string terminalFontFamily: frontend.terminalFontFamily
-    // Honors Settings -> Appearance -> font smoothing. On keeps the current
-    // Windows ClearType look (previous hardcoded behavior, also the stored
-    // default); off selects the Qt rasterizer. T3 Code exposes the same
-    // preference as grayscale antialiased vs. platform default.
+    // Single text-rendering policy (Windows consistent).
+    // Every textual surface must use Theme.textRenderType; hardcoded
+    // Text.NativeRendering is not allowed in components. `fontSmoothing on`
+    // keeps Windows ClearType (previous hardcoded look, stored default);
+    // off selects the Qt rasterizer. T3's `-webkit-font-smoothing` reference
+    // is macOS-only and is not used as justification for Windows changes.
     readonly property int textRenderType: frontend.fontSmoothing
         ? Text.NativeRendering : Text.QtRendering
 
@@ -112,11 +114,16 @@ QtObject {
     readonly property int radiusLg: scaledGeometry(16)
 
     // Standardized control heights (aligned with T3 Code)
+    // T3 desktop reference: button ~32, select ~32, input ~30, compact smaller.
+    // Qt defaults use compact (32) for inputs/selects/buttons; 38/44 remain
+    // for large touch targets and explicit large variants.
     readonly property int controlHeightCompact: scaledGeometry(32)
     readonly property int compactControlHeight: scaledGeometry(34)
     readonly property int controlHeight: scaledGeometry(38)
     readonly property int controlHeightNormal: scaledGeometry(38)
     readonly property int controlHeightLarge: scaledGeometry(44)
+    readonly property int menuRowHeight: scaledGeometry(32)
+    readonly property int pickerRowHeight: scaledGeometry(40)
     readonly property int iconButtonCompact: scaledGeometry(28)
     readonly property int iconButtonNormal: scaledGeometry(34)
     readonly property int iconButtonLarge: scaledGeometry(38)

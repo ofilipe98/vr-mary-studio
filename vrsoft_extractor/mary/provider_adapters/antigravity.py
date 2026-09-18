@@ -7,12 +7,80 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
-from ..antigravity_acp import AcpClient, AcpError, has_saved_account, resolve_acp
-from ..models import ConversationOptions, RuntimeEvent, approval_preset
-from .base import AgentProvider, ProviderError, _token_breakdown
+from ..antigravity_acp import (
+    AcpError,
+    IncompleteRuntimeError,
+    RUNTIME_NOT_FOUND_MESSAGE,
+    extract_acp_models,
+    has_saved_account,
+    resolve_acp,
+    resolve_acp_runtime,
+    spawn_acp_client,
+)
+from ..models import ConversationOptions, RuntimeEvent
+from .base import AgentProvider, ProviderError
 
 NATIVE_PREFIX = "acp:"
+
+# RuntimeEvent kinds are a stable Studio contract shared with the
+# orchestrator, persistence and the frontend. Antigravity session updates are
+# normalized onto them; no provider-specific kinds are introduced here.
+ASSISTANT_CHUNK_UPDATES = ("agent_message_chunk",)
+REASONING_UPDATES = ("agent_thought_chunk", "thought")
+TOOL_UPDATES = ("tool_call", "tool_call_update", "tool_result")
+
+# The provider-default alias never sends an identifier: it keeps the agent's
+# current model instead of replacing the selection.
+DEFAULT_MODEL_ALIASES = {"", "default"}
+
+
+def _chunk_text(content):
+    """Extracts plain text from an ACP message chunk content block."""
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) and text else ""
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+def _config_option_by_id(config_options, *ids):
+    wanted = {str(i).lower() for i in ids}
+    for opt in config_options or []:
+        if not isinstance(opt, dict):
+            continue
+        opt_id = str(opt.get("id") or "").lower()
+        category = str(opt.get("category") or "").lower()
+        if opt_id in wanted or (not opt_id and category in wanted):
+            return opt
+    # Fall back to a category match (e.g. category == "model").
+    for opt in config_options or []:
+        if isinstance(opt, dict) and str(opt.get("category") or "").lower() in wanted:
+            return opt
+    return None
+
+
+def _option_values(opt):
+    """Allowed values advertised by a select config option (may be empty)."""
+    values = []
+    options = opt.get("options") if isinstance(opt, dict) else None
+    if isinstance(options, list):
+        for entry in options:
+            if isinstance(entry, dict):
+                value = entry.get("value", entry.get("id", entry.get("modelId")))
+            else:
+                value = entry
+            if isinstance(value, str) and value and value not in values:
+                values.append(value)
+    return values
 
 
 class AntigravityProvider(AgentProvider):
@@ -28,29 +96,40 @@ class AntigravityProvider(AgentProvider):
         self._model_variants = {}
 
     def available(self):
-        return resolve_acp() is not None
+        try:
+            return resolve_acp() is not None
+        except IncompleteRuntimeError:
+            return False
+        except Exception:
+            return False
+
+    def update_catalog(self, items: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._catalog = list(items)
+            self._catalog_time = time.monotonic()
 
     def _read_catalog(self, session):
-        state = session.get("models") or {}
-        default = state.get("currentModelId")
-        items = []
-        for item in state.get("availableModels", []):
-            model_id = item.get("modelId")
-            if isinstance(model_id, str) and model_id:
-                items.append({"id": model_id, "model": model_id, "displayName": item.get("name") or model_id,
-                              "description": item.get("description") or "", "isDefault": model_id == default})
-        with self._lock:
-            self._catalog = items
-            self._catalog_time = time.monotonic()
+        items = extract_acp_models(session)
+        self.update_catalog(items)
         return items
 
     def list_models(self):
-        if not self.available() or not has_saved_account():
+        if not has_saved_account():
             return []
         with self._lock:
             if self._catalog and time.monotonic() - self._catalog_time < 60:
                 return list(self._catalog)
-        client = AcpClient()
+        # Single shared resolution per spawn: resolve once, then spawn with
+        # the same runtime_info. IncompleteRuntimeError stays controlled.
+        try:
+            runtime_info = resolve_acp_runtime()
+        except IncompleteRuntimeError:
+            return []
+        except Exception:
+            return []
+        if runtime_info is None:
+            return []
+        client = spawn_acp_client(runtime_info=runtime_info)
         try:
             client.start()
             client.request("authenticate", {"methodId": "oauth-personal"})
@@ -69,15 +148,27 @@ class AntigravityProvider(AgentProvider):
 
     def send_message(self, conversation_id, native_id, model, effort, workspace,
                      message, callback, options=None, skills=None, image_paths=None):
-        if not self.available():
-            raise ProviderError("Servidor Antigravity ACP não encontrado. Atualize o Antigravity CLI.")
         if not has_saved_account():
             raise ProviderError("Entre com Google em Configurações → Provedores → Antigravity.")
+        # Single shared resolution per spawn: resolve once, then spawn with
+        # the same runtime_info. available() is intentionally not used here
+        # as a pre-check because it would resolve the runtime a second time.
+        try:
+            runtime_info = resolve_acp_runtime()
+        except IncompleteRuntimeError as exc:
+            raise ProviderError(str(exc)) from None
+        except Exception:
+            runtime_info = None
+        if runtime_info is None:
+            raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         self.resume_conversation(conversation_id, native_id, model, effort, workspace, options)
         options = options or ConversationOptions(model=model, effort=effort)
         state = {"client": None, "session": "", "cancelled": False, "text": False, "options": options}
-        client = AcpClient(on_notification=lambda method, params: self._update(conversation_id, state, callback, method, params),
-                           on_request=lambda request_id, method, params: self._permission(conversation_id, state, callback, request_id, method, params))
+        client = spawn_acp_client(
+            runtime_info=runtime_info,
+            on_notification=lambda method, params: self._update(conversation_id, state, callback, method, params),
+            on_request=lambda request_id, method, params: self._permission(conversation_id, state, callback, request_id, method, params),
+        )
         state["client"] = client
         with self._lock:
             if conversation_id in self._active:
@@ -148,115 +239,232 @@ class AntigravityProvider(AgentProvider):
             callback(RuntimeEvent(cid, "turn_completed", payload={"exit_code": 1 if failed else 0, "cancelled": state["cancelled"]}))
 
     def _configure(self, client, session_id, session, model, effort, options):
-        models = {x.get("modelId") for x in (session.get("models") or {}).get("availableModels", [])}
-        if model and model != "default":
-            if model not in models:
-                raise ProviderError("O modelo selecionado não está disponível na conta Antigravity conectada. Atualize o catálogo.")
+        session = session if isinstance(session, dict) else {}
+        config_options = session.get("configOptions") or []
+        if not isinstance(config_options, list):
+            config_options = []
+        self._apply_model_selection(client, session_id, config_options, model)
+        self._apply_effort_selection(client, session_id, config_options, effort)
+
+        mode = "default"
+        if options and options.tools_enabled is False:
+            mode = "default"
+        elif options and options.approval_profile:
+            profile_to_mode = {
+                "supervised": "default",
+                "auto_edits": "auto_edit",
+                "full_access": "yolo",
+                "research_readonly": "default",
+            }
+            mode = profile_to_mode.get(options.approval_profile, "default")
+        client.request("session/set_mode", {"sessionId": session_id, "modeId": mode})
+
+    def _apply_model_selection(self, client, session_id, config_options, model):
+        """Applies the requested model through the negotiated ACP mechanism.
+
+        Never sends the invented ``session/configure`` method. When the
+        session negotiates a ``model`` config option, the model is validated
+        against the account's catalog and applied with
+        ``session/set_config_option``. Otherwise the unstable
+        ``session/set_model`` is used when the runtime supports it
+        (``-32601`` means unsupported and is tolerated).
+        """
+        if not model or str(model) in DEFAULT_MODEL_ALIASES:
+            return
+        model_opt = _config_option_by_id(config_options, "model")
+        if model_opt is not None:
+            option_id = str(model_opt.get("id") or "model")
+            current = model_opt.get("currentValue")
+            allowed = _option_values(model_opt)
+            if allowed and model not in allowed:
+                raise ProviderError(
+                    f"Modelo '{model}' indisponível para esta conta Google. "
+                    "Selecione um modelo disponível."
+                )
+            if current is not None and model == current:
+                return
+            client.request(
+                "session/set_config_option",
+                {"sessionId": session_id, "configId": option_id, "value": model},
+            )
+            return
+        try:
             client.request("session/set_model", {"sessionId": session_id, "modelId": model})
-        preset = approval_preset(options.approval_profile)
-        requested_mode = "yolo" if preset.sandbox == "danger-full-access" else "auto_edit" if preset.id == "auto_edits" else "default"
-        if not options.tools_enabled or options.collaboration_mode == "plan" or preset.sandbox == "read-only":
-            requested_mode = "default"
-        available_modes = {m.get("id") for m in (session.get("modes") or {}).get("availableModes", [])}
-        if requested_mode not in available_modes:
-            raise ProviderError("O runtime não oferece o modo de permissões solicitado.")
-        client.request("session/set_mode", {"sessionId": session_id, "modeId": requested_mode})
-        if effort and effort != "auto":
-            for config in session.get("configOptions", []):
-                if config.get("category") == "thought_level":
-                    values = {x.get("value") for x in config.get("options", []) if isinstance(x, dict)}
-                    if effort in values:
-                        client.request("session/set_config_option", {"sessionId": session_id, "configId": config["id"], "value": effort})
-                    break
+        except AcpError as exc:
+            if exc.code != -32601:
+                raise
 
-    def _update(self, cid, state, callback, method, params):
-        if method != "session/update" or state.get("replaying") or state["cancelled"]:
+    def _apply_effort_selection(self, client, session_id, config_options, effort):
+        """Applies thinking effort only through a negotiated option."""
+        if not effort:
             return
-        if state["session"] and params.get("sessionId") != state["session"]:
+        effort_opt = _config_option_by_id(config_options, "thinking", "reasoningEffort")
+        if effort_opt is None:
             return
-        update = params.get("update", {})
-        kind = update.get("sessionUpdate")
-        content = update.get("content") or {}
-        if kind in ("agent_message_chunk", "agent_thought_chunk") and isinstance(content, dict) and content.get("type") == "text":
-            text = content.get("text") or ""
-            if kind == "agent_message_chunk":
-                state["text"] = state["text"] or bool(text.strip())
-            callback(RuntimeEvent(cid, "assistant_delta" if kind == "agent_message_chunk" else "reasoning_delta", text))
-        elif kind in ("tool_call", "tool_call_update"):
-            callback(RuntimeEvent(cid, "tool_event", str(update.get("title") or "Ferramenta"), update))
-        elif kind == "plan":
-            callback(RuntimeEvent(cid, "task_plan_updated", payload={"plan": update.get("entries")}))
-        elif kind == "usage_update":
-            # ACP reports context occupancy, not cumulative billed tokens.
-            breakdown = _token_breakdown(total_tokens=update.get("used"))
-            callback(RuntimeEvent(cid, "token_usage", payload={"tokenUsage": {
-                "last": breakdown, "modelContextWindow": update.get("size"), "contextOnly": True}}))
+        option_id = str(effort_opt.get("id") or "thinking")
+        current = effort_opt.get("currentValue")
+        allowed = _option_values(effort_opt)
+        if allowed and effort not in allowed:
+            return
+        if current is not None and effort == current:
+            return
+        client.request(
+            "session/set_config_option",
+            {"sessionId": session_id, "configId": option_id, "value": effort},
+        )
 
-    def _permission(self, cid, state, callback, request_id, method, params):
-        client = state["client"]
-        if method != "session/request_permission":
-            client._send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Unsupported client method"}})
-            return
-        options = state["options"]
-        # ACP default mode asks permission. Plan always denies
-        # tools here because this runtime does not advertise a native plan mode.
-        if state["cancelled"] or not options.tools_enabled or options.collaboration_mode == "plan":
-            client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
-            return
-        preset = approval_preset(options.approval_profile)
-        choices = params.get("options", [])
-        if options.approval_profile == "research_readonly":
-            tool = params.get("toolCall") or {}
-            selected = next((x for x in choices if x.get("kind") == "allow_once"), None) if tool.get("kind") in {"read", "search"} else None
-            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-            client.respond(request_id, {"outcome": outcome})
-            return
-        if preset.sandbox == "danger-full-access":
-            preferred = "allow_always"
-            selected = next((x for x in choices if x.get("kind") == preferred), None)
-            if not selected:
-                selected = next((x for x in choices if x.get("kind") == "allow_once"), None)
-            outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-            client.respond(request_id, {"outcome": outcome})
-            return
-        key = uuid.uuid4().hex
-        with self._lock:
-            self._approvals[key] = (client, request_id, choices)
-        tool = params.get("toolCall") or {}
-        callback(RuntimeEvent(cid, "approval_requested", str(tool.get("title") or "Permitir ferramenta Antigravity?"),
-                              {"request_id": key, "method": method, **params}))
-
-    def approve_action(self, request_id, approved, session=False, request=None):
-        with self._lock:
-            pending = self._approvals.pop(str(request_id), None)
-        if not pending:
-            raise ProviderError("Esta solicitação de aprovação já foi encerrada.")
-        client, native_id, choices = pending
-        preferred = "allow_always" if session else "allow_once"
-        selected = next((x for x in choices if x.get("kind") == preferred), None) if approved else None
-        if approved and not selected:
-            selected = next((x for x in choices if x.get("kind") == "allow_once"), None)
-        outcome = {"outcome": "selected", "optionId": selected["optionId"]} if selected else {"outcome": "cancelled"}
-        client.respond(native_id, {"outcome": outcome})
-
-    def interrupt(self, conversation_id):
+    def cancel_conversation(self, conversation_id):
         with self._lock:
             state = self._active.get(conversation_id)
-            if not state:
-                return
+        if state:
             state["cancelled"] = True
-        try:
-            if state["session"]:
-                state["client"].notify("session/cancel", {"sessionId": state["session"]})
-        except AcpError:
-            pass
-        state["client"].close()
+            if state["client"]:
+                state["client"].close()
+            return True
+        return False
 
-    def release_conversation(self, conversation_id, native_id, *, delete_native=False):
-        self.interrupt(conversation_id)
+    def _update(self, cid, state, callback, method, params):
+        if method != "session/update" or params.get("sessionId") != state["session"] or state["cancelled"]:
+            return
+        update = params.get("update", {})
+        if not isinstance(update, dict):
+            return
+        kind = update.get("sessionUpdate")
+        if kind in ASSISTANT_CHUNK_UPDATES:
+            text = _chunk_text(update.get("content"))
+            if text:
+                state["text"] = True
+                callback(RuntimeEvent(cid, "assistant_delta", text))
+        elif kind in REASONING_UPDATES:
+            thought = update.get("thought")
+            text = thought if isinstance(thought, str) and thought else _chunk_text(update.get("content"))
+            if text:
+                callback(RuntimeEvent(cid, "reasoning_delta", text))
+        elif kind in ("tool_call", "tool_call_update"):
+            tool_call = update.get("toolCall") or {}
+            if not isinstance(tool_call, dict):
+                tool_call = {}
+            title = str(tool_call.get("title") or tool_call.get("name") or "Ferramenta externa")
+            status = str(update.get("status") or tool_call.get("status") or "")
+            callback(RuntimeEvent(cid, "tool_event", title, {
+                "sessionUpdate": kind,
+                "status": status,
+                "title": title,
+                "name": str(tool_call.get("name") or tool_call.get("title") or ""),
+                "toolCall": tool_call,
+                "item": {
+                    "id": str(tool_call.get("toolCallId") or ""),
+                    "type": "toolCall",
+                    "status": status,
+                    "title": title,
+                },
+            }))
+        elif kind == "tool_result":
+            result = update.get("toolResult") or {}
+            if not isinstance(result, dict):
+                result = {}
+            title = str(result.get("title") or result.get("name") or "Resultado")
+            status = str(update.get("status") or result.get("status") or "")
+            callback(RuntimeEvent(cid, "tool_event", title, {
+                "sessionUpdate": kind,
+                "status": status,
+                "title": title,
+                "name": str(result.get("name") or result.get("title") or ""),
+                "toolResult": result,
+                "item": {
+                    "id": str(result.get("toolCallId") or ""),
+                    "type": "toolResult",
+                    "status": status,
+                    "title": title,
+                },
+            }))
+        elif kind == "usage_update":
+            used = update.get("used", 0)
+            size = update.get("size", 0)
+            payload = {
+                "tokenUsage": {
+                    "contextOnly": True,
+                    "last": {"totalTokens": used},
+                    "modelContextWindow": size,
+                }
+            }
+            callback(RuntimeEvent(cid, "token_usage", payload=payload))
 
-    def close(self):
+    def _permission(self, cid, state, callback, request_id, method, params):
+        if method != "session/request_permission":
+            return
+        client = state.get("client")
+        cancelled = state.get("cancelled", False)
+        options = state.get("options") or ConversationOptions()
+        tool_call = params.get("toolCall") or {}
+        available_opts = params.get("options") or []
+
+        if cancelled or not options.tools_enabled or options.collaboration_mode == "plan":
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
+            return
+
+        profile = options.approval_profile
+        if profile == "full_access":
+            opt = next((o for o in available_opts if o.get("kind") == "allow_always"), None)
+            if not opt:
+                opt = next((o for o in available_opts if o.get("kind") == "allow_once"), None)
+            option_id = opt.get("optionId") if opt else "approve"
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "selected", "optionId": option_id}})
+            return
+
+        if profile == "research_readonly":
+            kind = tool_call.get("kind")
+            if kind in ("read", "search"):
+                opt = next((o for o in available_opts if o.get("kind") == "allow_once"), None)
+                if opt and client:
+                    client.respond(request_id, {"outcome": {"outcome": "selected", "optionId": opt.get("optionId")}})
+                    return
+            if client:
+                client.respond(request_id, {"outcome": {"outcome": "cancelled"}})
+            return
+
+        title = tool_call.get("title") or params.get("permission", {}).get("description", "Acesso solicitado")
+        action_id = uuid.uuid4().hex
         with self._lock:
-            active = list(self._active)
-        for cid in active:
-            self.interrupt(cid)
+            self._approvals[action_id] = (client, request_id, available_opts)
+        callback(RuntimeEvent(cid, "approval_requested", title,
+                              payload={"request_id": action_id, "options": available_opts,
+                                       "tool_call": tool_call, "description": title}))
+
+    def resolve_action(self, action_id, approved):
+        self.approve_action(action_id, approved)
+        return True
+
+    def interrupt(self, conversation_id: str) -> None:
+        self.cancel_conversation(conversation_id)
+
+    def approve_action(
+        self,
+        request_id: str,
+        approved: bool,
+        session: bool = False,
+        request: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            pair = self._approvals.pop(request_id, None)
+        if not pair:
+            return
+        client, r_id, available_opts = pair
+        if approved:
+            opt = next((o for o in available_opts if o.get("optionId") == "approve"), None)
+            if not opt:
+                kind_target = "allow_always" if session else "allow_once"
+                opt = next((o for o in available_opts if o.get("kind") == kind_target), None)
+            if not opt and available_opts:
+                opt = available_opts[0]
+            opt_id = opt.get("optionId", "approve") if opt else "approve"
+            client.respond(r_id, {"outcome": {"outcome": "selected", "optionId": opt_id}})
+        else:
+            client.respond(r_id, {"outcome": {"outcome": "cancelled"}})
+
+    def close(self) -> None:
+        with self._lock:
+            for cid in list(self._active.keys()):
+                self.cancel_conversation(cid)
