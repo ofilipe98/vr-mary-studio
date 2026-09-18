@@ -23,6 +23,7 @@ from vrsoft_extractor.mary.antigravity_auth import (
     LoginAttempt,
     AntigravityAuthManager,
 )
+from vrsoft_extractor.mary.providers import ProviderError
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +465,7 @@ class TestRunnerAuthRetry:
             run_id=run_id,
             workspace=tmp_path,
         )
-        with pytest.raises(Exception, match="todos os pesquisadores falharam"):
+        with pytest.raises(ProviderError, match="todos os pesquisadores falharam"):
             runner.execute_fanout(
                 context=context,
                 conversation={"provider": "codex", "model": "gpt-5"},
@@ -507,7 +508,6 @@ class TestRunnerAuthRetry:
 
     def test_transient_error_keeps_retry_policy(self, tmp_path):
         """Ordinary transient ProviderError must still be retried."""
-        from vrsoft_extractor.mary.providers import ProviderError
         from vrsoft_extractor.mary.research_fanout import RESEARCH_ATTEMPTS
 
         calls = []

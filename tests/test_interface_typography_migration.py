@@ -5,7 +5,7 @@ Covers P0 spec: Arial+14 v2 -> Arial+16 v3 (not Segoe UI).
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QSG_RHI_BACKEND", "software")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from pathlib import Path
