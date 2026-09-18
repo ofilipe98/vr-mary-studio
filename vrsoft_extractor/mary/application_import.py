@@ -14,8 +14,16 @@ def validate_preview_fingerprint(
     fingerprint: list[dict[str, Any]],
     *,
     single: bool = False,
+    catalog: ErpReleaseCatalog | None = None,
+    workspace_root: str | Path | None = None,
 ) -> None:
-    """Validate candidate JARs against preview fingerprint using cheap stat() checks."""
+    """Validate candidate JARs against preview fingerprint using cheap stat() checks.
+
+    Directory mode binds the fingerprint to the exact ``relative_path`` set
+    shown in the preview. Any added, removed, renamed or moved JAR invalidates
+    the preview before any expensive re-hash. Size/mtime only fail fast; the
+    SHA-256 calculated during streaming copy remains the final guarantee.
+    """
     candidate = Path(source).resolve(strict=False)
     if single:
         if not candidate.is_file():
@@ -38,6 +46,35 @@ def validate_preview_fingerprint(
         raise ErpReleaseError(f"Pasta de JARs não encontrada: {candidate}")
 
     fp_by_rel = {item["relative_path"]: item for item in fingerprint if "relative_path" in item}
+    # Current discovery with the same semantics as `_source_jars`: recursive
+    # os.walk, followlinks=False and pruning of irrelevant dirs. Identity is
+    # the `relative_path` set, never list index, count or bare file name.
+    if catalog is not None:
+        current_jars = catalog._source_jars(candidate)
+    elif workspace_root is not None:
+        current_jars = ErpReleaseCatalog(workspace_root)._source_jars(candidate)
+    else:
+        import os as _os
+
+        from .erp_releases import _PRUNED_SOURCE_DIRS as _PRUNED
+
+        current_jars = []
+        for root_str, dirs, files in _os.walk(candidate, followlinks=False):
+            dirs[:] = [d for d in dirs if d.casefold() not in _PRUNED]
+            root_path = Path(root_str)
+            for name in files:
+                if name.casefold().endswith(".jar"):
+                    path = root_path / name
+                    if path.is_file():
+                        current_jars.append(path)
+    preview_paths = set(fp_by_rel.keys())
+    current_paths = {
+        path.relative_to(candidate).as_posix() for path in current_jars
+    }
+    if current_paths != preview_paths:
+        raise ErpReleaseError(
+            "Os JARs mudaram após a prévia. Gere uma nova prévia antes de importar."
+        )
     for rel_path, fp in fp_by_rel.items():
         jar_path = candidate / rel_path
         if not jar_path.is_file():

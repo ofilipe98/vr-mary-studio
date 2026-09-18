@@ -175,7 +175,7 @@ Button {
                 text: control.currentItem.label || "Todos os projetos"
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCompact
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter

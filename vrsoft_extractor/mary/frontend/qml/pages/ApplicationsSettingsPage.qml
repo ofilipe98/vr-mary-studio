@@ -527,14 +527,14 @@ Item {
                                                     Text {
                                                         text: "•"
                                                         color: Theme.palette.chatBorder
-                                                        font.pixelSize: Theme.fontSize(9)
+                                                        font.pixelSize: Theme.fontSizeMicro
                                                     }
 
                                                     Text {
                                                         text: "SHA-256 " + (modelData.sha256 ? (modelData.sha256.substring(0, 8) + "…" + modelData.sha256.substring(modelData.sha256.length - 8)) : "")
                                                         color: Theme.palette.subtleText
                                                         font.family: Theme.monospaceFontFamily
-                                                        font.pixelSize: Theme.fontSize(10)
+                                                        font.pixelSize: Theme.fontSizeCaption
                                                     }
 
                                                     Rectangle {
@@ -549,7 +549,7 @@ Item {
                                                             text: previewItemDelegate.hashCopied ? "Copiado!" : "Copiar"
                                                             color: previewItemDelegate.hashCopied ? Theme.palette.success : Theme.palette.mutedText
                                                             font.family: Theme.fontFamily
-                                                            font.pixelSize: Theme.fontSize(10)
+                                                            font.pixelSize: Theme.fontSizeMicro
                                                         }
 
                                                         MouseArea {
@@ -1350,7 +1350,7 @@ Item {
                                             anchors.centerIn: parent
                                             text: "Identificação manual"
                                             color: Theme.palette.subtleText
-                                            font.pixelSize: Theme.fontSize(10)
+                                            font.pixelSize: Theme.fontSizeMicro
                                         }
                                     }
 
@@ -1371,8 +1371,8 @@ Item {
                                                   (modelData.indexState === "failed" ? "Falha" : "Pendente")
                                             color: modelData.indexState === "ready" ? Qt.rgba(0.1, 0.7, 0.1, 1.0) :
                                                    (modelData.indexState === "failed" ? Qt.rgba(0.9, 0.2, 0.2, 1.0) : Theme.palette.warning)
-                                            font.pixelSize: Theme.fontSize(10)
-                                            font.weight: Font.Medium
+                                            font.pixelSize: Theme.fontSizeMicro
+                                            font.weight: Theme.weightMedium
                                         }
                                     }
                                 }
@@ -2049,7 +2049,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 50
+                                        implicitHeight: 56
                                         radius: Theme.radiusSmall
                                         color: Theme.palette.chatBackground
                                         border.width: 1
@@ -2062,14 +2062,14 @@ Item {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.added : 0
                                                 color: Qt.rgba(0.1, 0.7, 0.1, 1.0)
-                                                font.pixelSize: Theme.fontSize(16)
+                                                font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: "Adicionadas"
                                                 color: Theme.palette.subtleText
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeCaption
                                             }
                                         }
                                     }
@@ -2077,7 +2077,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 50
+                                        implicitHeight: 56
                                         radius: Theme.radiusSmall
                                         color: Theme.palette.chatBackground
                                         border.width: 1
@@ -2090,14 +2090,14 @@ Item {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.modified : 0
                                                 color: Theme.palette.brandOrange
-                                                font.pixelSize: Theme.fontSize(16)
+                                                font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: "Modificadas"
                                                 color: Theme.palette.subtleText
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeCaption
                                             }
                                         }
                                     }
@@ -2105,7 +2105,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 50
+                                        implicitHeight: 56
                                         radius: Theme.radiusSmall
                                         color: Theme.palette.chatBackground
                                         border.width: 1
@@ -2118,14 +2118,14 @@ Item {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.removed : 0
                                                 color: Qt.rgba(0.9, 0.2, 0.2, 1.0)
-                                                font.pixelSize: Theme.fontSize(16)
+                                                font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: "Removidas"
                                                 color: Theme.palette.subtleText
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeCaption
                                             }
                                         }
                                     }
@@ -2133,7 +2133,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 50
+                                        implicitHeight: 56
                                         radius: Theme.radiusSmall
                                         color: Theme.palette.chatBackground
                                         border.width: 1
@@ -2146,14 +2146,14 @@ Item {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.unchanged : 0
                                                 color: Theme.palette.text
-                                                font.pixelSize: Theme.fontSize(16)
+                                                font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: "Inalteradas"
                                                 color: Theme.palette.subtleText
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeCaption
                                             }
                                         }
                                     }

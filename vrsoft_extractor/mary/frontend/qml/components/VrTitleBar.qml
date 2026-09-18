@@ -146,7 +146,7 @@ Item {
             objectName: "environmentVersionPill"
             visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
             implicitWidth: stageLabel.implicitWidth + 8
-            implicitHeight: 16
+            implicitHeight: 20
             radius: 4
             color: Theme.palette.accentSoft
 
@@ -156,7 +156,7 @@ Item {
                 text: (typeof frontend !== "undefined" && frontend ? frontend.appVersion : "v0.6.3") + " " + (typeof frontend !== "undefined" && frontend ? frontend.environmentStage : "Dev")
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(9)
+                font.pixelSize: Theme.fontSizeMicro
                 font.weight: Font.Medium
                 renderType: Text.NativeRendering
             }
@@ -165,8 +165,8 @@ Item {
         Rectangle {
             visible: !(typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill")
             implicitWidth: defaultBadge.implicitWidth + 10
-            implicitHeight: 18
-            radius: 9
+            implicitHeight: 20
+            radius: 10
             color: Theme.palette.surfaceRaised
             border.width: 1
             border.color: Theme.palette.border
@@ -177,7 +177,7 @@ Item {
                 text: (typeof frontend !== "undefined" && frontend) ? (frontend.appVersion + " Dev") : "v0.6.3 Dev"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(10)
+                font.pixelSize: Theme.fontSizeMicro
                 font.weight: Font.Medium
                 renderType: Text.NativeRendering
             }

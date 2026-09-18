@@ -1347,7 +1347,12 @@ class CodeAdminDomain:
                 known_hashes = None
                 if preview_fingerprint is not None:
                     from ...application_import import validate_preview_fingerprint
-                    validate_preview_fingerprint(candidate, preview_fingerprint, single=single_jar)
+                    validate_preview_fingerprint(
+                        candidate,
+                        preview_fingerprint,
+                        single=single_jar,
+                        workspace_root=workspace,
+                    )
                     known_hashes = {
                         item["relative_path"]: item["sha256"]
                         for item in preview_fingerprint
@@ -1529,6 +1534,10 @@ class CodeAdminDomain:
                 terminal_event = item
 
         if latest_progress is not None and terminal_event is None:
+            # A late progress arriving after a terminal was already processed
+            # must not resurrect the operation nor overwrite the final status.
+            if not self._release_snapshot_running:
+                return
             stage = str(latest_progress.get("stage") or "")
             current = latest_progress.get("current", 0)
             total = latest_progress.get("total", 0)

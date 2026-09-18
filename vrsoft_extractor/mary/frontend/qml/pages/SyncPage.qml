@@ -31,7 +31,7 @@ Item {
                     text: studio.syncRunning ? "Em andamento" : "Nenhuma execução"
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
                 VrButton { text: "Sincronizar tudo"; variant: "primary"; enabled: !studio.syncRunning; onClicked: studio.runSync("all") }
             }

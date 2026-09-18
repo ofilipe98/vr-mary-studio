@@ -68,7 +68,7 @@ Item {
                     text: entry.subtitle
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     elide: Text.ElideMiddle
                     maximumLineCount: 1
                 }
@@ -578,7 +578,7 @@ Item {
                                         text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"
                                         color: "#FFFFFF"
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(10)
+                                        font.pixelSize: Theme.fontSizeMicro
                                         font.weight: Font.DemiBold
                                     }
 
@@ -1252,7 +1252,7 @@ Item {
                                     text: expertChip.modelData.label
                                     color: Theme.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -1532,7 +1532,7 @@ Item {
                                             text: surfaceTab.modelData.title
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(11)
+                                            font.pixelSize: Theme.fontSizeCompact
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
@@ -1656,7 +1656,7 @@ Item {
                                         text: surfaceChoice.modelData.title.charAt(0)
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(10)
+                                        font.pixelSize: Theme.fontSizeMicro
                                     }
                                 }
                                 HoverHandler { id: surfaceChoiceHover }
@@ -1742,7 +1742,7 @@ Item {
                                     text: "Escolha o que exibir no painel direito."
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     horizontalAlignment: Text.AlignHCenter
                                 }
                                 GridLayout {
@@ -1940,7 +1940,7 @@ Item {
                                         text: fileTreeRow.modelData.name || fileTreeRow.modelData.label
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(11)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         elide: Text.ElideMiddle
                                     }
                                 }
@@ -1969,7 +1969,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
-                            Text { Layout.fillWidth: true; text: root.surfaceFilePath || "Selecione um arquivo para visualizar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideMiddle }
+                            Text { Layout.fillWidth: true; text: root.surfaceFilePath || "Selecione um arquivo para visualizar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideMiddle }
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: root.studioBridge.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
@@ -1991,7 +1991,7 @@ Item {
                                     color: Theme.palette.chatSidebar
                                 }
                                 font.family: "Cascadia Mono"
-                                font.pixelSize: Theme.fontSize(11)
+                                font.pixelSize: Theme.monospaceFontSize(12)
                             }
                         }
                     }
@@ -2029,7 +2029,7 @@ Item {
                                     anchors.margins: 8
                                     spacing: 3
                                     Text { width: parent.width; text: contextChoice.modelData.title + " · " + contextChoice.modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                    Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); lineHeight: Theme.denseLineHeight; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
+                                    Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; lineHeight: Theme.denseLineHeight; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
                                 HoverHandler { id: contextHover }
                                 TapHandler { onTapped: root.insertReference(contextChoice.modelData.reference) }
@@ -2097,7 +2097,7 @@ Item {
                                         Layout.fillWidth: true
                                         spacing: 2
                                         Text { Layout.fillWidth: true; text: agentChoice.modelData.label; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
-                                        Text { Layout.fillWidth: true; text: agentChoice.modelData.model + " · " + agentChoice.modelData.effort + " · " + agentChoice.modelData.statusLabel; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                                        Text { Layout.fillWidth: true; text: agentChoice.modelData.model + " · " + agentChoice.modelData.effort + " · " + agentChoice.modelData.statusLabel; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; elide: Text.ElideRight }
                                     }
                                 }
                                 HoverHandler { id: agentHover }
@@ -2195,7 +2195,7 @@ Item {
                         text: assistItem.modelData.description || ""
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
+                        font.pixelSize: Theme.fontSizeCaption
                         elide: Text.ElideRight
                     }
                 }
@@ -2294,7 +2294,7 @@ Item {
                 text: "Projetos"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(10)
+                font.pixelSize: Theme.fontSizeCaption
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignLeft
             }
@@ -2360,7 +2360,7 @@ Item {
                                     : "Espaço gerenciado VR"
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(10)
+                                font.pixelSize: Theme.fontSizeCaption
                                 horizontalAlignment: Text.AlignLeft
                                 elide: Text.ElideMiddle
                             }
@@ -2369,7 +2369,7 @@ Item {
                             text: newProjectItem.modelData.shortcut
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(10)
+                            font.pixelSize: Theme.fontSizeCaption
                         }
                     }
                     HoverHandler {
@@ -2437,20 +2437,20 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: 38
                 color: Theme.palette.chatComposer
                 border.width: 1
                 border.color: Theme.palette.chatDivider
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 10
-                    Text { text: "↑ ↓  Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
-                    Text { text: "Enter  Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
-                    Text { text: "Backspace  Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 12
+                    Text { text: "↑ ↓  Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
+                    Text { text: "Enter  Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
+                    Text { text: "Backspace  Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                     Item { Layout.fillWidth: true }
-                    Text { text: "Esc  Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Esc  Fechar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                 }
             }
         }
@@ -2516,7 +2516,7 @@ Item {
                 text: "Sources"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
                 font.weight: Font.DemiBold
             }
             ListView {
@@ -2568,7 +2568,7 @@ Item {
                                 text: sourceRow.modelData.description
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(10)
+                                font.pixelSize: Theme.fontSizeCaption
                                 elide: Text.ElideRight
                             }
                         }
@@ -2586,7 +2586,7 @@ Item {
                                 text: sourceRow.modelData.badge
                                 color: Theme.palette.warning
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(9)
+                                font.pixelSize: Theme.fontSizeMicro
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -2624,7 +2624,8 @@ Item {
                     text: "↑↓  Navegar     Enter  Selecionar     Esc  Fechar"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSizeMicro
+                    font.weight: Theme.weightMedium
                 }
             }
             }

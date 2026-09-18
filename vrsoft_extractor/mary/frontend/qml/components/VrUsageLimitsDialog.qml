@@ -48,7 +48,7 @@ Dialog {
                 text: root.accountsList.length ? root.accountsList.length + (root.accountsList.length === 1 ? " account" : " accounts") : ""
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
                 elide: Text.ElideRight
             }
             VrIconButton {
@@ -241,7 +241,7 @@ Dialog {
                                     text: windowRow.modelData.resetInText || ""
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     elide: Text.ElideRight
                                 }
                             }
@@ -255,7 +255,7 @@ Dialog {
                 text: "API Credits: " + String(root.snapshot && root.snapshot.credits ? root.snapshot.credits.balance ?? "0" : "0")
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
             }
             Text {
                 Layout.fillWidth: true

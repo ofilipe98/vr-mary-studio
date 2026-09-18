@@ -390,3 +390,528 @@ def test_scenario_16_source_jars_pruning_and_nested_discovery(tmp_path):
     found_names = [f.name for f in found]
     assert set(found_names) == {"nested.jar", "root.jar"}
     assert "ignored.jar" not in found_names
+
+
+def _wait_preview_ready(bridge, timeout=10.0):
+    wait_until(
+        lambda: bridge.applicationImportPreview.get("state") in ("ready", "error"),
+        timeout=timeout,
+    )
+
+
+def _wait_snapshot_idle(bridge, timeout=15.0):
+    wait_until(lambda: not bridge.releaseSnapshotRunning, timeout=timeout)
+
+
+def _catalog_package_ids(bridge):
+    try:
+        return {
+            str(item.get("package_id") or item.get("packageId") or "")
+            for item in ErpReleaseCatalog(bridge._settings.root).apps_store.load_catalog().get(
+                "packages", {}
+            )
+        } | {
+            str(item.get("packageId") or "")
+            for item in bridge._packages_catalog or []
+        }
+    except Exception:
+        return set()
+
+
+# Scenario 17 — novo JAR após preview invalida confirmação (bridge real)
+@pytest.mark.qml
+def test_scenario_17_added_jar_after_preview_invalidates_confirm(bridge, tmp_path):
+    source = tmp_path / "source_added"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    assert "mudaram após a prévia" in bridge.releaseSnapshotStatus
+    # Snapshot não publicado: nenhum pacote novo no catálogo final.
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    catalog = ErpReleaseCatalog(bridge._settings.root)
+    assert catalog.list_packages() == []
+
+
+# Scenario 18 — JAR removido após preview invalida confirmação (bridge real)
+@pytest.mark.qml
+def test_scenario_18_removed_jar_after_preview_invalidates_confirm(bridge, tmp_path):
+    source = tmp_path / "source_removed"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    (source / "vrpdv.jar").unlink()
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    assert "mudaram após a prévia" in bridge.releaseSnapshotStatus
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    assert ErpReleaseCatalog(bridge._settings.root).list_packages() == []
+
+
+# Scenario 19 — rename/path change invalida confirmação (bridge real + helper)
+def test_scenario_19_rename_invalidates_fingerprint(tmp_path):
+    source = tmp_path / "source_rename"
+    source.mkdir()
+    jar = source / "vrmaster.jar"
+    _vr_jar(jar, (1, 0, 0, 0))
+
+    preview = preview_application_import(tmp_path / "ws", source, single=False)
+
+    renamed = source / "vrmaster-renamed.jar"
+    jar.rename(renamed)
+    # Mesmo conteúdo/tamanho; mtime preservado pelo rename na maioria dos FS.
+    # Mesmo que o mtime mude, o relative_path já deve invalidar.
+    with pytest.raises(ErpReleaseError, match="mudaram após a prévia"):
+        validate_preview_fingerprint(source, preview["fingerprint"], single=False)
+
+
+@pytest.mark.qml
+def test_scenario_19b_subdir_move_invalidates_confirm_via_bridge(bridge, tmp_path):
+    source = tmp_path / "source_moved"
+    (source / "master").mkdir(parents=True)
+    _vr_jar(source / "master" / "vrmaster.jar", (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    (source / "outro").mkdir(parents=True)
+    (source / "master" / "vrmaster.jar").rename(source / "outro" / "vrmaster.jar")
+    try:
+        (source / "master").rmdir()
+    except OSError:
+        pass
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    assert "mudaram após a prévia" in bridge.releaseSnapshotStatus
+    assert ErpReleaseCatalog(bridge._settings.root).list_packages() == []
+
+
+# Scenario 20 — nenhum segundo preview na confirmação (spy explícito)
+@pytest.mark.qml
+def test_scenario_20_confirm_does_not_call_preview_again(bridge, tmp_path, monkeypatch):
+    import vrsoft_extractor.mary.application_import as app_import_mod
+
+    source = tmp_path / "source_nosecond"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    original = app_import_mod.preview_application_import
+    calls: list[tuple] = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(app_import_mod, "preview_application_import", spy)
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+
+    assert calls == []
+    # Confirmação legítima deve ter concluído o snapshot parcial.
+    assert "Não foi possível" not in bridge.releaseSnapshotStatus
+
+
+# Scenario 21 — bytes alterados com mesmo size+mtime falham no SHA final (bridge)
+@pytest.mark.qml
+def test_scenario_21_sha_catches_same_size_mtime_tamper_via_bridge(bridge, tmp_path):
+    source = tmp_path / "source_sha"
+    source.mkdir()
+    jar_file = source / "vrmaster.jar"
+    _vr_jar(jar_file, (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    st = jar_file.stat()
+    orig_size = st.st_size
+    orig_mtime_ns = st.st_mtime_ns
+    data = bytearray(jar_file.read_bytes())
+    data[10] = (data[10] + 1) % 256
+    jar_file.write_bytes(bytes(data))
+    assert jar_file.stat().st_size == orig_size
+    os.utime(jar_file, ns=(orig_mtime_ns, orig_mtime_ns))
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    assert "SHA-256 divergente" in bridge.releaseSnapshotStatus
+    catalog = ErpReleaseCatalog(bridge._settings.root)
+    assert catalog.list_packages() == []
+    staging = list(catalog.paths.source_releases.glob(".*snapshot-*"))
+    assert staging == []
+
+
+def test_scenario_21b_sha_same_size_mtime_staging_cleaned_and_catalog_empty(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    jar_file = source / "VRApp.jar"
+    _vr_jar(jar_file, (1, 0, 0, 0))
+    st = jar_file.stat()
+    orig_size = st.st_size
+    orig_mtime_ns = st.st_mtime_ns
+
+    preview = preview_application_import(tmp_path / "ws", source, single=False)
+    known_hashes = {
+        item["relative_path"]: item["sha256"] for item in preview["fingerprint"]
+    }
+
+    data = bytearray(jar_file.read_bytes())
+    data[10] = (data[10] + 1) % 256
+    jar_file.write_bytes(bytes(data))
+    assert jar_file.stat().st_size == orig_size
+    os.utime(jar_file, ns=(orig_mtime_ns, orig_mtime_ns))
+
+    # Metadata validation pode passar; SHA durante copy deve falhar.
+    validate_preview_fingerprint(source, preview["fingerprint"], single=False)
+
+    catalog = ErpReleaseCatalog(tmp_path / "ws", expected_jar_count=1)
+    with pytest.raises(ErpReleaseError, match="SHA-256 divergente no snapshot"):
+        catalog.snapshot_detected_release(
+            source,
+            release_id="test-rel-sha",
+            known_hashes=known_hashes,
+        )
+    assert list(catalog.paths.source_releases.glob(".*snapshot-*")) == []
+    assert not catalog.paths.manifest_for("test-rel-sha").is_file()
+    assert catalog.list_packages() == []
+
+
+# Scenario 22 — progresso monotônico por fase
+def test_scenario_22_progress_monotonic_per_stage(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _vr_jar(source / "app1.jar", (1, 0, 0, 0))
+    _vr_jar(source / "app2.jar", (2, 0, 0, 0))
+    _vr_jar(source / "app3.jar", (3, 0, 0, 0))
+    total_jars = 3
+
+    preview_events: list[dict] = []
+    preview_application_import(
+        tmp_path / "ws", source, single=False, progress_callback=preview_events.append
+    )
+    snapshot_events: list[dict] = []
+    catalog = ErpReleaseCatalog(tmp_path / "ws", expected_jar_count=3)
+    catalog.snapshot_detected_release(
+        source, release_id="rel-mono", progress_callback=snapshot_events.append
+    )
+    assert preview_events, "esperava eventos de progresso na preview"
+    assert snapshot_events, "esperava eventos de progresso no snapshot"
+
+    def _group(events: list[dict]) -> dict[str, list[dict]]:
+        grouped: dict[str, list[dict]] = {}
+        for ev in events:
+            if ev.get("event") != "progress":
+                continue
+            assert "stage" in ev and "current" in ev and "total" in ev and "file" in ev
+            grouped.setdefault(str(ev["stage"]), []).append(ev)
+        return grouped
+
+    def _assert_monotonic(grouped: dict[str, list[dict]], stages: tuple[str, ...]) -> None:
+        for expected in stages:
+            assert expected in grouped, f"fase ausente: {expected}"
+            staged = grouped[expected]
+            assert len(staged) == total_jars, f"fase {expected}: {len(staged)} != {total_jars}"
+            seen: list[int] = []
+            for ev in staged:
+                current = int(ev["current"])
+                total = int(ev["total"])
+                assert total == total_jars
+                assert 1 <= current <= total
+                assert str(ev["file"]).endswith(".jar")
+                seen.append(current)
+            assert seen == sorted(seen), f"fase {expected} não monotônica: {seen}"
+            assert seen == list(range(1, total_jars + 1))
+
+    _assert_monotonic(_group(preview_events), ("detect", "hash"))
+    _assert_monotonic(_group(snapshot_events), ("detect", "copy", "inventory"))
+
+
+# Scenario 23 — polling: terminal não é perdido e progress atrasado não sobrescreve
+@pytest.mark.qml
+def test_scenario_23_poll_progress_then_terminal(bridge):
+    bridge._release_snapshot_running = True
+    bridge._release_snapshot_poll_timer.start()
+    for current in (1, 2, 3):
+        bridge._release_snapshot_results.put({
+            "operation": "snapshot",
+            "event": "progress",
+            "stage": "copy",
+            "current": current,
+            "total": 3,
+            "file": f"app{current}.jar",
+        })
+        bridge._poll_release_snapshot()
+        assert bridge.releaseSnapshotRunning is True
+        assert bridge._release_snapshot_poll_timer.isActive()
+    assert "Copiando JARs — 3/3" in bridge.releaseSnapshotStatus
+
+    bridge._release_snapshot_results.put({
+        "ok": False,
+        "release_id": "rel-x",
+        "error": "falha terminal de teste",
+    })
+    bridge._poll_release_snapshot()
+    assert bridge.releaseSnapshotRunning is False
+    assert not bridge._release_snapshot_poll_timer.isActive()
+    assert "falha terminal de teste" in bridge.releaseSnapshotStatus
+
+
+@pytest.mark.qml
+def test_scenario_23b_late_progress_does_not_overwrite_terminal(bridge):
+    bridge._release_snapshot_running = True
+    bridge._release_snapshot_poll_timer.start()
+    bridge._release_snapshot_results.put({
+        "operation": "snapshot",
+        "event": "progress",
+        "stage": "copy",
+        "current": 1,
+        "total": 2,
+        "file": "app1.jar",
+    })
+    bridge._poll_release_snapshot()
+    bridge._release_snapshot_results.put({
+        "ok": True,
+        "release_id": "rel-final",
+        "jar_count": 2,
+        "package_jar_count": 2,
+        "base_release_id": "",
+        "analysis_scope": "partial_release",
+        "expected_jar_count": 46,
+        "updated_applications": [],
+    })
+    bridge._poll_release_snapshot()
+    assert bridge.releaseSnapshotRunning is False
+    final_status = bridge.releaseSnapshotStatus
+    assert "rel-final" in final_status
+
+    # Progress atrasado após terminal deve ser ignorado.
+    bridge._release_snapshot_results.put({
+        "operation": "snapshot",
+        "event": "progress",
+        "stage": "copy",
+        "current": 2,
+        "total": 2,
+        "file": "late.jar",
+    })
+    bridge._poll_release_snapshot()
+    assert bridge.releaseSnapshotRunning is False
+    assert not bridge._release_snapshot_poll_timer.isActive()
+    assert bridge.releaseSnapshotStatus == final_status
+
+
+# Scenario 24 — race real de stale worker na contagem de JARs
+@pytest.mark.qml
+def test_scenario_24_real_stale_count_race_ignored(bridge, tmp_path, monkeypatch):
+    import vrsoft_extractor.mary.erp_releases as erp_mod
+
+    dir_a = tmp_path / "jars_a"
+    dir_a.mkdir()
+    _vr_jar(dir_a / "only_a.jar", (1, 0, 0, 0))
+    dir_b = tmp_path / "jars_b"
+    dir_b.mkdir()
+    _vr_jar(dir_b / "b1.jar", (1, 0, 0, 0))
+    _vr_jar(dir_b / "b2.jar", (2, 0, 0, 0))
+
+    bridge._preferences.setValue(
+        bridge._workspace_research_preference("custom_jar_source_dir"), str(dir_a)
+    )
+    bridge._preferences.sync()
+
+    original_count = erp_mod.ErpReleaseCatalog.count_source_jars
+    block = threading.Event()
+    release = threading.Event()
+    call_index = {"n": 0}
+
+    def blocking_count(self, source_dir):
+        call_index["n"] += 1
+        if call_index["n"] == 1:
+            block.set()
+            assert release.wait(timeout=10), "worker A não foi liberado"
+        return original_count(self, source_dir)
+
+    monkeypatch.setattr(erp_mod.ErpReleaseCatalog, "count_source_jars", blocking_count)
+
+    bridge._refresh_code_analysis_jar_sources()
+    gen_a = bridge._jar_sources_generation
+    assert block.wait(timeout=10), "worker A não iniciou"
+
+    # Config muda para B enquanto A está bloqueado; monkeypatch removido p/ B ser rápido.
+    monkeypatch.undo()
+    bridge._preferences.setValue(
+        bridge._workspace_research_preference("custom_jar_source_dir"), str(dir_b)
+    )
+    bridge._preferences.sync()
+    bridge._refresh_code_analysis_jar_sources()
+    gen_b = bridge._jar_sources_generation
+    assert gen_b == gen_a + 1
+
+    wait_until(lambda: any(
+        item["value"] == codeadmin.ERP_JAR_SOURCE_CUSTOM and item["jarCount"] == 2
+        for item in bridge.codeAnalysisJarSourceItems
+    ), timeout=10)
+    workspace = bridge._settings.root
+
+    # Libera A; resultado antigo (gen A, workspace A) deve ser ignorado.
+    release.set()
+    # Dá tempo p/ A terminar e tentar entregar resultado stale.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.01)
+    bridge._poll_release_snapshot()
+    QApplication.processEvents()
+
+    custom = next(
+        item for item in bridge.codeAnalysisJarSourceItems
+        if item["value"] == codeadmin.ERP_JAR_SOURCE_CUSTOM
+    )
+    assert custom["jarCount"] == 2
+    assert str(dir_b.resolve()) in custom["path"]
+    assert bridge._jar_sources_generation == gen_b
+    assert workspace == bridge._settings.root
+
+
+# Scenario 25 — identidade da contagem usa workspace/path/generation, não índice
+@pytest.mark.qml
+def test_scenario_25_old_path_result_does_not_update_new_path(bridge, tmp_path):
+    old_dir = tmp_path / "old_jars"
+    old_dir.mkdir()
+    _vr_jar(old_dir / "old.jar", (1, 0, 0, 0))
+    new_dir = tmp_path / "new_jars"
+    new_dir.mkdir()
+    _vr_jar(new_dir / "new.jar", (1, 0, 0, 0))
+
+    bridge._preferences.setValue(
+        bridge._workspace_research_preference("custom_jar_source_dir"), str(old_dir)
+    )
+    bridge._preferences.sync()
+    bridge._refresh_code_analysis_jar_sources()
+    wait_until(lambda: any(
+        item["value"] == codeadmin.ERP_JAR_SOURCE_CUSTOM and item["jarCount"] == 1
+        for item in bridge.codeAnalysisJarSourceItems
+    ))
+
+    bridge._preferences.setValue(
+        bridge._workspace_research_preference("custom_jar_source_dir"), str(new_dir)
+    )
+    bridge._preferences.sync()
+    bridge._refresh_code_analysis_jar_sources()
+    current_gen = bridge._jar_sources_generation
+    wait_until(lambda: any(
+        item["value"] == codeadmin.ERP_JAR_SOURCE_CUSTOM
+        and str(new_dir.resolve()) in item["path"]
+        for item in bridge.codeAnalysisJarSourceItems
+    ))
+
+    # Resultado antigo referencia o path antigo com contagem absurda.
+    stale = (current_gen - 1, bridge._settings.root, {str(old_dir.resolve()): 999})
+    bridge._on_jar_sources_counted(stale)
+    custom = next(
+        item for item in bridge.codeAnalysisJarSourceItems
+        if item["value"] == codeadmin.ERP_JAR_SOURCE_CUSTOM
+    )
+    assert str(new_dir.resolve()) in custom["path"]
+    assert custom["jarCount"] != 999
+
+
+# Scenario 26 — partial release inalterado não é rejeitado pelo set comparison
+def test_scenario_26_partial_release_unchanged_passes(tmp_path):
+    source = tmp_path / "partial"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    preview = preview_application_import(tmp_path / "ws", source, single=False)
+    validate_preview_fingerprint(source, preview["fingerprint"], single=False)
+
+    catalog = ErpReleaseCatalog(tmp_path / "ws", expected_jar_count=DEFAULT_EXPECTED_JAR_COUNT)
+    manifest = catalog.snapshot_detected_release(source, release_id="partial-ok")
+    assert manifest["analysis_scope"] == "partial_release"
+    assert manifest["jar_count"] == 2
+
+
+# Scenario 27 — full release 46 JARs funciona quando nada mudou
+def test_scenario_27_full_release_46_jars(tmp_path):
+    source = tmp_path / "full"
+    source.mkdir()
+    for i in range(DEFAULT_EXPECTED_JAR_COUNT):
+        _vr_jar(source / f"vr_app_{i:02d}.jar", (1, 0, 0, i))
+
+    preview = preview_application_import(tmp_path / "ws", source, single=False)
+    assert len(preview["fingerprint"]) == DEFAULT_EXPECTED_JAR_COUNT
+    validate_preview_fingerprint(source, preview["fingerprint"], single=False)
+
+    catalog = ErpReleaseCatalog(tmp_path / "ws", expected_jar_count=DEFAULT_EXPECTED_JAR_COUNT)
+    known = {item["relative_path"]: item["sha256"] for item in preview["fingerprint"]}
+    manifest = catalog.snapshot_detected_release(
+        source, release_id="full-ok", known_hashes=known
+    )
+    assert manifest["jar_count"] == DEFAULT_EXPECTED_JAR_COUNT
+    assert manifest["analysis_scope"] == "full_release"
+
+
+# Scenario 28 — single JAR preserva todos os casos
+def test_scenario_28_single_jar_cases(tmp_path):
+    ws = tmp_path / "ws"
+    jar = tmp_path / "single.jar"
+    _vr_jar(jar, (1, 0, 0, 0))
+
+    preview = preview_application_import(ws, str(jar), single=True)
+    validate_preview_fingerprint(str(jar), preview["fingerprint"], single=True)
+
+    catalog = ErpReleaseCatalog(ws, expected_jar_count=1)
+    manifest = catalog.snapshot_detected_release(str(jar), release_id="single-ok")
+    assert manifest["analysis_scope"] == "single_jar"
+
+    with pytest.raises(ErpReleaseError, match="Arquivo JAR não encontrado"):
+        validate_preview_fingerprint(str(tmp_path / "missing.jar"), preview["fingerprint"], single=True)
+
+    txt = tmp_path / "notajar.txt"
+    txt.write_text("x", encoding="utf-8")
+    with pytest.raises(ErpReleaseError):
+        preview_application_import(ws, str(txt), single=True)
+
+    with jar.open("r+b") as handle:
+        handle.seek(0)
+        handle.write(b"ZZ")
+    with pytest.raises(ErpReleaseError, match="mudou após a prévia"):
+        validate_preview_fingerprint(str(jar), preview["fingerprint"], single=True)
+
+    # Restaura bytes originais p/ testar tamper com size+mtime preservados.
+    _vr_jar(jar, (1, 0, 0, 0))
+    preview2 = preview_application_import(ws, str(jar), single=True)
+    known2 = {item["relative_path"]: item["sha256"] for item in preview2["fingerprint"]}
+    st2 = jar.stat()
+    size2 = st2.st_size
+    mtime2 = st2.st_mtime_ns
+    data = bytearray(jar.read_bytes())
+    data[5] = (data[5] + 7) % 256
+    jar.write_bytes(bytes(data))
+    assert jar.stat().st_size == size2
+    os.utime(jar, ns=(mtime2, mtime2))
+    validate_preview_fingerprint(str(jar), preview2["fingerprint"], single=True)
+    catalog2 = ErpReleaseCatalog(tmp_path / "ws2", expected_jar_count=1)
+    with pytest.raises(ErpReleaseError, match="SHA-256 divergente"):
+        catalog2.snapshot_detected_release(str(jar), release_id="single-tamper", known_hashes=known2)
+

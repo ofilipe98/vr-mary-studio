@@ -247,7 +247,7 @@ Popup {
                                             anchors.centerIn: parent
                                             text: "Ação"
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(11)
+                                            font.pixelSize: Theme.fontSizeCaption
                                             font.weight: Font.DemiBold
                                             color: "#FFFFFF"
                                         }
@@ -265,7 +265,7 @@ Popup {
                                             anchors.centerIn: parent
                                             text: "Secundário"
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(11)
+                                            font.pixelSize: Theme.fontSizeCaption
                                             color: modal.colorText
                                         }
                                     }

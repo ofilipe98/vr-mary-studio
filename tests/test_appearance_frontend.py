@@ -205,5 +205,5 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         QTest.qWait(20)
         assert window.property("font").family() == "Arial"
         assert window.property("font").pixelSize() == 24
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 22
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
         assert not warnings

@@ -289,7 +289,7 @@ Button {
                                     text: control.legacyItems.length + (control.legacyItems.length === 1 ? " modelo" : " modelos")
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                             }
                             VrLineIcon {
@@ -353,7 +353,7 @@ Button {
                                     text: modelData.providerLabel || modelData.provider || ""
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     elide: Text.ElideRight
                                 }
                             }
@@ -368,7 +368,7 @@ Button {
                                     text: "Ctrl+" + (modelRow.sourceIndex + 1)
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(9)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
                             }
                             VrIconButton {

@@ -358,7 +358,7 @@ Item {
                         textRole: "label"
                         currentIndex: 0
                     }
-                    Text { text: control.threadLabel(); color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: control.threadLabel(); color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                 }
             }
 

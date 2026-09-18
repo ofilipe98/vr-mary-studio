@@ -147,14 +147,14 @@ Button {
                     text: "Context Window"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
-                    font.weight: Font.DemiBold
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.weight: Theme.weightMedium
                 }
                 Text {
                     text: control.usageLabel
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
             }
 
@@ -174,13 +174,13 @@ Button {
                     text: "Total processado"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
                 Text {
                     text: control.totalLabel
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
             }
 
@@ -189,7 +189,7 @@ Button {
                 text: control.note
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(10)
+                font.pixelSize: Theme.fontSizeMicro
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
                 elide: Text.ElideRight

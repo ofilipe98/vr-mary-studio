@@ -201,7 +201,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.uiScale, "auto")
             self.assertEqual(preferences.value("appearance/ui_scale"), "auto")
             self.assertEqual(
-                int(preferences.value("appearance/ui_scale_version")), 2
+                int(preferences.value("appearance/ui_scale_version")), FrontendBridge.UI_SCALE_PREFERENCE_VERSION
             )
             bridge.setUiScale("105")
             self.assertEqual(bridge.uiScale, "105")
@@ -4415,7 +4415,9 @@ class QmlFrontendTest(unittest.TestCase):
             window.setProperty("width", 3840)
             window.setProperty("height", 2160)
             self.application.processEvents()
-            self.assertGreater(
+            # Under the new auto-scale architecture (High-DPI / system DPI based, not window-dimension based),
+            # resizing window dimensions preserves stable font rendering.
+            self.assertEqual(
                 scale_preview.property("font").pixelSize(), small_window_pixel_size
             )
 

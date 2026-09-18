@@ -404,7 +404,7 @@ Popup {
                     text: "One or two characters. Leave empty to use the project initials."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }

@@ -23,7 +23,7 @@ ColumnLayout {
             title: "Fonte da interface"; description: "Todo o texto fora dos blocos de código e do terminal."
             settingKey: "interfaceFont"; family: frontend.interfaceFontFamily; size: frontend.interfaceFontSize
             minSize: 11; maxSize: 22
-            changed: family !== "Segoe UI" || size !== 14
+            changed: family !== "Segoe UI" || size !== 16
             onTypographySelected: (family,size) => frontend.setInterfaceTypography(family,size)
             PromptFontPreview { visible: !frontend.typographyAdvanced }
         }

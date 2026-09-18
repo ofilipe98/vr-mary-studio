@@ -49,10 +49,10 @@ Item {
                 text: "VR NORTE"
                 color: root.primaryColor
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(16)
+                font.pixelSize: Theme.headingSize
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.05
-                renderType: Text.NativeRendering
+                renderType: Theme.textRenderType
             }
             Row {
                 spacing: 6
@@ -60,10 +60,10 @@ Item {
                     text: "STUDIO"
                     color: Theme.palette.brandYellow
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(9)
+                    font.pixelSize: Theme.fontSizeMicro
                     font.weight: Font.DemiBold
                     font.letterSpacing: 1.7
-                    renderType: Text.NativeRendering
+                    renderType: Theme.textRenderType
                 }
                 Rectangle {
                     objectName: "environmentVersionPill"
@@ -73,8 +73,8 @@ Item {
                     Text {
                         id: stageLabel; anchors.centerIn: parent
                         text: frontend.appVersion + " " + frontend.environmentStage
-                        color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: 9
-                        renderType: Text.NativeRendering
+                        color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro
+                        renderType: Theme.textRenderType
                     }
                 }
             }

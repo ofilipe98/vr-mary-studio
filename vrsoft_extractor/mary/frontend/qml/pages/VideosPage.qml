@@ -104,7 +104,7 @@ Item {
                     onAccepted: root.runFilter()
                 }
                 VrButton { text: (root.filtersVisible ? "▾ " : "▸ ") + "Filtros"; onClicked: root.filtersVisible = !root.filtersVisible }
-                Text { text: videoList.count + " itens"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
+                Text { text: videoList.count + " itens"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                 VrButton { text: "Inventariar e baixar"; variant: "primary"; onClicked: studio.runVideoAction("run") }
             }
         }

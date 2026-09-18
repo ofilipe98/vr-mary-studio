@@ -141,7 +141,7 @@ Button {
                                 text: modelData.description || ""
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(10)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.WordWrap
                             }
                         }
