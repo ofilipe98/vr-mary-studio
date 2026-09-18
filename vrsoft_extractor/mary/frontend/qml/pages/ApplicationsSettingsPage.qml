@@ -296,7 +296,7 @@ Item {
                                     text: importPreviewCard.totalCount + " componentes"
                                     color: Theme.palette.headingText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -315,7 +315,7 @@ Item {
                                     text: importPreviewCard.newAppsCount + " novos aplicativos"
                                     color: Theme.palette.success
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -334,7 +334,7 @@ Item {
                                     text: importPreviewCard.depsCount + " dependências"
                                     color: "#3B82F6"
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -353,7 +353,7 @@ Item {
                                     text: importPreviewCard.updateCount + " atualizações / variantes"
                                     color: Theme.palette.warning
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -372,7 +372,7 @@ Item {
                                     text: importPreviewCard.existingCount + " já existentes"
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
                             }
                         }
@@ -502,7 +502,7 @@ Item {
                                                             text: modelData.version
                                                             color: Theme.palette.brandOrange
                                                             font.family: Theme.monospaceFontFamily
-                                                            font.pixelSize: Theme.fontSize(11)
+                                                            font.pixelSize: Theme.fontSizeMicro
                                                             font.weight: Font.Medium
                                                         }
                                                     }
@@ -519,7 +519,7 @@ Item {
                                                         text: modelData.relative_path
                                                         color: Theme.palette.mutedText
                                                         font.family: Theme.fontFamily
-                                                        font.pixelSize: Theme.fontSize(11)
+                                                        font.pixelSize: Theme.fontSizeMicro
                                                         elide: Text.ElideMiddle
                                                         Layout.maximumWidth: 220
                                                     }
@@ -594,7 +594,7 @@ Item {
                                                          : (previewItemDelegate.isUpdate ? Theme.palette.warning
                                                          : Theme.palette.mutedText))
                                                     font.family: Theme.fontFamily
-                                                    font.pixelSize: Theme.fontSize(11)
+                                                    font.pixelSize: Theme.fontSizeMicro
                                                     font.weight: Font.DemiBold
                                                 }
                                             }
@@ -616,7 +616,7 @@ Item {
                                 text: importPreviewCard.getFilteredRows().length + " de " + importPreviewCard.totalCount + " componentes exibidos"
                                 color: Theme.palette.subtleText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(11)
+                                font.pixelSize: Theme.fontSizeMicro
                             }
 
                             VrButton {
@@ -1162,7 +1162,7 @@ Item {
                             text: chat.codeProcessingStatus
                             color: Theme.palette.subtleText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(11)
+                            font.pixelSize: Theme.fontSizeMicro
                             elide: Text.ElideRight
                         }
 
@@ -1236,7 +1236,7 @@ Item {
                                           " · Composição: " + (modelData.composition ? modelData.composition.length : 0) + " aplicativos"
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
                             }
 
@@ -1724,7 +1724,7 @@ Item {
                                     wrapMode: Text.WrapAnywhere
                                     text: chat.codeProcessingCurrentJar ? ("JAR atual: " + chat.codeProcessingCurrentJar) : ""
                                     color: Theme.palette.mutedText
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
 
                                 Text {
@@ -1734,7 +1734,7 @@ Item {
                                     wrapMode: Text.Wrap
                                     text: chat.codeProcessingTelemetrySummary
                                     color: Theme.palette.subtleText
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
 
                                 Text {
@@ -1744,7 +1744,7 @@ Item {
                                     wrapMode: Text.Wrap
                                     text: chat.codeProcessingEtaSummary
                                     color: Theme.palette.subtleText
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
                             }
 
@@ -1888,7 +1888,7 @@ Item {
                                     wrapMode: Text.Wrap
                                     text: "Bancos compartilhados: " + (chat.codeProcessingCapacitySummary || "Integridade OK")
                                     color: Theme.palette.subtleText
-                                    font.pixelSize: Theme.fontSize(11)
+                                    font.pixelSize: Theme.fontSizeMicro
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                 }
@@ -2035,7 +2035,7 @@ Item {
                                             Layout.minimumWidth: 0
                                             text: chat.versionComparisonResult.pendingNote || ""
                                             color: Theme.palette.warning
-                                            font.pixelSize: Theme.fontSize(11)
+                                            font.pixelSize: Theme.fontSizeMicro
                                             wrapMode: Text.WordWrap
                                         }
                                     }
@@ -2438,7 +2438,7 @@ Item {
                             : "Apenas desvincula o pacote do catálogo. Os arquivos descompilados e índices existentes são mantidos no disco."
                         color: unlinkDeleteDataCheckBox.checked ? Theme.palette.danger : Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(11)
+                        font.pixelSize: Theme.fontSizeMicro
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -2687,7 +2687,7 @@ Item {
                         text: chat.codeProcessingHardwareSummary || "Carregando perfil de hardware..."
                         color: Theme.palette.subtleText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(11)
+                        font.pixelSize: Theme.fontSizeMicro
                         wrapMode: Text.WordWrap
                     }
                 }

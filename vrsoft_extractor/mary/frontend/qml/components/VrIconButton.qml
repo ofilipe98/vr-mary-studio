@@ -12,8 +12,8 @@ Button {
     property color foreground: Theme.palette.text
     property real iconSize: Theme.iconSize
 
-    implicitWidth: Theme.controlHeight
-    implicitHeight: Theme.controlHeight
+    implicitWidth: Theme.iconButtonNormal
+    implicitHeight: Theme.iconButtonNormal
     padding: 0
     focusPolicy: Qt.StrongFocus
     Accessible.name: ToolTip.text || text || iconKind || symbol

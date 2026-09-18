@@ -33,6 +33,7 @@ ColumnLayout {
         font.family: Theme.fontFamily
         font.pixelSize: Theme.headingSize
         font.weight: Font.DemiBold
+        lineHeight: Theme.headingLineHeight
         horizontalAlignment: Text.AlignHCenter
     }
     Text {
@@ -42,6 +43,7 @@ ColumnLayout {
         font.family: Theme.fontFamily
         font.pixelSize: Theme.bodySize
         wrapMode: Text.WordWrap
+        lineHeight: Theme.bodyLineHeight
         horizontalAlignment: Text.AlignHCenter
     }
     VrButton {

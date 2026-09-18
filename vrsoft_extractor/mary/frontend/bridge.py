@@ -146,8 +146,17 @@ class FrontendBridge(QObject):
             self._preferences.setValue("appearance/ui_scale", self._ui_scale)
             old_size = self._preferences.value("appearance/interface_font_size", None)
             if old_size in (14, "14", None):
+                old_family = self._preferences.value(
+                    "appearance/interface_font_family", None
+                )
+                family = str(old_family).strip() if old_family else "Segoe UI"
+                if not family:
+                    family = "Segoe UI"
+                    self._preferences.setValue(
+                        "appearance/interface_font_family", family
+                    )
                 self._preferences.setValue("appearance/interface_font_size", 16)
-                self._theme_manager.setInterfaceTypography("Segoe UI", 16)
+                self._theme_manager.setInterfaceTypography(family, 16)
             self._preferences.setValue(
                 "appearance/ui_scale_version", UI_SCALE_PREFERENCE_VERSION
             )
@@ -496,6 +505,19 @@ class FrontendBridge(QObject):
     @Slot(bool)
     def setFontSmoothing(self, enabled: bool) -> None:  # noqa: N802
         self._theme_manager.setFontSmoothing(enabled)
+        # Single rendering policy: keep the QQuickWindow global in sync with
+        # Theme.textRenderType so plain Texts (global) and shared components
+        # (Theme.textRenderType) never diverge without explicit reason.
+        try:
+            from PySide6.QtQuick import QQuickWindow
+
+            QQuickWindow.setTextRenderType(
+                QQuickWindow.TextRenderType.NativeTextRendering
+                if enabled
+                else QQuickWindow.TextRenderType.QtTextRendering
+            )
+        except Exception:
+            pass
 
     @Slot(bool)
     def setWordWrap(self, enabled: bool) -> None:  # noqa: N802

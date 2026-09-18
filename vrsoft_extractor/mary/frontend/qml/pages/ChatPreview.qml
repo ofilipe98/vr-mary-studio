@@ -2766,14 +2766,14 @@ Item {
         id: approvalDialog
         objectName: "chatApprovalDialog"
         anchors.centerIn: parent
-        width: 510
+        width: Math.min(510, parent.width - 32)
         modal: true
         closePolicy: Popup.NoAutoClose
         title: "Aprovação necessária"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: 12
-            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; wrapMode: Text.WordWrap }
+            Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; lineHeight: Theme.bodyLineHeight; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
                 VrButton { text: "Negar"; onClicked: { approvalDialog.close(); root.chatBridge.decideApproval(false, false) } }
@@ -2842,7 +2842,7 @@ Item {
         id: conversationDeleteDialog
         objectName: "conversationDeleteDialog"
         anchors.centerIn: parent
-        width: 440
+        width: Math.min(440, parent.width - 32)
         modal: true
         dim: true
         padding: 0

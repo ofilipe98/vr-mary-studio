@@ -14,7 +14,8 @@ TextArea {
     selectionColor: Theme.palette.selection
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily
-    font.pixelSize: Theme.bodySize
+    font.pixelSize: Theme.controlSize
+    renderType: Theme.textRenderType
     wrapMode: TextArea.Wrap
     focusPolicy: Qt.StrongFocus
 

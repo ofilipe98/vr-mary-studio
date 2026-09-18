@@ -11,12 +11,12 @@ ComboBox {
     property string settingsPathRole: "path"
     signal itemSettingsRequested(int index)
 
-    implicitHeight: Theme.controlHeight
+    implicitHeight: Theme.controlHeightCompact
     leftPadding: 13
     rightPadding: 34
     focusPolicy: Qt.StrongFocus
     font.family: Theme.fontFamily
-    font.pixelSize: Theme.bodySize
+    font.pixelSize: Theme.controlSize
 
     contentItem: Text {
         leftPadding: 0
@@ -26,6 +26,7 @@ ComboBox {
         font: control.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideMiddle
+        renderType: Theme.textRenderType
     }
 
     indicator: Text {
@@ -35,6 +36,7 @@ ComboBox {
         color: Theme.palette.mutedText
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSize(14)
+        renderType: Theme.textRenderType
     }
 
     background: Rectangle {
@@ -50,7 +52,7 @@ ComboBox {
         required property var modelData
 
         width: ListView.view ? ListView.view.width : control.width
-        height: control.showSettingsAction ? 32 : 40
+        height: control.showSettingsAction ? Theme.menuRowHeight : Theme.pickerRowHeight
         highlighted: control.highlightedIndex === index
 
         contentItem: RowLayout {
@@ -68,9 +70,10 @@ ComboBox {
                     : optionDelegate.modelData
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.bodySize
+                font.pixelSize: Theme.controlSize
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideMiddle
+                renderType: Theme.textRenderType
             }
             Item {
                 id: settingsAction

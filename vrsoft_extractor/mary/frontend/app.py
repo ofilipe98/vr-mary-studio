@@ -152,7 +152,17 @@ def create_engine(
     chat_bridge: ChatBridge,
     studio_bridge: StudioBridge | None = None,
 ) -> QQmlApplicationEngine:
-    QQuickWindow.setTextRenderType(QQuickWindow.TextRenderType.NativeTextRendering)
+    # Single rendering policy: global follows the stored fontSmoothing so it
+    # matches Theme.textRenderType from the first frame.
+    try:
+        smoothing = bool(getattr(bridge, "fontSmoothing", True))
+    except Exception:
+        smoothing = True
+    QQuickWindow.setTextRenderType(
+        QQuickWindow.TextRenderType.NativeTextRendering
+        if smoothing
+        else QQuickWindow.TextRenderType.QtTextRendering
+    )
     engine = QQmlApplicationEngine()
     qml_warnings: list[object] = []
     engine.warnings.connect(qml_warnings.extend)

@@ -137,9 +137,9 @@ Item {
             text: (typeof frontend !== "undefined" && frontend && frontend.appName) ? frontend.appName : "VR Norte Studio"
             color: Theme.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: Theme.controlSize
             font.weight: Font.Bold
-            renderType: Text.NativeRendering
+            renderType: Theme.textRenderType
         }
 
         Rectangle {
@@ -158,7 +158,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeMicro
                 font.weight: Font.Medium
-                renderType: Text.NativeRendering
+                renderType: Theme.textRenderType
             }
         }
 
@@ -179,7 +179,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeMicro
                 font.weight: Font.Medium
-                renderType: Text.NativeRendering
+                renderType: Theme.textRenderType
             }
         }
     }
@@ -263,9 +263,9 @@ Item {
             }
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12)
+            font.pixelSize: Theme.controlSize
             font.weight: Font.DemiBold
-            renderType: Text.NativeRendering
+            renderType: Theme.textRenderType
             elide: Text.ElideRight
             Layout.maximumWidth: 160
         }
@@ -274,8 +274,8 @@ Item {
             text: "/"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12)
-            renderType: Text.NativeRendering
+            font.pixelSize: Theme.fontSizeCaption
+            renderType: Theme.textRenderType
         }
 
         Text {
@@ -283,9 +283,9 @@ Item {
                 ? root.chatPage.chatBridge.selectedTitle : "Nova conversa"
             color: Theme.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12)
+            font.pixelSize: Theme.controlSize
             font.weight: Font.DemiBold
-            renderType: Text.NativeRendering
+            renderType: Theme.textRenderType
             elide: Text.ElideRight
             Layout.maximumWidth: Math.max(120, root.width - 680)
         }

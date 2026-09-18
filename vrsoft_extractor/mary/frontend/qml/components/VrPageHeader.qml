@@ -16,6 +16,7 @@ ColumnLayout {
         font.family: Theme.fontFamily
         font.pixelSize: root.compact ? Theme.fontSize(24) : Theme.titleSize
         font.weight: Font.DemiBold
+        lineHeight: Theme.headingLineHeight
     }
     Text {
         Layout.fillWidth: true

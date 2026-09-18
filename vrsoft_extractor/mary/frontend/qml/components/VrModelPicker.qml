@@ -59,7 +59,7 @@ Button {
                 : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
-            renderType: Text.NativeRendering
+            renderType: Theme.textRenderType
             elide: control.compact ? Text.ElideNone : Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }

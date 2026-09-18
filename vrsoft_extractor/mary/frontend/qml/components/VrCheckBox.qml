@@ -25,6 +25,7 @@ CheckBox {
             color: "#FFFFFF"
             font.pixelSize: Theme.fontSize(13)
             font.weight: Font.Bold
+            renderType: Theme.textRenderType
         }
     }
 
@@ -33,7 +34,8 @@ CheckBox {
         text: control.text
         color: Theme.palette.text
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.bodySize
+        font.pixelSize: Theme.controlSize
+        renderType: Theme.textRenderType
         verticalAlignment: Text.AlignVCenter
         wrapMode: Text.WordWrap
     }

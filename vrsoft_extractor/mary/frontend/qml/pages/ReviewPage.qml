@@ -10,6 +10,10 @@ Item {
     property var filterControls: ({})
     property string pendingAction: ""
     property var pendingReviewIds: []
+    // Adaptive layout: desktop keeps horizontal SplitView; narrow/tablet
+    // stacks list above detail so 390x844 and 768x1024 remain usable.
+    // Never solved by shrinking fonts below the micro token.
+    property bool isNarrow: root.width < 900
 
     function registerFilter(key, control) {
         filterControls[key] = control
@@ -95,7 +99,7 @@ Item {
         Rectangle {
             visible: root.filtersVisible
             Layout.fillWidth: true
-            Layout.preferredHeight: 168
+            Layout.preferredHeight: root.isNarrow ? 360 : 168
             color: "transparent"
             border.width: 0
             ColumnLayout {
@@ -104,7 +108,7 @@ Item {
                 spacing: 5
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: 6
+                    columns: root.isNarrow ? 2 : (root.width < 1200 ? 3 : 6)
                     columnSpacing: 7
                     rowSpacing: 5
                     Repeater {
@@ -170,7 +174,7 @@ Item {
         SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            orientation: Qt.Horizontal
+            orientation: root.isNarrow ? Qt.Vertical : Qt.Horizontal
 
             handle: Rectangle {
                 implicitWidth: 9
@@ -187,9 +191,12 @@ Item {
             }
 
             Rectangle {
-                SplitView.minimumWidth: 620
-                SplitView.preferredWidth: 840
+                SplitView.minimumWidth: root.isNarrow ? 0 : 620
+                SplitView.minimumHeight: root.isNarrow ? 220 : 0
+                SplitView.preferredWidth: root.isNarrow ? 0 : 840
+                SplitView.preferredHeight: root.isNarrow ? 300 : 0
                 SplitView.fillWidth: true
+                SplitView.fillHeight: true
                 color: "transparent"
                 border.width: 0
                 clip: true
@@ -209,14 +216,14 @@ Item {
                             spacing: 6
                             Item { Layout.preferredWidth: 25 }
                             Text { Layout.fillWidth: true; text: "Título"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 48; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 85; text: "Atual"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 85 : 0; text: "Atual"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { Layout.preferredWidth: 85; text: "Sugestão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 48; text: "Conf."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 75; text: "Produto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 75; text: "Categoria"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: "Conf."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: "Produto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: "Categoria"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { Layout.preferredWidth: 110; text: "Risco / motivo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 80; text: "Atualização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 80 : 0; text: "Atualização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                         }
                     }
 
@@ -254,14 +261,14 @@ Item {
                                 onToggled: studio.setReviewSelected(reviewRow.reviewId, checked)
                             }
                             Text { Layout.fillWidth: true; text: reviewRow.title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCompact; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 48; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 85; text: reviewRow.currentModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 85 : 0; text: reviewRow.currentModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { Layout.preferredWidth: 85; text: reviewRow.suggestedModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 48; text: reviewRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
-                            Text { Layout.preferredWidth: 75; text: reviewRow.product; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 75; text: reviewRow.category; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: reviewRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: reviewRow.product; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: reviewRow.category; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { Layout.preferredWidth: 110; text: reviewRow.risk; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 80; text: reviewRow.updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; elide: Text.ElideRight }
+                            Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 80 : 0; text: reviewRow.updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; elide: Text.ElideRight }
                         }
                         TapHandler { onTapped: studio.selectReview(reviewRow.index) }
                     }
@@ -280,15 +287,23 @@ Item {
 
             Rectangle {
                 visible: studio.reviewTotal > 0
-                SplitView.minimumWidth: 330
-                SplitView.preferredWidth: 380
+                SplitView.minimumWidth: root.isNarrow ? 0 : 330
+                SplitView.minimumHeight: root.isNarrow ? 300 : 0
+                SplitView.preferredWidth: root.isNarrow ? 0 : 380
+                SplitView.preferredHeight: root.isNarrow ? 420 : 0
+                SplitView.fillWidth: true
+                SplitView.fillHeight: true
                 color: "transparent"
                 border.width: 0
+                clip: true
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 8
                     Text { Layout.fillWidth: true; text: studio.reviewTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(16); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    // Narrow mode hides secondary table columns; the detail
+                    // preview markdown already carries fonte/produto/categoria/
+                    // confiança/atualização, keeping them accessible.
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -348,7 +363,7 @@ Item {
     Dialog {
         id: bulkDecisionDialog
         anchors.centerIn: parent
-        width: 500
+        width: Math.min(500, parent.width - 32)
         modal: true
         title: "Confirmar ação nos selecionados"
         standardButtons: Dialog.NoButton
@@ -361,6 +376,7 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.bodySize
                 wrapMode: Text.WordWrap
+                lineHeight: Theme.bodyLineHeight
             }
             RowLayout {
                 Layout.fillWidth: true
