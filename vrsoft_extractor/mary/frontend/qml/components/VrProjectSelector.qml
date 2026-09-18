@@ -349,7 +349,7 @@ Button {
                     height: 32
                     radius: 6
                     color: projectRow.selected
-                        ? (Theme.isDark ? "#24384c" : Theme.palette.selection)
+                        ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
                         : (rowHover.hovered ? Qt.rgba(255, 255, 255, 0.06) : "transparent")
 
                     RowLayout {
@@ -486,9 +486,9 @@ Button {
         }
 
         background: Rectangle {
-            color: Theme.isDark ? "#22272f" : Theme.palette.surfaceRaised
+            color: Theme.palette.appearance === "light" ? Theme.palette.surfaceRaised : "#22272f"
             border.width: 1
-            border.color: Theme.isDark ? "#353c48" : Theme.palette.border
+            border.color: Theme.palette.appearance === "light" ? Theme.palette.border : "#353c48"
             radius: 12
         }
     }
