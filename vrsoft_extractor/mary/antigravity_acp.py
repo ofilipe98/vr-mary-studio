@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from .antigravity_auth import AuthStreamParser
+from .antigravity_auth import AuthStreamParser, is_oauth_authorization_url
 from .provider_cli import native_cli_path
 
 logger = logging.getLogger(__name__)
@@ -572,7 +572,7 @@ def acp_environment(runtime_info: AcpRuntimeInfo | None = None, base_env: dict[s
         helper = browser_helper_script().as_posix()
         env["BROWSER"] = f'"{exe}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{helper}" %s'
     else:
-        env["BROWSER"] = 'python3 -c "import sys, json; sys.stderr.write(\'__VRSTUDIO_ANTIGRAVITY_AUTH_URL__\' + json.dumps(sys.argv[1]) + \'\\n\'); sys.stderr.flush()" %s'
+        env["BROWSER"] = 'python3 -c "import sys, json; sys.stderr.write(\'__VRSTUDIO_ANTIGRAVITY_AUTH_URL__\' + json.dumps(sys.argv[1].strip(\'\\\'\"\')) + \'\\n\'); sys.stderr.flush()" %s'
 
     return env
 
@@ -890,6 +890,9 @@ class AcpClient:
                 self._fail_pending()
 
     def _auth_url(self, url):
+        if not is_oauth_authorization_url(url):
+            logger.debug("URL do navegador ignorada por não ser fluxo de autorização OAuth: %s", url)
+            return
         if self.on_auth_url:
             self.on_auth_url(url)
         else:

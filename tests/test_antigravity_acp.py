@@ -708,3 +708,21 @@ def test_chat_updates_use_studio_event_contract():
     assert usage["last"]["totalTokens"] == 42
     assert [e.text for e in events if e.kind == "assistant_delta"] == ["Hello"]
     assert [e.text for e in events if e.kind == "reasoning_delta"] == ["plan", "more"]
+
+
+def test_acp_client_ignores_non_oauth_url_when_unattended():
+    from vrsoft_extractor.mary.antigravity_acp import AcpClient
+    client = AcpClient(on_auth_url=None)
+    client._fail_pending = MagicMock()
+    client.close = MagicMock()
+
+    # Receiving non-OAuth advisory URL (e.g. Google One upsell) must not fail or close
+    client._auth_url("https://accounts.google.com/AccountChooser?Email=user@gmail.com&continue=https%3A%2F%2Fone.google.com%2Fai")
+    client._fail_pending.assert_not_called()
+    client.close.assert_not_called()
+
+    # Receiving real OAuth URL when unattended must fail pending with -32000
+    client._auth_url("https://accounts.google.com/o/oauth2/v2/auth?client_id=123")
+    client._fail_pending.assert_called_once()
+    err = client._fail_pending.call_args[0][0]
+    assert err.code == -32000

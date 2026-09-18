@@ -3,10 +3,11 @@
 # Does NOT open secondary browser. Exits with code 0.
 param([string]$AuthorizationUrl)
 if ($AuthorizationUrl) {
+    $clean = $AuthorizationUrl.Trim("'""`t ")
     try {
-        $encoded = ConvertTo-Json -InputObject $AuthorizationUrl -Compress
+        $encoded = ConvertTo-Json -InputObject $clean -Compress
     } catch {
-        $escaped = $AuthorizationUrl.Replace('\', '\\').Replace('"', '\"')
+        $escaped = $clean.Replace('\', '\\').Replace('"', '\"')
         $encoded = '"' + $escaped + '"'
     }
     [Console]::Error.WriteLine('__VRSTUDIO_ANTIGRAVITY_AUTH_URL__' + $encoded)

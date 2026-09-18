@@ -188,6 +188,28 @@ class TestAuthStreamParser(unittest.TestCase):
         parser.finish()
         self.assertEqual(captured_lines, ["trailing line without newline"])
 
+    def test_ignore_account_chooser_and_promotional_urls(self):
+        captured_urls = []
+        captured_lines = []
+        parser = AuthStreamParser(
+            on_auth_url=captured_urls.append,
+            on_line=captured_lines.append,
+        )
+        line = '__VRSTUDIO_ANTIGRAVITY_AUTH_URL__"https://accounts.google.com/AccountChooser?Email=user@gmail.com&continue=https%3A%2F%2Fone.google.com%2Fai"\n'
+        parser.feed(line.encode("utf-8"))
+        self.assertEqual(captured_urls, [])
+        self.assertEqual(len(captured_lines), 1)
+
+    def test_is_oauth_authorization_url(self):
+        from vrsoft_extractor.mary.antigravity_auth import is_oauth_authorization_url
+        self.assertTrue(is_oauth_authorization_url("https://accounts.google.com/o/oauth2/v2/auth?client_id=xyz"))
+        self.assertTrue(is_oauth_authorization_url("https://accounts.google.com/o/oauth2/auth?client_id=xyz"))
+        self.assertFalse(is_oauth_authorization_url("https://accounts.google.com/AccountChooser?continue=https://one.google.com"))
+        self.assertFalse(is_oauth_authorization_url("https://one.google.com/ai"))
+        self.assertFalse(is_oauth_authorization_url("http://accounts.google.com/o/oauth2/v2/auth?client_id=xyz"))
+        self.assertFalse(is_oauth_authorization_url("https://malicious.com/o/oauth2/v2/auth"))
+        self.assertFalse(is_oauth_authorization_url(""))
+
 
 class TestCallbackValidationAndForwarding(unittest.TestCase):
     def setUp(self):

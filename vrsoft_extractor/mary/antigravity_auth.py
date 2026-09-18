@@ -86,11 +86,34 @@ class LoginAttempt:
     error_detail: str = ""
 
 
+def is_oauth_authorization_url(raw_url: str) -> bool:
+    """Checks whether a URL represents a Google OAuth authorization flow.
+
+    Distinguishes legitimate OAuth 2.0 authorization endpoints (/o/oauth2/v2/auth
+    or /o/oauth2/auth on accounts.google.com) from informational, promotional,
+    account-switching, or subscription URLs (such as /AccountChooser or one.google.com).
+    """
+    if not isinstance(raw_url, str):
+        return False
+    clean = raw_url.strip().strip("'\"")
+    if not clean:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(clean)
+        return (
+            parsed.scheme == "https"
+            and parsed.netloc == "accounts.google.com"
+            and parsed.path in ("/o/oauth2/v2/auth", "/o/oauth2/auth")
+        )
+    except Exception:
+        return False
+
+
 def validate_authorization_url(raw_url: str) -> ValidatedAuthUrl:
     """Strictly validates an authorization URL emitted by the Antigravity CLI."""
     if not isinstance(raw_url, str) or not raw_url.strip():
         raise OAuthValidationError("URL de autorização vazia.")
-    clean = raw_url.strip()
+    clean = raw_url.strip().strip("'\"")
     if len(clean.encode("utf-8")) > MAX_AUTH_LINE_BYTES or any(ord(c) < 32 or ord(c) == 127 for c in clean):
         raise OAuthValidationError("A URL de autorização contém tamanho ou caracteres de controle inválidos.")
 
@@ -444,6 +467,8 @@ class AuthStreamParser:
         if not stripped or stripped.startswith("{"):
             return None
 
+        url: str | None = None
+
         # 1. Check framed stderr markers (T3, VRSTUDIO)
         for marker in (AUTH_MARKER_VRSTUDIO, AUTH_MARKER_T3):
             idx = stripped.find(marker)
@@ -451,25 +476,33 @@ class AuthStreamParser:
                 payload = stripped[idx + len(marker):].strip()
                 if payload.startswith('"') and payload.endswith('"') and len(payload) >= 2:
                     try:
-                        return json.loads(payload)
+                        url = json.loads(payload)
                     except ValueError:
-                        pass
-                return payload.strip()
+                        url = payload
+                else:
+                    url = payload
+                break
 
         # 2. Browser prefix
-        if AUTH_PREFIX_BROWSER in stripped:
+        if url is None and AUTH_PREFIX_BROWSER in stripped:
             url_part = stripped.split(AUTH_PREFIX_BROWSER, 1)[1].strip()
-            return url_part.split()[0].rstrip(".,)")
+            url = url_part.split()[0].rstrip(".,)'\"")
 
         # 3. ACP stderr prefix
-        if AUTH_PREFIX_ACP in stripped:
+        if url is None and AUTH_PREFIX_ACP in stripped:
             url_part = stripped.split(AUTH_PREFIX_ACP, 1)[1].strip()
-            return url_part.split()[0].rstrip(".,)")
+            url = url_part.split()[0].rstrip(".,)'\"")
 
-        # 4. Bare accounts.google.com URL
-        match = re.search(r"https://accounts\.google\.com/\S+", stripped)
-        if match:
-            return match.group(0).rstrip(".,)")
+        # 4. Bare accounts.google.com OAuth URL
+        if url is None:
+            match = re.search(r"https://accounts\.google\.com/o/oauth2/\S+", stripped)
+            if match:
+                url = match.group(0).rstrip(".,)'\"")
+
+        if url:
+            clean_url = str(url).strip().strip("'\"")
+            if is_oauth_authorization_url(clean_url):
+                return clean_url
 
         return None
 

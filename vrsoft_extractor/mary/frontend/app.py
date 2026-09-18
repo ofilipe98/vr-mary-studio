@@ -237,7 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         use_software = not hw_accel
 
     if use_software:
-        os.environ["QSG_RHI_BACKEND"] = "software"
+        # Note: Qt 6 does not accept 'software' as a QSG_RHI_BACKEND key.
+        # Software rasterization is enabled via QT_QUICK_BACKEND="software".
         os.environ["QT_QUICK_BACKEND"] = "software"
         existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         if "--disable-gpu" not in existing_flags:

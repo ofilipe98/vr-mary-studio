@@ -5,7 +5,6 @@ echo ===================================================
 echo  Iniciando VR Studio em Modo Seguro (Sem GPU / Software)
 echo ===================================================
 set "VR_STUDIO_SOFTWARE_RENDERING=1"
-set "QSG_RHI_BACKEND=software"
 set "QT_QUICK_BACKEND=software"
 
 call "%~dp0Start-VRStudio.bat" %*
