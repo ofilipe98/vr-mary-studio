@@ -14,9 +14,10 @@ Item {
     implicitHeight: 36
 
     readonly property bool isChatPage: typeof frontend !== "undefined" && frontend && frontend.currentPage === 1
-    readonly property bool hasSidebar: isChatPage
+    readonly property bool isBootstrapping: root.window && root.window.isBootstrapReady === false
+    readonly property bool hasSidebar: isBootstrapping ? false : (isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760)
-        : (root.hubPage ? root.hubPage.sidebarBorderOffset > 0 : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980))
+        : (root.hubPage ? root.hubPage.sidebarBorderOffset > 0 : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980)))
     readonly property real sidebarWidth: isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760
             ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : 264))

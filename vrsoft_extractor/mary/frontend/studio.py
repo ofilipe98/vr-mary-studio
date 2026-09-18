@@ -37,7 +37,8 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog
 
 from ..brand import ORGANIZATION_NAME, SETTINGS_APP_NAME
-from ..config import MarySettings, save_vr_env
+from ..config import MarySettings
+from ..settings_service import get_settings_values, diagnostic_text, save_settings
 from ..db import MaryDatabase
 from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
@@ -1728,30 +1729,11 @@ class StudioBridge(QObject):
         return self._settings.root / "schema" / "schema.md"
 
     def _refresh_settings(self) -> None:
-        movidesk_password = os.environ.get("MOVIDESK_PASSWORD", "")
-        endoo_password = os.environ.get("ENDOO_PASSWORD", "")
-        self._settings_values = {
-            "root": str(self._settings.root),
-            "movideskEmail": os.environ.get("MOVIDESK_EMAIL", ""),
-            "movideskPassword": "",
-            "movideskPasswordConfigured": bool(movidesk_password),
-            "endooEmail": os.environ.get("ENDOO_EMAIL", ""),
-            "endooPassword": "",
-            "endooPasswordConfigured": bool(endoo_password),
-            "interval": str(self._settings.sync_interval_minutes),
-            "diagnostic": self._diagnostic_text(),
-        }
+        self._settings_values = get_settings_values(self._settings)
         self.settingsChanged.emit()
 
     def _diagnostic_text(self) -> str:
-        try:
-            from ..ocr import OcrManager
-
-            ocr_ready = OcrManager(self._settings.tesseract_dir).is_ready()
-        except Exception:
-            ocr_ready = False
-        codex_ready = (self._settings.root / ".codex" / "config.toml").is_file()
-        return f"Projeto Codex: {'OK' if codex_ready else 'não preparado'}\nTesseract por+eng: {'OK' if ocr_ready else 'não instalado'}"
+        return diagnostic_text(self._settings)
 
     @Slot(result=str)
     def chooseKnowledgeRoot(self) -> str:  # noqa: N802
@@ -1760,40 +1742,21 @@ class StudioBridge(QObject):
 
     @Slot(str, str, str, str, str, str)
     def saveSettings(self, root: str, movidesk_email: str, movidesk_password: str, endoo_email: str, endoo_password: str, interval: str) -> None:  # noqa: N802
-        movidesk_secret = (
-            movidesk_password
-            if movidesk_password
-            else os.environ.get("MOVIDESK_PASSWORD", "")
-        )
-        endoo_secret = (
-            endoo_password if endoo_password else os.environ.get("ENDOO_PASSWORD", "")
-        )
-        values = {
-            "VR_ROOT": root,
-            "MOVIDESK_EMAIL": movidesk_email,
-            "MOVIDESK_PASSWORD": movidesk_secret,
-            "ENDOO_EMAIL": endoo_email,
-            "ENDOO_PASSWORD": endoo_secret,
-            "VR_SYNC_INTERVAL_MINUTES": interval,
-            "VR_DEFAULT_EFFORT": self._settings.default_effort,
-        }
         try:
-            save_vr_env(self._settings.app_dir, values)
+            new_settings, safe_values = save_settings(
+                self._settings,
+                root,
+                movidesk_email,
+                movidesk_password,
+                endoo_email,
+                endoo_password,
+                interval,
+            )
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
             return
-        for key, value in values.items():
-            os.environ[key] = str(value)
-        self._settings_values.update({
-            "root": root,
-            "movideskEmail": movidesk_email,
-            "movideskPassword": "",
-            "movideskPasswordConfigured": bool(movidesk_secret),
-            "endooEmail": endoo_email,
-            "endooPassword": "",
-            "endooPasswordConfigured": bool(endoo_secret),
-            "interval": interval,
-        })
+        self._settings = new_settings
+        self._settings_values.update(safe_values)
         self.settingsChanged.emit()
         self.toastRequested.emit(
             "Configurações salvas. Credenciais e intervalo já estão ativos; reinicie apenas para aplicar mudanças de caminho.",

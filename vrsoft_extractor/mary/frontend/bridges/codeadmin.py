@@ -2039,14 +2039,27 @@ class CodeAdminDomain:
             return
         workspace = self._settings.root
         signal = self._applicationsLoaded
+        phase_signal = getattr(self, "applicationsCatalogPhase", None)
         stop = self._release_coverage_stop
         self._apps_catalog_dirty = False
+        if phase_signal is not None:
+            try:
+                phase_signal.emit("detecting_apps", 0, 0)
+            except RuntimeError:
+                pass
 
         def load():
             try:
                 catalog = ErpReleaseCatalog(workspace)
                 catalog.ensure_apps_catalog_synced()
                 data = catalog.apps_store.load_catalog()
+                apps_count = len(data.get("applications", {}))
+                packages_count = len(data.get("packages", {}))
+                if phase_signal is not None and not stop.is_set():
+                    try:
+                        phase_signal.emit("loading_versions", apps_count, packages_count)
+                    except RuntimeError:
+                        pass
                 index = JavaCodeIndex(workspace)
                 coverage = {}
                 for package_id in data["packages"]:
@@ -2103,11 +2116,24 @@ class CodeAdminDomain:
             self.refreshApplicationsCatalog()
             return
         self._apps_catalog_error = result.get("error", "")
+        phase_signal = getattr(self, "applicationsCatalogPhase", None)
         if not self._apps_catalog_error:
             self._apps_catalog_data = result
             self._applications_catalog = result["applications"]
             self._packages_catalog = result["packages"]
+            self._applications_catalog_loaded = True
             self.selectApplication(self._selected_app_id)
+            if phase_signal is not None:
+                try:
+                    phase_signal.emit("ready", len(self._applications_catalog), len(result.get("versions", {})))
+                except RuntimeError:
+                    pass
+        else:
+            if phase_signal is not None:
+                try:
+                    phase_signal.emit("error", 0, 0)
+                except RuntimeError:
+                    pass
         self.stateChanged.emit()
 
     def selectApplication(self, app_id: str) -> None:  # noqa: N802

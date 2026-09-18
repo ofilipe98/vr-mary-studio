@@ -18,11 +18,14 @@ from PySide6.QtWidgets import QApplication
 
 from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
-from ..config import load_vr_settings
+from ..config import MarySettings, load_vr_settings
+from ..db import MaryDatabase
 from ..workspace import initialize_workspace
 from .bridge import FrontendBridge, _stored_bool
 from .chat import ChatBridge
 from .studio import StudioBridge
+from .bootstrap import BootstrapBridge
+from ..settings_service import is_setup_needed
 
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
@@ -149,8 +152,9 @@ def _apply_window_decorations(engine: QQmlApplicationEngine) -> None:
 
 def create_engine(
     bridge: FrontendBridge,
-    chat_bridge: ChatBridge,
+    chat_bridge: ChatBridge | None = None,
     studio_bridge: StudioBridge | None = None,
+    bootstrap_bridge: BootstrapBridge | None = None,
 ) -> QQmlApplicationEngine:
     # Single rendering policy: global follows the stored fontSmoothing so it
     # matches Theme.textRenderType from the first frame.
@@ -163,6 +167,8 @@ def create_engine(
         if smoothing
         else QQuickWindow.TextRenderType.QtTextRendering
     )
+    if bootstrap_bridge is None:
+        bootstrap_bridge = BootstrapBridge(settings=None, initial_state="ready")
     engine = QQmlApplicationEngine()
     qml_warnings: list[object] = []
     engine.warnings.connect(qml_warnings.extend)
@@ -170,6 +176,7 @@ def create_engine(
     engine.rootContext().setContextProperty("frontend", bridge)
     engine.rootContext().setContextProperty("chat", chat_bridge)
     engine.rootContext().setContextProperty("studio", studio_bridge)
+    engine.rootContext().setContextProperty("bootstrap", bootstrap_bridge)
     engine.load(QUrl.fromLocalFile(str(MAIN_QML)))
     engine._qml_warnings = qml_warnings  # type: ignore[attr-defined]
     _apply_window_decorations(engine)
@@ -285,21 +292,12 @@ def main(argv: list[str] | None = None) -> int:
         initial_page=args.screenshot_page,
         navigation_override=False if args.screenshot else None,
     )
-    database = initialize_workspace(settings, refresh_conversations=False)
-    chat_bridge = ChatBridge(settings, database, preferences, open_new_chat=True)
-    if args.screenshot_vr_mode:
-        # Visual-test override only; do not persist or mutate a conversation.
-        chat_bridge._vr_mode = args.screenshot_vr_mode
-    studio_bridge = StudioBridge(
-        settings,
-        database,
-        preferences,
-        chat_orchestrator=chat_bridge._orchestrator,
-    )
-    studio_bridge.conversationRestored.connect(chat_bridge.refresh)
-    chat_bridge.conversationArchived.connect(
-        lambda _conversation_id: studio_bridge.refreshArchived("")
-    )
+    needs_setup = not args.screenshot and is_setup_needed(settings, preferences)
+    database: MaryDatabase | None = None
+    chat_bridge: ChatBridge | None = None
+    studio_bridge: StudioBridge | None = None
+    engine: QQmlApplicationEngine | None = None
+
     shutdown_complete = False
 
     def shutdown() -> None:
@@ -307,15 +305,67 @@ def main(argv: list[str] | None = None) -> int:
         if shutdown_complete:
             return
         shutdown_complete = True
-        studio_bridge.close()
-        chat_bridge.close()
+        if studio_bridge is not None:
+            studio_bridge.close()
+        if chat_bridge is not None:
+            chat_bridge.close()
 
     app.aboutToQuit.connect(shutdown)
-    engine = create_engine(bridge, chat_bridge, studio_bridge)
+
+    def setup_backend(target_settings: MarySettings) -> None:
+        nonlocal database, chat_bridge, studio_bridge, settings, engine
+        settings = target_settings
+        database = initialize_workspace(settings, refresh_conversations=False)
+        chat_bridge = ChatBridge(settings, database, preferences, open_new_chat=True)
+        if args.screenshot_vr_mode:
+            chat_bridge._vr_mode = args.screenshot_vr_mode
+        studio_bridge = StudioBridge(
+            settings,
+            database,
+            preferences,
+            chat_orchestrator=chat_bridge._orchestrator,
+        )
+        studio_bridge.conversationRestored.connect(chat_bridge.refresh)
+        chat_bridge.conversationArchived.connect(
+            lambda _conversation_id: studio_bridge.refreshArchived("")
+        )
+        if engine is not None:
+            engine.rootContext().setContextProperty("chat", chat_bridge)
+            engine.rootContext().setContextProperty("studio", studio_bridge)
+
+    if needs_setup:
+        def on_setup_completed(new_settings: MarySettings) -> None:
+            setup_backend(new_settings)
+            if chat_bridge is not None:
+                bootstrap_bridge.attach_chat_bridge(chat_bridge)
+                bootstrap_bridge.start_bootstrap()
+
+        bootstrap_bridge = BootstrapBridge(
+            settings,
+            preferences,
+            initial_state="setup",
+            on_setup_completed=on_setup_completed,
+        )
+        engine = create_engine(bridge, None, None, bootstrap_bridge)
+    else:
+        setup_backend(settings)
+        bootstrap_bridge = BootstrapBridge(
+            settings,
+            preferences,
+            initial_state="loading_apps",
+        )
+        if chat_bridge is not None:
+            bootstrap_bridge.attach_chat_bridge(chat_bridge)
+        engine = create_engine(bridge, chat_bridge, studio_bridge, bootstrap_bridge)
+        if args.screenshot:
+            bootstrap_bridge.set_ready()
+        else:
+            bootstrap_bridge.start_bootstrap()
+
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):
             print(warning.toString(), file=sys.stderr)
-        print(f"N\u00e3o foi poss\u00edvel carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
+        print(f"Não foi possível carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
         shutdown()
         return 1
 

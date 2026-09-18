@@ -28,9 +28,27 @@ ApplicationWindow {
     property bool chatVisited: frontend.currentPage === 1
     property bool hubVisited: frontend.currentPage !== 1
 
+    readonly property bool isBootstrapReady: typeof bootstrap === "undefined" || !bootstrap || bootstrap.isReady
+    readonly property bool isSetupActive: typeof bootstrap !== "undefined" && bootstrap && bootstrap.isSetupActive
+
+    onIsBootstrapReadyChanged: {
+        if (isBootstrapReady && typeof studio !== "undefined" && studio) {
+            studio.activatePage(frontend.currentPage)
+        }
+    }
+
     Connections {
-        target: studio
+        target: typeof studio !== "undefined" ? studio : null
         function onNavigationRequested(index) { frontend.setCurrentPage(index) }
+        function onToastRequested(message, kind) {
+            toast.message = message
+            toast.kind = kind
+            toast.open()
+        }
+    }
+
+    Connections {
+        target: typeof bootstrap !== "undefined" ? bootstrap : null
         function onToastRequested(message, kind) {
             toast.message = message
             toast.kind = kind
@@ -43,12 +61,12 @@ ApplicationWindow {
         function onCurrentPageChanged() {
             if (frontend.currentPage === 1) chatVisited = true
             else hubVisited = true
-            if (studio) studio.activatePage(frontend.currentPage)
+            if (window.isBootstrapReady && typeof studio !== "undefined" && studio) studio.activatePage(frontend.currentPage)
         }
     }
 
     Component.onCompleted: {
-        if (studio) studio.activatePage(frontend.currentPage)
+        if (window.isBootstrapReady && typeof studio !== "undefined" && studio) studio.activatePage(frontend.currentPage)
     }
 
     Rectangle {
@@ -72,13 +90,37 @@ ApplicationWindow {
         }
 
         Loader {
+            id: setupLoader
+            objectName: "setupLoader"
+            anchors.top: titleBar.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            active: window.isSetupActive
+            visible: active
+            source: "pages/StartupSetupPage.qml"
+        }
+
+        Loader {
+            id: loadingLoader
+            objectName: "loadingLoader"
+            anchors.top: titleBar.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            active: !window.isBootstrapReady && !window.isSetupActive
+            visible: active
+            source: "pages/StartupLoadingPage.qml"
+        }
+
+        Loader {
             id: chatLoader
             anchors.top: titleBar.bottom
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            active: window.chatVisited || frontend.currentPage === 1
-            visible: active && frontend.currentPage === 1
+            active: window.isBootstrapReady && (window.chatVisited || frontend.currentPage === 1)
+            visible: window.isBootstrapReady && active && frontend.currentPage === 1
             opacity: frontend.currentPage === 1 ? 1 : 0
             sourceComponent: chatComponent
 
@@ -101,8 +143,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            active: window.hubVisited || frontend.currentPage !== 1
-            visible: active && frontend.currentPage !== 1
+            active: window.isBootstrapReady && (window.hubVisited || frontend.currentPage !== 1)
+            visible: window.isBootstrapReady && active && frontend.currentPage !== 1
             opacity: frontend.currentPage !== 1 ? 1 : 0
             sourceComponent: settingsHubComponent
 

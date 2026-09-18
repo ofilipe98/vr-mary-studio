@@ -121,6 +121,7 @@ class ChatBridge(QObject):
     _conversationTrashFinished = Signal(object)
     _codeAnalysisCoverageWarmed = Signal(object)
     _applicationsLoaded = Signal(object)
+    applicationsCatalogPhase = Signal(str, int, int)
     _appComparisonLoaded = Signal(object)
     _appSourcesLoaded = Signal(object)
     activeSkillsChanged = Signal()
@@ -281,6 +282,7 @@ class ChatBridge(QObject):
         self._apps_catalog_error = ""
         self._apps_catalog_thread: threading.Thread | None = None
         self._apps_catalog_dirty = False
+        self._applications_catalog_loaded = False
         self._app_variants: list[dict[str, Any]] = []
         self._selected_app_origin_id = ""
         self._code_processing_relative_jars: tuple[str, ...] = ()
@@ -561,6 +563,14 @@ class ChatBridge(QObject):
     @Property(str, notify=stateChanged)
     def applicationsCatalogError(self) -> str:  # noqa: N802
         return self._apps_catalog_error
+
+    @Property(bool, notify=stateChanged)
+    def applicationsCatalogLoading(self) -> bool:  # noqa: N802
+        return self._apps_catalog_thread is not None
+
+    @Property(bool, notify=stateChanged)
+    def applicationsCatalogLoaded(self) -> bool:  # noqa: N802
+        return self._applications_catalog_loaded
 
     @Property("QVariantList", notify=stateChanged)
     def appVariants(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1261,6 +1271,9 @@ class ChatBridge(QObject):
             timer.stop()
         self._code_processing_pause_event.set()
         self._code_processing_cancel_event.set()
+        apps_thread = self._apps_catalog_thread
+        if apps_thread is not None and apps_thread.is_alive():
+            apps_thread.join(timeout=1.0)
         processing_thread = self._code_processing_thread
         if processing_thread is not None and processing_thread.is_alive():
             processing_thread.join(timeout=2.0)
