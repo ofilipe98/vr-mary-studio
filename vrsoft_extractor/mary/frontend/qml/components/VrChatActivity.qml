@@ -25,13 +25,6 @@ Rectangle {
         enabled: !frontend.reduceMotion && !root.running
         NumberAnimation { duration: Theme.fastDuration }
     }
-    Rectangle {
-        x: 7; y: 34
-        width: 1
-        height: Math.max(0, root.implicitHeight - 34)
-        visible: root.expanded
-        color: Theme.palette.chatDivider
-    }
 
     ColumnLayout {
         id: content
@@ -56,25 +49,15 @@ Rectangle {
 
             RowLayout {
                 anchors.fill: parent
-                spacing: 8
+                spacing: 6
 
-                VrLineIcon {
-                    Layout.preferredWidth: 14; Layout.preferredHeight: 14
-                    kind: root.expanded ? "chevronDown" : "chevronRight"
-                    foreground: Theme.palette.mutedText
-                }
-                Text {
-                    text: root.running ? "·" : root.statusText === "Erro" ? "!" : root.statusText === "Interrompido" ? "−" : "✓"
-                    color: root.statusText === "Erro" ? Theme.palette.danger : Theme.palette.mutedText
-                    font.pixelSize: Theme.captionSize
-                }
                 Text {
                     Layout.fillWidth: true
                     text: root.headerText()
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.captionSize
-                    font.weight: root.running ? Font.DemiBold : Font.Normal
+                    font.pixelSize: Theme.fontSize(13)
+                    font.weight: Font.Normal
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
@@ -96,8 +79,8 @@ Rectangle {
         ColumnLayout {
             visible: root.expanded || (root.running && root.items && root.items.length > 0)
             Layout.fillWidth: true
-            Layout.leftMargin: 7
-            spacing: 3
+            Layout.leftMargin: 0
+            spacing: 2
 
             TextEdit {
                 visible: !root.items.some(function(item) { return item.itemType === "reasoning" })
@@ -112,42 +95,6 @@ Rectangle {
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSize(13)
-            }
-
-            Rectangle {
-                visible: root.hiddenCount > 0 && root.expanded
-                Layout.fillWidth: true
-                activeFocusOnTab: true
-                Accessible.role: Accessible.Button
-                Accessible.name: "Mostrar atividades anteriores"
-                Keys.onReturnPressed: root.logExpanded = !root.logExpanded
-                Keys.onSpacePressed: root.logExpanded = !root.logExpanded
-                Layout.preferredHeight: 25
-                radius: 7
-                color: logToggleHover.hovered ? Theme.palette.hover : "transparent"
-
-                RowLayout {
-                    anchors.fill: parent
-                    spacing: 6
-                    VrLineIcon {
-                        Layout.preferredWidth: 11
-                        Layout.preferredHeight: 11
-                        kind: root.logExpanded ? "chevronDown" : "chevronRight"
-                        foreground: Theme.palette.mutedText
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.logExpanded
-                            ? "Ocultar atividades anteriores"
-                            : "+" + root.hiddenCount + " atividades anteriores"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
-                    }
-                }
-
-                HoverHandler { id: logToggleHover }
-                TapHandler { onTapped: root.logExpanded = !root.logExpanded }
             }
 
             Repeater {
@@ -222,7 +169,7 @@ Rectangle {
                 id: actionColumn
                 anchors.left: parent.left
                 anchors.right: parent.right
-                spacing: 6
+                spacing: 4
 
                 Rectangle {
                     activeFocusOnTab: String(actionRoot.modelData.detail || "").length > 0
@@ -233,15 +180,15 @@ Rectangle {
                     border.width: activeFocus ? 1 : 0
                     border.color: Theme.palette.focus
                     Layout.fillWidth: true
-                    Layout.leftMargin: 6
-                    Layout.preferredHeight: 27
-                    radius: 7
+                    Layout.leftMargin: 0
+                    Layout.preferredHeight: 25
+                    radius: 4
                     color: actionHover.hovered ? Theme.palette.hover : "transparent"
                     clip: true
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 4
+                        anchors.leftMargin: 2
                         anchors.rightMargin: 4
                         spacing: 8
 
@@ -258,7 +205,7 @@ Rectangle {
                             text: String(actionRoot.modelData.text || "Atividade")
                             color: actionRoot.modelData.state === "running"
                                 ? Theme.palette.text : Theme.palette.mutedText
-                            font.family: Theme.fontFamily
+                            font.family: Theme.monospaceFontFamily
                             font.pixelSize: Theme.fontSize(12)
                             font.weight: actionRoot.modelData.state === "running"
                                 ? Font.DemiBold : Font.Normal
@@ -266,9 +213,8 @@ Rectangle {
                         }
 
                         VrLineIcon {
-                            visible: String(actionRoot.modelData.detail || "").length > 0
-                            Layout.preferredWidth: 11
-                            Layout.preferredHeight: 11
+                            Layout.preferredWidth: 9
+                            Layout.preferredHeight: 9
                             kind: actionRoot.detailExpanded ? "chevronDown" : "chevronRight"
                             foreground: Theme.palette.mutedText
                         }
@@ -320,7 +266,7 @@ Rectangle {
                         && String(actionRoot.modelData.detail || "").length > 0
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(actionDetail.implicitHeight + 18, 260)
-                    radius: 8
+                    radius: 6
                     color: Theme.palette.surfaceRaised
                     border.width: 1
                     border.color: Theme.palette.chatBorder
@@ -339,7 +285,7 @@ Rectangle {
                             selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere
                             color: Theme.palette.mutedText
-                            font.family: "Cascadia Mono"
+                            font.family: Theme.monospaceFontFamily
                             font.pixelSize: Theme.captionSize
                             background: Item { }
                         }
@@ -375,25 +321,22 @@ Rectangle {
 
     function itemIcon(item) {
         if (item.state === "error" || item.state === "failed") return "close"
-        if (item.state === "completed" || item.state === "success") return "check"
         var itemType = String(item.itemType || "")
         var text = String(item.text || "").toLowerCase()
-        if (itemType === "commandExecution" || text.indexOf("command") >= 0 || text.indexOf("terminal") >= 0) return "terminal"
-        if (itemType === "webSearch" || itemType === "web_search" || text.indexOf("search") >= 0) return "search"
-        if (itemType === "fileChange" || text.indexOf("edit") >= 0 || text.indexOf("write") >= 0) return "edit"
-        if (itemType === "fileRead" || text.indexOf("view") >= 0 || text.indexOf("read") >= 0 || text.indexOf(".qml") >= 0 || text.indexOf(".py") >= 0 || text.indexOf(".json") >= 0) return "eye"
-        if (String(item.kind || "") === "status") return "task"
-        return "eye"
+        if (itemType === "commandExecution" || text.indexOf("command") >= 0 || text.indexOf("terminal") >= 0 || text.indexOf("git ") >= 0 || text.indexOf("running git") >= 0 || text.indexOf("running ") === 0) {
+            return "terminalPrompt"
+        }
+        return "hammer"
     }
 
     function visibleItems() {
-        if (root.logExpanded || root.items.length <= root.recentCount)
+        if (root.expanded || root.logExpanded)
             return root.items
-        if (!root.expanded && root.running) {
+        if (root.running) {
             var runningItems = root.items.filter(function(i) { return i.state === "running" })
             if (runningItems.length > 0) return runningItems
             return root.items.slice(-1)
         }
-        return root.items.slice(root.items.length - root.recentCount)
+        return root.items.slice(-1)
     }
 }

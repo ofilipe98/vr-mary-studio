@@ -13,8 +13,9 @@ Button {
     property string popupObjectName: ""
     property bool compact: false
     property bool showSearch: true
-    property bool showNewProject: true
+    property bool showNewProject: false
     property string searchText: ""
+    property Item anchorItem: null
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
@@ -56,10 +57,17 @@ Button {
         selectorPopup.open()
     }
 
-    // Mantém o popup dentro da janela: alinhado à direita do botão,
-    // mas deslocado para a direita quando sairia pela borda esquerda
-    // (sidebar estreita) ou pela borda direita.
+    // Mantém o popup alinhado à esquerda do container de busca (paridade T3 Code)
+    // ou calcula a posição relativa ao botão trigger com contenção na janela.
     function updatePopupX() {
+        if (control.anchorItem) {
+            var anchorPos = control.mapFromItem(control.anchorItem, 0, 0)
+            selectorPopup.x = anchorPos.x
+            selectorPopup.width = Math.min(288, control.anchorItem.width)
+            var bottomPos = control.mapFromItem(control.anchorItem, 0, control.anchorItem.height)
+            selectorPopup.y = bottomPos.y + 4
+            return
+        }
         var popupW = selectorPopup.width
         var fallbackX = control.width - popupW
         var overlay = Overlay.overlay
@@ -144,26 +152,15 @@ Button {
             isAll: !String(control.currentItem.path || "").length
         }
 
-        Rectangle {
-            visible: control.compact && control.currentIndex > 0
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 4
-            width: 5
-            height: 5
-            radius: 2.5
-            color: Theme.palette.brandOrange
-        }
-
         RowLayout {
             visible: !control.compact
             anchors.fill: parent
             spacing: 7
             VrProjectIcon {
-                Layout.preferredWidth: 22
-                Layout.preferredHeight: 22
-                boxSize: 22
-                iconSize: 13
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                boxSize: 24
+                iconSize: 15
                 projectLabel: String(control.currentItem.label || "")
                 iconPath: String(control.currentItem.icon || "")
                 iconKind: String(control.currentItem.iconKind || control.currentItem.icon_kind || "")
@@ -194,10 +191,11 @@ Button {
     }
 
     background: Rectangle {
-        radius: control.compact ? 4 : Theme.radiusSmall
-        color: control.down || control.hovered || selectorPopup.opened
-            ? (control.compact ? Qt.rgba(255, 255, 255, 0.1) : Theme.palette.chatControl) : (control.compact ? "transparent" : Theme.palette.surfaceRaised)
-        border.width: control.compact ? (control.activeFocus ? 1 : 0) : 1
+        radius: control.compact ? 6 : Theme.radiusSmall
+        color: control.down || control.hovered
+            ? (control.compact ? Qt.rgba(255, 255, 255, 0.08) : Theme.palette.chatControl)
+            : (control.compact ? "transparent" : Theme.palette.surfaceRaised)
+        border.width: control.compact ? 0 : 1
         border.color: control.activeFocus
             ? Theme.palette.focus : Theme.palette.border
     }
@@ -206,12 +204,12 @@ Button {
         id: selectorPopup
         objectName: control.popupObjectName
         parent: control
-        x: control.compact ? Math.min(0, control.width - 264) : 0
+        x: 0
         y: control.height + 4
-        width: control.compact ? 264 : Math.max(240, control.width)
-        height: Math.min(384, (searchHeader.visible ? 44 : 0)
-            + Math.min(6, Math.max(1, control.filteredModel.length)) * 38 + 8
-            + (control.showNewProject ? 47 : 0) + 8)
+        width: 260
+        height: Math.min(384, (searchHeader.visible ? 38 : 0)
+            + Math.min(8, Math.max(1, control.filteredModel.length)) * 32 + 8
+            + (control.showNewProject ? 42 : 0) + 6)
         padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: {
@@ -229,26 +227,30 @@ Button {
                 id: searchHeader
                 visible: control.showSearch
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 40 : 0
+                Layout.preferredHeight: visible ? 34 : 0
+
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    spacing: 6
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 8
+
                     VrLineIcon {
                         Layout.preferredWidth: 14
                         Layout.preferredHeight: 14
                         kind: "search"
                         foreground: Theme.palette.mutedText
+                        opacity: 0.65
                     }
+
                     TextField {
                         id: selectorSearch
                         objectName: "projectSelectorSearch"
                         Layout.fillWidth: true
-                        placeholderText: "Buscar projetos..."
+                        placeholderText: "Search projects..."
                         text: control.searchText
                         color: Theme.palette.text
-                        placeholderTextColor: Theme.palette.mutedText
+                        placeholderTextColor: Qt.alpha(Theme.palette.mutedText, 0.7)
                         selectionColor: Theme.palette.selection
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
@@ -285,6 +287,7 @@ Button {
                             }
                         }
                     }
+
                     VrLineIcon {
                         visible: control.searchText.length > 0
                         Layout.preferredWidth: 12
@@ -298,13 +301,16 @@ Button {
                         }
                     }
                 }
+
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
                     anchors.bottom: parent.bottom
                     height: 1
-                    color: selectorSearch.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
-                    opacity: selectorSearch.activeFocus ? 1.0 : 0.6
+                    color: selectorSearch.activeFocus ? "#38bdf8" : Qt.rgba(255, 255, 255, 0.12)
+                    opacity: selectorSearch.activeFocus ? 1.0 : 0.7
                 }
             }
 
@@ -340,21 +346,23 @@ Button {
                         activateSettings()
                     }
                     width: projectList.width
-                    height: 38
-                    radius: 8
-                    color: projectRow.selected ? Qt.alpha(Theme.palette.focus, 0.32)
-                        : rowHover.hovered ? Theme.palette.chatControl : "transparent"
+                    height: 32
+                    radius: 6
+                    color: projectRow.selected
+                        ? (Theme.isDark ? "#24384c" : Theme.palette.selection)
+                        : (rowHover.hovered ? Qt.rgba(255, 255, 255, 0.06) : "transparent")
 
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 8
-                        anchors.rightMargin: 4
-                        spacing: 9
+                        anchors.rightMargin: 6
+                        spacing: 8
+
                         VrProjectIcon {
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 22
-                            boxSize: 22
-                            iconSize: 13
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
+                            boxSize: 20
+                            iconSize: 14
                             flat: true
                             projectLabel: String(projectRow.modelData.label || "")
                             iconPath: String(projectRow.modelData.icon || "")
@@ -364,41 +372,36 @@ Button {
                             iconText: String(projectRow.modelData.iconText || "")
                             isAll: !String(projectRow.modelData.path || "").length
                         }
+
                         Text {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            text: projectRow.modelData.label
-                            color: Theme.palette.text
+                            text: !String(projectRow.modelData.path || "").length && projectRow.modelData.label === "Todos os projetos"
+                                ? "All projects" : projectRow.modelData.label
+                            color: projectRow.selected ? "#ffffff" : Theme.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
-                            font.weight: projectRow.selected ? Font.DemiBold : Font.Medium
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: projectRow.selected ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
                             verticalAlignment: Text.AlignVCenter
                             maximumLineCount: 1
                         }
+
                         VrIconButton {
                             id: settingsButton
                             objectName: "projectSettingsButton"
                             property int projectIndex: projectRow.sourceIndex
                             visible: projectRow.configurable
-                            Layout.preferredWidth: visible ? 26 : 0
-                            Layout.preferredHeight: 26
+                            Layout.preferredWidth: visible ? 24 : 0
+                            Layout.preferredHeight: 24
                             iconKind: "settings"
                             iconSize: 14
-                            foreground: projectRow.selected || hovered
-                                ? Theme.palette.text : Theme.palette.mutedText
+                            foreground: hovered ? "#ffffff" : Qt.rgba(150/255, 156/255, 166/255, 1.0)
                             ToolTip.visible: hovered
                             ToolTip.text: "Configurar projeto"
                             Accessible.name: "Configurar " + projectRow.modelData.label
                             onClicked: projectRow.activateSettings()
                             z: 2
-                        }
-                        VrLineIcon {
-                            visible: projectRow.selected && !projectRow.configurable
-                            Layout.preferredWidth: visible ? 14 : 0
-                            Layout.preferredHeight: 14
-                            kind: "check"
-                            foreground: Theme.palette.brandOrange
                         }
                     }
 
@@ -412,8 +415,7 @@ Button {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
-                        anchors.rightMargin: projectRow.configurable ? 30
-                            : projectRow.selected ? 22 : 0
+                        anchors.rightMargin: projectRow.configurable ? 28 : 0
                         onClicked: projectRow.activateSelection()
                     }
                 }
@@ -421,7 +423,7 @@ Button {
                 Text {
                     anchors.centerIn: parent
                     visible: selectorPopup.opened && projectList.count === 0
-                    text: "Nenhum projeto encontrado"
+                    text: "No matching projects."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
@@ -442,29 +444,30 @@ Button {
                 id: newProjectRow
                 visible: control.showNewProject
                 Layout.fillWidth: true
-                Layout.preferredHeight: visible ? 38 : 0
+                Layout.preferredHeight: visible ? 34 : 0
                 Layout.topMargin: visible ? 3 : 0
                 Layout.bottomMargin: visible ? 1 : 0
-                radius: 8
+                radius: 6
                 color: newProjectHover.hovered ? Theme.palette.chatControl : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
-                    spacing: 9
+                    spacing: 8
                     VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
-                        kind: "plus"
+                        Layout.preferredWidth: 14
+                        Layout.preferredHeight: 14
+                        kind: "folderPlus"
                         foreground: Theme.palette.mutedText
+                        strokeWidth: 1.6
                     }
                     Text {
                         Layout.fillWidth: true
                         text: "New project"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSize(13)
                         font.weight: Font.Medium
                         elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter
@@ -483,9 +486,9 @@ Button {
         }
 
         background: Rectangle {
-            color: Theme.palette.surface
+            color: Theme.isDark ? "#22272f" : Theme.palette.surfaceRaised
             border.width: 1
-            border.color: Theme.palette.border
+            border.color: Theme.isDark ? "#353c48" : Theme.palette.border
             radius: 12
         }
     }

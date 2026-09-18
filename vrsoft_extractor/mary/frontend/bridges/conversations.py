@@ -183,6 +183,8 @@ class ConversationsDomain:
                 item["iconEmoji"] = value
                 if value:
                     item["icon"] = ""
+                    item["iconKind"] = ""
+                    item["iconText"] = ""
                 break
         else:
             values.append(
@@ -190,7 +192,9 @@ class ConversationsDomain:
                     "path": str(project_path),
                     "label": self._projects[index]["label"],
                     "icon": "",
+                    "iconKind": "",
                     "iconEmoji": value,
+                    "iconText": "",
                 }
             )
         self._store_project_entries(values)
@@ -328,6 +332,7 @@ class ConversationsDomain:
         for item in values:
             raw_path = str(item.get("path") or "").strip()
             if raw_path and Path(raw_path).expanduser().resolve(strict=False) == project_path:
+                item["icon"] = ""
                 item["iconKind"] = clean_kind
                 item["iconColor"] = clean_color
                 item["iconEmoji"] = clean_emoji
@@ -338,6 +343,7 @@ class ConversationsDomain:
                 {
                     "path": str(project_path),
                     "label": self._projects[index]["label"],
+                    "icon": "",
                     "iconKind": clean_kind,
                     "iconColor": clean_color,
                     "iconEmoji": clean_emoji,

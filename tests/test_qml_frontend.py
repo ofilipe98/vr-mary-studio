@@ -3235,7 +3235,8 @@ class QmlFrontendTest(unittest.TestCase):
             conversation_id = database.create_conversation(
                 "Excluir sem travar", "codex", "gpt-5.6", settings.root
             )
-            bridge = ChatBridge(settings, database)
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = ChatBridge(settings, database, preferences)
             bridge.selectConversation(0)
             started = threading.Event()
             release = threading.Event()

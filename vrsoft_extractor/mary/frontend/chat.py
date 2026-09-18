@@ -3095,8 +3095,24 @@ class ChatBridge(QObject):
             "userMessage": "Preparação do contexto",
             "agentMessage": "Preparação da resposta",
         }
+        tool_summary = str(
+            item.get("toolSummary")
+            or item.get("tool_summary")
+            or payload.get("toolSummary")
+            or payload.get("tool_summary")
+            or ""
+        ).strip()
+        tool_action = str(
+            item.get("toolAction")
+            or item.get("tool_action")
+            or payload.get("toolAction")
+            or payload.get("tool_action")
+            or ""
+        ).strip()
         label = str(
-            item.get("name")
+            tool_action
+            or tool_summary
+            or item.get("name")
             or item.get("tool")
             or fallback_labels.get(item_type)
             or item_type

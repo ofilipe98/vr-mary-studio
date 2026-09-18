@@ -41,7 +41,8 @@ def test_centered_landing_project_picker_and_image_paste(tmp_path):
             assert menu.property('opened')
             window.grabWindow().save(str(tmp_path / 'landing.png'))
             print('SCREENSHOT', tmp_path / 'landing.png')
-            window.findChild(QObject, 'landingChooseFolder').click()
+            assert window.findChild(QObject, 'landingChooseFolder') is None
+            window.findChild(QObject, 'landingNewProject').click()
             QTest.qWait(100)
             assert window.findChild(QObject, 'addProjectPopup').property('opened')
             project = tmp_path / 'Meu Projeto'
@@ -188,11 +189,11 @@ def test_app_opens_on_new_conversation_when_conversations_exist(tmp_path):
             assert len(titles) == 1
             title = titles[0]
             assert title.property('text') == 'Conversa Existente'
-            assert title.property('font').weight() == QFont.Weight.DemiBold
+            assert title.property('font').weight() == QFont.Weight.Medium
             chat.selectConversationId(cid)
             QTest.qWait(100)
             title = find_items(window.contentItem(), 'conversationTitle')[0]
-            assert title.property('font').weight() == QFont.Weight.DemiBold
+            assert title.property('font').weight() == QFont.Weight.Medium
             assert not engine._qml_warnings, [w.toString() for w in engine._qml_warnings]
     finally:
         if window:

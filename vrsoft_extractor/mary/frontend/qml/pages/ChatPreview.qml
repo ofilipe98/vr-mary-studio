@@ -422,6 +422,7 @@ Item {
                                     id: projectSelector
                                     objectName: "projectSelector"
                                     compact: true
+                                    anchorItem: searchBarContainer
                                     model: root.chatBridge.projectItems
                                     currentIndex: root.chatBridge.currentProjectIndex
                                     popupObjectName: "projectSelectorMenu"
@@ -1085,23 +1086,13 @@ Item {
                                 text: "New project"
                                 subtitle: ""
                                 iconPath: ""
-                                iconEmoji: "➕"
+                                iconKind: "folderPlus"
+                                iconEmoji: ""
                                 iconColor: ""
                                 isAll: false
                                 onTriggered: {
                                     root.addProjectView = "sources"
                                     addProjectSearch.clear()
-                                    addProjectPopup.open()
-                                }
-                            }
-                            ProjectMenuEntry {
-                                objectName: "landingChooseFolder"
-                                text: "Escolher pasta do projeto…"
-                                subtitle: ""
-                                isAll: true
-                                onTriggered: {
-                                    root.addProjectView = "folder"
-                                    root.chatBridge.beginProjectFolderBrowse()
                                     addProjectPopup.open()
                                 }
                             }
@@ -2419,7 +2410,7 @@ Item {
                     VrLineIcon {
                         Layout.preferredWidth: 16
                         Layout.preferredHeight: 16
-                        kind: "plus"
+                        kind: "folderPlus"
                         foreground: Theme.palette.brandOrange
                     }
                     Text {

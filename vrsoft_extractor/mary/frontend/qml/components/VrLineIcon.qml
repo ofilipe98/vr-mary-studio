@@ -70,10 +70,24 @@ Canvas {
             ctx.beginPath(); ctx.moveTo(12, 3.8)
             ctx.bezierCurveTo(7.5, 6.5, 7.5, 17.5, 12, 20.2)
             ctx.bezierCurveTo(16.5, 17.5, 16.5, 6.5, 12, 3.8); ctx.stroke()
-        } else if (kind === "terminal") {
-            rect(3.5, 5, 17, 14, 2)
-            ctx.beginPath(); ctx.moveTo(7, 9); ctx.lineTo(10, 12); ctx.lineTo(7, 15); ctx.stroke()
-            line(12.5, 15, 17, 15)
+        } else if (kind === "terminal" || kind === "terminalPrompt") {
+            ctx.beginPath()
+            ctx.moveTo(4, 7); ctx.lineTo(10, 12); ctx.lineTo(4, 17)
+            ctx.stroke()
+            line(12, 17, 19, 17)
+        } else if (kind === "hammer") {
+            ctx.beginPath()
+            ctx.moveTo(14, 4); ctx.lineTo(20, 10); ctx.lineTo(17.5, 12.5); ctx.lineTo(11.5, 6.5)
+            ctx.closePath()
+            ctx.stroke()
+            line(13, 11, 4.5, 19.5)
+        } else if (kind === "wrench") {
+            ctx.beginPath()
+            ctx.arc(16, 8, 5.5, Math.PI * 0.25, Math.PI * 1.75, true)
+            ctx.lineTo(16, 8)
+            ctx.closePath()
+            ctx.stroke()
+            line(12, 12, 5, 19)
         } else if (kind === "files") {
             ctx.beginPath(); ctx.moveTo(3.5, 8); ctx.lineTo(3.5, 18); ctx.quadraticCurveTo(3.5, 20, 5.5, 20); ctx.lineTo(18.5, 20); ctx.quadraticCurveTo(20.5, 20, 20.5, 18); ctx.lineTo(20.5, 9); ctx.quadraticCurveTo(20.5, 7, 18.5, 7); ctx.lineTo(11, 7); ctx.lineTo(9, 4.8); ctx.lineTo(5.5, 4.8); ctx.quadraticCurveTo(3.5, 4.8, 3.5, 7); ctx.closePath(); ctx.stroke()
         } else if (kind === "folder") {
