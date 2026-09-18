@@ -333,9 +333,16 @@ def test_closed_client_cannot_launch_a_late_process():
 
 
 def test_oauth_diagnostic_with_runtime_log_prefix_is_captured():
+    from urllib.parse import urlencode
+
     from vrsoft_extractor.mary.antigravity_auth import AuthStreamParser
     urls = []
-    url = "https://accounts.google.com/o/oauth2/v2/auth?state=test"
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+        "response_type": "code",
+        "client_id": "123",
+        "redirect_uri": "http://127.0.0.1:45678/",
+        "state": "test",
+    })
     parser = AuthStreamParser(urls.append)
     parser.feed(("INFO runtime: Open the following link to authenticate the ACP server: " + url + "\n").encode())
     assert urls == [url]
@@ -712,6 +719,7 @@ def test_chat_updates_use_studio_event_contract():
 
 def test_acp_client_ignores_non_oauth_url_when_unattended():
     from vrsoft_extractor.mary.antigravity_acp import AcpClient
+    from urllib.parse import urlencode
     client = AcpClient(on_auth_url=None)
     client._fail_pending = MagicMock()
     client.close = MagicMock()
@@ -721,8 +729,19 @@ def test_acp_client_ignores_non_oauth_url_when_unattended():
     client._fail_pending.assert_not_called()
     client.close.assert_not_called()
 
-    # Receiving real OAuth URL when unattended must fail pending with -32000
+    # Incomplete OAuth URL (missing state, redirect_uri) must also be ignored
     client._auth_url("https://accounts.google.com/o/oauth2/v2/auth?client_id=123")
+    client._fail_pending.assert_not_called()
+    client.close.assert_not_called()
+
+    # Receiving a fully valid OAuth URL when unattended must fail pending with -32000
+    valid_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+        "response_type": "code",
+        "client_id": "123",
+        "redirect_uri": "http://127.0.0.1:45678/",
+        "state": "valid_state",
+    })
+    client._auth_url(valid_url)
     client._fail_pending.assert_called_once()
     err = client._fail_pending.call_args[0][0]
     assert err.code == -32000

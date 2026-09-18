@@ -86,34 +86,56 @@ class LoginAttempt:
     error_detail: str = ""
 
 
-def is_oauth_authorization_url(raw_url: str) -> bool:
-    """Checks whether a URL represents a Google OAuth authorization flow.
+def normalize_browser_url(raw: str) -> str:
+    """Strips surrounding quotes and whitespace at the transport boundary.
 
-    Distinguishes legitimate OAuth 2.0 authorization endpoints (/o/oauth2/v2/auth
-    or /o/oauth2/auth on accounts.google.com) from informational, promotional,
-    account-switching, or subscription URLs (such as /AccountChooser or one.google.com).
+    This is the **only** place where shell/PowerShell quoting artefacts are
+    removed.  Downstream validators receive a clean URL and stay strict.
     """
-    if not isinstance(raw_url, str):
-        return False
-    clean = raw_url.strip().strip("'\"")
-    if not clean:
-        return False
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip().strip("'\"")
+
+
+def try_validate_authorization_url(raw_url: str) -> ValidatedAuthUrl | None:
+    """Safe wrapper: returns a ValidatedAuthUrl when the URL passes the full
+    OAuth contract, or ``None`` when it doesn't.
+
+    This is the **single canonical predicate** for deciding whether a URL
+    represents a real Google OAuth authorization flow.  Every call-site that
+    needs to distinguish OAuth from promotional / auxiliary URLs must use this
+    function (or the underlying ``validate_authorization_url``).
+    """
     try:
-        parsed = urllib.parse.urlsplit(clean)
-        return (
-            parsed.scheme == "https"
-            and parsed.netloc == "accounts.google.com"
-            and parsed.path in ("/o/oauth2/v2/auth", "/o/oauth2/auth")
-        )
-    except Exception:
-        return False
+        return validate_authorization_url(raw_url)
+    except OAuthValidationError:
+        return None
+
+
+def is_oauth_authorization_url(raw_url: str) -> bool:
+    """Convenience predicate delegating to the canonical strict validator.
+
+    Returns ``True`` only when the URL passes the **full** OAuth contract
+    (scheme, host, path, response_type, state, redirect_uri, port, …).
+
+    .. versionchanged:: 2026.9
+       Now delegates to ``try_validate_authorization_url`` instead of
+       checking only scheme + host + path.  Incomplete URLs (e.g. missing
+       ``state`` or ``redirect_uri``) return ``False``.
+    """
+    return try_validate_authorization_url(normalize_browser_url(raw_url)) is not None
 
 
 def validate_authorization_url(raw_url: str) -> ValidatedAuthUrl:
-    """Strictly validates an authorization URL emitted by the Antigravity CLI."""
+    """Strictly validates an authorization URL emitted by the Antigravity CLI.
+
+    The caller is responsible for normalizing transport artefacts (quotes,
+    whitespace) via :func:`normalize_browser_url` **before** calling this
+    function.  The validator itself only strips leading/trailing whitespace.
+    """
     if not isinstance(raw_url, str) or not raw_url.strip():
         raise OAuthValidationError("URL de autorização vazia.")
-    clean = raw_url.strip().strip("'\"")
+    clean = raw_url.strip()
     if len(clean.encode("utf-8")) > MAX_AUTH_LINE_BYTES or any(ord(c) < 32 or ord(c) == 127 for c in clean):
         raise OAuthValidationError("A URL de autorização contém tamanho ou caracteres de controle inválidos.")
 
@@ -500,8 +522,8 @@ class AuthStreamParser:
                 url = match.group(0).rstrip(".,)'\"")
 
         if url:
-            clean_url = str(url).strip().strip("'\"")
-            if is_oauth_authorization_url(clean_url):
+            clean_url = normalize_browser_url(str(url))
+            if try_validate_authorization_url(clean_url) is not None:
                 return clean_url
 
         return None
@@ -1009,9 +1031,12 @@ class AntigravityAuthManager:
         self._notify_changed()
 
     def _on_auth_url_received(self, attempt_id: str, raw_url: str) -> None:
-        try:
-            validated = validate_authorization_url(raw_url)
-        except OAuthValidationError:
+        # Transport-boundary normalization happens here (the parser already
+        # normalizes, but explicit callers may pass quoted payloads). The
+        # strict validator below stays quote-intolerant; the single canonical
+        # predicate is try_validate_authorization_url.
+        validated = try_validate_authorization_url(normalize_browser_url(raw_url))
+        if validated is None:
             logger.warning("URL de autorização rejeitada na validação")
             return
 

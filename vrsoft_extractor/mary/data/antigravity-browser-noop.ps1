@@ -3,7 +3,11 @@
 # Does NOT open secondary browser. Exits with code 0.
 param([string]$AuthorizationUrl)
 if ($AuthorizationUrl) {
-    $clean = $AuthorizationUrl.Trim("'""`t ")
+    # Transport-boundary normalization: strip whitespace first, then
+    # shell quoting artefacts (single/double quotes). The strict OAuth
+    # validator downstream stays quote-intolerant by design.
+    $clean = $AuthorizationUrl.Trim()
+    $clean = $clean.Trim("'").Trim('"')
     try {
         $encoded = ConvertTo-Json -InputObject $clean -Compress
     } catch {
