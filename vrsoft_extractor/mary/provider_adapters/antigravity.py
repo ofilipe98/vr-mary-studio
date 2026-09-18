@@ -148,14 +148,17 @@ class AntigravityProvider(AgentProvider):
 
     def send_message(self, conversation_id, native_id, model, effort, workspace,
                      message, callback, options=None, skills=None, image_paths=None):
-        if not self.available():
-            raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         if not has_saved_account():
             raise ProviderError("Entre com Google em Configurações → Provedores → Antigravity.")
+        # Single shared resolution per spawn: resolve once, then spawn with
+        # the same runtime_info. available() is intentionally not used here
+        # as a pre-check because it would resolve the runtime a second time.
         try:
             runtime_info = resolve_acp_runtime()
         except IncompleteRuntimeError as exc:
             raise ProviderError(str(exc)) from None
+        except Exception:
+            runtime_info = None
         if runtime_info is None:
             raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         self.resume_conversation(conversation_id, native_id, model, effort, workspace, options)
