@@ -1297,43 +1297,75 @@ class CodeAdminDomain:
             )
             self.stateChanged.emit()
             return False
+        candidate = Path(source).resolve(strict=False)
         if single_jar:
-            candidate = Path(source).resolve(strict=False)
-            if not candidate.is_file() or candidate.suffix.casefold() != ".jar":
-                self._release_snapshot_status = "Selecione um arquivo JAR válido."
+            if not candidate.is_file():
+                self._release_snapshot_status = f"Arquivo JAR não encontrado: {candidate}"
+                self.stateChanged.emit()
+                return False
+            if candidate.suffix.casefold() != ".jar":
+                self._release_snapshot_status = f"O arquivo selecionado não é um JAR: {candidate}"
+                self.stateChanged.emit()
+                return False
+        else:
+            if not candidate.exists():
+                self._release_snapshot_status = f"Pasta de JARs não encontrada: {candidate}"
+                self.stateChanged.emit()
+                return False
+            if not candidate.is_dir():
+                self._release_snapshot_status = f"A origem especificada não é um diretório: {candidate}"
                 self.stateChanged.emit()
                 return False
 
         self._release_snapshot_running = True
         self._release_snapshot_status = (
-            (
-                f"Detectando aplicação e versão de {Path(source).name} localmente..."
+            "Validando prévia…"
+            if preview_fingerprint is not None
+            else (
+                f"Detectando aplicação e versão de {candidate.name} localmente..."
                 if single_jar
                 else "Detectando aplicações e preparando a release localmente..."
             )
         )
         self.stateChanged.emit()
         results = self._release_snapshot_results
+        signal = self._releaseSnapshotReady
+        stop = self._release_coverage_stop
         workspace = self._settings.root
+
+        def progress_cb(event: dict[str, Any]) -> None:
+            if stop.is_set():
+                return
+            results.put(event)
+            try:
+                signal.emit()
+            except RuntimeError:
+                pass
 
         def snapshot() -> None:
             try:
+                known_hashes = None
                 if preview_fingerprint is not None:
-                    from ...application_import import preview_application_import
-                    current = preview_application_import(workspace, source, single=single_jar)
-                    if current["fingerprint"] != preview_fingerprint:
-                        raise ErpReleaseError("Os JARs mudaram após a prévia. Confira uma nova prévia antes de importar.")
+                    from ...application_import import validate_preview_fingerprint
+                    validate_preview_fingerprint(candidate, preview_fingerprint, single=single_jar)
+                    known_hashes = {
+                        item["relative_path"]: item["sha256"]
+                        for item in preview_fingerprint
+                        if "relative_path" in item and "sha256" in item
+                    }
                 manifest = ErpReleaseCatalog(
                     workspace,
                     expected_jar_count=(1 if single_jar else EXPECTED_ERP_JAR_COUNT),
                 ).snapshot_detected_release(
-                    source,
+                    candidate,
                     release_id=selected_release,
                     analysis_scope=(
                         ERP_JAR_SCOPE_SINGLE
                         if single_jar
                         else ERP_JAR_SCOPE_FULL_RELEASE
                     ),
+                    known_hashes=known_hashes,
+                    progress_callback=progress_cb,
                 )
             except Exception as exc:
                 results.put(
@@ -1478,12 +1510,50 @@ class CodeAdminDomain:
     def _poll_release_snapshot(self) -> None:
         if self._closed:
             return
-        latest: dict[str, Any] | None = None
+        events: list[dict[str, Any]] = []
         while True:
             try:
-                latest = self._release_snapshot_results.get_nowait()
+                events.append(self._release_snapshot_results.get_nowait())
             except queue.Empty:
                 break
+        if not events:
+            return
+
+        terminal_event: dict[str, Any] | None = None
+        latest_progress: dict[str, Any] | None = None
+
+        for item in events:
+            if item.get("event") == "progress":
+                latest_progress = item
+            else:
+                terminal_event = item
+
+        if latest_progress is not None and terminal_event is None:
+            stage = str(latest_progress.get("stage") or "")
+            current = latest_progress.get("current", 0)
+            total = latest_progress.get("total", 0)
+            filename = str(latest_progress.get("file") or "")
+            stage_labels = {
+                "scan": "Localizando JARs",
+                "detect": "Detectando aplicativos",
+                "hash": "Verificando hashes",
+                "copy": "Copiando JARs",
+                "inventory": "Inventariando snapshot",
+                "finalize": "Finalizando",
+            }
+            label = stage_labels.get(stage, "Processando")
+            if total > 0 and filename:
+                self._release_snapshot_status = f"{label} — {current}/{total} · {filename}"
+            elif total > 0:
+                self._release_snapshot_status = f"{label} — {current}/{total}"
+            elif filename:
+                self._release_snapshot_status = f"{label} · {filename}"
+            else:
+                self._release_snapshot_status = f"{label}…"
+            self.stateChanged.emit()
+            return
+
+        latest = terminal_event
         if latest is None:
             return
 
@@ -1515,7 +1585,10 @@ class CodeAdminDomain:
             self._application_preview_thread = None
             if latest["root"] == self._settings.root and latest["generation"] == self._application_preview_generation:
                 self._application_import_preview = latest["preview"]
-                self._release_snapshot_status = latest["preview"].get("error", "Confira a prévia e confirme a importação.")
+                if latest["preview"].get("state") == "ready":
+                    self._release_snapshot_status = "Prévia pronta. Confira os aplicativos e confirme a importação."
+                else:
+                    self._release_snapshot_status = latest["preview"].get("error", "Confira a prévia e confirme a importação.")
             self.refreshApplicationsCatalog()
             self.stateChanged.emit()
             return
@@ -1660,27 +1733,71 @@ class CodeAdminDomain:
             ),
         ) + custom_option
         items: list[dict[str, Any]] = []
-        catalog = ErpReleaseCatalog(self._settings.root)
+        to_count: list[tuple[str, Path]] = []
         for value, label, path in options:
             resolved = path.resolve(strict=False)
             exists = resolved.is_dir()
-            jar_count = catalog.count_source_jars(resolved) if exists else 0
-            status = (
-                f"{jar_count} JAR(s) encontrados"
-                if exists
-                else "Pasta não encontrada"
-            )
+            path_str = str(resolved)
+            if exists:
+                to_count.append((path_str, resolved))
+                jar_count = 0
+                status = "Verificando…"
+            else:
+                jar_count = 0
+                status = "Pasta não encontrada"
             items.append(
                 {
                     "value": value,
                     "label": f"{label} · {resolved}",
-                    "path": str(resolved),
+                    "path": path_str,
                     "exists": exists,
                     "jarCount": jar_count,
                     "status": status,
                 }
             )
         self._code_analysis_jar_source_items = items
+
+        if not to_count or self._closed:
+            return
+
+        self._jar_sources_generation += 1
+        generation = self._jar_sources_generation
+        workspace = self._settings.root
+        signal = self._jarSourcesCounted
+
+        def count_worker() -> None:
+            catalog = ErpReleaseCatalog(workspace)
+            counts: dict[str, int] = {}
+            for path_str, resolved in to_count:
+                try:
+                    counts[path_str] = catalog.count_source_jars(resolved)
+                except Exception:
+                    counts[path_str] = 0
+            if not self._closed:
+                try:
+                    signal.emit((generation, workspace, counts))
+                except RuntimeError:
+                    pass
+
+        self._jar_sources_thread = threading.Thread(target=count_worker, daemon=True)
+        self._jar_sources_thread.start()
+
+    def _on_jar_sources_counted(self, result: object) -> None:
+        if self._closed:
+            return
+        generation, workspace, counts = result  # type: ignore[misc]
+        if generation != self._jar_sources_generation or workspace != self._settings.root:
+            return
+        updated = False
+        for item in self._code_analysis_jar_source_items:
+            path_str = item["path"]
+            if path_str in counts and item["exists"]:
+                cnt = counts[path_str]
+                item["jarCount"] = cnt
+                item["status"] = f"{cnt} JAR(s) encontrados"
+                updated = True
+        if updated:
+            self.stateChanged.emit()
 
 
     def _load_cached_release_coverage(self) -> dict[str, dict[str, Any]]:
@@ -1908,9 +2025,6 @@ class CodeAdminDomain:
     def refreshApplicationsCatalog(self) -> None:  # noqa: N802
         if self._closed:
             return
-        if self._release_snapshot_running:
-            self._apps_catalog_dirty = True
-            return
         if self._apps_catalog_thread is not None:
             self._apps_catalog_dirty = True
             return
@@ -2044,6 +2158,27 @@ class CodeAdminDomain:
     def previewApplicationImport(self, source: str, single: bool, release_id: str = "") -> bool:  # noqa: N802
         if self._release_snapshot_running or self._code_processing_running or not source or self._closed:
             return False
+
+        candidate = Path(source).resolve(strict=False)
+        if single:
+            if not candidate.is_file():
+                self._release_snapshot_status = f"Arquivo JAR não encontrado: {candidate}"
+                self.stateChanged.emit()
+                return False
+            if candidate.suffix.casefold() != ".jar":
+                self._release_snapshot_status = f"O arquivo selecionado não é um JAR: {candidate}"
+                self.stateChanged.emit()
+                return False
+        else:
+            if not candidate.exists():
+                self._release_snapshot_status = f"Pasta de JARs não encontrada: {candidate}"
+                self.stateChanged.emit()
+                return False
+            if not candidate.is_dir():
+                self._release_snapshot_status = f"A origem especificada não é um diretório: {candidate}"
+                self.stateChanged.emit()
+                return False
+
         self._application_preview_generation += 1
         generation = self._application_preview_generation
         workspace = self._settings.root
@@ -2052,20 +2187,41 @@ class CodeAdminDomain:
         stop = self._release_coverage_stop
         self._application_import_preview = {"state": "running"}
         self._release_snapshot_running = True
-        self._release_snapshot_status = "Lendo aplicativos e verificando os hashes para a prévia…"
+        self._release_snapshot_status = "Detectando aplicativos…"
+
+        def progress_cb(event: dict[str, Any]) -> None:
+            if stop.is_set():
+                return
+            results.put(event)
+            try:
+                signal.emit()
+            except RuntimeError:
+                pass
+
         def preview():
             from ...application_import import preview_application_import
             try:
-                result = {**preview_application_import(workspace, source, single=single),
-                          "state": "ready", "release_id": release_id}
+                result = {
+                    **preview_application_import(
+                        workspace, str(candidate), single=single, progress_callback=progress_cb
+                    ),
+                    "state": "ready",
+                    "release_id": release_id,
+                }
             except Exception as exc:
                 result = {"state": "error", "error": str(exc)}
             if not stop.is_set():
-                results.put({"operation": "preview", "generation": generation, "root": workspace, "preview": result})
+                results.put({
+                    "operation": "preview",
+                    "generation": generation,
+                    "root": workspace,
+                    "preview": result,
+                })
                 try:
                     signal.emit()
                 except RuntimeError:
                     pass
+
         self._release_snapshot_poll_timer.start()
         self._application_preview_thread = threading.Thread(target=preview, daemon=True)
         self._application_preview_thread.start()

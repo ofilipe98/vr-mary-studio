@@ -220,7 +220,7 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     text: chat.applicationImportPreview.state === "running"
-                                        ? (chat.releaseSnapshotStatus || "Verificando hashes SHA-256 e detectando componentes…")
+                                        ? (chat.releaseSnapshotStatus || "Detectando aplicativos…")
                                         : (chat.applicationImportPreview.error
                                             ? chat.applicationImportPreview.error
                                             : "Revise os componentes identificados no pacote antes de confirmar a inclusão no catálogo.")
@@ -923,7 +923,7 @@ Item {
                         Layout.bottomMargin: 8
                         visible: text.length > 0
                         text: chat.releaseSnapshotStatus
-                        color: text.indexOf("Não foi possível") === 0 ? Theme.palette.warning : Theme.palette.mutedText
+                        color: (text.indexOf("Não foi possível") === 0 || text.indexOf("não encontrada") !== -1 || text.indexOf("não encontrado") !== -1 || text.indexOf("não é um JAR") !== -1 || text.indexOf("mudaram após a prévia") !== -1 || text.indexOf("Erro") === 0) ? Theme.palette.warning : Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(12)
                         wrapMode: Text.WordWrap
