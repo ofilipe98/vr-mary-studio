@@ -259,7 +259,7 @@ Item {
                         Rectangle {
                             visible: !!control.activeApp && !!control.activeApp.hasUnidentified
                             implicitWidth: activeUnidentText.implicitWidth + 8
-                            implicitHeight: 18
+                            implicitHeight: 20
                             radius: Theme.radiusSmall
                             color: Qt.rgba(0.9, 0.6, 0.0, 0.15)
                             border.width: 1
@@ -270,7 +270,7 @@ Item {
                                 anchors.centerIn: parent
                                 text: "Versão pendente"
                                 color: Theme.palette.warning
-                                font.pixelSize: Theme.fontSize(10)
+                                font.pixelSize: Theme.fontSizeMicro
                                 font.weight: Font.Medium
                             }
                         }
@@ -278,7 +278,7 @@ Item {
                         Rectangle {
                             visible: !!control.activeApp && !!control.activeApp.hasVariants
                             implicitWidth: activeVarText.implicitWidth + 8
-                            implicitHeight: 18
+                            implicitHeight: 20
                             radius: Theme.radiusSmall
                             color: Qt.rgba(0.2, 0.6, 1.0, 0.15)
                             border.width: 1
@@ -289,7 +289,7 @@ Item {
                                 anchors.centerIn: parent
                                 text: "Variantes"
                                 color: Theme.palette.brandOrange
-                                font.pixelSize: Theme.fontSize(10)
+                                font.pixelSize: Theme.fontSizeMicro
                                 font.weight: Font.Medium
                             }
                         }
@@ -636,7 +636,7 @@ Item {
                                         Rectangle {
                                             visible: !!modelData.hasUnidentified
                                             implicitWidth: itemUnidentText.implicitWidth + 8
-                                            implicitHeight: 18
+                                            implicitHeight: 20
                                             radius: Theme.radiusSmall
                                             color: Qt.rgba(0.9, 0.6, 0.0, 0.15)
                                             border.width: 1
@@ -647,7 +647,7 @@ Item {
                                                 anchors.centerIn: parent
                                                 text: "Versão pendente"
                                                 color: Theme.palette.warning
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeMicro
                                                 font.weight: Font.Medium
                                             }
                                         }
@@ -655,7 +655,7 @@ Item {
                                         Rectangle {
                                             visible: !!modelData.hasVariants
                                             implicitWidth: itemVarText.implicitWidth + 8
-                                            implicitHeight: 18
+                                            implicitHeight: 20
                                             radius: Theme.radiusSmall
                                             color: Qt.rgba(0.2, 0.6, 1.0, 0.15)
                                             border.width: 1
@@ -666,7 +666,7 @@ Item {
                                                 anchors.centerIn: parent
                                                 text: "Variantes"
                                                 color: Theme.palette.brandOrange
-                                                font.pixelSize: Theme.fontSize(10)
+                                                font.pixelSize: Theme.fontSizeMicro
                                                 font.weight: Font.Medium
                                             }
                                         }
@@ -681,7 +681,7 @@ Item {
                                               (modelData.failedCount > 0 ? (" · Falhas: " + modelData.failedCount) : "")
                                         color: Theme.palette.subtleText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(11)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         elide: Text.ElideRight
                                     }
                                 }

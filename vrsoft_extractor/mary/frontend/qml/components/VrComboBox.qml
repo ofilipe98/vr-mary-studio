@@ -81,10 +81,9 @@ ComboBox {
                 Layout.preferredHeight: 30
                 VrLineIcon {
                     anchors.centerIn: parent
-                    width: 13
-                    height: 13
+                    width: 14
+                    height: 14
                     kind: "settings"
-                    strokeWidth: 1.55
                     foreground: settingsMouse.containsMouse
                         ? Theme.palette.text : Theme.palette.mutedText
                 }

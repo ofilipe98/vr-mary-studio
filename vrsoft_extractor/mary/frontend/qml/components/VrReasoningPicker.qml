@@ -108,7 +108,8 @@ Button {
                 text: "Raciocínio"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
+                font.weight: Theme.weightMedium
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -147,7 +148,7 @@ Button {
                                 text: "Padrão"
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(9)
+                                font.pixelSize: Theme.fontSizeMicro
                             }
                         }
                     }
@@ -178,7 +179,8 @@ Button {
                 text: "Service Tier"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
+                font.weight: Theme.weightMedium
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -220,7 +222,7 @@ Button {
                                     text: "Padrão"
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(9)
+                                    font.pixelSize: Theme.fontSizeMicro
                                 }
                             }
                         }
@@ -230,7 +232,7 @@ Button {
                             text: modelData.description || ""
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(10)
+                            font.pixelSize: Theme.fontSizeCaption
                             elide: Text.ElideRight
                         }
                     }

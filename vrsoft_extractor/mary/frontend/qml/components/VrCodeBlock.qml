@@ -90,9 +90,9 @@ Rectangle {
                 text: root.language
                 color: Theme.palette.subtleText || Theme.palette.mutedText || "#8f9ca8"
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11.5)
+                font.pixelSize: Theme.fontSize(12)
                 font.weight: Font.Normal
-                renderType: Text.NativeRendering
+                renderType: Theme.textRenderType
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -104,7 +104,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: 26
                 implicitHeight: 26
-                iconSize: 13
+                iconSize: 14
                 iconKind: "wrapText"
                 checkable: true
                 checked: frontend.wordWrap
@@ -123,7 +123,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: 26
                 implicitHeight: 26
-                iconSize: 13
+                iconSize: 14
                 iconKind: root.copied ? "check" : "copy"
                 foreground: root.copied
                     ? (Theme.palette.success || "#34d399")
@@ -159,7 +159,7 @@ Rectangle {
                 selectByMouse: true
                 persistentSelection: true
                 activeFocusOnPress: true
-                renderType: TextEdit.NativeRendering
+                renderType: Theme.textRenderType
                 wrapMode: wrapButton.checked ? TextEdit.Wrap : TextEdit.NoWrap
                 color: Theme.palette.text
                 selectionColor: Theme.palette.selection

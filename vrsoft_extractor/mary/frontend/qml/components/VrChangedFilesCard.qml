@@ -19,7 +19,7 @@ Rectangle {
         ? files : files.slice(0, Math.min(4, files.length))
 
     implicitHeight: cardColumn.implicitHeight + 24
-    radius: 18
+    radius: Theme.radiusCard
     color: Theme.palette.surfaceRaised
     border.width: 1
     border.color: Theme.palette.chatBorder
@@ -48,24 +48,27 @@ Rectangle {
                     + (root.fileCount === 1 ? " alterado" : "s alterados")
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
-                font.weight: Font.DemiBold
+                font.pixelSize: Theme.fontSizeCompact
+                font.weight: Theme.weightMedium
+                renderType: Theme.textRenderType
             }
 
             Text {
                 visible: root.additions > 0
                 text: "+" + root.additions
                 color: Theme.palette.success
-                font.family: "Cascadia Mono"
-                font.pixelSize: Theme.fontSize(10)
+                font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+                font.pixelSize: Theme.fontSizeCaption
+                renderType: Theme.textRenderType
             }
 
             Text {
                 visible: root.deletions > 0
                 text: "-" + root.deletions
                 color: Theme.palette.danger
-                font.family: "Cascadia Mono"
-                font.pixelSize: Theme.fontSize(10)
+                font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+                font.pixelSize: Theme.fontSizeCaption
+                renderType: Theme.textRenderType
             }
 
             Item { Layout.fillWidth: true }
@@ -73,9 +76,9 @@ Rectangle {
             Rectangle {
                 objectName: "changedFilesDiffButton"
                 visible: root.hasDiff
-                Layout.preferredWidth: diffButtonLabel.implicitWidth + 22
-                Layout.preferredHeight: 26
-                radius: 8
+                Layout.preferredWidth: diffButtonLabel.implicitWidth + 24
+                Layout.preferredHeight: 28
+                radius: Theme.radiusSmall
                 color: diffHover.hovered
                     ? Theme.palette.hover : Theme.palette.chatControl
                 border.width: 1
@@ -85,8 +88,8 @@ Rectangle {
                     anchors.centerIn: parent
                     spacing: 5
                     VrLineIcon {
-                        Layout.preferredWidth: 11
-                        Layout.preferredHeight: 11
+                        Layout.preferredWidth: 12
+                        Layout.preferredHeight: 12
                         kind: "edit"
                         foreground: Theme.palette.mutedText
                     }
@@ -95,8 +98,9 @@ Rectangle {
                         text: root.diffExpanded ? "Fechar diff" : "Abrir diff"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
-                        font.weight: Font.DemiBold
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.weight: Theme.weightMedium
+                        renderType: Theme.textRenderType
                     }
                 }
 
@@ -114,8 +118,9 @@ Rectangle {
             Layout.fillWidth: true
             text: root.folderSummary
             color: Theme.palette.mutedText
-            font.family: "Cascadia Mono"
-            font.pixelSize: Theme.fontSize(9)
+            font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+            font.pixelSize: Theme.fontSizeMicro
+            renderType: Theme.textRenderType
             elide: Text.ElideRight
         }
 
@@ -130,31 +135,32 @@ Rectangle {
 
                 Rectangle {
                     required property var modelData
-                    width: Math.min(fileChipText.implicitWidth + 18, fileFlow.width)
-                    height: 25
-                    radius: 7
+                    width: Math.min(fileChipText.implicitWidth + 20, fileFlow.width)
+                    height: 26
+                    radius: Theme.radiusSmall
                     color: Theme.palette.chatControl
 
                     Row {
                         anchors.fill: parent
-                        anchors.leftMargin: 7
-                        anchors.rightMargin: 7
-                        spacing: 5
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 6
                         VrLineIcon {
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 10
-                            height: 10
+                            width: 12
+                            height: 12
                             kind: "files"
                             foreground: Theme.palette.mutedText
                         }
                         Text {
                             id: fileChipText
                             anchors.verticalCenter: parent.verticalCenter
-                            width: Math.min(implicitWidth, fileFlow.width - 28)
+                            width: Math.min(implicitWidth, fileFlow.width - 32)
                             text: String(modelData.name || modelData.path || "arquivo")
                             color: Theme.palette.mutedText
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: Theme.fontSize(9)
+                            font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+                            font.pixelSize: Theme.fontSizeMicro
+                            renderType: Theme.textRenderType
                             elide: Text.ElideMiddle
                         }
                     }
@@ -168,7 +174,8 @@ Rectangle {
                 ? "Mostrar menos" : "Mostrar todos os " + root.files.length + " arquivos"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(9)
+            font.pixelSize: Theme.fontSizeCaption
+            renderType: Theme.textRenderType
 
             HoverHandler { id: showFilesHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.filesExpanded = !root.filesExpanded }
@@ -193,15 +200,16 @@ Rectangle {
                         Layout.fillWidth: true
                         text: String(modelData.path || "")
                         color: Theme.palette.text
-                        font.family: "Cascadia Mono"
-                        font.pixelSize: Theme.fontSize(9)
+                        font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+                        font.pixelSize: Theme.fontSizeCaption
+                        renderType: Theme.textRenderType
                         elide: Text.ElideMiddle
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(diffText.implicitHeight + 16, 320)
-                        radius: 8
+                        radius: Theme.radiusSmall
                         color: Theme.palette.chatBackground
                         border.width: 1
                         border.color: Theme.palette.chatBorder
@@ -217,8 +225,9 @@ Rectangle {
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
                             color: Theme.palette.mutedText
-                            font.family: "Cascadia Mono"
-                            font.pixelSize: Theme.fontSize(9)
+                            font.family: Theme.monospaceFontFamily || "Cascadia Mono"
+                            font.pixelSize: Theme.monospaceFontSize(12)
+                            renderType: Theme.textRenderType
                         }
                     }
                 }

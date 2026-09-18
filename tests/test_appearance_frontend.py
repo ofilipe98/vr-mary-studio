@@ -193,7 +193,9 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         assert composer.property("color").alphaF() == 1.0
         frontend.setUiScale("150")
         QTest.qWait(20)
-        assert prompt.property("font").pixelSize() == 27
+        # T3 model: prompt/code stay absolute in their own setting; only the
+        # interface scale follows uiScale (18px prompt unchanged at 150%).
+        assert prompt.property("font").pixelSize() == 18
         frontend.setCurrentPage(7)
         QTest.qWait(100)
         window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
@@ -203,5 +205,5 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         QTest.qWait(20)
         assert window.property("font").family() == "Arial"
         assert window.property("font").pixelSize() == 24
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 22
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
         assert not warnings

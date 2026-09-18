@@ -58,7 +58,7 @@ Button {
                 text: control.description
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(11)
+                font.pixelSize: Theme.fontSizeCaption
                 font.weight: Font.Normal
                 wrapMode: Text.WordWrap
             }

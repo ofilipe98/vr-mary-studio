@@ -83,7 +83,7 @@ Item {
                     text: root.feedbackMessage
                     color: root.feedbackIsError ? Theme.palette.danger : Theme.palette.success
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     elide: Text.ElideRight
                 }
                 VrIconButton {
@@ -196,14 +196,14 @@ Item {
                                     radius: 4
                                     color: Theme.palette.chatControl
                                     implicitWidth: provText.implicitWidth + 8
-                                    implicitHeight: 18
+                                    implicitHeight: 20
                                     Text {
                                         id: provText
                                         anchors.centerIn: parent
                                         text: skillItemRow.modelData.provider || "app"
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(9)
+                                        font.pixelSize: Theme.fontSizeMicro
                                     }
                                 }
 
@@ -211,14 +211,14 @@ Item {
                                     radius: 4
                                     color: Theme.palette.chatControl
                                     implicitWidth: scopeText.implicitWidth + 8
-                                    implicitHeight: 18
+                                    implicitHeight: 20
                                     Text {
                                         id: scopeText
                                         anchors.centerIn: parent
                                         text: skillItemRow.modelData.scope || "project"
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(9)
+                                        font.pixelSize: Theme.fontSizeMicro
                                     }
                                 }
                             }
@@ -228,7 +228,7 @@ Item {
                                 text: skillItemRow.modelData.description || "Sem descrição informada."
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(11)
+                                font.pixelSize: Theme.fontSizeCompact
                                 elide: Text.ElideRight
                             }
 
@@ -237,7 +237,7 @@ Item {
                                 text: skillItemRow.modelData.path || ""
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(9)
+                                font.pixelSize: Theme.fontSizeMicro
                                 elide: Text.ElideMiddle
                             }
                         }
@@ -337,7 +337,7 @@ Item {
                         text: "Nome da Skill (sem espaços):"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(11)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
 
@@ -356,7 +356,7 @@ Item {
                         text: "Provedor:"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(11)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
 
@@ -382,7 +382,7 @@ Item {
                     text: "Descrição resumida:"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
 
@@ -402,7 +402,7 @@ Item {
                     text: "Instruções / SKILL.md (Markdown):"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
 
@@ -544,7 +544,7 @@ Item {
                     text: "Descrição resumida:"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
 
@@ -563,7 +563,7 @@ Item {
                     text: "Instruções (Markdown):"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
 

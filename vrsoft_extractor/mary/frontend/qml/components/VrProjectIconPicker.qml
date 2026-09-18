@@ -315,7 +315,6 @@ Popup {
                         height: 24
                         kind: iconCell.modelData.kind
                         foreground: iconCell.selected ? root.selColor : Theme.palette.mutedText
-                        strokeWidth: 1.55
                     }
                     ToolTip.visible: cellHover.hovered
                     ToolTip.delay: 400
@@ -405,7 +404,7 @@ Popup {
                     text: "One or two characters. Leave empty to use the project initials."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }

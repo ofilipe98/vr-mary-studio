@@ -88,7 +88,7 @@ Item {
                     onAccepted: root.applyFilters()
                 }
                 VrButton { text: (root.filtersVisible ? "▾ " : "▸ ") + "Filtros"; onClicked: root.filtersVisible = !root.filtersVisible }
-                Text { text: studio.reviewTotal + " resultados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
+                Text { text: studio.reviewTotal + " resultados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
             }
         }
 
@@ -126,7 +126,7 @@ Item {
                             required property var modelData
                             Layout.fillWidth: true
                             spacing: 1
-                            Text { text: modelData[0]; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(9) }
+                            Text { text: modelData[0]; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                             VrComboBox {
                                 id: filterCombo
                                 Layout.fillWidth: true
@@ -143,7 +143,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 6
-                    Text { text: "Atalhos:"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10) }
+                    Text { text: "Atalhos:"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                     VrButton { text: "Maior risco"; implicitHeight: 28; onClicked: root.applyPreset("risk") }
                     VrButton { text: "Aprovação simples"; implicitHeight: 28; onClicked: root.applyPreset("simple") }
                     VrButton { text: "Sem produto"; implicitHeight: 28; onClicked: root.applyPreset("no_product") }
@@ -200,23 +200,23 @@ Item {
                     Rectangle {
                         visible: studio.reviewTotal > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 36
+                        Layout.preferredHeight: 38
                         color: frontend.palette.chatSidebar
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 5
-                            anchors.rightMargin: 5
-                            spacing: 5
-                            Text { Layout.preferredWidth: 25; text: "✓"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); horizontalAlignment: Text.AlignHCenter }
-                            Text { Layout.fillWidth: true; text: "Título"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 45; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 80; text: "Atual"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 80; text: "Sugestão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 45; text: "Conf."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 75; text: "Produto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 75; text: "Categoria"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 110; text: "Risco / motivo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 80; text: "Atualização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold }
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 6
+                            Item { Layout.preferredWidth: 25 }
+                            Text { Layout.fillWidth: true; text: "Título"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 48; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 85; text: "Atual"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 85; text: "Sugestão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 48; text: "Conf."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 75; text: "Produto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 75; text: "Categoria"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 110; text: "Risco / motivo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: 80; text: "Atualização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                         }
                     }
 
@@ -240,28 +240,28 @@ Item {
                         required property string risk
                         required property string updatedAt
                         width: reviewList.width
-                        height: 50
+                        height: 52
                         color: index % 2 ? frontend.palette.surfaceRaised : frontend.palette.surface
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 5
-                            anchors.rightMargin: 5
-                            spacing: 5
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 6
                             VrCheckBox {
                                 implicitWidth: 25
                                 checked: studio.reviewSelectionCount >= 0
                                     && studio.isReviewSelected(reviewRow.reviewId)
                                 onToggled: studio.setReviewSelected(reviewRow.reviewId, checked)
                             }
-                            Text { Layout.fillWidth: true; text: reviewRow.title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 45; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 80; text: reviewRow.currentModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 80; text: reviewRow.suggestedModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 45; text: reviewRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
-                            Text { Layout.preferredWidth: 75; text: reviewRow.product; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 75; text: reviewRow.category; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 110; text: reviewRow.risk; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 80; text: reviewRow.updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(10); elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; text: reviewRow.title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCompact; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 48; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 85; text: reviewRow.currentModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 85; text: reviewRow.suggestedModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 48; text: reviewRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+                            Text { Layout.preferredWidth: 75; text: reviewRow.product; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 75; text: reviewRow.category; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 110; text: reviewRow.risk; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: 80; text: reviewRow.updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; elide: Text.ElideRight }
                         }
                         TapHandler { onTapped: studio.selectReview(reviewRow.index) }
                     }
@@ -324,7 +324,7 @@ Item {
             Text { text: studio.reviewPageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
             VrButton { text: "Próxima >"; enabled: studio.reviewCanNext; onClicked: studio.nextReviewPage() }
             Item { Layout.fillWidth: true }
-            Text { text: studio.reviewTotal ? studio.reviewTotal + " itens" : "Nenhum item"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
+            Text { text: studio.reviewTotal ? studio.reviewTotal + " itens" : "Nenhum item"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
     }
 

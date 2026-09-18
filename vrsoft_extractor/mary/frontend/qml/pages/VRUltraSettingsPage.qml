@@ -327,7 +327,7 @@ Item {
                                                 text: modelData.warning
                                                 color: Theme.palette.warning
                                                 font.family: Theme.fontFamily
-                                                font.pixelSize: Theme.fontSize(11)
+                                                font.pixelSize: Theme.fontSizeCaption
                                                 wrapMode: Text.WordWrap
                                             }
                                         }

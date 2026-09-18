@@ -82,7 +82,7 @@ Item {
                     text: "Ctrl Enter"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(9)
+                    font.pixelSize: Theme.fontSizeMicro
                 }
             }
         }
@@ -98,7 +98,7 @@ Item {
             text: "Diretórios"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(11)
+            font.pixelSize: Theme.fontSizeCaption
             font.weight: Font.DemiBold
         }
 
@@ -183,7 +183,8 @@ Item {
                     text: "↑↓  Navegar    Enter  Abrir    Backspace  Voltar    Esc  Fechar"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(10)
+                    font.pixelSize: Theme.fontSizeMicro
+                    font.weight: Theme.weightMedium
                 }
                 Item { Layout.fillWidth: true }
                 Button {
@@ -194,7 +195,8 @@ Item {
                         text: parent.text
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(10)
+                        font.pixelSize: Theme.fontSizeMicro
+                        font.weight: Theme.weightMedium
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }

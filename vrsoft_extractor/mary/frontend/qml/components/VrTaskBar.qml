@@ -175,7 +175,7 @@ Rectangle {
                                 : modelData.state === "running" ? "Executando" : "Pendente"
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(10)
+                            font.pixelSize: Theme.fontSizeMicro
                         }
                         Text {
                             Layout.preferredWidth: 40
@@ -186,7 +186,7 @@ Rectangle {
                                 : modelData.state === "running" ? "agora" : ""
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(10)
+                            font.pixelSize: Theme.fontSizeMicro
                         }
                     }
                 }

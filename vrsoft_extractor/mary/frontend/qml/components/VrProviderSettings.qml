@@ -153,7 +153,7 @@ Item {
                             text: studio.providerItems.length
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(11)
+                            font.pixelSize: Theme.fontSizeCaption
                             font.weight: Font.Medium
                         }
                     }
@@ -265,7 +265,7 @@ Item {
                                             text: providerRow.modelData.installVersion || ""
                                             color: Theme.palette.subtleText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(10)
+                                            font.pixelSize: Theme.fontSizeCaption
                                         }
                                     }
                                 }
@@ -288,7 +288,7 @@ Item {
                                         elide: Text.ElideRight
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(11)
+                                        font.pixelSize: Theme.fontSizeCaption
                                     }
                                 }
                             }

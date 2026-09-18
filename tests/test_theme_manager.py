@@ -126,9 +126,9 @@ def test_typography_settings_and_reset():
     with TemporaryDirectory() as tmp:
         mgr = _create_manager(Path(tmp))
 
-        mgr.setInterfaceTypography("Arial", 16)
+        mgr.setInterfaceTypography("Arial", 18)
         assert mgr.interfaceFontFamily == "Arial"
-        assert mgr.interfaceFontSize == 16
+        assert mgr.interfaceFontSize == 18
 
         mgr.setCodeTypography("Cascadia Code", 14)
         assert mgr.codeFontFamily == "Cascadia Code"
@@ -141,7 +141,7 @@ def test_typography_settings_and_reset():
 
         mgr.resetSetting("interfaceFont")
         assert mgr.interfaceFontFamily == "Segoe UI"
-        assert mgr.interfaceFontSize == 14
+        assert mgr.interfaceFontSize == 16
 
 
 def test_simple_typography_inherits_and_advanced_restores_preferences(tmp_path):

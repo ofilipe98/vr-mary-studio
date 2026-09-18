@@ -240,6 +240,12 @@ class ChatBridge(QObject):
             self._on_coverage_warmed,
             Qt.ConnectionType.QueuedConnection,
         )
+        self._jar_sources_generation = 0
+        self._jar_sources_thread: threading.Thread | None = None
+        self._jarSourcesCounted.connect(
+            self._on_jar_sources_counted,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._code_analysis_jar_source = ERP_JAR_SOURCE_VR_EXEC
         self._code_analysis_jar_source_items: list[dict[str, Any]] = []
         self._code_analysis_snapshot_scope = ERP_JAR_SCOPE_FULL_RELEASE
@@ -408,6 +414,7 @@ class ChatBridge(QObject):
     _runtimeEvent = Signal(object)
     _releaseSnapshotReady = Signal()
     _codeProcessingReady = Signal()
+    _jarSourcesCounted = Signal(object)
 
     @Property(QObject, constant=True)
     def conversations(self) -> ConversationListModel:
@@ -1264,6 +1271,8 @@ class ChatBridge(QObject):
             thread.join(timeout=1.0)
         if self._release_coverage_thread is not None:
             self._release_coverage_thread.join(timeout=1.0)
+        if self._jar_sources_thread is not None and self._jar_sources_thread.is_alive():
+            self._jar_sources_thread.join(timeout=1.0)
         if self._apps_catalog_thread is not None:
             self._apps_catalog_thread.join(timeout=1.0)
         if self._app_comparison_thread is not None:
@@ -2194,6 +2203,10 @@ class ChatBridge(QObject):
     def _on_coverage_warmed(self, result: object) -> None:
         return self._CodeAdmin_domain._on_coverage_warmed(result)
 
+    @Slot(object)
+    def _on_jar_sources_counted(self, result: object) -> None:
+        return self._CodeAdmin_domain._on_jar_sources_counted(result)
+
     def _refresh_code_analysis_releases(self, *, include_coverage: bool = True) -> None:
         return self._CodeAdmin_domain._refresh_code_analysis_releases(include_coverage=include_coverage)
 
@@ -3095,8 +3108,24 @@ class ChatBridge(QObject):
             "userMessage": "Preparação do contexto",
             "agentMessage": "Preparação da resposta",
         }
+        tool_summary = str(
+            item.get("toolSummary")
+            or item.get("tool_summary")
+            or payload.get("toolSummary")
+            or payload.get("tool_summary")
+            or ""
+        ).strip()
+        tool_action = str(
+            item.get("toolAction")
+            or item.get("tool_action")
+            or payload.get("toolAction")
+            or payload.get("tool_action")
+            or ""
+        ).strip()
         label = str(
-            item.get("name")
+            tool_action
+            or tool_summary
+            or item.get("name")
             or item.get("tool")
             or fallback_labels.get(item_type)
             or item_type

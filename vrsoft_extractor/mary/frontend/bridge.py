@@ -63,7 +63,7 @@ UI_SCALE_OPTIONS = (
     "125",
     "150",
 )
-UI_SCALE_PREFERENCE_VERSION = 2
+UI_SCALE_PREFERENCE_VERSION = 3
 INTERFACE_FONT_OPTIONS = ("Segoe UI", "Arial", "Inter", "Tahoma")
 MONOSPACE_FONT_OPTIONS = ("Consolas", "Cascadia Code", "Courier New")
 BROWSER_VIEWPORT_OPTIONS = ("fill", "1280x720", "1440x900", "390x844")
@@ -79,6 +79,8 @@ def normalized_ui_scale(value: object, default: str = "auto") -> str:
 
 class FrontendBridge(QObject):
     """Stable QML-facing state; business rules remain in the existing backend."""
+
+    UI_SCALE_PREFERENCE_VERSION = UI_SCALE_PREFERENCE_VERSION
 
     themeChanged = Signal()
     currentPageChanged = Signal()
@@ -142,6 +144,10 @@ class FrontendBridge(QObject):
         if scale_version < UI_SCALE_PREFERENCE_VERSION:
             self._ui_scale = "auto"
             self._preferences.setValue("appearance/ui_scale", self._ui_scale)
+            old_size = self._preferences.value("appearance/interface_font_size", None)
+            if old_size in (14, "14", None):
+                self._preferences.setValue("appearance/interface_font_size", 16)
+                self._theme_manager.setInterfaceTypography("Segoe UI", 16)
             self._preferences.setValue(
                 "appearance/ui_scale_version", UI_SCALE_PREFERENCE_VERSION
             )
@@ -311,13 +317,7 @@ class FrontendBridge(QObject):
     @Property(str, notify=typographyChanged)
     def effectiveInterfaceFontFamily(self) -> str:  # noqa: N802
         fam = self._theme_manager.interfaceFontFamily
-        if fam in ("Segoe UI", "") and sys.platform == "win32":
-            from PySide6.QtGui import QFontDatabase
-
-            if "Segoe UI Variable Text" in set(QFontDatabase.families()):
-                return "Segoe UI Variable Text"
         return fam or "Segoe UI"
-
     @Property(int, notify=typographyChanged)
     def interfaceFontSize(self) -> int:  # noqa: N802
         return self._theme_manager.interfaceFontSize

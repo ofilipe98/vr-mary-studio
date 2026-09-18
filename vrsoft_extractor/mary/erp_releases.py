@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -86,6 +87,20 @@ class ErpReleasePaths:
         return self.index_for(release_id) / "manifest.json"
 
 
+_PRUNED_SOURCE_DIRS = frozenset({
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    "build",
+    "dist",
+    ".idea",
+    ".vscode",
+    ".gradle",
+})
+
+
 class ErpReleaseCatalog:
     """Import, validate and safely remove versioned ERP JAR inventories."""
 
@@ -110,7 +125,12 @@ class ErpReleaseCatalog:
         ):
             path.mkdir(parents=True, exist_ok=True)
 
-    def detect_package(self, source_dir: str | Path) -> dict[str, Any]:
+    def detect_package(
+        self,
+        source_dir: str | Path,
+        *,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
         """Read only application release metadata from JAR-local properties."""
 
         source = Path(source_dir).resolve()
@@ -130,7 +150,17 @@ class ErpReleaseCatalog:
         components: list[dict[str, Any]] = []
         seen_applications: dict[str, str] = {}
         duplicate_applications: list[str] = []
-        for jar_path in jar_paths:
+        total_jars = len(jar_paths)
+        for idx, jar_path in enumerate(jar_paths):
+            if progress_callback:
+                progress_callback({
+                    "operation": "preview",
+                    "event": "progress",
+                    "stage": "detect",
+                    "current": idx + 1,
+                    "total": total_jars,
+                    "file": jar_path.name,
+                })
             identity = detect_jar_release(jar_path)
             relative = jar_path.relative_to(source_root).as_posix()
             identity["source_relative_path"] = relative
@@ -186,17 +216,26 @@ class ErpReleaseCatalog:
         source = source.resolve()
         managed_root = self.paths.source_releases.resolve()
         paths: list[Path] = []
-        for path in source.rglob("*"):
-            if not path.is_file() or path.suffix.casefold() != ".jar":
-                continue
-            relative = path.relative_to(source)
-            if source == managed_root:
-                parts = relative.parts
-                if len(parts) >= 3 and parts[1].casefold() == "jars":
-                    continue
-                if parts and parts[0].startswith("."):
-                    continue
-            paths.append(path)
+        for root_str, dirs, files in os.walk(source, followlinks=False):
+            dirs[:] = [
+                d for d in dirs
+                if d.casefold() not in _PRUNED_SOURCE_DIRS
+                and not (source == managed_root and d.startswith("."))
+            ]
+            root_path = Path(root_str)
+            for f in files:
+                if f.casefold().endswith(".jar"):
+                    path = root_path / f
+                    if not path.is_file():
+                        continue
+                    relative = path.relative_to(source)
+                    if source == managed_root:
+                        parts = relative.parts
+                        if len(parts) >= 3 and parts[1].casefold() == "jars":
+                            continue
+                        if parts and parts[0].startswith("."):
+                            continue
+                    paths.append(path)
         return sorted(
             paths,
             key=lambda path: path.relative_to(source).as_posix().casefold(),
@@ -210,6 +249,8 @@ class ErpReleaseCatalog:
         source_origin_dir: str | Path | None = None,
         analysis_scope: str | None = None,
         expected_jar_count: int | None = None,
+        known_hashes: dict[str, str] | None = None,
+        progress_callback: Any = None,
     ) -> dict[str, Any]:
         release_id = validate_release_id(release_id)
         effective_expected_count = max(
@@ -235,14 +276,7 @@ class ErpReleaseCatalog:
                 f"O limite de {self.max_releases} releases indexadas foi atingido; "
                 "remova uma delas com aprovação antes de importar outra."
             )
-        jar_paths = sorted(
-            (
-                path
-                for path in source.rglob("*")
-                if path.is_file() and path.suffix.casefold() == ".jar"
-            ),
-            key=lambda path: path.relative_to(source).as_posix().casefold(),
-        )
+        jar_paths = self._source_jars(source)
         if not jar_paths:
             raise ErpReleaseError(f"Nenhum JAR encontrado em: {source}")
 
@@ -252,9 +286,22 @@ class ErpReleaseCatalog:
         class_names: list[str] = []
         warnings: list[str] = []
 
-        for jar_path in jar_paths:
+        total_jars = len(jar_paths)
+        for idx, jar_path in enumerate(jar_paths):
             relative_path = jar_path.relative_to(source).as_posix()
-            artifact, names = self._inventory_jar(jar_path, relative_path)
+            if progress_callback:
+                progress_callback({
+                    "operation": "snapshot",
+                    "event": "progress",
+                    "stage": "inventory",
+                    "current": idx + 1,
+                    "total": total_jars,
+                    "file": jar_path.name,
+                })
+            known_sha = known_hashes.get(relative_path) if known_hashes else None
+            artifact, names = self._inventory_jar(
+                jar_path, relative_path, known_sha256=known_sha
+            )
             artifacts.append(artifact)
             class_names.extend(names)
             for class_name in names:
@@ -433,13 +480,12 @@ class ErpReleaseCatalog:
         try:
             for artifact in source_artifacts:
                 target = staging_jars / artifact["relative_path"]
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(artifact["path"], target)
+                actual_sha = _copy_with_digest(artifact["path"], target)
                 if target.stat().st_size != int(artifact["size_bytes"]):
                     raise ErpReleaseError(
                         f"Tamanho divergente no snapshot: {artifact['relative_path']}"
                     )
-                if sha256_file(target) != artifact["sha256"]:
+                if actual_sha != artifact["sha256"]:
                     raise ErpReleaseError(
                         f"SHA-256 divergente no snapshot: {artifact['relative_path']}"
                     )
@@ -486,11 +532,13 @@ class ErpReleaseCatalog:
         release_id: str = "",
         base_release_id: str = "",
         analysis_scope: str | None = None,
+        known_hashes: dict[str, str] | None = None,
+        progress_callback: Any = None,
     ) -> dict[str, Any]:
         """Create a categorized snapshot, composing partial VR update packages."""
 
         source = Path(source_dir).resolve()
-        package = self.detect_package(source)
+        package = self.detect_package(source, progress_callback=progress_callback)
         single_jar = source.is_file() or analysis_scope == "single_jar"
         package_components = list(package["components"])
         source_root = source.parent if source.is_file() else source
@@ -498,8 +546,12 @@ class ErpReleaseCatalog:
         for component in package_components:
             jar_path = (source_root / str(component["source_relative_path"])).resolve()
             _require_child(jar_path, source_root)
+            rel = str(component["source_relative_path"])
             before = jar_path.stat()
-            digest = sha256_file(jar_path)
+            if known_hashes and rel in known_hashes:
+                digest = known_hashes[rel]
+            else:
+                digest = sha256_file(jar_path)
             after = jar_path.stat()
             if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
                 raise ErpReleaseError(
@@ -635,19 +687,26 @@ class ErpReleaseCatalog:
         )
         staging_jars = staging_root / "jars"
         materialization: list[dict[str, str]] = []
+        total_categorized = len(categorized)
         try:
-            for item in categorized:
+            for idx, item in enumerate(categorized):
                 target = staging_jars / item["target_relative_path"]
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # A snapshot must remain immutable even if an updater edits a
-                # source JAR in place. Hard links would violate that guarantee.
-                shutil.copy2(item["path"], target)
+                if progress_callback:
+                    progress_callback({
+                        "operation": "snapshot",
+                        "event": "progress",
+                        "stage": "copy",
+                        "current": idx + 1,
+                        "total": total_categorized,
+                        "file": Path(item["target_relative_path"]).name,
+                    })
+                actual_sha = _copy_with_digest(item["path"], target)
                 method = "copy"
                 if target.stat().st_size != int(item["size_bytes"]):
                     raise ErpReleaseError(
                         f"Tamanho divergente no snapshot: {item['target_relative_path']}"
                     )
-                if sha256_file(target) != item["sha256"]:
+                if actual_sha != item["sha256"]:
                     raise ErpReleaseError(
                         f"SHA-256 divergente no snapshot: {item['target_relative_path']}"
                     )
@@ -674,6 +733,10 @@ class ErpReleaseCatalog:
             if len(combined) == expected
             else "partial_release"
         )
+        known_target_hashes = {
+            item["target_relative_path"]: item["sha256"]
+            for item in categorized
+        }
         try:
             manifest = self.import_release(
                 selected_release_id,
@@ -681,6 +744,8 @@ class ErpReleaseCatalog:
                 source_origin_dir=source,
                 analysis_scope=effective_scope,
                 expected_jar_count=expected,
+                known_hashes=known_target_hashes,
+                progress_callback=progress_callback,
             )
         except Exception:
             _require_child(release_root, self.paths.source_releases)
@@ -1555,10 +1620,14 @@ class ErpReleaseCatalog:
         }
 
     def _inventory_jar(
-        self, jar_path: Path, relative_path: str
+        self,
+        jar_path: Path,
+        relative_path: str,
+        *,
+        known_sha256: str | None = None,
     ) -> tuple[dict[str, Any], list[str]]:
         before = jar_path.stat()
-        digest = sha256_file(jar_path)
+        digest = known_sha256 if known_sha256 is not None else sha256_file(jar_path)
         after = jar_path.stat()
         error = ""
         class_names: list[str] = []
@@ -1890,6 +1959,17 @@ def _decode_java_property_escapes(value: str) -> str:
         .replace(r"\=", "=")
         .replace(r"\\", "\\")
     )
+
+
+def _copy_with_digest(src_path: Path, dst_path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    with src_path.open("rb") as src, dst_path.open("wb") as dst:
+        while chunk := src.read(chunk_size):
+            digest.update(chunk)
+            dst.write(chunk)
+    shutil.copystat(src_path, dst_path)
+    return digest.hexdigest()
 
 
 def sha256_file(path: Path, chunk_size: int = 4 * 1024 * 1024) -> str:

@@ -36,7 +36,7 @@ Column {
                 spacing: 8
                 VrLineIcon { kind: "files"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; foreground: Theme.palette.mutedText }
                 Text { Layout.fillWidth: true; text: source.modelData.content; elide: Text.ElideRight; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize }
-                Text { visible: root.width > 480; text: source.modelData.origin; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
+                Text { visible: root.width > 480; text: source.modelData.origin; color: Theme.palette.subtleText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                 VrLineIcon { kind: "external"; Layout.preferredWidth: 14; Layout.preferredHeight: 14; foreground: Theme.palette.mutedText }
             }
             background: Rectangle {

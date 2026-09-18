@@ -59,8 +59,8 @@ Item {
                 width: Theme.iconSize
                 height: Theme.iconSize
                 source: root.iconSource
-                sourceSize.width: 24
-                sourceSize.height: 24
+                sourceSize.width: Theme.iconSize
+                sourceSize.height: Theme.iconSize
                 fillMode: Image.PreserveAspectFit
             }
             MultiEffect {
@@ -82,7 +82,7 @@ Item {
             text: root.title
             color: root.selected ? "#FFFFFF" : Theme.palette.navText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: Theme.fontSize(14)
             font.weight: root.selected ? Font.DemiBold : Font.Medium
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight

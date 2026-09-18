@@ -23,7 +23,7 @@ RowLayout {
         color: Theme.palette.mutedSurface || Theme.palette.surfaceRaised
         Text {
             anchors.centerIn: parent; text: Math.round(slider.value) + root.suffix
-            font.family: Theme.monospaceFontFamily; font.pixelSize: Theme.fontSize(11); font.weight: Font.DemiBold
+            font.family: Theme.monospaceFontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium
             color: Theme.palette.text
         }
     }

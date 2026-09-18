@@ -28,12 +28,12 @@ Button {
             : control.variant === "primary" || control.variant === "danger"
                 ? "#FFFFFF" : Theme.palette.text
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.bodySize
-        font.weight: Font.DemiBold
+        font.pixelSize: Theme.controlSize
+        font.weight: Theme.weightMedium
         horizontalAlignment: control.textAlignment
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
-        renderType: Text.NativeRendering
+        renderType: Theme.textRenderType
     }
 
     background: Rectangle {

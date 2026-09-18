@@ -8,8 +8,8 @@ Rectangle {
     property string kind: "info"
 
     implicitWidth: label.implicitWidth + 18
-    implicitHeight: 26
-    radius: 13
+    implicitHeight: 24
+    radius: height / 2
     color: {
         if (kind === "success")
             return frontend.themeId === "dark_orange" ? "#183629" : "#E8F5ED"
@@ -26,7 +26,8 @@ Rectangle {
             : kind === "warning" ? Theme.palette.warning
             : Theme.palette.text
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSize(11)
-        font.weight: Font.DemiBold
+        font.pixelSize: Theme.fontSizeCaption
+        font.weight: Theme.weightMedium
+        renderType: Theme.textRenderType
     }
 }

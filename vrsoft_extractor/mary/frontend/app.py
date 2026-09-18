@@ -181,13 +181,9 @@ def _apply_application_font(app: QApplication) -> None:
         ):
             if candidate.exists():
                 QFontDatabase.addApplicationFont(str(candidate))
-        primary_family = (
-            "Segoe UI Variable Text"
-            if "Segoe UI Variable Text" in set(QFontDatabase.families())
-            else "Segoe UI"
-        )
+        primary_family = "Segoe UI"
         font = QFont(primary_family)
-        font.setFamilies([primary_family, "Segoe UI", "sans-serif"])
+        font.setFamilies([primary_family, "sans-serif"])
         font.setStyleStrategy(
             QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality
         )

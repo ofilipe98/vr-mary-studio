@@ -9,43 +9,81 @@ QtObject {
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property string promptFontFamily: frontend.promptFontFamily
     readonly property string terminalFontFamily: frontend.terminalFontFamily
-    readonly property int textRenderType: Text.NativeRendering
+    // Honors Settings -> Appearance -> font smoothing. On keeps the current
+    // Windows ClearType look (previous hardcoded behavior, also the stored
+    // default); off selects the Qt rasterizer. T3 Code exposes the same
+    // preference as grayscale antialiased vs. platform default.
+    readonly property int textRenderType: frontend.fontSmoothing
+        ? Text.NativeRendering : Text.QtRendering
 
     readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120
     property real viewportHeight: 700
-    readonly property real automaticScale: automaticScaleForSize(
-        viewportWidth, viewportHeight)
-    readonly property int automaticScalePercent: Math.round(automaticScale * 100)
+    readonly property real automaticScale: 1.0
+    readonly property int automaticScalePercent: 100
     readonly property real selectedScale: frontend.uiScale === "auto"
-        ? automaticScale : frontend.uiScaleFactor
+        ? 1.0 : frontend.uiScaleFactor
     readonly property real textScale: baseTextScale * selectedScale
-        * (frontend.interfaceFontSize / 14.0)
+        * (frontend.interfaceFontSize / 16.0)
 
     function automaticScaleForSize(width, height) {
-        var relativeSize = Math.min(Number(width) / 1120, Number(height) / 700)
-        var progress = Math.max(0, Math.min(1, (relativeSize - 1) / 2.08))
-        return 1.0 + 0.10 * progress
+        return 1.0
     }
 
+    // Semantic root scale: interfaceFontSize drives textScale (nominal 16px baseline).
+    // Prompt/code/mono/terminal stay in absolute pixels from their own settings.
     function fontSize(pixelSize) {
-        return Math.max(1, Math.round(Number(pixelSize) * textScale))
+        return Math.max(1, Number(pixelSize) * textScale)
     }
 
     function monospaceFontSize(pixelSize) {
-        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
-            * selectedScale * (frontend.monospaceFontSize / 12.0)))
+        return Math.max(1, Number(pixelSize) * baseTextScale
+            * (frontend.monospaceFontSize / 12.0))
     }
 
     function promptFontSize(pixelSize) {
-        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
-            * selectedScale * (frontend.promptFontSize / 14.0)))
+        return Math.max(1, Number(pixelSize) * baseTextScale
+            * (frontend.promptFontSize / 14.0))
     }
 
     function terminalFontSize(pixelSize) {
-        return Math.max(1, Math.round(Number(pixelSize) * baseTextScale
-            * selectedScale * (frontend.terminalFontSize / 12.0)))
+        return Math.max(1, Number(pixelSize) * baseTextScale
+            * (frontend.terminalFontSize / 12.0))
     }
+
+    // Semantic typography scale (T3 Code design hierarchy)
+    readonly property real fontSizeMicro: fontSize(11)
+    readonly property real fontSizeCaption: fontSize(12)
+    readonly property real fontSizeCompact: fontSize(13)
+    readonly property real fontSizeControl: fontSize(14)
+    readonly property real fontSizeBody: fontSize(16)
+    readonly property real fontSizeHeading: fontSize(18)
+    readonly property real fontSizeSection: fontSize(20)
+    readonly property real fontSizeTitle: fontSize(24)
+    readonly property real fontSizePageTitle: fontSize(26)
+
+    // Semantic aliases for consistency
+    readonly property real microSize: fontSizeMicro
+    readonly property real captionSize: fontSizeCaption
+    readonly property real compactLabelSize: fontSizeCompact
+    readonly property real controlSize: fontSizeControl
+    readonly property real bodySize: fontSizeBody
+    readonly property real headingSize: fontSizeHeading
+    readonly property real sectionTitleSize: fontSizeSection
+    readonly property real subtitleSize: fontSizeHeading
+    readonly property real titleSize: fontSizePageTitle
+    readonly property real pageTitleSize: fontSizePageTitle
+
+    // Typographic weights (aligned with design system)
+    readonly property int weightRegular: Font.Normal
+    readonly property int weightMedium: Font.Medium
+    readonly property int weightDemiBold: Font.DemiBold
+    readonly property int weightBold: Font.Bold
+
+    // Proportional line-height rhythm (T3 Code body reads at ~1.45-1.5)
+    readonly property real bodyLineHeight: 1.45
+    readonly property real denseLineHeight: 1.35
+    readonly property real headingLineHeight: 1.25
 
     // Contrast and Glass Opacity tokens
     readonly property int contrast: frontend.appearanceContrast
@@ -54,42 +92,52 @@ QtObject {
     readonly property int rawPanelAnimationDuration: frontend.rawPanelAnimationDurationMs
     readonly property int panelAnimationDuration: frontend.panelAnimationDurationMs
 
-    readonly property int spaceXs: 4
-    readonly property int spaceSm: 8
-    readonly property int spaceMd: 12
-    readonly property int spaceLg: 16
-    readonly property int spaceXl: 24
-    readonly property int space2Xl: 32
+    // Layout follows selectedScale (T3 rem behavior) with integer snapping
+    function scaledGeometry(base) {
+        return Math.max(1, Math.round(Number(base) * selectedScale))
+    }
 
-    readonly property int radiusSmall: 8
-    readonly property int radiusControl: 10
-    readonly property int radiusPopup: 12
-    readonly property int radiusCard: 14
+    readonly property int spaceXs: scaledGeometry(4)
+    readonly property int spaceSm: scaledGeometry(8)
+    readonly property int spaceMd: scaledGeometry(12)
+    readonly property int spaceLg: scaledGeometry(16)
+    readonly property int spaceXl: scaledGeometry(24)
+    readonly property int space2Xl: scaledGeometry(32)
 
-    readonly property int controlHeight: 40
-    readonly property int compactControlHeight: 34
-    readonly property int navigationWidth: 228
-    readonly property int navigationCollapsedWidth: 64
-    readonly property int chatSidebarWidth: 220
-    readonly property int chatHeaderHeight: 50
-    readonly property int contentWidth: 800
-    readonly property int messageRadius: 16
-    readonly property int composerRadius: 16
-    readonly property int messageGap: 8
-    readonly property int iconSmall: 14
-    readonly property int iconMedium: 16
-    readonly property int pageMargin: 22
-    readonly property int pageSpacing: 12
-    readonly property int iconSize: 18
+    readonly property int radiusXs: scaledGeometry(4)
+    readonly property int radiusSmall: scaledGeometry(8)
+    readonly property int radiusControl: scaledGeometry(10)
+    readonly property int radiusPopup: scaledGeometry(12)
+    readonly property int radiusCard: scaledGeometry(14)
+    readonly property int radiusLg: scaledGeometry(16)
 
-    readonly property int bodySize: fontSize(14)
-    readonly property int captionSize: fontSize(12)
-    readonly property int subtitleSize: fontSize(16)
-    readonly property int titleSize: fontSize(26)
-    readonly property int headingSize: fontSize(18)
+    // Standardized control heights (aligned with T3 Code)
+    readonly property int controlHeightCompact: scaledGeometry(32)
+    readonly property int compactControlHeight: scaledGeometry(34)
+    readonly property int controlHeight: scaledGeometry(38)
+    readonly property int controlHeightNormal: scaledGeometry(38)
+    readonly property int controlHeightLarge: scaledGeometry(44)
+    readonly property int iconButtonCompact: scaledGeometry(28)
+    readonly property int iconButtonNormal: scaledGeometry(34)
+    readonly property int iconButtonLarge: scaledGeometry(38)
 
-    // Motion tokens keep interactions consistent and make it easy to honor
-    // the reduce-motion preference at each animation site.
+    readonly property int navigationWidth: scaledGeometry(228)
+    readonly property int navigationCollapsedWidth: scaledGeometry(64)
+    readonly property int chatSidebarWidth: scaledGeometry(220)
+    readonly property int chatHeaderHeight: scaledGeometry(52)
+    readonly property int contentWidth: scaledGeometry(800)
+    readonly property int messageRadius: scaledGeometry(16)
+    readonly property int composerRadius: scaledGeometry(16)
+    readonly property int messageGap: scaledGeometry(8)
+
+    // Lucide-style presence: 16px metadata actions, 18px inline affordances, 20px navigation
+    readonly property int iconSmall: scaledGeometry(16)
+    readonly property int iconMedium: scaledGeometry(18)
+    readonly property int iconSize: scaledGeometry(20)
+    readonly property int pageMargin: scaledGeometry(22)
+    readonly property int pageSpacing: scaledGeometry(12)
+
+    // Motion tokens
     readonly property int pressDuration: frontend.reduceMotion ? 0 : 90
     readonly property int fastDuration: frontend.reduceMotion ? 0 : 140
     readonly property int motionDuration: frontend.panelAnimationDurationMs

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import QtQuick.Layouts
 import "../theme"
 
@@ -41,13 +42,34 @@ Rectangle {
         }
         return false
     }
+    readonly property bool hasFileAttachments: {
+        var list = composerCard.page.chatBridge.attachments || []
+        for (var i = 0; i < list.length; ++i) {
+            var item = list[i]
+            var p = String((item && (item.path || item.name)) || "").toLowerCase()
+            if (!(p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
+                p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp") ||
+                p.endsWith(".svg") || p.endsWith(".ico"))) return true
+        }
+        return false
+    }
     readonly property int attachmentsCount: composerCard.page.chatBridge.attachments ? composerCard.page.chatBridge.attachments.length : 0
     readonly property bool hasSkills: composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0
     readonly property real attachmentsAreaHeight: {
         var h = 0
         if (hasImageAttachments) h += 68
-        if (attachmentsCount > 0) h += 34
+        if (hasFileAttachments) h += 34
         return h
+    }
+    // Distância do topo do cartão até o campo de texto, sem ler AnchorLines
+    // (attachmentList.bottom.y é indefinido e zerava a margem, sobrepondo o texto aos thumbnails).
+    // Thumbnails: top 12 + altura 60 = 72; faixa de arquivos: 10 (sem thumbs) ou 8 + 30 de altura.
+    readonly property real composerTopMargin: {
+        if (composerCard.isCompact) return 6
+        if (hasImageAttachments && hasFileAttachments) return 116
+        if (hasImageAttachments) return 78
+        if (hasFileAttachments) return 46
+        return 12
     }
     readonly property real skillsAreaHeight: hasSkills ? 34 : 0
     readonly property real chipAreaHeight: attachmentsAreaHeight + skillsAreaHeight
@@ -174,6 +196,20 @@ Rectangle {
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
+                    // Item.clip é retangular e não respeita o radius do card,
+                    // por isso a imagem vazava com cantos quadrados.
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        maskEnabled: true
+                        maskSource: thumbMask
+                    }
+                }
+
+                Rectangle {
+                    id: thumbMask
+                    anchors.fill: parent
+                    radius: 8
+                    visible: false
                 }
 
                 Rectangle {
@@ -198,11 +234,11 @@ Rectangle {
         }
     }
 
-    // Attachment chips row (below thumbnails, above text input)
+    // Attachment chips row (below thumbnails, above text input; only non-image files)
     ListView {
         id: attachmentList
         objectName: "chatAttachmentList"
-        visible: composerCard.attachmentsCount > 0 && !composerCard.isCompact
+        visible: composerCard.hasFileAttachments && !composerCard.isCompact
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: attachmentThumbnailsList.visible ? attachmentThumbnailsList.bottom : parent.top
@@ -237,8 +273,8 @@ Rectangle {
                 anchors.rightMargin: 4
                 spacing: 5
                 VrLineIcon {
-                    width: 13
-                    height: 13
+                    width: 14
+                    height: 14
                     anchors.verticalCenter: parent.verticalCenter
                     kind: "file"
                     foreground: Theme.palette.brandOrange
@@ -251,14 +287,14 @@ Rectangle {
                     elide: Text.ElideMiddle
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSize(12)
                 }
                 VrIconButton {
                     width: 22
                     height: 22
                     anchors.verticalCenter: parent.verticalCenter
                     iconKind: "close"
-                    iconSize: 10
+                    iconSize: 12
                     foreground: Theme.palette.mutedText
                     onClicked: composerCard.page.chatBridge.removeAttachment(attachmentChip.index)
                 }
@@ -276,7 +312,7 @@ Rectangle {
         anchors.leftMargin: 16
         anchors.rightMargin: composerCard.isCompact ? 86 : 16
         anchors.top: parent.top
-        anchors.topMargin: composerCard.isCompact ? 6 : (attachmentList.visible ? attachmentList.bottom.y + 6 : (attachmentThumbnailsList.visible ? 78 : 12))
+        anchors.topMargin: composerCard.composerTopMargin
         height: composerCard.isCompact ? 34 : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
             contentHeight + topPadding + bottomPadding))
         clip: true
@@ -303,7 +339,7 @@ Rectangle {
             objectName: "chatComposerInput"
             font.family: Theme.promptFontFamily
             font.pixelSize: Theme.promptFontSize(14)
-            renderType: TextEdit.NativeRendering
+            renderType: Theme.textRenderType
             leftPadding: 0
             rightPadding: 0
             topPadding: 2
@@ -368,7 +404,7 @@ Rectangle {
                     elide: Text.ElideMiddle
                     color: Theme.palette.brandOrange
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.DemiBold
                 }
                 VrIconButton {
@@ -376,7 +412,7 @@ Rectangle {
                     height: 22
                     anchors.verticalCenter: parent.verticalCenter
                     iconKind: "close"
-                    iconSize: 11
+                    iconSize: 12
                     foreground: Theme.palette.mutedText
                     onClicked: composerCard.page.chatBridge.removeActiveSkill(skillChip.index)
                 }

@@ -363,7 +363,7 @@ Item {
                                     text: settingResult.modelData.category
                                     color: Theme.palette.navMuted
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(10)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                             }
                         }

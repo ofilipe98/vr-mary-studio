@@ -44,7 +44,7 @@ Item {
                     text: studio.knowledgeTotal + (studio.knowledgeTotal === 1 ? " documento encontrado" : " documentos encontrados")
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(11)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
                 VrButton { text: "Pesquisar"; variant: "primary"; onClicked: runSearch() }
             }
@@ -234,7 +234,7 @@ Item {
             Text { text: studio.knowledgePageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
             VrButton { text: "Próxima"; enabled: studio.knowledgeCanNext; onClicked: studio.nextKnowledgePage() }
             Item { Layout.fillWidth: true }
-            Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(11) }
+            Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
     }
 

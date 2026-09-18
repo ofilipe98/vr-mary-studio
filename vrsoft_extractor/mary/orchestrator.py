@@ -1183,15 +1183,11 @@ class ChatOrchestrator:
                     missing_sections=tuple(v.detail for v in result.violations[:3]) or result.merged.gaps[:3],
                 ))
             elif draft.answer_status == "insufficient_evidence":
-                if draft.answer_markdown and draft.answer_markdown.strip():
-                    self._pending_used_evidence_ids[conversation_id] = tuple(draft.used_evidence_ids)
-                    final_text = render_sources(draft.answer_markdown, draft.used_evidence_ids, result.synthesis_bundle)
-                else:
-                    self._pending_used_evidence_ids[conversation_id] = ()
-                    final_text = build_controlled_failure(FinalResponseValidation(
-                        verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
-                        missing_sections=result.merged.gaps[:3],
-                    ))
+                self._pending_used_evidence_ids[conversation_id] = ()
+                final_text = build_controlled_failure(FinalResponseValidation(
+                    verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
+                    missing_sections=result.merged.gaps[:3],
+                ))
             else:
                 self._pending_used_evidence_ids[conversation_id] = tuple(draft.used_evidence_ids)
                 final_text = render_sources(draft.answer_markdown, draft.used_evidence_ids, result.synthesis_bundle)

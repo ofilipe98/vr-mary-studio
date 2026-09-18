@@ -81,6 +81,15 @@ def _code_scope_queries(value: str, limit: int = 8) -> tuple[str, ...]:
 
     return tuple(dict.fromkeys(stack_symbols + camel + symbols + preferred + fallback))[: max(1, int(limit))]
 
+def _has_stack_trace_elements(text: str) -> bool:
+    val = str(text or "")
+    return bool(
+        re.search(r"\bat\s+(?:[\w\$]+\.)*[A-Z][\w\$]+\.[\w\$]+\(", val)
+        or re.search(r"\b[A-Z][\w\$]+Exception\b", val)
+        or re.search(r"\b[A-Z][\w\$]+\.java\b", val)
+    )
+
+
 
 def check_code_availability(
     root: Path,
@@ -204,9 +213,14 @@ def retrieve_code_candidates(
             if scoped_count >= limit_per_scope:
                 break
 
-    # If scoped search did not find enough candidates or if stack-trace classes
-    # exist outside the selected app_context, search across the release as fallback:
-    if len(code_results) < limit_per_scope and application_contexts is not None:
+    # If stack-trace classes exist outside the selected app_context,
+    # search across the release as fallback:
+    if (
+        _has_stack_trace_elements(scoped_text)
+        and bool(code_analysis_release)
+        and len(code_results) < limit_per_scope
+        and application_contexts is not None
+    ):
         for code_query in _code_scope_queries(scoped_text):
             for res in JavaCodeIndex(root).search(
                 code_query,
