@@ -349,7 +349,7 @@ def test_refresh_antigravity_auth_succeeded_triggers_validation(bridge):
 
     with patch.object(result, "validateAntigravityAccount") as mock_validate:
         result._refresh_antigravity_auth()
-        mock_validate.assert_called_once()
+        mock_validate.assert_not_called()
 
 def test_open_antigravity_login_forces_even_when_authenticated(bridge):
     result, _ = bridge

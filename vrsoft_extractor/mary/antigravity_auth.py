@@ -11,7 +11,8 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, Literal
+from pathlib import Path
+from typing import Any, Callable, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,12 @@ MAX_AUTH_LINE_BYTES = 65536  # 64 KiB envelope limit (>= 32 KiB requirement)
 INIT_TIMEOUT_SECONDS = 45.0   # Runtime initialization timeout
 OAUTH_TIMEOUT_SECONDS = 300.0 # OAuth user completion timeout
 CALLBACK_TIMEOUT_SECONDS = 5.0
+SESSION_TIMEOUT = 90.0
 
 AUTH_PREFIX_ACP = "Open the following link to authenticate the ACP server: "
 AUTH_PREFIX_BROWSER = "Open the following link in your browser: "
 AUTH_PREFIX_GENERIC = "Open the following link: "
+AUTH_MARKER_VRSTUDIO = '__VRSTUDIO_ANTIGRAVITY_AUTH_URL__'
 AUTH_MARKER_T3 = '__T3_ANTIGRAVITY_AUTH_URL__'
 
 AttemptState = Literal["idle", "starting", "waiting", "verifying", "succeeded", "failed", "cancelled"]
@@ -262,14 +265,11 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def forward_callback_to_listener(callback_url: str, expected_auth: ValidatedAuthUrl, timeout: float = CALLBACK_TIMEOUT_SECONDS) -> None:
     """Forwards validated OAuth callback parameters to the local 127.0.0.1 listener."""
-    # Ensure validation passes first
     code, state = validate_callback_url(callback_url, expected_auth)
 
-    # Build exact request URL on 127.0.0.1 with validated port and path
     query = urllib.parse.urlencode({"code": code, "state": state})
     target_url = f"http://127.0.0.1:{expected_auth.port}{expected_auth.path}?{query}"
 
-    # Never send the code to an inherited HTTP proxy, including on Windows.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
     req = urllib.request.Request(target_url, method="GET")
     req.add_header("User-Agent", "AntigravityStudioOAuthHelper/1.0")
@@ -278,7 +278,6 @@ def forward_callback_to_listener(callback_url: str, expected_auth: ValidatedAuth
         with opener.open(req, timeout=timeout):
             pass
     except urllib.error.HTTPError as exc:
-        # A 302/303 redirect or success page is normal for OAuth listeners
         if exc.code in (200, 204, 301, 302, 303, 307, 308):
             return
         raise RuntimeError(f"O listener local retornou status HTTP {exc.code}.") from None
@@ -286,19 +285,62 @@ def forward_callback_to_listener(callback_url: str, expected_auth: ValidatedAuth
         raise RuntimeError("Falha ao conectar ao listener local da tentativa.") from None
 
 
+def map_acp_error_to_ui_message(exc: Exception, phase: str = "") -> tuple[str, bool]:
+    """Returns (user_friendly_message, is_account_authenticated).
+    
+    Guarantees sensitive secrets (tokens, code, state, full URLs) are never exposed.
+    """
+    from .antigravity_acp import AcpError, BrowserHelperError, IncompleteRuntimeError
+
+    if isinstance(exc, IncompleteRuntimeError):
+        return str(exc), False
+
+    if isinstance(exc, BrowserHelperError):
+        return f"Falha na verificação do helper de navegador: {exc}", False
+
+    if isinstance(exc, OAuthCallbackError):
+        return "O login Google não foi aprovado. Inicie novamente.", False
+
+    if isinstance(exc, AcpError):
+        raw_upper = (exc.raw_message or "").upper()
+        if "SUBSCRIPTION_REQUIRED" in raw_upper or "SUBSCRIPTION" in raw_upper:
+            return "Assinatura do Google Antigravity necessária para esta conta. Verifique sua assinatura.", False
+
+        if any(term in raw_upper.lower() for term in ("access_denied", "denied access", "cancelled")):
+            return "Acesso recusado ou permissões insuficientes para a conta Google. Inicie novamente.", False
+
+        if exc.method == "authenticate":
+            if exc.code == -32000:
+                return "O Antigravity não confirmou a conta Google. Inicie o login novamente.", False
+            return "Falha na autenticação Antigravity. Inicie o login novamente.", False
+
+        if exc.method == "session/new":
+            if exc.code == -32603:
+                return "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos.", True
+            return "A conta Google foi autenticada, mas o Antigravity não conseguiu inicializar a sessão.", True
+
+        if exc.method == "initialize":
+            return "Falha na inicialização do servidor Antigravity ACP.", False
+
+    if isinstance(exc, TimeoutError):
+        if phase == "starting":
+            return "Tempo limite de inicialização do runtime excedido (45s).", False
+        elif phase == "waiting":
+            return "Tempo limite de autorização no navegador excedido (300s).", False
+        elif phase == "authenticate":
+            return "Tempo limite de confirmação do Antigravity excedido.", False
+        elif phase == "session/new":
+            return "Tempo limite de criação da sessão excedido.", True
+        return "Tempo limite da operação excedido.", False
+
+    return "Não foi possível concluir a autenticação Google. Tente novamente.", False
+
+
 class AuthStreamParser:
     """Incremental UTF-8 stream decoder and OAuth line parser.
 
     For bounded login diagnostics only. Conversation protocol framing remains
     in AntigravityProvider and must not be routed through this line limit.
-    
-    Handles:
-    - multi-line chunks, LF, CRLF, split markers between chunks
-    - bounded buffer (discarding lines exceeding MAX_AUTH_LINE_BYTES)
-    - preservation and routing of valid non-auth protocol lines
-    - JSON decoding of __T3_ANTIGRAVITY_AUTH_URL__"..." suffix
-    - 'Open the following link...' prefix detection
-    - pending trailing lines on EOF
     """
 
     def __init__(
@@ -319,14 +361,11 @@ class AuthStreamParser:
             return
 
         for byte in chunk:
-            # Handle LF (newline)
-            if byte == 10:  # ord('\n')
+            if byte == 10:  # LF
                 if self._discarding:
-                    # Reset after discarding oversized line
                     self._byte_buffer.clear()
                     self._discarding = False
                     continue
-                # Process complete line
                 raw_line = bytes(self._byte_buffer)
                 self._byte_buffer.clear()
                 self._handle_raw_line(raw_line)
@@ -335,7 +374,6 @@ class AuthStreamParser:
                     continue
                 self._byte_buffer.append(byte)
                 if len(self._byte_buffer) > self._max_line_bytes:
-                    # Line limit exceeded: discard entire line up to next newline
                     self._discarding = True
                     self._byte_buffer.clear()
 
@@ -347,11 +385,10 @@ class AuthStreamParser:
             self._handle_raw_line(raw_line)
 
     def _handle_raw_line(self, raw_bytes: bytes) -> None:
-        # Bytes are buffered through LF, so split UTF-8 is already assembled.
-        # Decode each frame independently; incomplete bytes cannot leak to the next.
         line = raw_bytes.decode("utf-8", errors="replace").removesuffix("\r")
         if not line:
             return
+
         # A protocol JSON frame may contain the marker as user/model text.
         # Never interpret that text as an instruction to open a browser.
         if line.lstrip().startswith(("{", "[")):
@@ -359,31 +396,29 @@ class AuthStreamParser:
                 self._on_line(line)
             return
 
-        # Check for T3 JSON marker: __T3_ANTIGRAVITY_AUTH_URL__"https://..."
-        if AUTH_MARKER_T3 in line:
-            idx = line.find(AUTH_MARKER_T3)
-            suffix = line[idx + len(AUTH_MARKER_T3):].strip()
-            if suffix.startswith('"'):
-                try:
-                    auth_url = json.loads(suffix)
-                    if isinstance(auth_url, str):
-                        self._on_auth_url(auth_url.strip())
-                        return
-                except ValueError:
-                    pass
+        # Check for Studio and T3 JSON markers: __VRSTUDIO_ANTIGRAVITY_AUTH_URL__"https://..."
+        for marker in (AUTH_MARKER_VRSTUDIO, AUTH_MARKER_T3):
+            if marker in line:
+                idx = line.find(marker)
+                suffix = line[idx + len(marker):].strip()
+                if suffix.startswith('"'):
+                    try:
+                        auth_url = json.loads(suffix)
+                        if isinstance(auth_url, str):
+                            self._on_auth_url(auth_url.strip())
+                            return
+                    except ValueError:
+                        pass
 
-        # Check for runtime output prefixes
+        # Check for runtime output prefixes (stdout or stderr)
         for prefix in (AUTH_PREFIX_ACP, AUTH_PREFIX_BROWSER, AUTH_PREFIX_GENERIC):
             if prefix in line:
                 idx = line.find(prefix)
                 candidate = line[idx + len(prefix):].strip()
-                # Preserve the complete URL. Punctuation is legal in opaque
-                # OAuth parameters; truncating it could change state or PKCE.
                 if candidate.startswith("https://"):
                     self._on_auth_url(candidate)
                     return
 
-        # Pass through regular protocol lines to preserve existing flow
         if self._on_line:
             self._on_line(line)
 
@@ -412,15 +447,18 @@ class AntigravityAuthManager:
         command_resolver: Callable[[], str | None],
         env_factory: Callable[[], dict[str, str]],
         on_state_changed: Callable[[], None] | None = None,
+        on_catalog_discovered: Callable[[list[dict[str, Any]]], None] | None = None,
     ):
         self._command_resolver = command_resolver
         self._env_factory = env_factory
         self._on_state_changed = on_state_changed
+        self._on_catalog_discovered = on_catalog_discovered
         self._lock = threading.RLock()
 
         self._active_attempt: LoginAttempt | None = None
         self._account_state: AccountState = "unknown"
         self._account_status_label: str = "Conta Google ainda não verificada"
+        self._discovered_catalog: list[dict[str, Any]] = []
         self._init_timer: threading.Timer | None = None
         self._oauth_timer: threading.Timer | None = None
 
@@ -438,6 +476,11 @@ class AntigravityAuthManager:
     def active_attempt(self) -> LoginAttempt | None:
         with self._lock:
             return self._active_attempt
+
+    @property
+    def discovered_catalog(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._discovered_catalog)
 
     def get_ui_snapshot(self) -> dict:
         """Returns the current state for consumption by UI / QML."""
@@ -464,7 +507,6 @@ class AntigravityAuthManager:
         """Starts a new login attempt or returns the existing active attempt (double-click safe)."""
         with self._lock:
             if not force and self._active_attempt and self._active_attempt.state in ("starting", "waiting", "verifying"):
-                # Reuse the active attempt without spawning a new OAuth process
                 return self._active_attempt
 
             if force and self._active_attempt and self._active_attempt.state in ("starting", "waiting", "verifying"):
@@ -500,38 +542,106 @@ class AntigravityAuthManager:
         threading.Thread(target=self._run_login, args=(attempt, command), daemon=True).start()
         return attempt
 
-    def _run_login(self, attempt, command):
-        from .antigravity_acp import AcpClient
+    def _run_login(self, attempt: LoginAttempt, command: str) -> None:
+        from .antigravity_acp import (
+    profile_path as profile_path,
+            AcpClient,
+            AcpError,
+            BrowserHelperError,
+            IncompleteRuntimeError,
+            prepare_profile,
+            preflight_browser_helper,
+            resolve_acp_runtime,
+        )
+
         client = None
+        phase = "starting"
         try:
-            client = AcpClient(command=command, env=self._env_factory(),
-                               on_auth_url=lambda url: self._on_auth_url_received(attempt.attempt_id, url))
+            # 1. Profile preparation
+            prepare_profile()
+
+            # 2. Browser helper preflight
+            try:
+                preflight_browser_helper()
+            except Exception as exc:
+                raise BrowserHelperError(str(exc)) from exc
+
+            # 3. Resolve complete runtime bundle
+            try:
+                runtime_info = resolve_acp_runtime(command)
+            except IncompleteRuntimeError:
+                raise
+            except Exception:
+                runtime_info = None
+
+            client = AcpClient(
+                command=runtime_info.executable_path if runtime_info else command,
+                runtime_info=runtime_info,
+                env=self._env_factory(),
+                on_auth_url=lambda url: self._on_auth_url_received(attempt.attempt_id, url),
+            )
             with self._lock:
                 if not self._is_active(attempt.attempt_id):
                     return
                 attempt.client = client
+
             client.start()
             with self._lock:
                 if not self._is_active(attempt.attempt_id):
                     return
                 attempt.process = client.process
-                attempt.state = "verifying"
-                self._account_status_label = "Preparando autorização Google…"
-                self._oauth_timer = threading.Timer(OAUTH_TIMEOUT_SECONDS, self._on_oauth_timeout, args=(attempt.attempt_id,))
-                self._oauth_timer.daemon = True
-                self._oauth_timer.start()
+                self._account_status_label = "Iniciando autenticação Google…"
+                self._init_timer = threading.Timer(INIT_TIMEOUT_SECONDS, self._on_init_timeout, args=(attempt.attempt_id,))
+                self._init_timer.daemon = True
+                self._init_timer.start()
             self._notify_changed()
-            client.request("authenticate", {"methodId": "oauth-personal"}, OAUTH_TIMEOUT_SECONDS)
+
+            # 4. Authenticate via OAuth
+            phase = "authenticate"
+            client.request("authenticate", {"methodId": "oauth-personal"}, timeout=OAUTH_TIMEOUT_SECONDS)
+
             with self._lock:
                 if not self._is_active(attempt.attempt_id):
                     return
-                self._account_state = "authenticated"
-                self._finish_attempt("succeeded", "Conta Google autenticada pelo Antigravity.")
+                self._cancel_timers()
+                attempt.state = "verifying"
+                self._account_status_label = "Verificando acesso e carregando modelos…"
             self._notify_changed()
-        except Exception:
+
+            # 5. Session/new in the SAME ACP process to discover models
+            phase = "session/new"
+            session = client.request("session/new", {"cwd": str(Path.home()), "mcpServers": []}, timeout=SESSION_TIMEOUT)
+            with self._lock:
+                if not self._is_active(attempt.attempt_id):
+                    return
+                session_id = session.get("sessionId") if isinstance(session, dict) else None
+                if not isinstance(session_id, str) or not session_id:
+                    raise AcpError("session/new")
+
+                available_models = (session.get("models") or {}).get("availableModels", [])
+                n_models = len(available_models) if isinstance(available_models, list) else 0
+                models_label = f" · {n_models} modelos disponíveis" if n_models > 0 else ""
+                success_message = f"Conta Google autenticada{models_label}."
+
+                self._account_state = "authenticated"
+                self._discovered_catalog = available_models
+                if self._on_catalog_discovered and isinstance(available_models, list):
+                    try:
+                        self._on_catalog_discovered(available_models)
+                    except Exception:
+                        pass
+                self._finish_attempt("succeeded", success_message)
+            self._notify_changed()
+
+        except Exception as exc:
             with self._lock:
                 if self._is_active(attempt.attempt_id):
-                    self._finish_attempt("failed", "Não foi possível concluir a autenticação Google. Tente novamente.")
+                    user_msg, is_authenticated = map_acp_error_to_ui_message(exc, phase)
+                    if is_authenticated:
+                        self._account_state = "authenticated"
+                    elif phase == "authenticate" and (isinstance(exc, AcpError) and exc.code == -32000 or "rejected" in str(exc).lower()):
+                        self._account_state = "unauthenticated"
+                    self._finish_attempt("failed", user_msg)
             self._notify_changed()
         finally:
             if client:
@@ -557,6 +667,8 @@ class AntigravityAuthManager:
     def _finish_attempt(self, state: AttemptState, message: str) -> None:
         """Caller holds the lock; all terminal transitions clear transient secrets."""
         attempt = self._active_attempt
+        if not attempt:
+            return
         attempt.state = state
         attempt.validated_auth = None
         attempt.expires_at = None
@@ -592,17 +704,14 @@ class AntigravityAuthManager:
             if attempt.callback_consumed:
                 raise RuntimeError("A URL de retorno já foi consumida para esta tentativa.")
             validated_auth = attempt.validated_auth
-            # Invalid input does not consume the attempt or change its phase.
             validate_callback_url(callback_url, validated_auth)
             attempt.state = "verifying"
             attempt.callback_consumed = True
-            self._account_status_label = "Verificando autenticação Google…"
+            self._account_status_label = "Aguardando confirmação do Antigravity…"
         self._notify_changed()
         try:
             forward_callback_to_listener(callback_url, validated_auth)
         except Exception:
-            # Delivery may already have reached the listener. Do not replay the
-            # code or resurrect cancelled/expired attempts on a network error.
             with self._lock:
                 if self._is_active(attempt.attempt_id):
                     self._account_status_label = "Retorno enviado sem confirmação. Aguarde ou reinicie a tentativa."
@@ -628,7 +737,6 @@ class AntigravityAuthManager:
     def mark_session_or_model_error(self, error_message: str) -> None:
         """Records session/model failure without resetting authenticated credentials."""
         with self._lock:
-            # Failure of session/models does NOT erase credentials if previously authenticated
             if self._account_state == "authenticated":
                 self._account_status_label = (
                     "Conta Google autenticada, mas não foi possível inicializar a sessão ou carregar os modelos."
@@ -657,27 +765,33 @@ class AntigravityAuthManager:
             except OSError:
                 pass
 
+    def _wait_process(self, attempt_id: str, process: subprocess.Popen) -> None:
+        exit_code = process.wait()
+        with self._lock:
+            if not self._is_active(attempt_id):
+                return
+            if exit_code == 0:
+                self._finish_attempt("idle", "CLI encerrado. Clique em Validar conta para verificar a sessão salva.")
+            else:
+                self._finish_attempt("failed", "O CLI encerrou sem confirmar o login. Valide a conta salva ou tente novamente.")
+        self._notify_changed()
+
     def _on_auth_url_received(self, attempt_id: str, raw_url: str) -> None:
         try:
             validated = validate_authorization_url(raw_url)
         except OAuthValidationError:
-            # Reject invalid URLs safely
             logger.warning("URL de autorização rejeitada na validação")
             return
 
         with self._lock:
             attempt = self._active_attempt
             if not self._is_active(attempt_id):
-                # Ignore events from older or terminal attempts
                 return
 
             if attempt.validated_auth is not None:
-                # Check duplicate vs conflict
                 if attempt.validated_auth.authorization_url == validated.authorization_url:
-                    # Same URL repeated: safely ignore
                     return
                 else:
-                    # CONFLICT: Two different valid URLs in the same attempt
                     self._finish_attempt("failed", "Conflito de URLs de autorização detectado.")
                     if attempt.client:
                         threading.Thread(target=attempt.client.close, daemon=True).start()
@@ -686,12 +800,10 @@ class AntigravityAuthManager:
                     self._notify_changed()
                     return
 
-            # Valid new URL
             self._cancel_timers()
             attempt.validated_auth = validated
             attempt.state = "waiting"
 
-            # Compute expiration label (300s)
             now = datetime.now()
             expires = now + timedelta(seconds=OAUTH_TIMEOUT_SECONDS)
             attempt.expires_at = expires
@@ -699,24 +811,10 @@ class AntigravityAuthManager:
             attempt.expires_at_label = f"Esta tentativa expira às {expires.strftime('%H:%M')}"
             self._account_status_label = f"Aguardando autorização no navegador… ({attempt.expires_at_label})"
 
-            # Start 300s OAuth timer
             self._oauth_timer = threading.Timer(OAUTH_TIMEOUT_SECONDS, self._on_oauth_timeout, args=(attempt_id,))
             self._oauth_timer.daemon = True
             self._oauth_timer.start()
 
-        self._notify_changed()
-
-    def _wait_process(self, attempt_id: str, process: subprocess.Popen) -> None:
-        exit_code = process.wait()
-        with self._lock:
-            if not self._is_active(attempt_id):
-                return
-            # agy is a TUI, not an auth-only command. Even clean exit is not
-            # evidence of Google login and must never set account=authenticated.
-            if exit_code == 0:
-                self._finish_attempt("idle", "CLI encerrado. Clique em Validar conta para verificar a sessão salva.")
-            else:
-                self._finish_attempt("failed", "O CLI encerrou sem confirmar o login. Valide a conta salva ou tente novamente.")
         self._notify_changed()
 
     def _timeout(self, attempt_id: str, phases: tuple[str, ...], message: str) -> None:
@@ -737,7 +835,16 @@ class AntigravityAuthManager:
         self._timeout(attempt_id, ("starting",), "Tempo limite de inicialização do runtime excedido (45s).")
 
     def _on_oauth_timeout(self, attempt_id: str) -> None:
-        self._timeout(attempt_id, ("waiting", "verifying"), "Tempo limite de autorização excedido (300s).")
+        with self._lock:
+            attempt = self._active_attempt
+            st = attempt.state if attempt else ""
+        if st == "waiting":
+            msg = "Tempo limite de autorização no navegador excedido (300s)."
+        elif st == "verifying":
+            msg = "Tempo limite de confirmação do Antigravity excedido."
+        else:
+            msg = "Tempo limite de autorização excedido (300s)."
+        self._timeout(attempt_id, ("waiting", "verifying"), msg)
 
     def _cancel_init_timer(self) -> None:
         if self._init_timer:

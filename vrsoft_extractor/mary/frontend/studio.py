@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -42,7 +43,7 @@ from ..endoo_wiki import EndooWikiSync
 from ..models import ReviewFilters
 from ..provider_cli import INSTALLERS, INSTALL_DOCS, InstallCancelled, install_cli, resolve_cli, verify_cli
 from ..antigravity import AntigravityAuthManager
-from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account, SESSION_TIMEOUT
+from ..antigravity_acp import AcpClient, acp_environment, resolve_acp, has_saved_account, SESSION_TIMEOUT, prepare_profile, AcpError
 from ..movidesk import MovideskInteractiveLoginRequired, MovideskSync
 from ..schema_sync import SchemaSync
 from ..wiki import WikiSync
@@ -313,12 +314,33 @@ class StudioBridge(QObject):
             command_resolver=resolve_acp,
             env_factory=acp_environment,
             on_state_changed=self._on_antigravity_auth_state_changed,
+            on_catalog_discovered=self._on_antigravity_catalog_discovered,
         )
         self._agy_check_running = False
         self._agy_check_cancel = threading.Event()
         self._agy_check_process = None
         self._agy_check_client = None
         self._agy_opened_attempt = None
+
+    def _on_antigravity_catalog_discovered(self, catalog: list[dict[str, Any]]) -> None:
+        if self._conversation_orchestrator and hasattr(self._conversation_orchestrator, "providers"):
+            provider = self._conversation_orchestrator.providers.get("antigravity")
+            if provider and hasattr(provider, "_catalog"):
+                with getattr(provider, "_lock", threading.RLock()):
+                    items = []
+                    for item in catalog:
+                        model_id = item.get("modelId")
+                        if isinstance(model_id, str) and model_id:
+                            items.append({
+                                "id": model_id,
+                                "model": model_id,
+                                "displayName": item.get("name") or model_id,
+                                "description": item.get("description") or "",
+                                "isDefault": False,
+                            })
+                    if items:
+                        provider._catalog = items
+                        provider._catalog_time = time.monotonic()
 
     def _on_antigravity_auth_state_changed(self) -> None:
         if not getattr(self, "_closed", False):
@@ -360,9 +382,7 @@ class StudioBridge(QObject):
                 self._agy_opened_attempt = attempt.attempt_id
                 if not self._open_browser_url(attempt.validated_auth.authorization_url):
                     self.toastRequested.emit("Não foi possível abrir o navegador. Use Abrir no navegador ou Copiar link.", "warning")
-            elif attempt and attempt.state == "succeeded":
-                if not getattr(self, "_agy_check_running", False):
-                    self.validateAntigravityAccount()
+
 
     @Slot()
     def restoreAntigravityAccount(self) -> None:
@@ -1947,9 +1967,7 @@ class StudioBridge(QObject):
             if attempt.state == "waiting" and attempt.validated_auth:
                 self._agy_opened_attempt = attempt.attempt_id
                 self._open_browser_url(attempt.validated_auth.authorization_url)
-            elif attempt.state == "succeeded":
-                if not getattr(self, "_agy_check_running", False):
-                    self.validateAntigravityAccount()
+
             self.refreshProviders()
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
@@ -1997,6 +2015,7 @@ class StudioBridge(QObject):
             raise RuntimeError("Entre com Google primeiro.")
         if self._agy_check_cancel.is_set():
             raise RuntimeError("Validação cancelada.")
+        prepare_profile()
         client = AcpClient(command=command)
         self._agy_check_client = client
         try:
@@ -2062,11 +2081,12 @@ class StudioBridge(QObject):
             if checked_attempt and checked_attempt.state in ("cancelled", "failed") and checked_attempt.state != checked_phase:
                 self.refreshProviders()
                 return
-            # Exceptions may contain captured CLI output/URLs. Publish only a
-            # fixed diagnostic, preserving any previously confirmed account.
-            self._antigravity_auth.mark_session_or_model_error(
-                "Não foi possível verificar a conta. Entre com Google ou tente validar novamente."
-            )
+            if isinstance(exc, AcpError) and exc.method == "authenticate" and exc.code == -32000:
+                self._antigravity_auth.mark_credentials_rejected()
+            else:
+                self._antigravity_auth.mark_session_or_model_error(
+                    "Não foi possível verificar a conta. Entre com Google ou tente validar novamente."
+                )
             self.refreshProviders()
         task.signals.finished.connect(finish_success)
         task.signals.failed.connect(finish_error)

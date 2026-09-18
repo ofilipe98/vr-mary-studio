@@ -49,9 +49,14 @@ Item {
         if (!p.available) return {text: "Não instalado", tone: "warning"}
         if (p.id !== "antigravity") return {text: "CLI instalado", tone: "success"}
         var a = String(p.accountStatus || "")
-        if (p.isVerifying || a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
-        if (p.isWaiting || p.isStarting || a.indexOf("Conclua o login") === 0) return {text: "Login em andamento", tone: "warning"}
-        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0) return {text: "Conta autenticada", tone: "success"}
+        if (p.isVerifying) {
+            var vText = a.indexOf("modelos") !== -1 ? "Carregando modelos…" : (a.indexOf("confirmação") !== -1 ? "Aguardando confirmação…" : "Verificando…")
+            return {text: vText, tone: "muted", busy: true}
+        }
+        if (a.indexOf("Validando") === 0) return {text: "Validando conta…", tone: "muted", busy: true}
+        if (p.isWaiting) return {text: "Aguardando navegador…", tone: "warning"}
+        if (p.isStarting) return {text: "Iniciando…", tone: "warning", busy: true}
+        if (p.accountState === "authenticated" || a.indexOf("Conta Google validada") === 0 || a.indexOf("Conta Google autenticada") === 0) return {text: "Conta autenticada", tone: "success"}
         if (p.attemptState === "idle" || p.attemptState === "cancelled") return {text: "Conta não verificada", tone: "warning"}
         if (!a || a.indexOf("Conta Google ainda") === 0) return {text: "Conta não verificada", tone: "warning"}
         return {text: "Falha na validação", tone: "danger"}
@@ -806,7 +811,8 @@ Item {
                                             objectName: "providerAccountStatus"
                                             text: root.validating ? "Validando conta\u2026"
                                                 : root.isWaiting ? "Aguardando autoriza\u00e7\u00e3o no navegador\u2026"
-                                                : (root.isStarting || root.isVerifying) ? "Preparando login Google\u2026"
+                                                : root.isStarting ? "Iniciando autentica\u00e7\u00e3o\u2026"
+                                                : root.isVerifying ? (root.account.indexOf("modelos") !== -1 ? "Carregando modelos\u2026" : "Verificando acesso\u2026")
                                                 : root.authenticated ? "Conta autenticada"
                                                 : root.authError ? "Falha na valida\u00e7\u00e3o"
                                                 : "Conta n\u00e3o verificada"

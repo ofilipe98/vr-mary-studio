@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 
 from .antigravity_auth import (
+    AUTH_MARKER_VRSTUDIO as AUTH_MARKER_VRSTUDIO,
     AUTH_MARKER_T3 as AUTH_MARKER_T3,
     AUTH_PREFIX_ACP as AUTH_PREFIX_ACP,
     AUTH_PREFIX_BROWSER as AUTH_PREFIX_BROWSER,

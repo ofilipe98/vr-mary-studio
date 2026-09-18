@@ -176,7 +176,7 @@ def test_login_authenticate_response_confirms_account_without_session_new():
         manager.start_login()
         assert changed.wait(2)
     assert manager.active_attempt.state == "succeeded"
-    assert [m for m, _ in manager.active_attempt.client.calls] == ["authenticate"]
+    assert [m for m, _ in manager.active_attempt.client.calls] == ["authenticate", "session/new"]
     manager.mark_session_or_model_error("failed")
     assert manager.account_state == "authenticated"
 
