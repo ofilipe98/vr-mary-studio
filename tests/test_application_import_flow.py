@@ -2,21 +2,17 @@
 from __future__ import annotations
 
 import os
-import queue
 import threading
 import time
-import zipfile
-from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from vrsoft_extractor.mary.application_import import (
     preview_application_import,
     validate_preview_fingerprint,
 )
-from vrsoft_extractor.mary.apps_catalog import AppsCatalogStore
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.erp_releases import (
@@ -27,7 +23,7 @@ from vrsoft_extractor.mary.erp_releases import (
 from vrsoft_extractor.mary.frontend.bridges import codeadmin
 from vrsoft_extractor.mary.frontend.chat import ChatBridge
 from test_apps_catalog_audit import register
-from test_erp_releases import _vr_jar, _jar
+from test_erp_releases import _vr_jar
 
 
 def wait_until(predicate, timeout=6.0):

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import subprocess
 import threading
@@ -342,7 +341,7 @@ def map_acp_error_to_ui_message(exc: Exception, phase: str = "") -> tuple[str, b
     
     Guarantees sensitive secrets (tokens, code, state, full URLs) are never exposed.
     """
-    from .antigravity_acp import AcpError, AcpTimeoutError, BrowserHelperError, IncompleteRuntimeError
+    from .antigravity_acp import AcpError, BrowserHelperError, IncompleteRuntimeError
 
     if isinstance(exc, IncompleteRuntimeError):
         return str(exc), False
@@ -673,7 +672,6 @@ class AntigravityAuthManager:
             AcpError,
             AcpClient,
             BrowserHelperError,
-            IncompleteRuntimeError,
             acp_environment,
             prepare_profile,
             preflight_browser_helper,

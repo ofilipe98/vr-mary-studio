@@ -44,7 +44,6 @@ from ..models import ReviewFilters
 from ..provider_cli import INSTALLERS, INSTALL_DOCS, InstallCancelled, install_cli, resolve_cli, verify_cli
 from ..antigravity import AntigravityAuthManager
 from ..antigravity_acp import (
-    AcpClient,
     AcpError,
     AcpTimeoutError,
     IncompleteRuntimeError,

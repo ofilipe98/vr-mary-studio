@@ -19,8 +19,8 @@ from ..antigravity_acp import (
     resolve_acp_runtime,
     spawn_acp_client,
 )
-from ..models import ConversationOptions, RuntimeEvent, approval_preset
-from .base import AgentProvider, ProviderError, _token_breakdown
+from ..models import ConversationOptions, RuntimeEvent
+from .base import AgentProvider, ProviderError
 
 NATIVE_PREFIX = "acp:"
 

@@ -39,7 +39,6 @@ Covers all 34 requirements:
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 import shutil
@@ -47,9 +46,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,7 +60,6 @@ from vrsoft_extractor.mary.antigravity_acp import (
     acp_environment,
     preflight_browser_helper,
     prepare_profile,
-    profile_path,
     resolve_acp_runtime,
 )
 from vrsoft_extractor.mary.antigravity_auth import (
@@ -72,13 +68,11 @@ from vrsoft_extractor.mary.antigravity_auth import (
     AUTH_PREFIX_ACP,
     AUTH_PREFIX_BROWSER,
     MAX_AUTH_LINE_BYTES,
-    OAUTH_TIMEOUT_SECONDS,
     AntigravityAuthManager,
     AuthStreamParser,
     LoginAttempt,
     OAuthCallbackError,
     OAuthValidationError,
-    ValidatedAuthUrl,
     forward_callback_to_listener,
     map_acp_error_to_ui_message,
     validate_authorization_url,
@@ -309,26 +303,26 @@ def test_12_strict_auth_url_validation():
 # 13. Strict manual callback URL validation
 def test_13_strict_manual_callback_validation():
     auth = validate_authorization_url(sample_auth_url(port=5555, state="test-state"))
-    valid_cb = f"http://127.0.0.1:5555/?code=auth-code-123&state=test-state"
+    valid_cb = "http://127.0.0.1:5555/?code=auth-code-123&state=test-state"
     code, state = validate_callback_url(valid_cb, auth)
     assert code == "auth-code-123"
     assert state == "test-state"
 
     # Mismatched port
     with pytest.raises(OAuthValidationError):
-        validate_callback_url(f"http://127.0.0.1:6666/?code=auth-code-123&state=test-state", auth)
+        validate_callback_url("http://127.0.0.1:6666/?code=auth-code-123&state=test-state", auth)
 
     # Mismatched state
     with pytest.raises(OAuthValidationError):
-        validate_callback_url(f"http://127.0.0.1:5555/?code=auth-code-123&state=wrong-state", auth)
+        validate_callback_url("http://127.0.0.1:5555/?code=auth-code-123&state=wrong-state", auth)
 
     # Both code and error
     with pytest.raises(OAuthValidationError):
-        validate_callback_url(f"http://127.0.0.1:5555/?code=auth-code-123&error=denied&state=test-state", auth)
+        validate_callback_url("http://127.0.0.1:5555/?code=auth-code-123&error=denied&state=test-state", auth)
 
     # Error only
     with pytest.raises(OAuthCallbackError):
-        validate_callback_url(f"http://127.0.0.1:5555/?error=access_denied&state=test-state", auth)
+        validate_callback_url("http://127.0.0.1:5555/?error=access_denied&state=test-state", auth)
 
 
 # 14. Local loopback callback forwarding without inherited proxy or redirects

@@ -20,7 +20,7 @@ from typing import Any
 
 from .. import __version__
 from .antigravity_auth import AuthStreamParser, normalize_browser_url, try_validate_authorization_url
-from .provider_cli import native_cli_path
+from .provider_cli import native_cli_path  # noqa: F401  # patch target em tests/test_provider_cli_install.py
 
 logger = logging.getLogger(__name__)
 
