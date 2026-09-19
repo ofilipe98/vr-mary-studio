@@ -82,6 +82,7 @@ ComboBox {
                     && String(optionDelegate.modelData[control.settingsPathRole] || "").length > 0
                 Layout.preferredWidth: visible ? 22 : 0
                 Layout.preferredHeight: 30
+                Accessible.name: "Configurar pasta"
                 VrLineIcon {
                     anchors.centerIn: parent
                     width: 14
@@ -90,8 +91,6 @@ ComboBox {
                     foreground: settingsMouse.containsMouse
                         ? Theme.palette.text : Theme.palette.mutedText
                 }
-                ToolTip.visible: settingsMouse.containsMouse
-                ToolTip.text: "Configurar pasta"
                 MouseArea {
                     id: settingsMouse
                     anchors.fill: parent

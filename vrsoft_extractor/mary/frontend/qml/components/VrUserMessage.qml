@@ -57,8 +57,7 @@ Item {
         objectName: "messageCopyButton"
         iconKind: root.copied ? "check" : "copy"
         opacity: hover.hovered || hovered || activeFocus || root.copied ? 1 : 0
-        ToolTip.visible: hovered || activeFocus
-        ToolTip.text: root.copied ? "Copiado" : "Copiar mensagem"
+        Accessible.name: root.copied ? "Copiado" : "Copiar mensagem"
         onClicked: { root.copyRequested(); root.copied = true; feedback.restart() }
         Behavior on opacity { enabled: !frontend.reduceMotion; NumberAnimation { duration: Theme.fastDuration } }
     }

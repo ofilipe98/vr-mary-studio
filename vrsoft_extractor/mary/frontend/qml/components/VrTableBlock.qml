@@ -69,8 +69,7 @@ Column {
             foreground: Theme.palette.mutedText
             checkable: true
             checked: root.expanded
-            ToolTip.visible: hovered || activeFocus
-            ToolTip.text: root.expanded ? "Ajustar tabela à conversa" : "Ampliar colunas"
+            Accessible.name: root.expanded ? "Ajustar tabela à conversa" : "Ampliar colunas"
             onClicked: { root.layoutChanging(); root.expanded = !root.expanded }
         }
         VrIconButton {
@@ -80,8 +79,7 @@ Column {
             width: 26; height: 26; iconSize: Theme.iconSmall
             iconKind: root.copied ? "check" : "copy"
             foreground: Theme.palette.mutedText
-            ToolTip.visible: hovered || activeFocus
-            ToolTip.text: root.copied ? "Copiado" : "Copiar tabela"
+            Accessible.name: root.copied ? "Copiado" : "Copiar tabela"
             onClicked: copyMenu.popup()
             Menu {
                 id: copyMenu

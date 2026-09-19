@@ -30,10 +30,8 @@ Rectangle {
             implicitHeight: 34
             iconKind: "panelLeft"
             foreground: Theme.palette.mutedText
-            ToolTip.visible: hovered
-            ToolTip.text: root.sidebarVisible
+            Accessible.name: root.sidebarVisible
                 ? "Recolher barra lateral" : "Mostrar conversas"
-            Accessible.name: ToolTip.text
             onClicked: root.toggleSidebar()
             background: Rectangle {
                 radius: 8
@@ -50,9 +48,7 @@ Rectangle {
             objectName: "copyConversationButton"
             iconKind: "copy"
             enabled: root.hasMessages
-            ToolTip.visible: hovered
-            ToolTip.text: "Copiar conversa completa"
-            Accessible.name: ToolTip.text
+            Accessible.name: "Copiar conversa completa"
             onClicked: root.copyConversation()
         }
         VrButton {
@@ -71,9 +67,7 @@ Rectangle {
             iconSize: 17
             iconKind: "panelRight"
             foreground: Theme.palette.mutedText
-            ToolTip.visible: hovered
-            ToolTip.text: "Expandir painel direito"
-            Accessible.name: ToolTip.text
+            Accessible.name: "Expandir painel direito"
             onClicked: root.showPanel()
         }
     }
