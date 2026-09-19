@@ -500,6 +500,187 @@ class AuditRegressionTest(unittest.TestCase):
         self._bridge.close()
         self.assertEqual(len(self._bridge._timeline_reducers), 0)
 
+    # Follow-up P1 Tests:
+
+    def test_p1_sequence_idempotency_scenarios(self):
+        """P1: sequence idempotency priority and monotonicity."""
+        # 1. Retry with same sequence: delta "A", seq=10; retry delta "A", seq=10 -> "A"
+        r1 = ToolLifecycleReducer()
+        r1.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r1.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", sequence=10, provider="codex"))
+        tool1 = r1.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", sequence=10, provider="codex"))
+        self.assertEqual(tool1.output, "A")
+
+        # 2. Distinct event: delta "A", seq=10; delta "A", seq=11 -> "AA"
+        r2 = ToolLifecycleReducer()
+        r2.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r2.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", sequence=10, provider="codex"))
+        tool2 = r2.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", sequence=11, provider="codex"))
+        self.assertEqual(tool2.output, "AA")
+
+        # 3. Priority event_id: delta "A", event_id=x, seq=10; delta "A", event_id=x, seq=11 -> "A"
+        r3 = ToolLifecycleReducer()
+        r3.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r3.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", event_id="ev-fixed", sequence=10, provider="codex"))
+        tool3 = r3.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", event_id="ev-fixed", sequence=11, provider="codex"))
+        self.assertEqual(tool3.output, "A")
+
+    def test_p1_terminal_priority_error_cancel_vs_turn_completed(self):
+        """P1: error -> turn_completed divergence: terminal priority error > cancelled > completed."""
+        def reload_multiterminal(tool_payloads, terminals):
+            cid = self._database.create_conversation("R", "codex", "modelo", self._settings.root)
+            eid = 25
+            for p in tool_payloads:
+                payload = dict(p)
+                payload.setdefault("execution_id", eid)
+                self._database.add_event(RuntimeEvent(cid, "tool_event", "", payload))
+            for term in terminals:
+                self._database.add_event(RuntimeEvent(cid, term, "", {"execution_id": eid}))
+            self._database.begin_user_turn(cid, "hi")
+            rows = self._database.messages(cid)
+            bridge2_prefs = QSettings(str(Path(self._tmp.name) / f"{cid}_term.ini"), QSettings.IniFormat)
+            bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
+            self.addCleanup(bridge2.close)
+            bridge2._selected = {"conversationId": cid}
+            ok = bridge2._reload_execution_timeline(cid, rows)
+            self.assertTrue(ok)
+            cards = {}
+            for m in bridge2._messages._items:
+                for t in m.get("activityData", []):
+                    cards[t["id"]] = t
+            return cards
+
+        # 1. Error followed by turn_completed -> live = failure, reload = failure
+        chat_err = self._database.create_conversation("C1", "codex", "m", self._settings.root)
+        self._run_live_turn(
+            chat_err,
+            [{"toolCallId": "t1", "step_type": "commandExecution", "status": "running"}],
+            terminal_kind="error",
+        )
+        self._bridge._on_runtime_event(
+            RuntimeEvent(chat_err, "turn_completed", "", {"execution_id": 7})
+        )
+        self.application.processEvents()
+        msg = next((m for m in self._bridge._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg)
+        live_cards = {t["id"]: t for t in msg.get("activityData", [])}
+        self.assertEqual(live_cards["t1"]["state"], "error")
+
+        reloaded_err = reload_multiterminal(
+            [{"toolCallId": "t1", "step_type": "commandExecution", "status": "running"}],
+            ["error", "turn_completed"],
+        )
+        self.assertEqual(reloaded_err["t1"]["state"], "error")
+
+        # 2. Cancelled followed by turn_completed -> live = cancelled, reload = cancelled
+        chat_cancel = self._database.create_conversation("C2", "codex", "m", self._settings.root)
+        self._run_live_turn(
+            chat_cancel,
+            [{"toolCallId": "t2", "step_type": "commandExecution", "status": "running"}],
+            terminal_kind="orchestration_cancelled",
+        )
+        self._bridge._on_runtime_event(
+            RuntimeEvent(chat_cancel, "turn_completed", "", {"execution_id": 7})
+        )
+        self.application.processEvents()
+        msg2 = next((m for m in self._bridge._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg2)
+        live_cancel_cards = {t["id"]: t for t in msg2.get("activityData", [])}
+        self.assertEqual(live_cancel_cards["t2"]["state"], "cancelled")
+
+        reloaded_cancel = reload_multiterminal(
+            [{"toolCallId": "t2", "step_type": "commandExecution", "status": "running"}],
+            ["orchestration_cancelled", "turn_completed"],
+        )
+        self.assertEqual(reloaded_cancel["t2"]["state"], "cancelled")
+
+        # 3. turn_completed simple -> live = interrupted, reload = interrupted
+        chat_comp = self._database.create_conversation("C3", "codex", "m", self._settings.root)
+        live_comp = self._run_live_turn(
+            chat_comp,
+            [{"toolCallId": "t3", "step_type": "commandExecution", "status": "running"}],
+            terminal_kind="turn_completed",
+        )
+        self.assertEqual(live_comp["t3"]["state"], "interrupted")
+
+        reloaded_comp = reload_multiterminal(
+            [{"toolCallId": "t3", "step_type": "commandExecution", "status": "running"}],
+            ["turn_completed"],
+        )
+        self.assertEqual(reloaded_comp["t3"]["state"], "interrupted")
+
+    def test_p1_background_tool_progression_no_regression(self):
+        """P1: tool output maintains progression and avoids regression during tab switching."""
+        cid1 = self._database.create_conversation("Chat1", "codex", "m1", self._settings.root)
+        cid2 = self._database.create_conversation("Chat2", "codex", "m2", self._settings.root)
+        self._database.begin_user_turn(cid1, "hello")
+        self._bridge._active_turns.add(cid1)
+        self._bridge.refresh()
+
+        eid = 33
+
+        # Step 1: Select Chat 1 and emit delta "A"
+        self._bridge.selectConversationId(cid1)
+        ev_start = {"toolCallId": "t1", "step_type": "commandExecution", "status": "running", "execution_id": eid}
+        ev_a = {"toolCallId": "t1", "step_type": "commandExecution", "status": "running", "delta": "A", "output_mode": "delta", "execution_id": eid}
+        self._bridge._on_runtime_event(RuntimeEvent(cid1, "tool_event", "", ev_start))
+        self._bridge._on_runtime_event(RuntimeEvent(cid1, "tool_event", "", ev_a))
+        self._database.add_event(RuntimeEvent(cid1, "tool_event", "", ev_start))
+        self._database.add_event(RuntimeEvent(cid1, "tool_event", "", ev_a))
+        self.application.processEvents()
+
+        msg1 = next((m for m in self._bridge._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg1)
+        cards1 = {t["id"]: t for t in msg1.get("activityData", [])}
+        self.assertEqual(cards1["t1"]["output"], "A")
+
+        # Step 2: Switch to Chat 2
+        self._bridge.selectConversationId(cid2)
+        self.application.processEvents()
+
+        # Step 3: Emit background event delta "B" for Chat 1
+        ev_b = {"toolCallId": "t1", "step_type": "commandExecution", "status": "running", "delta": "B", "output_mode": "delta", "execution_id": eid}
+        self._bridge._on_runtime_event(RuntimeEvent(cid1, "tool_event", "", ev_b))
+        self._database.add_event(RuntimeEvent(cid1, "tool_event", "", ev_b))
+        self.application.processEvents()
+
+        # Step 4: Switch back to Chat 1 -> verify UI reflects "AB"
+        self._bridge.selectConversationId(cid1)
+        self.application.processEvents()
+
+        msg1 = next((m for m in self._bridge._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg1)
+        cards1 = {t["id"]: t for t in msg1.get("activityData", [])}
+        self.assertEqual(cards1["t1"]["output"], "AB")
+
+        # Step 5: Emit delta "C" while Chat 1 is selected
+        ev_c = {"toolCallId": "t1", "step_type": "commandExecution", "status": "running", "delta": "C", "output_mode": "delta", "execution_id": eid}
+        self._bridge._on_runtime_event(RuntimeEvent(cid1, "tool_event", "", ev_c))
+        self._database.add_event(RuntimeEvent(cid1, "tool_event", "", ev_c))
+        self.application.processEvents()
+
+        msg1 = next((m for m in self._bridge._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg1)
+        cards1 = {t["id"]: t for t in msg1.get("activityData", [])}
+        self.assertEqual(cards1["t1"]["output"], "ABC")
+
+        # Verify live reducer output
+        self.assertIn((cid1, eid), self._bridge._tool_reducers)
+        live_tool = self._bridge._tool_reducers[(cid1, eid)].get_tool("t1")
+        self.assertIsNotNone(live_tool)
+        self.assertEqual(live_tool.output, "ABC")
+
+        # Verify reload also produces "ABC"
+        rows = self._database.messages(cid1)
+        bridge_reload = ChatBridge(self._settings, self._database, QSettings(str(Path(self._tmp.name) / "test_reload.ini"), QSettings.IniFormat))
+        self.addCleanup(bridge_reload.close)
+        bridge_reload._selected = {"conversationId": cid1}
+        bridge_reload._reload_execution_timeline(cid1, rows)
+        msg_rel = next((m for m in bridge_reload._messages._items if m.get("role") == "activity"), None)
+        self.assertIsNotNone(msg_rel)
+        cards_rel = {t["id"]: t for t in msg_rel.get("activityData", [])}
+        self.assertEqual(cards_rel["t1"]["output"], "ABC")
+
 
 if __name__ == "__main__":
     unittest.main()

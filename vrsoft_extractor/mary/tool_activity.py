@@ -190,7 +190,7 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
     
     Handles patterns like:
     - Traceback (most recent call last): ... FileNotFoundError: ...
-    - null\nvratacarejo.service.notasaida.NotaSaidaFiscalService... -> ("NullPointerException", full stack)
+    - null\\nvratacarejo.service.notasaida.NotaSaidaFiscalService... -> ("NullPointerException", full stack)
     - java.lang.NullPointerException: Cannot invoke ... -> ("NullPointerException", full stack)
     """
     if not raw_error:
@@ -463,7 +463,7 @@ class ToolLifecycleReducer:
     - Rejection of out-of-order and stale updates
     - Independent tracking of concurrent/parallel tools
     - Seamless handling of snapshot vs delta outputs without duplication
-    - Strict idempotency
+    - Strict idempotency (event_id > sequence > digest)
     - Title and error sanitization
     """
 
@@ -472,8 +472,11 @@ class ToolLifecycleReducer:
         self._tool_order: list[str] = []
         self._processed_event_ids: set[str] = set()
         self._processed_digests: set[str] = set()
+        self._processed_sequences: set[tuple[str, int]] = set()
+        self._processed_provider_sequences: set[tuple[str, str, int]] = set()
         self._event_to_tool: dict[str, str] = {}
         self._digest_to_tool: dict[str, str] = {}
+        self._sequence_to_tool: dict[tuple[str, str, int], str] = {}
         self._anon_counter: int = 0
 
     def _mint_anonymous_id(self, event: NormalizedToolEvent) -> str:
@@ -518,7 +521,7 @@ class ToolLifecycleReducer:
         if is_generic_tool_id(event.tool_id):
             event.tool_id = self._mint_anonymous_id(event)
 
-        # 1. Idempotency check by event_id
+        # 1. Idempotency check by event_id (highest priority)
         if event.event_id and event.event_id in self._processed_event_ids:
             logger.debug("Duplicate event_id ignored: %s (tool_id=%s)", event.event_id, event.tool_id)
             mapped = self._event_to_tool.get(event.event_id)
@@ -527,6 +530,26 @@ class ToolLifecycleReducer:
             if event.tool_id in self._tools:
                 return self._tools[event.tool_id]
             # Fall through to create (should not happen for deterministic anon ids).
+
+        # 2. Idempotency check by sequence (when sequence represents monotonic event identity)
+        provider = str(event.provider or "").strip().lower()
+        tool_seq_key = (event.tool_id, event.sequence)
+        provider_seq_key = (provider, event.tool_id, event.sequence)
+        if event.sequence > 0 and (
+            provider_seq_key in self._processed_provider_sequences
+            or tool_seq_key in self._processed_sequences
+        ):
+            logger.debug(
+                "Duplicate sequence ignored: provider=%s tool_id=%s seq=%d",
+                provider,
+                event.tool_id,
+                event.sequence,
+            )
+            mapped = self._sequence_to_tool.get(provider_seq_key)
+            if mapped is not None and mapped in self._tools:
+                return self._tools[mapped]
+            if event.tool_id in self._tools:
+                return self._tools[event.tool_id]
 
         digest = event.payload_digest()
         # Deduplication prioritizes explicit identity (event_id/sequence).
@@ -618,6 +641,10 @@ class ToolLifecycleReducer:
                 if event.event_id:
                     self._processed_event_ids.add(event.event_id)
                     self._event_to_tool[event.event_id] = tool.id
+                if event.sequence > 0:
+                    self._processed_sequences.add(tool_seq_key)
+                    self._processed_provider_sequences.add(provider_seq_key)
+                    self._sequence_to_tool[provider_seq_key] = tool.id
                 self._processed_digests.add(digest)
                 self._digest_to_tool[digest] = tool.id
                 logger.info(
@@ -756,6 +783,10 @@ class ToolLifecycleReducer:
         if event.event_id:
             self._processed_event_ids.add(event.event_id)
             self._event_to_tool[event.event_id] = tool.id
+        if event.sequence > 0:
+            self._processed_sequences.add(tool_seq_key)
+            self._processed_provider_sequences.add(provider_seq_key)
+            self._sequence_to_tool[provider_seq_key] = tool.id
         self._processed_digests.add(digest)
         self._digest_to_tool[digest] = tool.id
 
@@ -822,6 +853,8 @@ class ToolLifecycleReducer:
             "tools": [self._tools[tid].to_dict() for tid in self._tool_order if tid in self._tools],
             "processed_event_ids": list(self._processed_event_ids),
             "processed_digests": list(self._processed_digests),
+            "processed_sequences": [list(item) for item in self._processed_sequences],
+            "processed_provider_sequences": [list(item) for item in self._processed_provider_sequences],
         }
 
     @classmethod
@@ -833,4 +866,6 @@ class ToolLifecycleReducer:
             reducer._tool_order.append(tool.id)
         reducer._processed_event_ids = set(data.get("processed_event_ids", []))
         reducer._processed_digests = set(data.get("processed_digests", []))
+        reducer._processed_sequences = {tuple(x) for x in data.get("processed_sequences", [])}
+        reducer._processed_provider_sequences = {tuple(x) for x in data.get("processed_provider_sequences", [])}
         return reducer

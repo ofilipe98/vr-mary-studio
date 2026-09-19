@@ -904,6 +904,12 @@ class ConversationsDomain:
         if hasattr(self, "_timeline_reducers") and cid:
             for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == cid]:
                 self._timeline_reducers.pop(k, None)
+        if hasattr(self, "_tool_reducers") and cid:
+            for k in [k for k in list(self._tool_reducers.keys()) if k[0] == cid]:
+                self._tool_reducers.pop(k, None)
+        if hasattr(self, "_ui_terminal_kinds") and cid:
+            for k in [k for k in list(self._ui_terminal_kinds.keys()) if k[0] == cid]:
+                self._ui_terminal_kinds.pop(k, None)
         is_selected = cid == self._selected_conversation_id()
         self._conversation_delete_running = True
         self._conversation_delete_id = cid

@@ -85,7 +85,7 @@ from .bridges.presentation import (
 )
 from .bridges.codeadmin import CodeAdminDomain
 from .bridges.providersettings import ProviderSettingsDomain
-from .bridges.activity import ActivityDomain
+from .bridges.activity import ActivityDomain, TERMINAL_PRIORITY
 from .bridges.conversations import ConversationsDomain
 
 class ChatBridge(QObject):
@@ -219,6 +219,8 @@ class ChatBridge(QObject):
         self._favorite_model_keys = self._load_favorite_model_keys()
         self._model_catalog_loading = False
         self._timeline_reducers: dict[tuple[str, int], ToolLifecycleReducer] = {}
+        self._tool_reducers: dict[tuple[str, int], ToolLifecycleReducer] = {}
+        self._ui_terminal_kinds: dict[tuple[str, int], str] = {}
         self._model_catalog_results: queue.SimpleQueue[list[dict[str, Any]]] = (
             queue.SimpleQueue()
         )
@@ -1497,6 +1499,10 @@ class ChatBridge(QObject):
         self._active_turns.clear()
         if hasattr(self, "_timeline_reducers"):
             self._timeline_reducers.clear()
+        if hasattr(self, "_tool_reducers"):
+            self._tool_reducers.clear()
+        if hasattr(self, "_ui_terminal_kinds"):
+            self._ui_terminal_kinds.clear()
         self._sync_selected_turn_state()
 
     def _selected_conversation_id(self) -> str:
@@ -3794,7 +3800,14 @@ class ChatBridge(QObject):
             key = str(payload.get("message_key") or "")
             if kind in {"turn_completed", "orchestration_cancelled", "error", "turn_recovered"}:
                 terminal_ids.add(eid)
-                terminal_kind_by_eid[eid] = str(kind or "")
+                cur_kind = terminal_kind_by_eid.get(eid)
+                if cur_kind is None:
+                    terminal_kind_by_eid[eid] = str(kind or "")
+                else:
+                    cur_prio = TERMINAL_PRIORITY.get(cur_kind, 0)
+                    new_prio = TERMINAL_PRIORITY.get(kind, 0)
+                    if new_prio > cur_prio:
+                        terminal_kind_by_eid[eid] = str(kind or "")
             if kind == "tool_event":
                 payload["runtime_event_id"] = record["id"]
                 if not hasattr(self, "_timeline_reducers"):
@@ -3906,7 +3919,16 @@ class ChatBridge(QObject):
                     item["activityData"] = rebuilt
                 if hasattr(self, "_timeline_reducers"):
                     self._timeline_reducers.pop((cid, group_id), None)
-        if not running and hasattr(self, "_timeline_reducers"):
+                if hasattr(self, "_tool_reducers"):
+                    self._tool_reducers.pop((cid, group_id), None)
+            elif reducer is not None and running:
+                if not hasattr(self, "_tool_reducers"):
+                    self._tool_reducers = {}
+                self._tool_reducers[(cid, group_id)] = reducer
+                if hasattr(self, "_timeline_reducers"):
+                    self._timeline_reducers.pop((cid, group_id), None)
+
+        if hasattr(self, "_timeline_reducers"):
             for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == cid]:
                 self._timeline_reducers.pop(k, None)
         for group_id, group in groups.items():

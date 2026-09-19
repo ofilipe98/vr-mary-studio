@@ -37,12 +37,18 @@ def _extract_event_id(*containers: Any) -> str:
     return ""
 
 
-def _extract_sequence(*containers: Any) -> int:
+def _extract_sequence(*containers: Any, provider: str = "") -> int:
     """Extract sequence or ordering index from heterogeneous provider payloads."""
+    p = str(provider or "").strip().lower()
+    if p == "claude":
+        allowed_keys = ("sequence", "seq", "index")
+    else:
+        allowed_keys = ("sequence", "seq", "output_index", "index")
+
     for c in containers:
         if not isinstance(c, dict):
             continue
-        for key in ("sequence", "seq", "output_index", "index"):
+        for key in allowed_keys:
             val = c.get(key)
             if val is None or val == "":
                 continue
@@ -61,7 +67,7 @@ def normalize_codex_event(
     """Normalize Codex RPC notifications into a NormalizedToolEvent."""
     item = params.get("item") if isinstance(params.get("item"), dict) else {}
     event_id = _extract_event_id(params, item)
-    sequence = _extract_sequence(params, item)
+    sequence = _extract_sequence(params, item, provider="codex")
 
     if method == "item/started":
         item_id = str(item.get("id") or "")
@@ -268,7 +274,7 @@ def normalize_antigravity_event(
         if not isinstance(tool_call, dict):
             tool_call = {}
         event_id = _extract_event_id(params, update, tool_call)
-        sequence = _extract_sequence(params, update, tool_call)
+        sequence = _extract_sequence(params, update, tool_call, provider="antigravity")
         call_id = str(tool_call.get("toolCallId") or tool_call.get("id") or "")
         raw_name = str(tool_call.get("name") or tool_call.get("title") or "ferramenta")
         tool_type = ToolType.from_string(raw_name)
@@ -360,7 +366,7 @@ def normalize_antigravity_event(
         if not isinstance(tool_result, dict):
             tool_result = {}
         event_id = _extract_event_id(params, update, tool_result)
-        sequence = _extract_sequence(params, update, tool_result)
+        sequence = _extract_sequence(params, update, tool_result, provider="antigravity")
         call_id = str(
             tool_result.get("toolCallId")
             or tool_result.get("id")
@@ -432,7 +438,7 @@ def normalize_opencode_event(
 
     if is_tool_payload:
         event_id = _extract_event_id(payload, part)
-        sequence = _extract_sequence(payload, part)
+        sequence = _extract_sequence(payload, part, provider="opencode")
         call_id = str(
             part.get("callID")
             or part.get("id")
@@ -541,7 +547,7 @@ def normalize_claude_event(
 ) -> NormalizedToolEvent | None:
     """Normalize Claude Code CLI tool_use / tool_result blocks."""
     event_id = _extract_event_id(block_or_payload)
-    sequence = _extract_sequence(block_or_payload)
+    sequence = _extract_sequence(block_or_payload, provider="claude")
     block_type = str(block_or_payload.get("type") or "")
     if block_type == "tool_use":
         tool_id = str(block_or_payload.get("id") or "")
@@ -599,6 +605,7 @@ def normalize_claude_event(
 def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     """Fallback normalizer for any RuntimeEvent."""
     payload = dict(event.payload or {})
+    provider_name = str(payload.get("provider") or "").strip().lower()
     if "canonical_event" in payload and isinstance(payload["canonical_event"], dict):
         d = dict(payload["canonical_event"])
         item = (
@@ -613,7 +620,7 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
             if ext_ev_id:
                 d["event_id"] = ext_ev_id
         if not d.get("sequence"):
-            ext_seq = _extract_sequence(payload, item)
+            ext_seq = _extract_sequence(payload, item, provider=provider_name)
             if ext_seq:
                 d["sequence"] = ext_seq
         if not d.get("conversation_id") and event.conversation_id:
@@ -718,7 +725,7 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     exit_code = int(exit_code_raw) if exit_code_raw is not None else None
     # Explicit provider event identity prioritized over content heuristics.
     event_id = _extract_event_id(payload, item)
-    sequence = _extract_sequence(payload, item)
+    sequence = _extract_sequence(payload, item, provider=provider_name)
     # Explicit output semantics: incremental delta vs cumulative snapshot.
     # Only providers that declare cumulative snapshots use snapshot coalescing;
     # true deltas always append literally (even when textually equal).

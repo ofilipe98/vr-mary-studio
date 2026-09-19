@@ -20,6 +20,14 @@ from ...task_plan import TaskPlan
 
 from .presentation import (markdown_for_display, short_event_text, segments_for_display)
 
+TERMINAL_PRIORITY: dict[str, int] = {
+    "error": 3,
+    "orchestration_cancelled": 2,
+    "turn_recovered": 1,
+    "turn_completed": 1,
+    "orchestration_completed": 1,
+}
+
 class ActivityDomain:
     """Domain operations using the facade as the sole state and transaction owner."""
     def __init__(self, owner):
@@ -67,10 +75,32 @@ class ActivityDomain:
             if is_terminal and previous and execution_id != previous:
                 return
             if (event.conversation_id, execution_id) in self._ui_terminal_executions:
-                return
+                if not hasattr(self, "_ui_terminal_kinds"):
+                    self._ui_terminal_kinds = {}
+                current_term = self._ui_terminal_kinds.get((event.conversation_id, execution_id))
+                if current_term is not None:
+                    cur_prio = TERMINAL_PRIORITY.get(current_term, 0)
+                    new_prio = TERMINAL_PRIORITY.get(event.kind, 0)
+                    if new_prio <= cur_prio:
+                        return
+                else:
+                    return
             self._ui_execution_ids[event.conversation_id] = max(previous, execution_id)
             if is_terminal:
+                if not hasattr(self, "_ui_terminal_kinds"):
+                    self._ui_terminal_kinds = {}
                 self._ui_terminal_executions.add((event.conversation_id, execution_id))
+                self._ui_terminal_kinds[(event.conversation_id, execution_id)] = event.kind
+
+        # Maintain tool reducer state for every tool_event regardless of conversation selection
+        tool_entry = None
+        if event.kind == "tool_event" and execution_id:
+            reducer_key = (event.conversation_id, execution_id)
+            if not hasattr(self, "_tool_reducers"):
+                self._tool_reducers = {}
+            reducer = self._tool_reducers.setdefault(reducer_key, ToolLifecycleReducer())
+            tool_entry = self._extract_tool_entry(event, reducer=reducer)
+
         selected_id = self._selected_conversation_id()
         if event.conversation_id != selected_id:
             self._on_background_runtime_event(event)
@@ -82,11 +112,6 @@ class ActivityDomain:
             self._messages.replace([row for row in self._messages._items if row.get("role") != "activity" or row.get("messageKey")])
         self._record_execution_event(event)
         if event.kind == "tool_event" and execution_id:
-            reducer_key = (event.conversation_id, execution_id)
-            if not hasattr(self, "_tool_reducers"):
-                self._tool_reducers = {}
-            reducer = self._tool_reducers.setdefault(reducer_key, ToolLifecycleReducer())
-            tool_entry = self._extract_tool_entry(event, reducer=reducer)
             if tool_entry is not None:
                 assistant_count = sum(
                     1 for r in self._messages._items
@@ -342,6 +367,16 @@ class ActivityDomain:
         }:
             execution_id = int(event.payload.get("execution_id") or 0)
             self._discard_conversation_approvals(event.conversation_id)
+            reducer_key = (event.conversation_id, execution_id)
+            reducer = getattr(self, "_tool_reducers", {}).get(reducer_key)
+            if reducer is not None:
+                terminal_status = (
+                    ToolStatus.FAILURE if event.kind == "error"
+                    else ToolStatus.CANCELLED if event.kind == "orchestration_cancelled"
+                    else ToolStatus.INTERRUPTED
+                )
+                reducer.finalize_turn(terminal_status)
+                self._tool_reducers.pop(reducer_key, None)
             self._finish_background_turn(
                 event.conversation_id, kind=event.kind, execution_id=execution_id
             )
