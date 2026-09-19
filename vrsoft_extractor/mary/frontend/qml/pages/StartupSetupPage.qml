@@ -19,7 +19,8 @@ Rectangle {
         ColumnLayout {
             // Compact central envelope: same contained card principle as the
             // loading page, with generous outer margins on wide windows.
-            width: Math.min(520, scroller.width - 64)
+            // Tuned for the ~760 px bootstrap window (content ~600 px).
+            width: Math.min(600, scroller.width - 64)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 16
 

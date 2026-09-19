@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
-from ..config import MarySettings, load_vr_settings
+from ..config import load_vr_settings
 from .bridge import FrontendBridge, _stored_bool
 from .chat import ChatBridge
 from .studio import StudioBridge
@@ -318,18 +318,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.screenshot:
             schedule_antigravity_restore(studio_bridge)
 
-    def handle_setup_request(new_settings: MarySettings) -> None:
-        # Async handshake: only arm the deferred backend run. Returning to
-        # the event loop lets the loading page paint its first frame before
-        # the coordinator builds the backend; setup/completed is persisted
-        # by setupInitializationSucceeded, never here.
-        coordinator_holder["coordinator"].request_setup_backend(new_settings)
-
     bootstrap_bridge = BootstrapBridge(
         settings,
         preferences,
         initial_state="setup" if needs_setup else "initializing",
-        on_setup_completed=handle_setup_request,
         on_bootstrap_retry=lambda: coordinator_holder["coordinator"].bootstrap_or_retry(),
     )
     coordinator = StartupBackendCoordinator(
@@ -340,6 +332,13 @@ def main(argv: list[str] | None = None) -> int:
         on_backend_started=schedule_restore,
     )
     coordinator_holder["coordinator"] = coordinator
+    # Single setup contract: the signal arms the deferred backend run.
+    # Returning to the event loop lets the loading page paint its first
+    # frame before the coordinator prepares the backend; setup/completed
+    # is persisted by setupInitializationSucceeded, never here.
+    bootstrap_bridge.setupInitializationRequested.connect(
+        coordinator.request_setup_backend
+    )
 
     shutdown_complete = False
 
@@ -348,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         if shutdown_complete:
             return
         shutdown_complete = True
+        coordinator.shutdown()
         if coordinator.studio_bridge is not None:
             coordinator.studio_bridge.close()
         if coordinator.chat_bridge is not None:
@@ -366,6 +366,14 @@ def main(argv: list[str] | None = None) -> int:
 
     window = engine.rootObjects()[0]
     coordinator.set_window(window)
+    # Compact bootstrap envelope: setup/loading/error share one small
+    # centered window; the normal geometry is restored on ready. The
+    # controller writes nothing to QSettings, so the compact size never
+    # becomes the user's saved preference.
+    from .bootstrap_geometry import BootstrapGeometryController
+
+    geometry_controller = BootstrapGeometryController(window, bootstrap_bridge)
+    engine._bootstrap_geometry = geometry_controller  # type: ignore[attr-defined]
     if args.screenshot:
         # Deterministic capture path: backend synchronously, then ready.
         coordinator.setup_backend(settings)

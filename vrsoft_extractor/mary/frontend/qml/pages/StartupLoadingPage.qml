@@ -13,9 +13,11 @@ Rectangle {
     Item {
         // Same compact central envelope as the setup page: concentrated
         // content with generous outer margins on wide windows.
+        // Tuned for the ~760 px bootstrap window (content ~520 px) so
+        // setup and loading read as parts of the same flow.
         anchors.centerIn: parent
-        width: Math.min(440, parent.width - 64)
-        height: contentCol.implicitHeight
+        width: Math.min(520, parent.width - 64)
+        height: Math.min(contentCol.implicitHeight, parent.height - 32)
 
         ColumnLayout {
             id: contentCol

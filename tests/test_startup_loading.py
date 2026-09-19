@@ -75,7 +75,7 @@ def test_reviewing_settings_after_error_restarts_bootstrap(tmp_path, monkeypatch
     mock_chat = MagicMock()
     requested = []
 
-    def on_setup_completed(new_settings):
+    def on_setup_requested(new_settings):
         assert new_settings.root == settings.root
         requested.append(new_settings)
 
@@ -83,8 +83,8 @@ def test_reviewing_settings_after_error_restarts_bootstrap(tmp_path, monkeypatch
         settings,
         None,
         initial_state="loading_apps",
-        on_setup_completed=on_setup_completed,
     )
+    mock_bridge.setupInitializationRequested.connect(on_setup_requested)
     mock_bridge.attach_chat_bridge(mock_chat)
 
     # Catalog fails during normal startup.

@@ -38,13 +38,11 @@ class BootstrapBridge(QObject):
         preferences: QSettings | None = None,
         *,
         initial_state: str = "ready",
-        on_setup_completed: Callable[[MarySettings], Any] | None = None,
         on_bootstrap_retry: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
         self._preferences = preferences
-        self._on_setup_completed = on_setup_completed
         self._on_bootstrap_retry = on_bootstrap_retry
         self._state = initial_state  # boot, check_setup, setup, initializing, loading_apps, loading_versions, ready, error
         self._phase = "idle"
@@ -172,22 +170,12 @@ class BootstrapBridge(QObject):
         self.stateChanged.emit()
         self.statusMessageChanged.emit()
         self.detailMessageChanged.emit()
-        self.setupInitializationRequested.emit(new_settings)
-
-        # Fire-and-forget backend request: the callback must only schedule
-        # the real initialization (after the first loading frame) and return
-        # to the event loop. Completion arrives via
+        # Single contract for requesting the backend:
+        # setupInitializationRequested -> StartupBackendCoordinator
+        # .request_setup_backend. Completion arrives via
         # setupInitializationSucceeded / setupInitializationFailed, which is
-        # the only path that persists setup/completed. The synchronous return
-        # value is intentionally ignored so no heavy probe can run here.
-        if self._on_setup_completed is not None:
-            try:
-                self._on_setup_completed(new_settings)
-            except Exception as exc:
-                self.setupInitializationFailed(
-                    f"Não foi possível inicializar o ambiente: {exc}"
-                )
-                return
+        # the only path that persists setup/completed.
+        self.setupInitializationRequested.emit(new_settings)
 
     @Slot(object)
     def setupInitializationSucceeded(self, new_settings: object = None) -> None:  # noqa: N802

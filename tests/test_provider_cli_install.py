@@ -164,26 +164,34 @@ def test_native_fallback_does_not_replace_existing_path_selection(tmp_path):
 def test_new_acp_is_found_without_restarting(tmp_path):
     binary = tmp_path / "agy.exe"
     acp = tmp_path / ("agy_acp_server.exe" if os.name == "nt" else "agy_acp_server")
+    harness = tmp_path / ("localharness_external.exe" if os.name == "nt" else "localharness_external")
     with patch("vrsoft_extractor.mary.antigravity_acp.native_cli_path", return_value=binary), \
          patch("vrsoft_extractor.mary.antigravity_acp.shutil.which", return_value=None), \
          patch.dict(os.environ, {"LOCALAPPDATA": str(tmp_path)}):
         assert resolve_acp() is None
         acp.touch()
+        harness.touch()
         assert resolve_acp() == str(acp)
 
 
-def test_acp_in_nested_version_directory_is_resolved(tmp_path):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(parents=True)
-    binary = bin_dir / ("agy.exe" if os.name == "nt" else "agy")
+def test_acp_in_nested_version_directory_is_resolved(tmp_path, monkeypatch):
+    # Supported layout: %LOCALAPPDATA%/agy/bin/acp/<version>/ with a
+    # complete server + harness pair per version; highest version wins.
+    root = tmp_path / "agy" / "bin" / "acp"
+    binary = tmp_path / ("agy.exe" if os.name == "nt" else "agy")
     binary.touch()
     server_name = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
-    v1 = bin_dir / "acp" / "1.1.0" / server_name
-    v2 = bin_dir / "acp" / "1.1.1" / server_name
+    harness_name = "localharness_external.exe" if os.name == "nt" else "localharness_external"
+    v1 = root / "1.1.0" / server_name
+    v2 = root / "1.1.1" / server_name
     v1.parent.mkdir(parents=True)
     v2.parent.mkdir(parents=True)
     v1.touch()
     v2.touch()
+    # Same-installation pairing: each server needs its harness companion.
+    (v1.parent / harness_name).touch()
+    (v2.parent / harness_name).touch()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
     with patch("vrsoft_extractor.mary.antigravity_acp.native_cli_path", return_value=binary), \
          patch("vrsoft_extractor.mary.antigravity_acp.shutil.which", return_value=None):

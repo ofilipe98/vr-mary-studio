@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
+from typing import Any
 
 import pytest
-from PySide6.QtCore import QObject, QSettings, Signal, Slot
+from PySide6.QtCore import QObject, QSettings, QTimer, Signal, Slot
 from PySide6.QtWidgets import QApplication
 
 from vrsoft_extractor.mary.config import load_vr_settings
@@ -164,8 +166,8 @@ def test_partial_backend_never_published_and_retry_rebuilds_all(env_root):
 
     # Retry rebuilds the entire backend (never ready without StudioBridge).
     coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
     assert calls == {"chat": 2, "studio": 2}
-    assert coordinator.is_backend_ready() is True
     assert bootstrap.isAttachedTo(coordinator.chat_bridge) is True
     wait_until(lambda: bootstrap.state == "ready")
     assert bootstrap.isReady is True
@@ -185,13 +187,13 @@ def test_backend_failure_before_chat_rebuilds_on_retry(env_root):
         env_root, initialize_workspace_fn=flaky_init
     )
     coordinator.bootstrap_or_retry()
-    assert bootstrap.state == "error"
+    wait_until(lambda: bootstrap.state == "error")
     assert bootstrap.isReady is False
     assert coordinator.is_backend_ready() is False
 
     coordinator.bootstrap_or_retry()
-    assert attempts["count"] == 2
-    assert coordinator.is_backend_ready() is True
+    wait_until(lambda: attempts["count"] == 2)
+    wait_until(lambda: coordinator.is_backend_ready() is True)
     wait_until(lambda: bootstrap.state == "ready")
 
 
@@ -211,8 +213,8 @@ def test_catalog_failure_reuses_valid_backend(env_root):
         env_root, chat_factory=chat_factory, studio_factory=studio_factory
     )
     coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
     chat = coordinator.chat_bridge
-    assert coordinator.is_backend_ready() is True
     assert chat.refresh_calls == 1
 
     # Catalog fails after the backend is complete.
@@ -235,8 +237,8 @@ def test_setup_async_completion_marks_completed_only_on_success(env_root):
         env_root["settings"],
         env_root["prefs"],
         initial_state="setup",
-        on_setup_completed=requested.append,
     )
+    bootstrap2.setupInitializationRequested.connect(requested.append)
     bootstrap2.setupCompleted.connect(completed.append)
 
     bootstrap2.saveSetup(
@@ -252,12 +254,12 @@ def test_setup_async_completion_marks_completed_only_on_success(env_root):
     assert completed == []
     assert str(env_root["prefs"].value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
 
-    # Coordinator finishes the backend after the loading frame (sync here).
+    # Coordinator finishes the backend on its worker, then publishes on UI.
     coordinator._bootstrap = bootstrap2
     coordinator._run_setup_backend(requested[0])
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: len(completed) == 1)
     assert str(env_root["prefs"].value(SETUP_KEY_COMPLETED)).lower() == "true"
-    assert len(completed) == 1
-    assert coordinator.is_backend_ready() is True
     assert coordinator.chat_bridge.refresh_calls == 1
 
 
@@ -268,8 +270,8 @@ def test_setup_async_failure_keeps_setup_open(env_root):
         env_root["settings"],
         env_root["prefs"],
         initial_state="setup",
-        on_setup_completed=requested.append,
     )
+    bootstrap.setupInitializationRequested.connect(requested.append)
     bootstrap.saveSetup(
         str(env_root["root"]),
         "admin@vr.com.br",
@@ -279,6 +281,7 @@ def test_setup_async_failure_keeps_setup_open(env_root):
         "120",
     )
     assert bootstrap.state == "initializing"
+    assert len(requested) == 1
 
     bootstrap.setupInitializationFailed("db offline")
     assert bootstrap.state == "setup"
@@ -333,7 +336,7 @@ def test_coordinator_with_real_bridges_normal_flow(env_root):
     assert coordinator.is_backend_ready() is False
 
     coordinator.bootstrap_or_retry()
-    assert coordinator.is_backend_ready() is True
+    wait_until(lambda: coordinator.is_backend_ready() is True, timeout=20.0)
     assert bootstrap.isAttachedTo(coordinator.chat_bridge) is True
     wait_until(lambda: bootstrap.state == "ready", timeout=20.0)
     assert bootstrap.isReady is True
@@ -386,9 +389,9 @@ def test_coordinator_firstrun_flow_setup_to_ready(env_root):
         env_root["settings"],
         env_root["prefs"],
         initial_state="setup",
-        on_setup_completed=coordinator.request_setup_backend,
         on_bootstrap_retry=coordinator.bootstrap_or_retry,
     )
+    bootstrap.setupInitializationRequested.connect(coordinator.request_setup_backend)
     coordinator._bootstrap = bootstrap
 
     assert bootstrap.state == "setup"
@@ -409,3 +412,193 @@ def test_coordinator_firstrun_flow_setup_to_ready(env_root):
     assert bootstrap.isReady is True
     assert coordinator.is_backend_ready() is True
     assert str(env_root["prefs"].value(SETUP_KEY_COMPLETED)).lower() == "true"
+
+
+def test_first_frame_handler_disconnects_after_first_frame(env_root):
+    """frameSwapped is a real one-shot: 3 frames run the action exactly once."""
+    coordinator = make_coordinator(env_root)[0]
+    window = StubWindow()
+    runs: list[int] = []
+    coordinator._arm_first_frame(lambda: runs.append(1), window)
+    QApplication.processEvents()
+    assert runs == []
+    assert coordinator._frame_connected is True
+
+    window.frameSwapped.emit()
+    wait_until(lambda: runs == [1])
+    assert coordinator._frame_connected is False
+
+    # Frames 2 and 3 must not invoke the handler again (no ~60 FPS drain).
+    window.frameSwapped.emit()
+    window.frameSwapped.emit()
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert runs == [1]
+
+    # Re-arming installs exactly one new one-shot connection.
+    coordinator._arm_first_frame(lambda: runs.append(2), window)
+    assert coordinator._frame_connected is True
+    window.frameSwapped.emit()
+    wait_until(lambda: runs == [1, 2])
+    window.frameSwapped.emit()
+    QApplication.processEvents()
+    assert runs == [1, 2]
+
+
+def test_prepare_worker_keeps_ui_responsive_and_publishes_on_ui_thread(env_root):
+    """Blocked prepare: loading stays alive, publish happens on UI thread."""
+    entered = threading.Event()
+    release = threading.Event()
+    main_ident = threading.get_ident()
+    factory_idents: list[int] = []
+    calls = []
+
+    def blocked_init(settings, refresh_conversations=False):
+        calls.append(1)
+        entered.set()
+        assert release.wait(10), "worker was never released"
+        return object()
+
+    def chat_factory(settings, database, prefs):
+        factory_idents.append(threading.get_ident())
+        return FakeChat()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root,
+        initialize_workspace_fn=blocked_init,
+        chat_factory=chat_factory,
+        studio_factory=lambda settings, db, prefs, orchestrator: FakeStudio(),
+    )
+    coordinator.bootstrap_or_retry()
+    assert entered.wait(5)
+    assert coordinator.is_preparing() is True
+
+    # The Qt event loop still runs while the worker is blocked.
+    beat: list[bool] = []
+    QTimer.singleShot(0, lambda: beat.append(True))
+    wait_until(lambda: beat == [True])
+    # Nothing is published before the worker finishes (atomicity kept).
+    assert coordinator.is_backend_ready() is False
+    assert coordinator.chat_bridge is None
+
+    release.set()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: bootstrap.state == "ready")
+    assert calls == [1]
+    # QObject bridges were created on the UI thread, never on the worker.
+    assert factory_idents == [main_ident]
+
+
+def test_retry_while_preparing_does_not_spawn_second_worker(env_root):
+    """A fast retry during an in-flight prepare is ignored, never doubled."""
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def counting_init(settings, refresh_conversations=False):
+        calls.append(1)
+        entered.set()
+        assert release.wait(10), "worker was never released"
+        return object()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=counting_init
+    )
+    coordinator.bootstrap_or_retry()
+    assert entered.wait(5)
+    # Retry while busy: no second worker, same generation still in flight.
+    coordinator.bootstrap_or_retry()
+    coordinator.bootstrap_or_retry()
+    QApplication.processEvents()
+    assert coordinator.is_preparing() is True
+
+    release.set()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: bootstrap.state == "ready")
+    assert len(calls) == 1
+
+
+def test_shutdown_drops_late_worker_result(env_root):
+    """Closing during bootstrap never publishes a late backend afterwards."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_init(settings, refresh_conversations=False):
+        entered.set()
+        assert release.wait(10), "worker was never released"
+        return object()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=blocked_init
+    )
+    coordinator.bootstrap_or_retry()
+    assert entered.wait(5)
+    coordinator.shutdown()
+    release.set()
+    # Let the queued worker completion (now stale) arrive and be dropped.
+    wait_until(lambda: coordinator.is_preparing() is False)
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert coordinator.is_backend_ready() is False
+    assert coordinator.chat_bridge is None
+    assert bootstrap.state == "initializing"
+
+
+def test_restore_runs_only_for_new_backend(env_root):
+    """Catalog-only retry reuses the backend without repeating the restore."""
+    restores: list[Any] = []
+
+    def chat_factory(settings, database, prefs):
+        return FakeChat(auto_ready=False)
+
+    bootstrap = BootstrapBridge(
+        env_root["settings"], env_root["prefs"], initial_state="initializing"
+    )
+    coordinator = StartupBackendCoordinator(
+        settings=env_root["settings"],
+        bootstrap_bridge=bootstrap,
+        preferences=env_root["prefs"],
+        initialize_workspace_fn=lambda settings, refresh_conversations=False: object(),
+        chat_factory=chat_factory,
+        studio_factory=lambda settings, db, prefs, orchestrator: FakeStudio(),
+        on_backend_started=restores.append,
+    )
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    assert len(restores) == 1
+    assert coordinator.chat_bridge.refresh_calls == 1
+
+    # Catalog fails after a valid backend: retry reloads the catalog only.
+    bootstrap._on_catalog_phase("error", 0, 0)
+    assert bootstrap.state == "error"
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.chat_bridge.refresh_calls == 2)
+    assert coordinator.is_backend_ready() is True
+    assert len(restores) == 1
+
+    # A genuinely rebuilt backend schedules the restore exactly once more.
+    bootstrap.detach_chat_bridge()
+    assert coordinator.is_backend_ready() is False
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    assert len(restores) == 2
+
+
+def test_setup_request_uses_single_signal_contract(env_root):
+    """saveSetup fires setupInitializationRequested exactly once, no callback."""
+    bridge = BootstrapBridge(
+        env_root["settings"], env_root["prefs"], initial_state="setup"
+    )
+    assert not hasattr(bridge, "_on_setup_completed")
+    requested: list[Any] = []
+    bridge.setupInitializationRequested.connect(requested.append)
+    bridge.saveSetup(
+        str(env_root["root"]),
+        "admin@vr.com.br",
+        "",
+        "admin@vr.com.br",
+        "",
+        "120",
+    )
+    assert bridge.state == "initializing"
+    assert len(requested) == 1

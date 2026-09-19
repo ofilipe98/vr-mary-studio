@@ -92,7 +92,7 @@ class StartupQmlTest(unittest.TestCase):
 
             requested = []
 
-            def on_setup_completed(new_settings):
+            def on_setup_requested(new_settings):
                 # Async handshake like app.main: only request the backend.
                 # No initialize_workspace() runs inside saveSetup anymore.
                 requested.append(new_settings)
@@ -101,8 +101,8 @@ class StartupQmlTest(unittest.TestCase):
                 settings,
                 prefs,
                 initial_state="setup",
-                on_setup_completed=on_setup_completed,
             )
+            bootstrap_bridge.setupInitializationRequested.connect(on_setup_requested)
 
             # studio_bridge does not exist yet: engine creation and the whole
             # setup interaction must never touch it (used to AttributeError).

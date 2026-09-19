@@ -221,10 +221,9 @@ def test_bootstrap_save_setup_requests_backend_without_marking_completed(
         settings,
         prefs,
         initial_state="setup",
-        on_setup_completed=requested.append,
     )
     bridge.setupCompleted.connect(completed.append)
-    bridge.setupInitializationRequested.connect(lambda _s: requested.append("signal"))
+    bridge.setupInitializationRequested.connect(requested.append)
 
     bridge.saveSetup(
         str(temp_env["root"]),
@@ -235,8 +234,8 @@ def test_bootstrap_save_setup_requests_backend_without_marking_completed(
         "120",
     )
 
-    # Backend request was issued but nothing completed yet.
-    assert len(requested) == 2  # callback + signal
+    # Backend request was issued exactly once, but nothing completed yet.
+    assert len(requested) == 1
     assert bridge.state == "initializing"
     assert bridge.isSetupActive is False
     assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
@@ -252,19 +251,17 @@ def test_bootstrap_save_setup_requests_backend_without_marking_completed(
 def test_bootstrap_save_setup_backend_failure_returns_to_setup(
     temp_env, isolated_runtime_env
 ):
-    """A failed backend request or failed initialization keeps setup open."""
+    """A failed backend initialization keeps setup open (single signal path)."""
     settings = temp_env["settings"]
     prefs = temp_env["prefs"]
 
-    def _boom(_new_settings):
-        raise RuntimeError("db offline")
-
+    requested = []
     bridge = BootstrapBridge(
         settings,
         prefs,
         initial_state="setup",
-        on_setup_completed=_boom,
     )
+    bridge.setupInitializationRequested.connect(requested.append)
     bridge.saveSetup(
         str(temp_env["root"]),
         "admin@vr.com.br",
@@ -273,34 +270,15 @@ def test_bootstrap_save_setup_backend_failure_returns_to_setup(
         "",
         "120",
     )
+    # The single request path fires exactly once; completion is still pending.
+    assert len(requested) == 1
+    assert bridge.state == "initializing"
+
+    # Async failure after a successful request returns to setup.
+    bridge.setupInitializationFailed("db offline")
     assert bridge.state == "setup"
     assert bridge.isSetupActive is True
     assert bridge.errorMessage != ""
-    assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
-
-    # Async failure after a successful request behaves the same way.
-    prefs.remove(SETUP_KEY_COMPLETED)
-    prefs.remove(SETUP_KEY_VERSION)
-    prefs.sync()
-    bridge2 = BootstrapBridge(
-        settings,
-        prefs,
-        initial_state="setup",
-        on_setup_completed=lambda _new_settings: None,
-    )
-    bridge2.saveSetup(
-        str(temp_env["root"]),
-        "admin@vr.com.br",
-        "",
-        "admin@vr.com.br",
-        "",
-        "120",
-    )
-    assert bridge2.state == "initializing"
-    bridge2.setupInitializationFailed("db offline")
-    assert bridge2.state == "setup"
-    assert bridge2.isSetupActive is True
-    assert bridge2.errorMessage != ""
     assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
 
 
@@ -337,8 +315,8 @@ def test_bootstrap_bridge_save_setup_flow(temp_env):
         settings,
         prefs,
         initial_state="setup",
-        on_setup_completed=lambda s: requested_settings.append(s),
     )
+    bridge.setupInitializationRequested.connect(requested_settings.append)
     bridge.setupCompleted.connect(lambda s: completed_settings.append(s))
 
     assert bridge.state == "setup"
