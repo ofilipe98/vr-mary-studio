@@ -131,3 +131,111 @@ def test_chat_preview_sidebar_activity_and_approval_priority():
     activity = ACTIVITY.read_text(encoding="utf-8")
     assert "property string taskStep" in activity
     assert "taskStep" in activity
+
+
+def test_vr_task_bar_runtime_interactions_and_lifecycle(tmp_path):
+    from unittest.mock import patch
+    from PySide6.QtCore import QObject, QPoint, Qt
+    from PySide6.QtTest import QTest
+    from vrsoft_extractor.mary.frontend.app import create_engine
+    from vrsoft_extractor.mary.frontend.bridge import FrontendBridge
+    from vrsoft_extractor.mary.frontend.studio import StudioBridge
+    from vrsoft_extractor.mary.models import RuntimeEvent
+
+    app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "data", old_root=tmp_path / "old")
+    prefs = QSettings(str(tmp_path / "prefs.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation("TaskBar Test", "codex", "gpt-5.6", settings.root)
+    db.add_message(cid, "user", "Hello")
+
+    frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+        assert engine.rootObjects(), [str(w) for w in engine._qml_warnings]
+        window = engine.rootObjects()[0]
+        frontend.setReduceMotion(True)
+        bar = window.findChild(QObject, "chatTaskBar")
+        header = window.findChild(QObject, "taskPlanHeader")
+        assert bar is not None
+        assert header is not None
+
+        # Initially idle: not visible
+        assert not bar.property("visible")
+
+        # Start turn and supply task plan
+        chat._active_turns.add(cid)
+        chat._sync_selected_turn_state()
+        steps = [
+            {"text": "Task Step 1 with long description for narrow testing", "state": "running"},
+            {"text": "Task Step 2", "state": "pending"},
+        ]
+        chat._apply_task_snapshot(cid, steps, "2026-09-13T12:00:00Z")
+        chat.stateChanged.emit()
+        app.processEvents()
+
+        # Invariants: Bar is now visible and collapsed
+        assert chat.taskPlanVisible is True
+        assert bar.property("visible") is True
+        assert bar.property("expanded") is False
+
+        # 1. Click toggle (expanding)
+        point = header.mapToScene(QPoint(20, 12)).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+        app.processEvents()
+        assert bar.property("expanded") is True
+
+        # Click again to collapse (re-map point as drawer geometry shifted)
+        point = header.mapToScene(QPoint(20, 12)).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+        app.processEvents()
+        assert bar.property("expanded") is False
+
+        # 2. Keyboard toggle (Space)
+        header.forceActiveFocus()
+        app.processEvents()
+        assert header.property("activeFocus") is True
+        QTest.keyClick(window, Qt.Key_Space)
+        app.processEvents()
+        assert bar.property("expanded") is True
+
+        # Keyboard toggle (Return)
+        QTest.keyClick(window, Qt.Key_Return)
+        app.processEvents()
+        assert bar.property("expanded") is False
+
+        # 3. Narrow width layout test
+        window.setWidth(360)
+        app.processEvents()
+        assert bar.property("visible") is True
+
+        # 4. Expand, then trigger approval: drawer must collapse
+        QTest.keyClick(window, Qt.Key_Space)
+        app.processEvents()
+        assert bar.property("expanded") is True
+
+        chat._on_runtime_event(RuntimeEvent(
+            cid,
+            "approval_requested",
+            payload={"request_id": "req_1", "kind": "command", "command": "echo 1"}
+        ))
+        app.processEvents()
+        # VrTaskBar.expanded: root.taskBarExpanded && !approvalDialog.opened
+        assert bar.property("expanded") is False
+
+        # Discard approval
+        chat._Activity_domain._discard_conversation_approvals(cid)
+        app.processEvents()
+
+        # 5. Terminal state hides TaskBar
+        chat._queue_terminal_state("turn_completed", conversation_id=cid)
+        app.processEvents()
+        assert chat.taskPlanVisible is False
+        assert bar.property("visible") is False
+    finally:
+        chat.close()
+        app.processEvents()

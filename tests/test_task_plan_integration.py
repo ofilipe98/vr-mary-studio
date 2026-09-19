@@ -439,6 +439,8 @@ def test_two_concurrent_terminals_interleaved(tmp_path):
     try:
         cid_a = db.create_conversation("ConvA", "codex", "test", bridge._settings.root)
         cid_b = db.create_conversation("ConvB", "codex", "test", bridge._settings.root)
+        db.update_conversation(cid_a, status="running")
+        db.update_conversation(cid_b, status="running")
         bridge.refresh()
         bridge.selectConversationId(cid_a)
         orch = bridge._orchestrator
@@ -462,7 +464,8 @@ def test_two_concurrent_terminals_interleaved(tmp_path):
         assert rows[cid_b]["taskStep"] == "Plan B"
 
         # Background terminal for B arrives
-        orch._handle_event(RuntimeEvent(cid_b, "turn_completed"))
+        db.update_conversation(cid_b, status="idle")
+        bridge._on_background_runtime_event(RuntimeEvent(cid_b, "turn_completed"))
         assert cid_b not in bridge._active_turns
         bridge.refresh()
         rows = {r["conversationId"]: r for r in bridge._all_conversations}
@@ -472,11 +475,12 @@ def test_two_concurrent_terminals_interleaved(tmp_path):
         assert bridge.taskProgress == {"step": "Plan A", "completed": 0, "total": 1}
 
         # Terminal for A arrives
-        orch._handle_event(RuntimeEvent(cid_a, "turn_completed"))
+        db.update_conversation(cid_a, status="idle")
+        bridge._on_runtime_event(RuntimeEvent(cid_a, "turn_completed"))
         assert cid_a not in bridge._active_turns
         assert bridge.taskProgress == {}
 
-        # Check persisted plans of both
+        # Check persisted plans of both remain intact
         assert bridge._task_plans[cid_a].steps[0]["text"] == "Plan A"
         assert bridge._task_plans[cid_b].steps[0]["text"] == "Plan B"
     finally:
@@ -499,7 +503,7 @@ def test_malformed_snapshot_does_not_resurrect_persisted_plan(tmp_path):
             cid, "task_plan_updated", payload={"steps": [{"text": "Old Plan", "state": "running"}]}
         ))
         assert bridge.taskPlanVisible is True
-        orch._handle_event(RuntimeEvent(cid, "turn_completed"))
+        bridge._on_runtime_event(RuntimeEvent(cid, "turn_completed"))
         assert bridge.taskPlanVisible is False
         assert bridge.taskProgress == {}
 
@@ -530,6 +534,7 @@ def test_empty_snapshot_clears_active_plan(tmp_path):
     app, _settings, db, bridge = _make_bridge(tmp_path)
     try:
         cid = db.create_conversation("EmptySnapshot", "codex", "test", bridge._settings.root)
+        db.update_conversation(cid, status="running")
         bridge.refresh()
         bridge.selectConversationId(cid)
         orch = bridge._orchestrator
@@ -592,7 +597,7 @@ def test_antigravity_plan_updated_e2e(tmp_path):
         assert [s["state"] for s in bridge.taskSteps] == ["completed", "running", "pending"]
 
         # Terminal clears active progress
-        orch._handle_event(RuntimeEvent(cid, "turn_completed"))
+        bridge._on_runtime_event(RuntimeEvent(cid, "turn_completed"))
         assert bridge.taskProgress == {}
         assert bridge.taskPlanVisible is False
         assert [s["state"] for s in bridge.taskSteps] == ["completed", "running", "pending"]
