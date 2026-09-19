@@ -3,6 +3,9 @@
 This module deliberately has no database, filesystem, logging, provider adapter,
 or orchestration dependencies.  It does not make a provider safe by itself; it
 only defines the Studio-side contract that an approved provider must satisfy.
+The runtime identifier is local correlation metadata, not a Monitor identity or
+authorization session. Central credentials, users, clients and targets never
+enter the provider request surface.
 """
 
 from __future__ import annotations
@@ -74,12 +77,12 @@ class _SecretBuffer:
 
 
 class MonitorTurnRequest:
-    """Single-turn request exposed to an approved ephemeral provider."""
+    """Single-turn provider request with no central identity or authority."""
 
-    __slots__ = ("correlation_id", "session_id", "_payload")
+    __slots__ = ("correlation_id", "runtime_id", "_payload")
 
-    def __init__(self, session_id: str, correlation_id: str, payload: _SecretBuffer) -> None:
-        self.session_id = session_id
+    def __init__(self, runtime_id: str, correlation_id: str, payload: _SecretBuffer) -> None:
+        self.runtime_id = runtime_id
         self.correlation_id = correlation_id
         self._payload = payload
 
@@ -96,7 +99,7 @@ class MonitorTurnRequest:
     def __repr__(self) -> str:
         return (
             "MonitorTurnRequest("
-            f"session_id={self.session_id!r}, correlation_id={self.correlation_id!r}, "
+            f"runtime_id={self.runtime_id!r}, correlation_id={self.correlation_id!r}, "
             f"input_bytes={self.input_bytes})"
         )
 
@@ -104,10 +107,10 @@ class MonitorTurnRequest:
 class MonitorTurnResult:
     """Transient result which the transport must close after delivering it."""
 
-    __slots__ = ("correlation_id", "session_id", "_payload")
+    __slots__ = ("correlation_id", "runtime_id", "_payload")
 
-    def __init__(self, session_id: str, correlation_id: str, payload: _SecretBuffer) -> None:
-        self.session_id = session_id
+    def __init__(self, runtime_id: str, correlation_id: str, payload: _SecretBuffer) -> None:
+        self.runtime_id = runtime_id
         self.correlation_id = correlation_id
         self._payload = payload
 
@@ -133,7 +136,7 @@ class MonitorTurnResult:
     def __repr__(self) -> str:
         return (
             "MonitorTurnResult("
-            f"session_id={self.session_id!r}, correlation_id={self.correlation_id!r}, "
+            f"runtime_id={self.runtime_id!r}, correlation_id={self.correlation_id!r}, "
             f"output_bytes={self.output_bytes})"
         )
 
@@ -143,7 +146,7 @@ class MonitorTurnEvent:
     """Content-free lifecycle event suitable for operational counters."""
 
     kind: str
-    session_id: str
+    runtime_id: str
     correlation_id: str
     input_bytes: int = 0
     output_bytes: int = 0
@@ -186,7 +189,7 @@ class MonitorEphemeralSession:
         "_state_lock",
         "_turn_gate",
         "_turns_completed",
-        "session_id",
+        "runtime_id",
     )
 
     def __init__(
@@ -212,7 +215,7 @@ class MonitorEphemeralSession:
         if max_input_bytes <= 0 or max_output_bytes <= 0:
             raise ValueError("Monitor byte limits must be positive.")
 
-        self.session_id = secrets.token_hex(16)
+        self.runtime_id = secrets.token_hex(16)
         self._provider = provider
         self._event_sink = event_sink
         self._max_input_bytes = max_input_bytes
@@ -244,7 +247,7 @@ class MonitorEphemeralSession:
                 self._current_cancel = cancel_event
 
             request = MonitorTurnRequest(
-                self.session_id,
+                self.runtime_id,
                 correlation_id,
                 _SecretBuffer(
                     payload,
@@ -255,7 +258,7 @@ class MonitorEphemeralSession:
             if not self._emit(
                 MonitorTurnEvent(
                     "started",
-                    self.session_id,
+                    self.runtime_id,
                     correlation_id,
                     input_bytes=request.input_bytes,
                 )
@@ -277,7 +280,7 @@ class MonitorEphemeralSession:
             if not self._emit(
                 MonitorTurnEvent(
                     "finished",
-                    self.session_id,
+                    self.runtime_id,
                     correlation_id,
                     input_bytes=request.input_bytes,
                     output_bytes=output.size,
@@ -286,7 +289,7 @@ class MonitorEphemeralSession:
                 raise MonitorEphemeralError("monitor_event_sink_failed")
             with self._state_lock:
                 self._turns_completed += 1
-            result = MonitorTurnResult(self.session_id, correlation_id, output)
+            result = MonitorTurnResult(self.runtime_id, correlation_id, output)
             output = None
             return result
         except MonitorEphemeralError as exc:
@@ -294,7 +297,7 @@ class MonitorEphemeralSession:
             self._emit(
                 MonitorTurnEvent(
                     kind,
-                    self.session_id,
+                    self.runtime_id,
                     correlation_id,
                     input_bytes=request.input_bytes if request else 0,
                     code=exc.code,
@@ -305,7 +308,7 @@ class MonitorEphemeralSession:
             self._emit(
                 MonitorTurnEvent(
                     "failed",
-                    self.session_id,
+                    self.runtime_id,
                     correlation_id,
                     input_bytes=request.input_bytes if request else 0,
                     code="monitor_unavailable",
@@ -356,6 +359,6 @@ class MonitorEphemeralSession:
     def __repr__(self) -> str:
         return (
             "MonitorEphemeralSession("
-            f"session_id={self.session_id!r}, turns_completed={self.turns_completed}, "
+            f"runtime_id={self.runtime_id!r}, turns_completed={self.turns_completed}, "
             f"closed={self._closed})"
         )

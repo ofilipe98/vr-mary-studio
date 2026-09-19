@@ -15,9 +15,16 @@ histórico, resume ou exportação.
 
 O conteúdo de entrada fica em buffer mutável e é sobrescrito ao terminar, inclusive
 em erro ou cancelamento. O resultado transitório pertence ao transporte e precisa ser
-fechado depois da entrega. Eventos contêm somente IDs aleatórios, contagens de bytes,
-estado e código fechado de erro. Uma nova instância sempre recebe outra identidade e
-não recupera o turno anterior.
+fechado depois da entrega. Eventos contêm somente `runtime_id` e `correlation_id`
+aleatórios, contagens de bytes, estado e código fechado de erro. Uma nova instância
+sempre recebe outro runtime e não recupera o turno anterior.
+
+`runtime_id` é metadado local e não representa usuário ou sessão autenticada. O
+request entregue ao provider não possui credencial, user_id, client_id, sessão Harness
+ou target. No VRMonitor, o contrato central iniciado no commit `bd27e88` vincula token,
+cliente e sessão em uma credencial privada, recusa divergência antes de AuthZ/Agent e
+continua derivando usuário/target do cadastro. O futuro transporte deve criar esse
+vínculo fora do prompt; ele ainda não existe neste checkout.
 
 Esse limite ainda não habilita o Monitor. O contrato declarado por um provider
 (`persists_content=False` e `supports_resume=False`) é uma barreira local, não uma
@@ -35,7 +42,8 @@ gerais do Studio e não é permitido como substituto do perfil Monitor.
 Antes de habilitar uma sessão Monitor ainda são necessários:
 
 1. conectar o transporte ao limite efêmero sem introduzir persistência;
-2. identidade de usuário, sessão e cliente obtida fora do prompt e revalidada no central;
+2. conectar a credencial vinculada a usuário/sessão/cliente fora do prompt e validar
+   adulteração/revogação de ponta a ponta;
 3. processo isolado, ambiente mínimo, filesystem e executáveis permitidos;
 4. provider único, destinos de egress fixos e retenção/telemetria aprovadas;
 5. limites de streaming, subprocesso, tempo, cancelamento e concorrência;
@@ -52,5 +60,6 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
 ```
 
 Os testes efêmeros usam canários em sucesso, erro, cancelamento, reinício e encerramento
-abrupto do processo. Eles provam o limite local isolado; não aprovam o adapter, um
-provider, o tratamento de dados de clientes ou a integração do VRMonitor.
+abrupto do processo e verificam que a superfície do provider não carrega autoridade
+central. Eles provam o limite local isolado; não aprovam o adapter, um provider, o
+tratamento de dados de clientes ou a integração do VRMonitor.

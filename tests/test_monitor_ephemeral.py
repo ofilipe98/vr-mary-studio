@@ -183,7 +183,7 @@ def test_restart_has_new_identity_and_no_resume_or_history_surface() -> None:
     first.close()
 
     restarted = MonitorEphemeralSession(EchoProvider("second"), monitor_options())
-    assert restarted.session_id != first.session_id
+    assert restarted.runtime_id != first.runtime_id
     assert restarted.turns_completed == 0
     assert not hasattr(restarted, "resume")
     assert not hasattr(restarted, "history")
@@ -206,6 +206,30 @@ def test_contract_is_rejected_before_an_unapproved_provider_runs() -> None:
         MonitorEphemeralSession(provider, monitor_options())
 
     assert provider.called is False
+
+
+def test_provider_request_has_no_central_identity_or_target_surface() -> None:
+    provider = EchoProvider("response")
+    session = MonitorEphemeralSession(provider, monitor_options())
+
+    with session.run_turn("identity-looking data is still only payload"):
+        pass
+
+    assert provider.retained_request is not None
+    assert set(provider.retained_request.__slots__) == {
+        "_payload",
+        "correlation_id",
+        "runtime_id",
+    }
+    for authority in (
+        "client_id",
+        "credential",
+        "harness_session_id",
+        "target",
+        "user_id",
+    ):
+        with pytest.raises(AttributeError):
+            getattr(provider.retained_request, authority)
 
 
 def test_abrupt_process_exit_leaves_no_content_in_working_tree(tmp_path: Path) -> None:
