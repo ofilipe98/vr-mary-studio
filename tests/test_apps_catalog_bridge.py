@@ -1,4 +1,5 @@
 """Exercise the real Qt facade across catalog refresh, import and processing."""
+import os
 import threading
 import time
 
@@ -12,6 +13,7 @@ from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.apps_catalog import AppsCatalogStore
 from vrsoft_extractor.mary.frontend.bridges import codeadmin
 from vrsoft_extractor.mary.frontend.chat import ChatBridge
+from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from test_apps_catalog_audit import register
 from test_erp_releases import _vr_jar
 
@@ -36,6 +38,127 @@ def bridge(tmp_path):
     yield chat
     chat.close()
     app.processEvents()
+
+
+def test_refresh_loading_flag_flips_immediately_and_clears(bridge):
+    """refreshApplicationsCatalog() must notify loading on the same tick."""
+    notifications = []
+    bridge.stateChanged.connect(lambda: notifications.append(True))
+    assert bridge.applicationsCatalogLoading is False
+    bridge.refreshApplicationsCatalog()
+    assert bridge.applicationsCatalogLoading is True
+    assert len(notifications) >= 1
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    assert bridge.applicationsCatalogLoading is False
+
+
+def test_refresh_keeps_previous_catalog_and_error_hides_empty(bridge):
+    """Previous list stays visible in refresh; error never shows empty state."""
+    store = ErpReleaseCatalog(bridge._settings.root).apps_store
+    register(store, "one")
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: len(bridge.applicationsCatalog) == 1)
+    previous = list(bridge.applicationsCatalog)
+
+    bridge.refreshApplicationsCatalog()
+    assert bridge.applicationsCatalogLoading is True
+    assert bridge.applicationsCatalog == previous
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    assert bridge.applicationsCatalog == previous
+
+    bridge._on_applications_loaded(
+        {"root": bridge._settings.root, "error": "boom"}
+    )
+    assert bridge.applicationsCatalogError == "boom"
+    assert bridge.applicationsCatalog == previous
+    assert bridge.applicationsCatalogLoading is False
+    # Mirror of the ApplicationsSettingsPage empty-hint visible binding.
+    empty_visible = (
+        (bridge.applicationsCatalogLoading or bridge.applicationsCatalogLoaded)
+        and len(bridge.applicationsCatalog) == 0
+        and bridge.applicationsCatalogError == ""
+    )
+    assert empty_visible is False
+
+
+def test_ready_phase_reports_real_version_totals(bridge):
+    """versionsCount must count versions, not applications or packages."""
+    store = ErpReleaseCatalog(bridge._settings.root).apps_store
+    register(store, "one")
+    register(store, "two", "2.0")
+    phases = []
+    bridge.applicationsCatalogPhase.connect(
+        lambda phase, apps, versions: phases.append((phase, apps, versions))
+    )
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    ready = [item for item in phases if item[0] == "ready"]
+    assert ready, phases
+    _phase, apps_count, versions_count = ready[-1]
+    assert apps_count == 1
+    assert versions_count == 2
+    loading = [item for item in phases if item[0] == "loading_versions"]
+    assert loading and loading[-1][2] == 2
+
+
+def test_studio_save_settings_root_change_stays_on_old_root(tmp_path, monkeypatch):
+    """Strategy A: new root persists to .env; live bridges keep the old root."""
+    for key in (
+        "VR_ROOT",
+        "MOVIDESK_EMAIL",
+        "MOVIDESK_PASSWORD",
+        "ENDOO_EMAIL",
+        "ENDOO_PASSWORD",
+        "VR_SYNC_INTERVAL_MINUTES",
+        "VR_DEFAULT_EFFORT",
+    ):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)
+
+    old_root = tmp_path / "workspace"
+    old_root.mkdir(parents=True, exist_ok=True)
+    settings = MarySettings(app_dir=tmp_path, root=old_root, old_root=tmp_path / "old")
+    monkeypatch.setenv("VR_ROOT", str(old_root))
+    prefs = QSettings(str(tmp_path / "prefs.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    studio = StudioBridge(settings, db, prefs)
+    try:
+        toasts = []
+        studio.toastRequested.connect(lambda msg, kind: toasts.append((msg, kind)))
+
+        new_root = tmp_path / "novo_workspace"
+        studio.saveSettings(
+            str(new_root), "new@vr.com.br", "", "endoo@vr.com.br", "", "240"
+        )
+
+        # Live backend untouched: still the old root everywhere.
+        assert studio._settings.root == old_root
+        assert os.environ["VR_ROOT"] == str(old_root)
+        # Immediate-effect settings aligned in the running process.
+        assert os.environ["MOVIDESK_EMAIL"] == "new@vr.com.br"
+        assert os.environ["ENDOO_EMAIL"] == "endoo@vr.com.br"
+        assert os.environ["VR_SYNC_INTERVAL_MINUTES"] == "240"
+        # New root persisted for the next launch.
+        env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert str(new_root) in env_text
+        assert any(kind == "warning" for _msg, kind in toasts)
+
+        # Same-root save swaps settings and applies immediately.
+        toasts.clear()
+        studio.saveSettings(
+            str(old_root), "second@vr.com.br", "", "endoo2@vr.com.br", "", "60"
+        )
+        assert studio._settings.root == old_root
+        assert studio._settings.sync_interval_minutes == 60
+        assert os.environ["MOVIDESK_EMAIL"] == "second@vr.com.br"
+        assert os.environ["VR_SYNC_INTERVAL_MINUTES"] == "60"
+        assert any(kind == "success" for _msg, kind in toasts)
+    finally:
+        studio.close()
 
 
 def test_catalog_refresh_preserves_selection_and_clears_removed_app(bridge):

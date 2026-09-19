@@ -662,9 +662,10 @@ Item {
                 }
 
                 VrButton {
-                    text: "Atualizar"
+                    text: chat.applicationsCatalogLoading ? "Atualizando…" : "Atualizar"
                     variant: "ghost"
                     implicitHeight: 28
+                    enabled: !chat.applicationsCatalogLoading
                     onClicked: chat.refreshApplicationsCatalog()
                 }
             }
@@ -1014,11 +1015,34 @@ Item {
                     font.pixelSize: Theme.fontSize(14)
                 }
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: chat.applicationsCatalogLoading && chat.applicationsCatalog.length > 0
+                    spacing: 8
+                    VrProgressBar {
+                        Layout.fillWidth: true
+                        barHeight: 3
+                        indeterminate: true
+                        accentColor: Theme.palette.brandOrange
+                    }
+                    Text {
+                        text: "Atualizando catálogo…"
+                        color: Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                    }
+                }
+
                 Text {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    visible: chat.applicationsCatalog.length === 0
-                    text: "Nenhum aplicativo catalogado ainda. Importe um pacote VR ou JAR avulso acima."
+                    // Empty and error are mutually exclusive: the empty hint
+                    // only shows when there is no catalog error. While the
+                    // first load is still running it reads as loading state.
+                    visible: (chat.applicationsCatalogLoading || chat.applicationsCatalogLoaded) && chat.applicationsCatalog.length === 0 && chat.applicationsCatalogError.length === 0
+                    text: chat.applicationsCatalogLoading
+                        ? "Carregando catálogo de aplicativos…"
+                        : "Nenhum aplicativo catalogado ainda. Importe um pacote VR ou JAR avulso acima."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(13)

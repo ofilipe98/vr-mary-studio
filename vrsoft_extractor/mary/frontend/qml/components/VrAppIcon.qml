@@ -60,16 +60,21 @@ Item {
     }
 
     readonly property string canonical: canonicalName(appName)
-    readonly property string officialPath: canonical ? ("file:///D:/Codex/4.5.95_com_PDV/img/" + canonical + ".ico") : ""
     readonly property string assetPath: canonical ? Qt.resolvedUrl("../../../assets/app_icons/" + canonical + ".ico") : ""
+    readonly property string officialPath: assetPath
 
-    property string activeSource: officialPath
+    property string activeSource: assetPath
     property bool hasIcon: canonical.length > 0 && !imageFailed
     property bool imageFailed: false
 
     onAppNameChanged: {
         imageFailed = false;
-        activeSource = officialPath;
+        activeSource = assetPath;
+    }
+
+    onAssetPathChanged: {
+        imageFailed = false;
+        activeSource = assetPath;
     }
 
     Rectangle {
@@ -94,7 +99,7 @@ Item {
 
             onStatusChanged: {
                 if (status === Image.Error) {
-                    if (root.activeSource === root.officialPath && root.assetPath.length > 0) {
+                    if (root.activeSource !== root.assetPath && root.assetPath.length > 0) {
                         root.activeSource = root.assetPath;
                     } else {
                         root.imageFailed = true;

@@ -4630,6 +4630,27 @@ class QmlFrontendTest(unittest.TestCase):
                 settings_page = window.findChild(QObject, "settingsPage")
                 self.assertIsNotNone(settings_page)
                 settings_page.setProperty("tabIndex", 3)
+                # The page auto-refreshes the real catalog on load, which
+                # replaces the injected sample when it finishes. Let that
+                # worker start and settle first, then (re)inject the sample so
+                # the selector assertions below are deterministic.
+                for _attempt in range(100):
+                    self.application.processEvents()
+                    if (
+                        chat_bridge._apps_catalog_thread is not None
+                        or chat_bridge.applicationsCatalogLoaded
+                    ):
+                        break
+                    QTest.qWait(10)
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._apps_catalog_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._apps_catalog_thread)
+                chat_bridge._applications_catalog = sample_catalog
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
                 for _attempt in range(40):
                     self.application.processEvents()
                     if window.findChild(QObject, "appSelector") is not None:
@@ -4794,6 +4815,34 @@ class QmlFrontendTest(unittest.TestCase):
         stop_svg = (assets_dir / "chat-stop.svg").read_text(encoding="utf-8")
         self.assertIn('fill="#FFFFFF"', stop_svg)
         self.assertNotIn('fill="#A1261D"', stop_svg)
+
+
+    def test_vr_app_icon_resolves_bundled_asset_path_without_external_failure(self):
+        from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+
+        engine = QQmlApplicationEngine()
+        component_path = MAIN_QML.parent / "components" / "VrAppIcon.qml"
+        component = QQmlComponent(engine, QUrl.fromLocalFile(str(component_path)))
+        item = component.create()
+        self.assertIsNotNone(item, f"Failed to create VrAppIcon: {component.errors()}")
+        try:
+            item.setProperty("appName", "VRAdm")
+            self.application.processEvents()
+
+            canonical = item.property("canonical")
+            asset_path = item.property("assetPath")
+            active_source = item.property("activeSource")
+            official_path = item.property("officialPath")
+
+            self.assertEqual(canonical, "VRAdm")
+            self.assertTrue(asset_path.endswith("assets/app_icons/VRAdm.ico"))
+            self.assertFalse(asset_path.startswith("file:///D:/Codex/4.5.95_com_PDV"))
+            self.assertEqual(active_source, asset_path)
+            self.assertEqual(official_path, asset_path)
+            self.assertTrue(item.property("hasIcon"))
+            self.assertFalse(item.property("imageFailed"))
+        finally:
+            item.deleteLater()
 
 
 if __name__ == "__main__":

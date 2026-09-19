@@ -19,10 +19,12 @@ from PySide6.QtWidgets import QApplication
 from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import load_vr_settings
-from ..workspace import initialize_workspace
 from .bridge import FrontendBridge, _stored_bool
 from .chat import ChatBridge
 from .studio import StudioBridge
+from .bootstrap import BootstrapBridge
+from .startup import StartupBackendCoordinator
+from ..settings_service import is_setup_needed
 
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
@@ -149,8 +151,9 @@ def _apply_window_decorations(engine: QQmlApplicationEngine) -> None:
 
 def create_engine(
     bridge: FrontendBridge,
-    chat_bridge: ChatBridge,
+    chat_bridge: ChatBridge | None = None,
     studio_bridge: StudioBridge | None = None,
+    bootstrap_bridge: BootstrapBridge | None = None,
 ) -> QQmlApplicationEngine:
     # Single rendering policy: global follows the stored fontSmoothing so it
     # matches Theme.textRenderType from the first frame.
@@ -163,6 +166,8 @@ def create_engine(
         if smoothing
         else QQuickWindow.TextRenderType.QtTextRendering
     )
+    if bootstrap_bridge is None:
+        bootstrap_bridge = BootstrapBridge(settings=None, initial_state="ready")
     engine = QQmlApplicationEngine()
     qml_warnings: list[object] = []
     engine.warnings.connect(qml_warnings.extend)
@@ -170,10 +175,22 @@ def create_engine(
     engine.rootContext().setContextProperty("frontend", bridge)
     engine.rootContext().setContextProperty("chat", chat_bridge)
     engine.rootContext().setContextProperty("studio", studio_bridge)
+    engine.rootContext().setContextProperty("bootstrap", bootstrap_bridge)
     engine.load(QUrl.fromLocalFile(str(MAIN_QML)))
     engine._qml_warnings = qml_warnings  # type: ignore[attr-defined]
     _apply_window_decorations(engine)
     return engine
+
+
+def schedule_antigravity_restore(studio_bridge: StudioBridge | None) -> None:
+    """Schedule the Antigravity account restore only when the bridge exists.
+
+    Never called with a not-yet-created bridge: first-run starts with
+    studio_bridge=None and schedules this after setup_backend() succeeds.
+    """
+    if studio_bridge is None:
+        return
+    QTimer.singleShot(0, studio_bridge.restoreAntigravityAccount)
 
 
 def _apply_application_font(app: QApplication) -> None:
@@ -278,6 +295,10 @@ def main(argv: list[str] | None = None) -> int:
 
     install_crash_handlers(settings.logs_dir)
 
+    # Shell-first startup: the QML engine (Setup or global loading page) must
+    # exist before any configuration-dependent work runs.
+    #   first run: app -> setup -> initialize -> apps -> versions -> ready -> main
+    #   normal:    app -> startup loading -> initialize -> apps -> versions -> ready -> main
     bridge = FrontendBridge(
         settings,
         preferences,
@@ -285,21 +306,40 @@ def main(argv: list[str] | None = None) -> int:
         initial_page=args.screenshot_page,
         navigation_override=False if args.screenshot else None,
     )
-    database = initialize_workspace(settings, refresh_conversations=False)
-    chat_bridge = ChatBridge(settings, database, preferences, open_new_chat=True)
-    if args.screenshot_vr_mode:
-        # Visual-test override only; do not persist or mutate a conversation.
-        chat_bridge._vr_mode = args.screenshot_vr_mode
-    studio_bridge = StudioBridge(
+    needs_setup = not args.screenshot and is_setup_needed(settings, preferences)
+    engine: QQmlApplicationEngine | None = None
+
+    # Backend lifecycle (database + ChatBridge + StudioBridge) is owned by a
+    # testable coordinator: atomic publishes, explicit readiness, and a real
+    # first-frame gate before any heavy initialize_workspace() work runs.
+    coordinator_holder: dict[str, StartupBackendCoordinator] = {}
+
+    def schedule_restore(studio_bridge: StudioBridge | None) -> None:
+        if not args.screenshot:
+            schedule_antigravity_restore(studio_bridge)
+
+    bootstrap_bridge = BootstrapBridge(
         settings,
-        database,
         preferences,
-        chat_orchestrator=chat_bridge._orchestrator,
+        initial_state="setup" if needs_setup else "initializing",
+        on_bootstrap_retry=lambda: coordinator_holder["coordinator"].bootstrap_or_retry(),
     )
-    studio_bridge.conversationRestored.connect(chat_bridge.refresh)
-    chat_bridge.conversationArchived.connect(
-        lambda _conversation_id: studio_bridge.refreshArchived("")
+    coordinator = StartupBackendCoordinator(
+        settings=settings,
+        bootstrap_bridge=bootstrap_bridge,
+        frontend_bridge=bridge,
+        preferences=preferences,
+        on_backend_started=schedule_restore,
     )
+    coordinator_holder["coordinator"] = coordinator
+    # Single setup contract: the signal arms the deferred backend run.
+    # Returning to the event loop lets the loading page paint its first
+    # frame before the coordinator prepares the backend; setup/completed
+    # is persisted by setupInitializationSucceeded, never here.
+    bootstrap_bridge.setupInitializationRequested.connect(
+        coordinator.request_setup_backend
+    )
+
     shutdown_complete = False
 
     def shutdown() -> None:
@@ -307,22 +347,39 @@ def main(argv: list[str] | None = None) -> int:
         if shutdown_complete:
             return
         shutdown_complete = True
-        studio_bridge.close()
-        chat_bridge.close()
+        coordinator.shutdown()
+        if coordinator.studio_bridge is not None:
+            coordinator.studio_bridge.close()
+        if coordinator.chat_bridge is not None:
+            coordinator.chat_bridge.close()
 
     app.aboutToQuit.connect(shutdown)
-    engine = create_engine(bridge, chat_bridge, studio_bridge)
+    engine = create_engine(bridge, None, None, bootstrap_bridge)
+    coordinator.set_engine(engine)
+
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):
             print(warning.toString(), file=sys.stderr)
-        print(f"N\u00e3o foi poss\u00edvel carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
+        print(f"Não foi possível carregar o frontend QML: {MAIN_QML}", file=sys.stderr)
         shutdown()
         return 1
 
     window = engine.rootObjects()[0]
-    if not args.screenshot:
-        QTimer.singleShot(0, studio_bridge.restoreAntigravityAccount)
+    coordinator.set_window(window)
+    # Compact bootstrap envelope: setup/loading/error share one small
+    # centered window; the normal geometry is restored on ready. The
+    # controller writes nothing to QSettings, so the compact size never
+    # becomes the user's saved preference.
+    from .bootstrap_geometry import BootstrapGeometryController
+
+    geometry_controller = BootstrapGeometryController(window, bootstrap_bridge)
+    engine._bootstrap_geometry = geometry_controller  # type: ignore[attr-defined]
     if args.screenshot:
+        # Deterministic capture path: backend synchronously, then ready.
+        coordinator.setup_backend(settings)
+        if args.screenshot_vr_mode:
+            coordinator.chat_bridge._vr_mode = args.screenshot_vr_mode
+        bootstrap_bridge.set_ready()
         window.setProperty("width", max(1120, args.screenshot_width))
         window.setProperty("height", max(700, args.screenshot_height))
 
@@ -358,7 +415,9 @@ def main(argv: list[str] | None = None) -> int:
                 project_index = next(
                     (
                         index
-                        for index, item in enumerate(chat_bridge.projectItems)
+                        for index, item in enumerate(
+                            coordinator.chat_bridge.projectItems
+                        )
                         if item.get("path")
                     ),
                     -1,
@@ -394,11 +453,18 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(1300, save_capture)
     elif args.smoke_test:
         QTimer.singleShot(600, app.quit)
+    elif not needs_setup:
+        # Normal startup: the engine/loading shell is already visible; the
+        # heavy backend starts only after the first real frameSwapped frame,
+        # so the loading page paints (and keeps animating) first.
+        coordinator.request_normal_startup()
+    # First run stays on the Setup page until the user saves the configuration.
 
     # Keep Python-owned QObjects alive for the entire QML engine lifetime.
     engine._frontend_bridge = bridge  # type: ignore[attr-defined]
-    engine._chat_bridge = chat_bridge  # type: ignore[attr-defined]
-    engine._studio_bridge = studio_bridge  # type: ignore[attr-defined]
+    engine._coordinator = coordinator  # type: ignore[attr-defined]
+    engine._chat_bridge = coordinator.chat_bridge  # type: ignore[attr-defined]
+    engine._studio_bridge = coordinator.studio_bridge  # type: ignore[attr-defined]
     try:
         return app.exec()
     finally:

@@ -84,6 +84,7 @@ class FrontendBridge(QObject):
 
     themeChanged = Signal()
     currentPageChanged = Signal()
+    projectChanged = Signal()
     navigationCollapsedChanged = Signal()
     reduceMotionChanged = Signal()
     uiScaleChanged = Signal()
@@ -206,6 +207,18 @@ class FrontendBridge(QObject):
             value = default
         return max(minimum, min(maximum, value))
 
+    def update_settings(self, settings: MarySettings) -> None:
+        """Point the shell at new settings (e.g. after initial setup).
+
+        The QML engine keeps this same object as context property, so a
+        notify signal is enough — no bridge recreation needed.
+        """
+        if settings.root == self._settings.root:
+            self._settings = settings
+            return
+        self._settings = settings
+        self.projectChanged.emit()
+
     @Property(str, constant=True)
     def appName(self) -> str:  # noqa: N802 - QML property naming
         return APP_TITLE
@@ -224,11 +237,11 @@ class FrontendBridge(QObject):
     def version(self) -> str:
         return __version__
 
-    @Property(str, constant=True)
+    @Property(str, notify=projectChanged)
     def projectName(self) -> str:  # noqa: N802 - QML property naming
         return self._settings.root.name or "VRProject"
 
-    @Property(str, constant=True)
+    @Property(str, notify=projectChanged)
     def projectPath(self) -> str:  # noqa: N802 - QML property naming
         return str(self._settings.root)
 
