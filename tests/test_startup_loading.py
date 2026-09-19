@@ -142,6 +142,39 @@ def test_bootstrap_error_and_retry(dummy_settings):
     assert mock_chat.refreshApplicationsCatalog.called
 
 
+def test_bootstrap_begin_initialization_resets_error_and_enters_initializing(dummy_settings):
+    """beginInitialization transitions to initializing, clears error, and emits all signals."""
+    bridge = BootstrapBridge(dummy_settings, initial_state="loading_apps")
+    bridge.set_error("Falha ao inicializar o backend.")
+    assert bridge.state == "error"
+    assert bridge.errorMessage == "Falha ao inicializar o backend."
+    assert bridge.isBusy is False
+
+    signals_emitted: dict[str, int] = {
+        "stateChanged": 0,
+        "errorMessageChanged": 0,
+        "statusMessageChanged": 0,
+        "detailMessageChanged": 0,
+    }
+    bridge.stateChanged.connect(lambda: signals_emitted.__setitem__("stateChanged", signals_emitted["stateChanged"] + 1))
+    bridge.errorMessageChanged.connect(lambda: signals_emitted.__setitem__("errorMessageChanged", signals_emitted["errorMessageChanged"] + 1))
+    bridge.statusMessageChanged.connect(lambda: signals_emitted.__setitem__("statusMessageChanged", signals_emitted["statusMessageChanged"] + 1))
+    bridge.detailMessageChanged.connect(lambda: signals_emitted.__setitem__("detailMessageChanged", signals_emitted["detailMessageChanged"] + 1))
+
+    bridge.beginInitialization()
+
+    assert bridge.state == "initializing"
+    assert bridge.isReady is False
+    assert bridge.isBusy is True
+    assert bridge.errorMessage == ""
+    assert bridge.statusMessage == "Preparando seu ambiente"
+    assert bridge.detailMessage == "Inicializando…"
+    assert signals_emitted["stateChanged"] == 1
+    assert signals_emitted["errorMessageChanged"] == 1
+    assert signals_emitted["statusMessageChanged"] == 1
+    assert signals_emitted["detailMessageChanged"] == 1
+
+
 def test_in_app_refresh_does_not_reopen_startup_screen(dummy_settings):
     """When bootstrap is already ready, in-app catalog refreshes must not reset state to loading_apps."""
     bridge = BootstrapBridge(dummy_settings, initial_state="ready")

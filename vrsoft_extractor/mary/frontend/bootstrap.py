@@ -155,21 +155,13 @@ class BootstrapBridge(QObject):
         self._settings = new_settings
         self._settings_values = safe_values
         self._pending_setup_settings = new_settings
-        self._error_message = ""
-        self.errorMessageChanged.emit()
 
         # Move to the loading state synchronously so StartupLoadingPage
         # renders its first frame before any deferred backend work runs.
         # Field validation/persistence above is light (mkdir + .env + reload);
         # the heavy initialize_workspace() runs exactly once, later, owned by
         # the startup coordinator after the loading frame has been presented.
-        self._state = "initializing"
-        self._is_ready = False
-        self._status_message = "Preparando seu ambiente"
-        self._detail_message = "Inicializando…"
-        self.stateChanged.emit()
-        self.statusMessageChanged.emit()
-        self.detailMessageChanged.emit()
+        self.beginInitialization()
         # Single contract for requesting the backend:
         # setupInitializationRequested -> StartupBackendCoordinator
         # .request_setup_backend. Completion arrives via
@@ -242,6 +234,21 @@ class BootstrapBridge(QObject):
         self.detailMessageChanged.emit()
         self.errorMessageChanged.emit()
 
+    @Slot()
+    def beginInitialization(self) -> None:  # noqa: N802
+        """Enter the initializing state while heavy workspace prep runs."""
+        self._state = "initializing"
+        self._is_ready = False
+        self._error_message = ""
+        self._status_message = "Preparando seu ambiente"
+        self._detail_message = "Inicializando…"
+        self.stateChanged.emit()
+        self.errorMessageChanged.emit()
+        self.statusMessageChanged.emit()
+        self.detailMessageChanged.emit()
+
+    begin_initialization = beginInitialization
+
     # -------------------------------------------------------------------------
     # Catalog Bootstrap Lifecycle
     # -------------------------------------------------------------------------
@@ -305,7 +312,7 @@ class BootstrapBridge(QObject):
         # Fail closed: READY must mean (valid backend + finished catalog).
         # Without an attached ChatBridge there is no catalog to wait for, so
         # this is an error, never a shortcut to ready. Explicit set_ready()
-        # remains available for screenshots/tests that skip the bootstrap.
+        # remains available for screenshots/tests that skip the bootstrap."""
         if self._chat_bridge is None:
             self.set_error(
                 "Backend indisponível: nenhum ChatBridge anexado ao bootstrap."

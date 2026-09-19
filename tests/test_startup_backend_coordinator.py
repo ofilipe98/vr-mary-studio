@@ -786,3 +786,183 @@ def test_shutdown_during_worker_touches_nothing(env_root):
     assert bootstrap._chat_bridge is None
     assert restores == []
     assert context_calls == []
+
+
+def test_backend_failure_retry_transitions_immediately_to_initializing_and_completes_to_ready(
+    env_root,
+):
+    """Backend failure -> error; retry transitions immediately to initializing -> ready."""
+    attempts = {"count": 0}
+    worker_running = threading.Event()
+    worker_release = threading.Event()
+
+    def flaky_init(settings, refresh_conversations=False):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("primeira falha no banco")
+        worker_running.set()
+        assert worker_release.wait(10), "worker nunca foi liberado"
+        return object()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=flaky_init
+    )
+    bootstrap._on_bootstrap_retry = coordinator.bootstrap_or_retry
+
+    # Initial run fails
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: bootstrap.state == "error")
+    assert bootstrap.state == "error"
+    assert "primeira falha no banco" in bootstrap.errorMessage
+    assert bootstrap.isReady is False
+    assert bootstrap.isBusy is False
+    assert coordinator.is_backend_ready() is False
+
+    # Retry triggered
+    bootstrap.retryBootstrap()
+
+    # Must be immediately in initializing while worker is still blocked
+    assert worker_running.wait(5)
+    assert bootstrap.state == "initializing"
+    assert bootstrap.isBusy is True
+    assert bootstrap.isReady is False
+    assert bootstrap.errorMessage == ""
+    assert coordinator.is_preparing() is True
+
+    # Allow worker to complete
+    worker_release.set()
+    wait_until(lambda: attempts["count"] == 2)
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: bootstrap.state == "ready")
+    assert bootstrap.isReady is True
+    assert bootstrap.isBusy is False
+
+
+def test_retry_failure_transitions_through_initializing_to_error_with_new_message(
+    env_root,
+):
+    """Error -> retry -> initializing -> worker fails again -> error with new message."""
+    attempts = {"count": 0}
+    worker_running = threading.Event()
+    worker_release = threading.Event()
+
+    def flaky_init(settings, refresh_conversations=False):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("falha 1")
+        worker_running.set()
+        assert worker_release.wait(10), "worker nunca foi liberado"
+        raise RuntimeError("falha 2")
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=flaky_init
+    )
+    bootstrap._on_bootstrap_retry = coordinator.bootstrap_or_retry
+
+    # Initial failure
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: bootstrap.state == "error")
+    assert "falha 1" in bootstrap.errorMessage
+
+    # Retry
+    bootstrap.retryBootstrap()
+
+    # Immediately initializing
+    assert worker_running.wait(5)
+    assert bootstrap.state == "initializing"
+    assert bootstrap.errorMessage == ""
+    assert coordinator.is_preparing() is True
+
+    # Allow worker to fail
+    worker_release.set()
+    wait_until(lambda: bootstrap.state == "error")
+    assert "falha 2" in bootstrap.errorMessage
+    assert bootstrap.isReady is False
+    assert bootstrap.isBusy is False
+
+
+def test_retry_in_flight_prevents_duplicate_worker_and_preserves_busy(env_root):
+    """Calling retry while a worker is already running does not spawn another worker."""
+    attempts = {"count": 0}
+    worker_running = threading.Event()
+    worker_release = threading.Event()
+
+    def blocked_init(settings, refresh_conversations=False):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("falha inicial")
+        worker_running.set()
+        assert worker_release.wait(10), "worker nunca foi liberado"
+        return object()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=blocked_init
+    )
+    bootstrap._on_bootstrap_retry = coordinator.bootstrap_or_retry
+
+    # Initial failure
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: bootstrap.state == "error")
+
+    # Start retry worker
+    bootstrap.retryBootstrap()
+    assert worker_running.wait(5)
+    assert coordinator.is_preparing() is True
+    assert bootstrap.state == "initializing"
+    assert bootstrap.isBusy is True
+
+    initial_thread = coordinator._prepare_thread
+    initial_gen = coordinator._prepare_generation
+
+    # Second retry attempt while busy
+    coordinator.bootstrap_or_retry()
+    assert coordinator._prepare_thread is initial_thread
+    assert coordinator._prepare_generation == initial_gen
+    assert attempts["count"] == 2
+    assert bootstrap.state == "initializing"
+    assert bootstrap.isBusy is True
+
+    # Let worker finish
+    worker_release.set()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: bootstrap.state == "ready")
+
+
+def test_catalog_failure_retry_never_enters_initializing(env_root):
+    """Backend valid + catalog error: retry goes to loading_apps without entering initializing."""
+    built = {"chat": 0, "studio": 0}
+
+    def chat_factory(settings, db, prefs):
+        built["chat"] += 1
+        return FakeChat(auto_ready=False)
+
+    def studio_factory(settings, db, prefs, orchestrator):
+        built["studio"] += 1
+        return FakeStudio()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, chat_factory=chat_factory, studio_factory=studio_factory
+    )
+    bootstrap._on_bootstrap_retry = coordinator.bootstrap_or_retry
+
+    coordinator.bootstrap_or_retry()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    chat = coordinator.chat_bridge
+    assert chat.refresh_calls == 1
+
+    # Simulate catalog failure
+    bootstrap._on_catalog_phase("error", 0, 0)
+    assert bootstrap.state == "error"
+
+    recorded_states: list[str] = []
+    bootstrap.stateChanged.connect(lambda: recorded_states.append(bootstrap.state))
+
+    # Retry
+    bootstrap.retryBootstrap()
+
+    # State must transition directly to loading_apps, NEVER initializing
+    assert "initializing" not in recorded_states
+    assert bootstrap.state == "loading_apps"
+    assert built == {"chat": 1, "studio": 1}
+    assert coordinator.chat_bridge is chat
+    assert chat.refresh_calls == 2

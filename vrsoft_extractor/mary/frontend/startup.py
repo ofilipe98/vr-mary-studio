@@ -408,7 +408,13 @@ class StartupBackendCoordinator(QObject):
         if self.is_backend_ready():
             self._bootstrap.start_bootstrap()
             return
-        self._start_prepare(self.settings, is_setup=False)
+        if not self._start_prepare(self.settings, is_setup=False):
+            return
+        begin_fn = getattr(self._bootstrap, "beginInitialization", None) or getattr(
+            self._bootstrap, "begin_initialization", None
+        )
+        if callable(begin_fn):
+            begin_fn()
 
     def _run_setup_backend(self, new_settings: MarySettings) -> None:
         """Start the setup prepare after the loading frame was presented."""

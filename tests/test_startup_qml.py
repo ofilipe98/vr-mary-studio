@@ -243,3 +243,48 @@ class StartupQmlTest(unittest.TestCase):
 
             self.assertTrue(bootstrap_bridge.isReady)
             self.assertEqual(bootstrap_bridge.state, "ready")
+
+    def test_startup_loading_retry_from_error_clears_error_state_and_shows_initializing(self):
+        """Simulate error -> retry -> initializing in QML shell: error state is cleared."""
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app_dir = root / "app"
+            app_dir.mkdir()
+            settings = load_vr_settings(str(app_dir), str(root))
+            prefs = QSettings(str(root / "preferences.ini"), QSettings.Format.IniFormat)
+            frontend_bridge = FrontendBridge(settings, prefs)
+
+            bootstrap_bridge = BootstrapBridge(settings, prefs, initial_state="error")
+            bootstrap_bridge.set_error("Falha de conexão com o banco")
+
+            engine = create_engine(
+                frontend_bridge,
+                chat_bridge=None,
+                studio_bridge=None,
+                bootstrap_bridge=bootstrap_bridge,
+            )
+            self.application.processEvents()
+
+            window = engine.rootObjects()[0]
+            self.assertIsNotNone(window)
+
+            for _ in range(30):
+                self.application.processEvents()
+                if window.findChild(QObject, "startupLoadingPage") is not None:
+                    break
+                QTest.qWait(10)
+
+            loading_page = window.findChild(QObject, "startupLoadingPage")
+            self.assertIsNotNone(loading_page)
+            self.assertEqual(bootstrap_bridge.state, "error")
+            self.assertEqual(bootstrap_bridge.errorMessage, "Falha de conexão com o banco")
+            self.assertFalse(bootstrap_bridge.isBusy)
+
+            # Trigger transition to initializing (as done during retry)
+            bootstrap_bridge.beginInitialization()
+            self.application.processEvents()
+
+            self.assertEqual(bootstrap_bridge.state, "initializing")
+            self.assertEqual(bootstrap_bridge.errorMessage, "")
+            self.assertTrue(bootstrap_bridge.isBusy)
+            self.assertFalse(bootstrap_bridge.isReady)
