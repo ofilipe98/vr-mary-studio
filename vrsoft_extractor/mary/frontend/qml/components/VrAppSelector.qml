@@ -328,17 +328,6 @@ Item {
                 spacing: 8
 
                 VrButton {
-                    objectName: "appSelectorHeaderBatchDecompile"
-                    visible: control.selectedAppIds.length > 0
-                    text: "Descompilar (" + control.selectedAppIds.length + ")"
-                    variant: "primary"
-                    implicitHeight: 32
-                    onClicked: {
-                        control.batchDecompileRequested(control.selectedAppIds)
-                    }
-                }
-
-                VrButton {
                     id: viewVersionsBtn
                     objectName: "appSelectorViewVersions"
                     visible: !!control.activeApp
@@ -534,18 +523,6 @@ Item {
                         onClicked: control.clearSelection()
                     }
 
-                    VrButton {
-                        id: batchDecompBtn
-                        objectName: "appSelectorBatchDecompile"
-                        visible: control.selectedAppIds.length > 0
-                        text: "Descompilar (" + control.selectedAppIds.length + ")"
-                        variant: "primary"
-                        implicitHeight: 26
-                        onClicked: {
-                            control.batchDecompileRequested(control.selectedAppIds)
-                            selectorPopup.close()
-                        }
-                    }
                 }
 
                 Rectangle {

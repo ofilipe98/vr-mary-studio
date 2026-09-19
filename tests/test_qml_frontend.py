@@ -4666,10 +4666,52 @@ class QmlFrontendTest(unittest.TestCase):
                 apps_page = window.findChild(QObject, "appsSettingsPage")
                 export_button = window.findChild(QObject, "exportDecompiledCodeButton")
                 import_card = window.findChild(QObject, "appsImportCard")
+                packages_panel = window.findChild(QObject, "applicationsPackagesPanel")
+                import_toggle = window.findChild(QObject, "toggleImportToolsButton")
+                packages_toggle = window.findChild(QObject, "togglePackagesButton")
+                administration_bar = window.findChild(
+                    QObject, "applicationsAdministrationBar"
+                )
                 self.assertIsNotNone(apps_page)
                 self.assertIsNotNone(export_button)
                 self.assertIsNotNone(import_card)
+                self.assertIsNotNone(packages_panel)
+                self.assertIsNotNone(import_toggle)
+                self.assertIsNotNone(packages_toggle)
+                self.assertIsNotNone(administration_bar)
                 self.assertEqual(apps_page.property("navigationLevel"), 0)
+                self.assertEqual(apps_page.property("totalApplications"), 2)
+                self.assertEqual(apps_page.property("totalVersions"), 4)
+                self.assertEqual(apps_page.property("totalReadyVersions"), 4)
+                self.assertEqual(apps_page.property("totalPendingVersions"), 0)
+                self.assertEqual(apps_page.property("totalFailedVersions"), 0)
+                self.assertIsNotNone(
+                    window.findChild(QObject, "applicationsCatalogHeader")
+                )
+                self.assertIsNotNone(
+                    window.findChild(QObject, "applicationsCatalogMetrics")
+                )
+                self.assertLess(app_selector.y(), administration_bar.y())
+                self.assertFalse(import_card.isVisible())
+                self.assertFalse(packages_panel.isVisible())
+                import_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertTrue(import_card.isVisible())
+                import_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertFalse(import_card.isVisible())
+                packages_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertTrue(packages_panel.isVisible())
+                packages_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertFalse(packages_panel.isVisible())
+                self.assertIsNone(
+                    window.findChild(QObject, "appSelectorHeaderBatchDecompile")
+                )
+                self.assertIsNone(
+                    window.findChild(QObject, "appSelectorBatchDecompile")
+                )
                 self.assertFalse(export_button.isVisible())
                 ancestor = export_button.parent()
                 while ancestor is not None:
@@ -4684,11 +4726,38 @@ class QmlFrontendTest(unittest.TestCase):
                     "indexed_classes": 1,
                     "origin_packages": [{"package_id": "release-a", "index_state": "ready"}],
                 }
+                apps_page.setProperty("navigationLevel", 1)
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertTrue(
+                    window.findChild(QObject, "applicationHistoryContextCard").isVisible()
+                )
                 apps_page.setProperty("navigationLevel", 2)
                 chat_bridge.stateChanged.emit()
                 self.application.processEvents()
                 self.assertTrue(export_button.isVisible())
                 self.assertTrue(export_button.property("enabled"))
+                self.assertIsNotNone(
+                    window.findChild(QObject, "applicationVersionContextCard")
+                )
+                self.assertIsNotNone(
+                    window.findChild(QObject, "applicationVersionTabs")
+                )
+                apps_page.setProperty("versionSubTab", 1)
+                self.application.processEvents()
+                advanced_panel = window.findChild(QObject, "processingAdvancedPanel")
+                advanced_toggle = window.findChild(QObject, "processingAdvancedToggle")
+                self.assertIsNotNone(advanced_panel)
+                self.assertIsNotNone(advanced_toggle)
+                self.assertFalse(advanced_panel.isVisible())
+                advanced_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertTrue(advanced_panel.isVisible())
+                advanced_toggle.clicked.emit()
+                self.application.processEvents()
+                self.assertFalse(advanced_panel.isVisible())
+                apps_page.setProperty("versionSubTab", 0)
+                self.application.processEvents()
 
                 export_calls = []
 
@@ -4815,6 +4884,30 @@ class QmlFrontendTest(unittest.TestCase):
             item.setProperty("selectedAppIds", [])
             self.assertFalse(item.property("allFilteredSelected"))
 
+            self.assertTrue(QMetaObject.invokeMethod(item, "selectAllFiltered"))
+            selected_ids = item.property("selectedAppIds")
+            if hasattr(selected_ids, "toVariant"):
+                selected_ids = selected_ids.toVariant()
+            self.assertEqual(selected_ids, ["vradm", "vratacado"])
+
+            self.assertTrue(QMetaObject.invokeMethod(item, "deselectAllFiltered"))
+            selected_ids = item.property("selectedAppIds")
+            if hasattr(selected_ids, "toVariant"):
+                selected_ids = selected_ids.toVariant()
+            self.assertEqual(selected_ids, [])
+
+            self.assertTrue(QMetaObject.invokeMethod(item, "selectPendingOnly"))
+            selected_ids = item.property("selectedAppIds")
+            if hasattr(selected_ids, "toVariant"):
+                selected_ids = selected_ids.toVariant()
+            self.assertEqual(selected_ids, ["vradm"])
+
+            self.assertTrue(QMetaObject.invokeMethod(item, "clearSelection"))
+            selected_ids = item.property("selectedAppIds")
+            if hasattr(selected_ids, "toVariant"):
+                selected_ids = selected_ids.toVariant()
+            self.assertEqual(selected_ids, [])
+
             batch_emitted = []
             item.batchDecompileRequested.connect(batch_emitted.append)
             item.batchDecompileRequested.emit(["vradm", "vratacado"])
@@ -4836,6 +4929,43 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "globalDecompileDiskPicker"', qml)
         self.assertIn('objectName: "globalDecompileWindowPicker"', qml)
         self.assertIn('objectName: "globalDecompileCloseButton"', qml)
+
+    def test_applications_overhaul_uses_shared_navigation_and_progressive_disclosure(self):
+        apps_qml = (
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+        selector_qml = (
+            MAIN_QML.parent / "components" / "VrAppSelector.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('text: "Aplicativos e versões"', apps_qml)
+        self.assertIn('objectName: "applicationsCatalogMetrics"', apps_qml)
+        self.assertIn('objectName: "applicationHistoryContextCard"', apps_qml)
+        self.assertIn('text: "Abrir versão"', apps_qml)
+        self.assertIn('objectName: "applicationVersionContextCard"', apps_qml)
+        self.assertIn('objectName: "appVariantPicker"', apps_qml)
+        self.assertIn('objectName: "appOriginPicker"', apps_qml)
+        self.assertIn('objectName: "applicationVersionActions"', apps_qml)
+        self.assertIn('objectName: "applicationVersionTabs"', apps_qml)
+        self.assertIn(
+            'model: ["Resumo", "Processamento", "Comparação", "Origens", "Código"]',
+            apps_qml,
+        )
+        self.assertIn('chat.loadApplicationSources("", 0, "")', apps_qml)
+        self.assertIn('objectName: "processingAdvancedToggle"', apps_qml)
+        self.assertIn('objectName: "processingAdvancedPanel"', apps_qml)
+        self.assertIn('visible: root.processingAdvancedExpanded', apps_qml)
+        self.assertIn('objectName: "applicationSourceList"', apps_qml)
+        self.assertIn('objectName: "applicationSourceBrowserGrid"', apps_qml)
+        self.assertIn('columns: width >= 900 ? 2 : 1', apps_qml)
+        self.assertIn(
+            'studio.copyText(chat.applicationSources.body || "")', apps_qml
+        )
+        self.assertIn('font.family: Theme.monospaceFontFamily', apps_qml)
+        self.assertIn('wrapMode: TextEdit.NoWrap', apps_qml)
+        self.assertNotIn('objectName: "applicationSourcePicker"', apps_qml)
+        self.assertNotIn('objectName: "appSelectorHeaderBatchDecompile"', selector_qml)
+        self.assertNotIn('objectName: "appSelectorBatchDecompile"', selector_qml)
 
 
     def test_software_rendering_flags_and_safe_mode_args(self):

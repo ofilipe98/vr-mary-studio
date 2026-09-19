@@ -12,14 +12,22 @@ from visual_chat_review import (
     FrontendBridge, ChatBridge, StudioBridge, create_engine,
     _apply_application_font, repaint_icons, find_items,
 )
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 
 def check_geometry(item, viewport_width):
     """Catch collapsed cards and overlapping layout children, even without QML warnings."""
     if not item.isVisible():
         return
     name = item.objectName() or item.metaObject().className()
-    if item.objectName().startswith("vrUltra") and item.objectName().endswith("Card"):
+    card_names = {
+        "applicationsCatalogHeader", "applicationHistoryContextCard",
+        "applicationVersionContextCard", "applicationVersionIdentificationCard",
+        "applicationVersionMetadataCard", "applicationOriginSummaryCard",
+        "applicationOriginPackagesCard", "applicationSourceListPanel",
+        "applicationSourceBodyPanel", "applicationsPackagesPanel",
+    }
+    if ((item.objectName().startswith("vrUltra") and item.objectName().endswith("Card"))
+            or item.objectName() in card_names):
         assert item.height() > 30, (name, "collapsed card", item.height())
         for child in item.childItems():
             assert child.y() + child.height() <= item.height() + 1, (name, "content outside card")
@@ -30,10 +38,20 @@ def check_geometry(item, viewport_width):
                 overlap_x = min(child.x() + child.width(), other.x() + other.width()) - max(child.x(), other.x())
                 overlap_y = min(child.y() + child.height(), other.y() + other.height()) - max(child.y(), other.y())
                 assert overlap_x < 1 or overlap_y < 1, (name, "overlap", child.objectName(), other.objectName())
-    if item.objectName() in {"rootField", "movideskEmail", "movideskPassword", "endooEmail", "endooPassword", "interfaceFontCombo", "browserZoomCombo", "vrUltraAddReleaseButton"}:
+    if item.objectName() in {"rootField", "movideskEmail", "movideskPassword", "endooEmail", "endooPassword", "interfaceFontCombo", "browserZoomCombo", "vrUltraAddReleaseButton", "appVariantPicker", "appOriginPicker", "applicationSourceQuery", "applicationSourceListPanel", "applicationSourceBodyPanel", "applicationsPackagesPanel"}:
         left = item.mapToScene(QPointF(0, 0)).x()
         assert left >= -1 and left + item.width() <= viewport_width + 1, (name, "horizontal overflow", left, item.width())
         assert item.height() >= 30, (name, "collapsed control")
+    if item.objectName() == "applicationSourceBrowserGrid":
+        children = {child.objectName(): child for child in item.childItems()}
+        left_panel = children.get("applicationSourceListPanel")
+        right_panel = children.get("applicationSourceBodyPanel")
+        if left_panel is not None and right_panel is not None:
+            if item.width() >= 900:
+                assert abs(left_panel.y() - right_panel.y()) < 1, (name, "desktop panels not aligned")
+            else:
+                assert abs(left_panel.x() - right_panel.x()) < 1, (name, "narrow panels not stacked")
+                assert right_panel.y() >= left_panel.y() + left_panel.height(), (name, "stacked panels overlap")
     for child in item.childItems():
         check_geometry(child, viewport_width)
 
@@ -156,12 +174,44 @@ def main():
             apps_page = window.findChild(QObject, "appsSettingsPage")
             chat.selectApplication("vrapp")
             assert len(chat.appVersions) == 2
+            source_interaction_checked = False
+
+            def capture_app_state(prefix, width):
+                QTest.qWait(100)
+                scroll = window.findChild(QObject, "appsSettingsScroll")
+                flick = scroll.property("contentItem")
+                check_geometry(page, width)
+                positions = ("top", "bottom") if flick.property("contentHeight") > flick.property("height") else ("top",)
+                for position in positions:
+                    flick.setProperty("contentY", 0 if position == "top" else max(0, flick.property("contentHeight") - flick.property("height")))
+                    QTest.qWait(30)
+                    filename = f"{prefix}-{position}.png"
+                    assert window.grabWindow().save(str(out_dir / filename))
+                    captures.append(filename)
+
             for theme in ["dark_orange", "light"]:
                 frontend.setTheme(theme)
-                for width, scale in [(1280, "100"), (1280, "125"), (390, "100"), (1280, "150")]:
+                for width, height, scale in scenarios:
                     window.setWidth(width)
-                    window.setHeight(900)
+                    window.setHeight(height)
                     frontend.setUiScale(scale)
+
+                    apps_page.setProperty("navigationLevel", 0)
+                    apps_page.setProperty("importToolsExpanded", False)
+                    apps_page.setProperty("packagesExpanded", False)
+                    capture_app_state(f"apps-catalog-closed-{theme}-{width}-{scale}", width)
+
+                    apps_page.setProperty("importToolsExpanded", True)
+                    capture_app_state(f"apps-catalog-import-{theme}-{width}-{scale}", width)
+                    apps_page.setProperty("importToolsExpanded", False)
+
+                    apps_page.setProperty("packagesExpanded", True)
+                    capture_app_state(f"apps-catalog-packages-{theme}-{width}-{scale}", width)
+                    apps_page.setProperty("packagesExpanded", False)
+
+                    apps_page.setProperty("navigationLevel", 1)
+                    capture_app_state(f"apps-history-{theme}-{width}-{scale}", width)
+
                     chat.selectAppVersion(chat.appVersions[0]["version"])
                     assert len(chat.appVariants) == 2
                     chat.selectAppVariant(chat.appVariants[1]["variant_id"])
@@ -174,19 +224,39 @@ def main():
                             wait_for(lambda: chat._app_sources_thread is None)
                             assert chat.applicationSources.get("sources"), chat.applicationSources
                             key = chat.applicationSources["sources"][0]["source_key"]
-                            assert chat.loadApplicationSources("", 0, key)
+                            source_list = window.findChild(QObject, "applicationSourceList")
+                            assert source_list is not None
+                            assert source_list.property("count") == len(chat.applicationSources["sources"])
+                            if not source_interaction_checked:
+                                source_scroll = window.findChild(QObject, "appsSettingsScroll").property("contentItem")
+                                source_scroll.setProperty(
+                                    "contentY",
+                                    max(0, source_scroll.property("contentHeight") - source_scroll.property("height")),
+                                )
+                                QTest.qWait(50)
+                                source_grid = window.findChild(QObject, "applicationSourceBrowserGrid")
+                                assert source_grid.width() >= 900
+                                scene_point = source_list.mapToScene(QPointF(
+                                    source_list.width() / 2, 19
+                                ))
+                                QTest.mouseClick(
+                                    window, Qt.LeftButton, Qt.NoModifier,
+                                    QPoint(round(scene_point.x()), round(scene_point.y())),
+                                )
+                            else:
+                                assert chat.loadApplicationSources("", 0, key)
                             wait_for(lambda: chat._app_sources_thread is None)
+                            assert chat.applicationSources["source_key"] == key
                             assert "public class App" in chat.applicationSources["body"]
-                        QTest.qWait(100)
-                        scroll = window.findChild(QObject, "appsSettingsScroll")
-                        flick = scroll.property("contentItem")
-                        check_geometry(page, width)
-                        for position in ("top", "bottom"):
-                            flick.setProperty("contentY", 0 if position == "top" else max(0, flick.property("contentHeight") - flick.property("height")))
-                            QTest.qWait(30)
-                            filename = f"apps-version-{theme}-{width}-{scale}-{panel}-{position}.png"
-                            assert window.grabWindow().save(str(out_dir / filename))
-                            captures.append(filename)
+                            if not source_interaction_checked:
+                                copy_source = window.findChild(QObject, "copyApplicationSourceButton")
+                                assert copy_source is not None
+                                copy_source.clicked.emit()
+                                assert QApplication.clipboard().text() == chat.applicationSources["body"]
+                                source_interaction_checked = True
+                                QTest.qWait(2600)
+                        panel_name = ["summary", "processing", "comparison", "origins", "code"][panel]
+                        capture_app_state(f"apps-version-{panel_name}-{theme}-{width}-{scale}", width)
             # Exercise the real application context action, then inspect preview and Ultra.
             window.findChild(QObject, "useApplicationInUltra").clicked.emit()
             assert len(chat.ultraApplicationContexts) == 1 and chat.ultraApplicationContextsReady

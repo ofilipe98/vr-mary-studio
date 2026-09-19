@@ -23,7 +23,32 @@ Item {
     property int navigationLevel: 0
     property string activeAppId: chat.selectedAppId
     property string activeVersion: chat.selectedAppVersion
-    property int versionSubTab: 0 // 0: Detalhes, 1: Descompilacao, 2: Comparacao, 3: Origens
+    property int versionSubTab: 0 // 0: Resumo, 1: Processamento, 2: Comparacao, 3: Origens, 4: Codigo
+    property bool importToolsExpanded: false
+    property bool packagesExpanded: false
+    property bool processingAdvancedExpanded: false
+    readonly property bool showImportTools: root.navigationLevel === 0
+        && (root.importToolsExpanded
+            || chat.releaseSnapshotRunning
+            || !!chat.applicationImportPreview.state)
+
+    readonly property int totalApplications: (chat.applicationsCatalog || []).length
+    readonly property int totalVersions: root.sumCatalogCount("versionCount")
+    readonly property int totalReadyVersions: root.sumCatalogCount("readyCount")
+    readonly property int totalPendingVersions: root.sumCatalogCount("pendingCount")
+    readonly property int totalFailedVersions: root.sumCatalogCount("failedCount")
+    readonly property var activeApplication: {
+        var items = chat.applicationsCatalog || []
+        for (var i = 0; i < items.length; ++i) {
+            if (items[i].appId === root.activeAppId)
+                return items[i]
+        }
+        return null
+    }
+    readonly property int appReadyVersions: root.countVersionsInState("ready")
+    readonly property int appFailedVersions: root.countVersionsInState("failed")
+    readonly property int appPendingVersions: Math.max(
+        0, (chat.appVersions || []).length - root.appReadyVersions - root.appFailedVersions)
 
     property string manualVersionInput: ""
     property string compareTargetVersion: ""
@@ -35,6 +60,33 @@ Item {
     property string pendingDeleteJarsPackageId: ""
     property string pendingDeleteJarsPackageName: ""
     property var decompiledDetectionResult: null
+
+    function sumCatalogCount(role) {
+        var total = 0
+        var items = chat.applicationsCatalog || []
+        for (var i = 0; i < items.length; ++i)
+            total += Number(items[i][role] || 0)
+        return total
+    }
+
+    function countVersionsInState(state) {
+        var total = 0
+        var items = chat.appVersions || []
+        for (var i = 0; i < items.length; ++i) {
+            if ((items[i].indexState || "pending") === state)
+                total += 1
+        }
+        return total
+    }
+
+    function selectedOriginState() {
+        var origins = chat.selectedVersionDetails.origin_packages || []
+        for (var i = 0; i < origins.length; ++i) {
+            if (origins[i].package_id === chat.selectedAppOriginId)
+                return origins[i].index_state || chat.selectedVersionDetails.index_state || "pending"
+        }
+        return chat.selectedVersionDetails.index_state || "pending"
+    }
 
     Connections {
         target: chat
@@ -72,8 +124,9 @@ Item {
             ColumnLayout {
                 id: appsColumn
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: root.navigationLevel >= 2 ? parent.width : Math.min(848, parent.width)
-                spacing: 24
+                width: Math.min(parent.width, root.navigationLevel === 0
+                    ? 1040 : (root.navigationLevel === 1 ? 960 : 1180))
+                spacing: Theme.spaceLg
 
                 Text {
                     Layout.fillWidth: true
@@ -82,13 +135,131 @@ Item {
                     color: Theme.palette.danger
                     wrapMode: Text.Wrap
                 }
+
+                ColumnLayout {
+                    objectName: "applicationsCatalogHeader"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: root.navigationLevel === 0
+                    spacing: Theme.spaceMd
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        columns: width < 560 ? 1 : 2
+                        columnSpacing: Theme.spaceMd
+                        rowSpacing: Theme.spaceSm
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: Theme.spaceXs
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Aplicativos e versões"
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(17)
+                                font.weight: Theme.weightDemiBold
+                                renderType: Theme.textRenderType
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                text: "Gerencie aplicativos detectados, histórico de versões, variantes e código indexado."
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeCaption
+                                wrapMode: Text.WordWrap
+                                renderType: Theme.textRenderType
+                            }
+                        }
+
+                        VrButton {
+                            objectName: "refreshApplicationsCatalogButton"
+                            Layout.alignment: parent.width < 560 ? Qt.AlignLeft : Qt.AlignRight
+                            text: chat.applicationsCatalogLoading ? "Atualizando…" : "Atualizar"
+                            variant: "ghost"
+                            implicitHeight: Theme.controlHeightCompact
+                            enabled: !chat.applicationsCatalogLoading
+                            onClicked: chat.refreshApplicationsCatalog()
+                        }
+                    }
+
+                    GridLayout {
+                        id: catalogMetrics
+                        objectName: "applicationsCatalogMetrics"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        columns: width >= 720 ? 4 : (width >= 460 ? 2 : 1)
+                        columnSpacing: Theme.spaceSm
+                        rowSpacing: Theme.spaceSm
+
+                        Repeater {
+                            model: [
+                                { "label": "Aplicativos", "value": root.totalApplications, "detail": "no catálogo" },
+                                { "label": "Versões", "value": root.totalVersions, "detail": "histórico total" },
+                                { "label": "Prontas", "value": root.totalReadyVersions, "detail": "indexadas" },
+                                { "label": "Atenção", "value": root.totalPendingVersions + root.totalFailedVersions,
+                                  "detail": root.totalPendingVersions + " pendentes · " + root.totalFailedVersions + " falhas" }
+                            ]
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                implicitHeight: metricContent.implicitHeight + Theme.spaceLg
+                                radius: Theme.radiusCard
+                                color: Theme.palette.background
+                                border.width: 1
+                                border.color: Theme.palette.border
+
+                                ColumnLayout {
+                                    id: metricContent
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spaceSm
+                                    spacing: 1
+
+                                    Text {
+                                        text: modelData.value
+                                        color: Theme.palette.headingText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.headingSize
+                                        font.weight: Theme.weightDemiBold
+                                        renderType: Theme.textRenderType
+                                    }
+                                    Text {
+                                        text: modelData.label
+                                        color: Theme.palette.text
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeCompact
+                                        font.weight: Theme.weightMedium
+                                        renderType: Theme.textRenderType
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        text: modelData.detail
+                                        color: Theme.palette.mutedText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeMicro
+                                        elide: Text.ElideRight
+                                        renderType: Theme.textRenderType
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             // Refined Application Import Preview Card
             Rectangle {
                 id: importPreviewCard
                 objectName: "applicationImportPreview"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                visible: !!chat.applicationImportPreview.state
+                visible: root.navigationLevel === 0 && !!chat.applicationImportPreview.state
                 radius: Theme.radiusCard
                 color: Theme.palette.codeSurface
                 border.width: 1
@@ -637,47 +808,17 @@ Item {
                     }
                 }
             }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.navigationLevel === 0
-                spacing: 8
-
-                Text {
-                    text: "Importação de pacotes e JARs"
-                    Layout.leftMargin: 16
-                    Layout.fillWidth: true
-                    color: Theme.palette.text
-                    opacity: 0.7
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
-                }
-
-                VrButton {
-                    objectName: "globalDecompileConfigHeaderButton"
-                    text: "Configurações de descompilação"
-                    variant: "ghost"
-                    implicitHeight: 28
-                    enabled: !chat.codeProcessingRunning
-                    onClicked: globalDecompileConfigDialog.open()
-                }
-
-                VrButton {
-                    text: chat.applicationsCatalogLoading ? "Atualizando…" : "Atualizar"
-                    variant: "ghost"
-                    implicitHeight: 28
-                    enabled: !chat.applicationsCatalogLoading
-                    onClicked: chat.refreshApplicationsCatalog()
-                }
-            }
-
             Rectangle {
                 id: appsImportCard
                 objectName: "appsImportCard"
-                visible: root.navigationLevel === 0
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
+                parent: importCardHost
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                visible: root.showImportTools
                 implicitHeight: importActionsLayout.implicitHeight + 2
-                radius: 14
+                height: visible ? implicitHeight : 0
+                radius: Theme.radiusCard
                 color: Theme.palette.background
                 border.width: 1
                 border.color: Theme.palette.border
@@ -930,6 +1071,21 @@ Item {
                         font.pixelSize: Theme.fontSize(12)
                         wrapMode: Text.WordWrap
                     }
+
+                    AppearanceRow {
+                        title: "Configurações de descompilação"
+                        description: "Ajustes globais usados na preparação e no processamento em lote."
+                        divider: false
+
+                        VrButton {
+                            objectName: "globalDecompileConfigHeaderButton"
+                            text: "Configurar"
+                            variant: "secondary"
+                            implicitHeight: Theme.controlHeightCompact
+                            enabled: !chat.codeProcessingRunning
+                            onClicked: globalDecompileConfigDialog.open()
+                        }
+                    }
                 }
             }
 
@@ -937,11 +1093,10 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                implicitHeight: 42
-                radius: 14
-                color: Theme.palette.background
-                border.width: 1
-                border.color: Theme.palette.border
+                implicitHeight: Theme.compactControlHeight
+                radius: 0
+                color: "transparent"
+                border.width: 0
                 visible: root.navigationLevel > 0
 
                 RowLayout {
@@ -1007,15 +1162,6 @@ Item {
                 spacing: 16
                 visible: root.navigationLevel === 0
 
-                Text {
-                    text: "Aplicativos detectados"
-                    Layout.leftMargin: 16
-                    color: Theme.palette.text
-                    opacity: 0.7
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
-                }
-
                 RowLayout {
                     Layout.fillWidth: true
                     visible: chat.applicationsCatalogLoading && chat.applicationsCatalog.length > 0
@@ -1043,7 +1189,7 @@ Item {
                     visible: (chat.applicationsCatalogLoading || chat.applicationsCatalogLoaded) && chat.applicationsCatalog.length === 0 && chat.applicationsCatalogError.length === 0
                     text: chat.applicationsCatalogLoading
                         ? "Carregando catálogo de aplicativos…"
-                        : "Nenhum aplicativo catalogado ainda. Importe um pacote VR ou JAR avulso acima."
+                        : "Nenhum aplicativo catalogado ainda. Abra Importar e preparar para adicionar um pacote VR, JAR ou código descompilado."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(13)
@@ -1071,57 +1217,77 @@ Item {
                 Rectangle {
                     objectName: "appsBatchActionCard"
                     Layout.fillWidth: true
-                    implicitHeight: 52
-                    radius: 14
+                    Layout.minimumWidth: 0
+                    implicitHeight: batchActionLayout.implicitHeight + Theme.spaceLg
+                    radius: Theme.radiusCard
                     color: Qt.rgba(1.0, 0.45, 0.0, 0.08)
                     border.width: 1
                     border.color: Theme.palette.brandOrange
                     visible: appSelector.selectedAppIds && appSelector.selectedAppIds.length > 0 && !chat.codeProcessingRunning
 
-                    RowLayout {
+                    GridLayout {
+                        id: batchActionLayout
                         anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-                        spacing: 12
+                        anchors.margins: Theme.spaceSm
+                        columns: width < 720 ? 1 : 2
+                        rowSpacing: Theme.spaceSm
+                        columnSpacing: Theme.spaceMd
 
-                        VrLineIcon {
-                            Layout.preferredWidth: 18
-                            Layout.preferredHeight: 18
-                            kind: "play"
-                            foreground: Theme.palette.brandOrange
-                        }
-
-                        Text {
-                            text: (appSelector.selectedAppIds ? appSelector.selectedAppIds.length : 0) + " aplicativo(s) / JAR(s) selecionado(s) para descompilar em lote"
-                            color: Theme.palette.headingText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: Font.Medium
+                        RowLayout {
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: Theme.spaceSm
+
+                            VrLineIcon {
+                                Layout.preferredWidth: 18
+                                Layout.preferredHeight: 18
+                                kind: "play"
+                                foreground: Theme.palette.brandOrange
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                text: (appSelector.selectedAppIds ? appSelector.selectedAppIds.length : 0)
+                                    + " aplicativo(s) selecionado(s) para processamento em lote"
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeCompact
+                                font.weight: Theme.weightMedium
+                                wrapMode: Text.WordWrap
+                                renderType: Theme.textRenderType
+                            }
                         }
 
-                        VrButton {
-                            objectName: "batchDecompileSettingsButton"
-                            text: "Configurações Globais"
-                            variant: "secondary"
-                            implicitHeight: 30
-                            onClicked: globalDecompileConfigDialog.open()
-                        }
+                        Flow {
+                            Layout.fillWidth: batchActionLayout.width < 720
+                            Layout.minimumWidth: 0
+                            Layout.alignment: batchActionLayout.width < 720 ? Qt.AlignLeft : Qt.AlignRight
+                            spacing: Theme.spaceXs
 
-                        VrButton {
-                            text: "Limpar seleção"
-                            variant: "ghost"
-                            implicitHeight: 30
-                            onClicked: appSelector.clearSelection()
-                        }
+                            VrButton {
+                                objectName: "batchDecompileSettingsButton"
+                                text: "Configurações globais"
+                                variant: "secondary"
+                                implicitHeight: 30
+                                onClicked: globalDecompileConfigDialog.open()
+                            }
 
-                        VrButton {
-                            objectName: "startBatchAppsProcessingButton"
-                            text: "Iniciar Descompilação em Lote (" + (appSelector.selectedAppIds ? appSelector.selectedAppIds.length : 0) + ")"
-                            variant: "primary"
-                            implicitHeight: 30
-                            onClicked: {
-                                chat.startBatchAppsProcessing(appSelector.selectedAppIds);
+                            VrButton {
+                                text: "Limpar seleção"
+                                variant: "ghost"
+                                implicitHeight: 30
+                                onClicked: appSelector.clearSelection()
+                            }
+
+                            VrButton {
+                                objectName: "startBatchAppsProcessingButton"
+                                text: "Iniciar lote (" + (appSelector.selectedAppIds ? appSelector.selectedAppIds.length : 0) + ")"
+                                variant: "primary"
+                                implicitHeight: 30
+                                onClicked: {
+                                    chat.startBatchAppsProcessing(appSelector.selectedAppIds);
+                                }
                             }
                         }
                     }
@@ -1204,103 +1370,171 @@ Item {
                 }
 
 
-                // Packages List Section
-                Text {
-                    text: "Pacotes de origem importados"
-                    Layout.leftMargin: 16
-                    color: Theme.palette.text
-                    opacity: 0.7
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
-                }
-
-                Text {
+                Flow {
+                    objectName: "applicationsAdministrationBar"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    visible: chat.packagesCatalog.length === 0
-                    text: "Nenhum pacote importado."
-                    color: Theme.palette.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(13)
+                    spacing: Theme.spaceSm
+
+                    VrButton {
+                        objectName: "toggleImportToolsButton"
+                        text: root.importToolsExpanded ? "Fechar importação" : "Importar e preparar"
+                        variant: "secondary"
+                        implicitHeight: Theme.controlHeightCompact
+                        onClicked: root.importToolsExpanded = !root.importToolsExpanded
+                    }
+
+                    VrButton {
+                        objectName: "togglePackagesButton"
+                        text: (root.packagesExpanded ? "Ocultar pacotes" : "Pacotes de origem")
+                            + " (" + (chat.packagesCatalog || []).length + ")"
+                        variant: "ghost"
+                        implicitHeight: Theme.controlHeightCompact
+                        onClicked: root.packagesExpanded = !root.packagesExpanded
+                    }
                 }
 
-                Repeater {
-                    model: chat.packagesCatalog
-                    delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        implicitHeight: pkgCardLayout.implicitHeight + 20
-                        radius: 14
-                        color: Theme.palette.background
-                        border.width: 1
-                        border.color: Theme.palette.border
+                Item {
+                    id: importCardHost
+                    objectName: "appsImportCardHost"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: root.showImportTools
+                    implicitHeight: root.showImportTools ? appsImportCard.implicitHeight : 0
+                }
 
-                        RowLayout {
-                            id: pkgCardLayout
-                            anchors.fill: parent
-                            anchors.margins: 8
-                            spacing: 10
+                Rectangle {
+                    id: packagesPanel
+                    objectName: "applicationsPackagesPanel"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: root.packagesExpanded
+                    implicitHeight: packagesPanelContent.implicitHeight + Theme.spaceXl
+                    radius: Theme.radiusCard
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
 
-                            ColumnLayout {
+                    ColumnLayout {
+                        id: packagesPanelContent
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceMd
+                        spacing: Theme.spaceMd
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Pacotes de origem importados"
+                            color: Theme.palette.headingText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeControl
+                            font.weight: Theme.weightDemiBold
+                            renderType: Theme.textRenderType
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            visible: (chat.packagesCatalog || []).length === 0
+                            text: "Nenhum pacote importado. Use Importar e preparar para adicionar a primeira origem."
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            wrapMode: Text.WordWrap
+                            renderType: Theme.textRenderType
+                        }
+
+                        Repeater {
+                            model: chat.packagesCatalog || []
+                            delegate: Rectangle {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                spacing: 2
+                                implicitHeight: pkgCardLayout.implicitHeight + Theme.spaceLg
+                                radius: Theme.radiusSmall
+                                color: Theme.palette.codeSurface
+                                border.width: 1
+                                border.color: Theme.palette.chatBorder
 
-                                Text {
-                                    text: modelData.name || modelData.package_id
-                                    color: Theme.palette.headingText
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(13)
-                                    font.weight: Font.DemiBold
-                                }
+                                GridLayout {
+                                    id: pkgCardLayout
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spaceSm
+                                    columns: packagesPanel.width < 720 ? 1 : 2
+                                    rowSpacing: Theme.spaceSm
+                                    columnSpacing: Theme.spaceMd
 
-                                Text {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: "Importado em: " + (modelData.imported_at || "—") +
-                                          " · Composição: " + (modelData.composition ? modelData.composition.length : 0) + " aplicativos"
-                                    color: Theme.palette.mutedText
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSizeMicro
-                                }
-                            }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 2
 
-                            RowLayout {
-                                spacing: 6
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: modelData.name || modelData.package_id
+                                            color: Theme.palette.headingText
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeCompact
+                                            font.weight: Theme.weightDemiBold
+                                            elide: Text.ElideMiddle
+                                            renderType: Theme.textRenderType
+                                        }
 
-                                VrButton {
-                                    text: "Renomear"
-                                    variant: "secondary"
-                                    implicitHeight: 28
-                                    onClicked: {
-                                        root.pendingRenamePackageId = modelData.package_id;
-                                        root.pendingRenamePackageName = modelData.name || modelData.package_id;
-                                        renamePackageInput.text = root.pendingRenamePackageName;
-                                        renamePackageDialog.open();
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: "Importado em: " + (modelData.imported_at || "—")
+                                                + " · Composição: "
+                                                + (modelData.composition ? modelData.composition.length : 0)
+                                                + " aplicativos"
+                                            color: Theme.palette.mutedText
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeMicro
+                                            wrapMode: Text.WrapAnywhere
+                                            renderType: Theme.textRenderType
+                                        }
                                     }
-                                }
 
-                                VrButton {
-                                    text: "Excluir JARs Originais"
-                                    variant: "ghost"
-                                    implicitHeight: 28
-                                    onClicked: {
-                                        root.pendingDeleteJarsPackageId = modelData.package_id;
-                                        root.pendingDeleteJarsPackageName = modelData.name || modelData.package_id;
-                                        deleteJarsConfirmDialog.open();
-                                    }
-                                }
+                                    Flow {
+                                        Layout.fillWidth: packagesPanel.width < 720
+                                        Layout.minimumWidth: 0
+                                        Layout.alignment: packagesPanel.width < 720 ? Qt.AlignLeft : Qt.AlignRight
+                                        spacing: Theme.spaceXs
 
-                                VrButton {
-                                    objectName: "vrUltraRemoveReleaseButton"
-                                    text: "Remover / Desvincular"
-                                    variant: "danger"
-                                    implicitHeight: 28
-                                    onClicked: {
-                                        root.pendingUnlinkPackageId = modelData.package_id;
-                                        root.pendingUnlinkPackageName = modelData.name || modelData.package_id;
-                                        unlinkDeleteDataCheckBox.checked = false;
-                                        unlinkConfirmDialog.open();
+                                        VrButton {
+                                            text: "Renomear"
+                                            variant: "secondary"
+                                            implicitHeight: 28
+                                            onClicked: {
+                                                root.pendingRenamePackageId = modelData.package_id;
+                                                root.pendingRenamePackageName = modelData.name || modelData.package_id;
+                                                renamePackageInput.text = root.pendingRenamePackageName;
+                                                renamePackageDialog.open();
+                                            }
+                                        }
+
+                                        VrButton {
+                                            text: "Excluir JARs originais"
+                                            variant: "ghost"
+                                            implicitHeight: 28
+                                            onClicked: {
+                                                root.pendingDeleteJarsPackageId = modelData.package_id;
+                                                root.pendingDeleteJarsPackageName = modelData.name || modelData.package_id;
+                                                deleteJarsConfirmDialog.open();
+                                            }
+                                        }
+
+                                        VrButton {
+                                            objectName: "vrUltraRemoveReleaseButton"
+                                            text: "Remover / Desvincular"
+                                            variant: "danger"
+                                            implicitHeight: 28
+                                            onClicked: {
+                                                root.pendingUnlinkPackageId = modelData.package_id;
+                                                root.pendingUnlinkPackageName = modelData.name || modelData.package_id;
+                                                unlinkDeleteDataCheckBox.checked = false;
+                                                unlinkConfirmDialog.open();
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1316,13 +1550,83 @@ Item {
                 spacing: 16
                 visible: root.navigationLevel === 1
 
-                Text {
-                    text: "Histórico de versões: " + (root.activeAppId ? root.activeAppId.toUpperCase() : "")
-                    Layout.leftMargin: 16
-                    color: Theme.palette.text
-                    opacity: 0.7
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
+                Rectangle {
+                    objectName: "applicationHistoryContextCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    implicitHeight: applicationHistoryContext.implicitHeight + Theme.spaceXl
+                    radius: Theme.radiusCard
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
+
+                    GridLayout {
+                        id: applicationHistoryContext
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceMd
+                        columns: width < 640 ? 1 : 2
+                        columnSpacing: Theme.spaceLg
+                        rowSpacing: Theme.spaceSm
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: Theme.spaceMd
+
+                            VrAppIcon {
+                                Layout.preferredWidth: 40
+                                Layout.preferredHeight: 40
+                                appName: root.activeApplication
+                                    ? (root.activeApplication.name || root.activeApplication.appId)
+                                    : root.activeAppId
+                                iconSize: 26
+                                containerSize: 40
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: 2
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: root.activeApplication
+                                        ? (root.activeApplication.name || root.activeApplication.appId)
+                                        : root.activeAppId
+                                    color: Theme.palette.headingText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(17)
+                                    font.weight: Theme.weightDemiBold
+                                    elide: Text.ElideRight
+                                    renderType: Theme.textRenderType
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: root.activeAppId
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.monospaceFontFamily
+                                    font.pixelSize: Theme.monospaceFontSize(11)
+                                    elide: Text.ElideMiddle
+                                    renderType: Theme.textRenderType
+                                }
+                            }
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.alignment: applicationHistoryContext.width < 640 ? Qt.AlignLeft : Qt.AlignRight
+                            spacing: Theme.spaceXs
+
+                            VrStatusBadge { text: (chat.appVersions || []).length + " versões"; kind: "info" }
+                            VrStatusBadge { text: root.appReadyVersions + " prontas"; kind: "success" }
+                            VrStatusBadge { text: root.appPendingVersions + " pendentes"; kind: "warning" }
+                            VrStatusBadge {
+                                visible: root.appFailedVersions > 0
+                                text: root.appFailedVersions + " falhas"
+                                kind: "warning"
+                            }
+                        }
+                    }
                 }
 
                 // Versions Repeater
@@ -1337,11 +1641,13 @@ Item {
                         border.width: 1
                         border.color: Theme.palette.border
 
-                        RowLayout {
+                        GridLayout {
                             id: verCardLayout
                             anchors.fill: parent
                             anchors.margins: 10
-                            spacing: 12
+                            columns: width < 640 ? 1 : 2
+                            rowSpacing: Theme.spaceSm
+                            columnSpacing: Theme.spaceMd
 
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -1351,9 +1657,10 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    spacing: 8
+                                    spacing: Theme.spaceSm
 
                                     Text {
+                                        Layout.alignment: Qt.AlignVCenter
                                         text: "Versão " + modelData.version
                                         color: Theme.palette.headingText
                                         font.family: Theme.fontFamily
@@ -1362,13 +1669,14 @@ Item {
                                     }
 
                                     Rectangle {
+                                        Layout.alignment: Qt.AlignVCenter
                                         visible: modelData.manualOverride
                                         implicitWidth: manualTag.implicitWidth + 8
                                         implicitHeight: 18
-                                        radius: Theme.radiusSmall
-                                        color: Theme.palette.chatBackground
+                                        radius: Theme.radiusCard
+                                        color: Theme.palette.background
                                         border.width: 1
-                                        border.color: Theme.palette.chatBorder
+                                        border.color: Theme.palette.border
 
                                         Text {
                                             id: manualTag
@@ -1379,35 +1687,21 @@ Item {
                                         }
                                     }
 
-                                    Rectangle {
-                                        implicitWidth: statusText.implicitWidth + 10
-                                        implicitHeight: 20
-                                        radius: Theme.radiusSmall
-                                        color: modelData.indexState === "ready" ? Qt.rgba(0.2, 0.8, 0.2, 0.15) :
-                                               (modelData.indexState === "failed" ? Qt.rgba(0.9, 0.2, 0.2, 0.15) : Qt.rgba(1.0, 0.6, 0.0, 0.15))
-                                        border.width: 1
-                                        border.color: modelData.indexState === "ready" ? Qt.rgba(0.2, 0.8, 0.2, 0.4) :
-                                                      (modelData.indexState === "failed" ? Qt.rgba(0.9, 0.2, 0.2, 0.4) : Theme.palette.warning)
-
-                                        Text {
-                                            id: statusText
-                                            anchors.centerIn: parent
-                                            text: modelData.indexState === "ready" ? "Indexado" :
-                                                  (modelData.indexState === "failed" ? "Falha" : "Pendente")
-                                            color: modelData.indexState === "ready" ? Qt.rgba(0.1, 0.7, 0.1, 1.0) :
-                                                   (modelData.indexState === "failed" ? Qt.rgba(0.9, 0.2, 0.2, 1.0) : Theme.palette.warning)
-                                            font.pixelSize: Theme.fontSizeMicro
-                                            font.weight: Theme.weightMedium
-                                        }
+                                    VrStatusBadge {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: modelData.indexState === "ready" ? "Indexado"
+                                            : (modelData.indexState === "failed" ? "Falha" : "Pendente")
+                                        kind: modelData.indexState === "ready" ? "success"
+                                            : (modelData.indexState === "failed" ? "warning" : "warning")
                                     }
                                 }
 
                                 Text {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    text: "Classes: " + modelData.indexedClasses + " / " + modelData.classCount +
-                                          " · Variantes: " + modelData.variantCount +
-                                          " · Origens registradas: " + modelData.originCount
+                                    text: "Classes " + modelData.indexedClasses + "/" + modelData.classCount
+                                        + " · Variantes " + modelData.variantCount
+                                        + " · Origens " + modelData.originCount
                                     color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
@@ -1415,7 +1709,8 @@ Item {
                             }
 
                             VrButton {
-                                text: "Detalhes e Código"
+                                Layout.alignment: verCardLayout.width < 640 ? Qt.AlignLeft : Qt.AlignRight
+                                text: "Abrir versão"
                                 variant: "primary"
                                 implicitHeight: 32
                                 onClicked: {
@@ -1437,112 +1732,214 @@ Item {
                 spacing: 14
                 visible: root.navigationLevel === 2
 
-                VrComboBox {
-                    objectName: "appVariantPicker"
-                    Layout.fillWidth: true
-                    model: [{"variant_id": "", "label": "Selecione a variante (SHA-256)"}].concat(
-                        chat.appVariants.map(function(v) { return {variant_id: v.variant_id, label: v.sha256}; }))
-                    textRole: "label"
-                    currentIndex: {
-                        for (var i = 0; i < model.length; i++)
-                            if (model[i].variant_id === chat.selectedAppVariantId) return i;
-                        return 0;
-                    }
-                    onActivated: index => chat.selectAppVariant(model[index].variant_id)
-                }
-
-                VrComboBox {
-                    objectName: "appOriginPicker"
-                    Layout.fillWidth: true
-                    model: [{package_id: "", package_name: "Selecione a origem e suas dependências"}].concat(chat.selectedVersionDetails.origin_packages || [])
-                    textRole: "package_name"
-                    currentIndex: {
-                        for (var i = 0; i < model.length; i++)
-                            if (model[i].package_id === chat.selectedAppOriginId) return i;
-                        return 0;
-                    }
-                    onActivated: index => chat.selectAppOrigin(model[index].package_id)
-                }
-
-                VrButton {
-                    objectName: "exportDecompiledCodeButton"
-                    text: chat.decompiledExportRunning
-                        ? "Exportando código descompilado…"
-                        : "Exportar código descompilado"
-                    enabled: !!chat.selectedAppId
-                        && !!chat.selectedAppVersion
-                        && !!chat.selectedAppVariantId
-                        && !!chat.selectedAppOriginId
-                        && chat.decompiledCodeExportAvailable
-                        && !chat.releaseSnapshotRunning
-                        && !chat.codeProcessingRunning
-                        && !chat.decompiledExportRunning
-                    variant: "secondary"
-                    implicitHeight: 32
-                    ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
-                    ToolTip.text: "Nenhum código decompilado disponível para esta versão."
-                    onClicked: chat.exportDecompiledCode("")
-                }
-
-                VrButton {
-                    objectName: "useApplicationInUltra"
-                    text: "Usar no Ultra"
-                    variant: "primary"
-                    enabled: !!chat.selectedAppVariantId && !!chat.selectedAppOriginId
-                    onClicked: {
-                        if (chat.addSelectedApplicationContext()) root.ultraContextAdded = true
-                    }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.ultraContextAdded
-                    text: "Contexto atualizado. Ative a análise de código na aba VR Ultra. Outros aplicativos selecionados são mantidos."
-                    color: Theme.palette.mutedText
-                    wrapMode: Text.WordWrap
-                }
-
-                // Sub-tab Navigation
-                GridLayout {
+                Rectangle {
+                    objectName: "applicationVersionContextCard"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    columns: root.width < 800 ? 1 : 4
-                    rowSpacing: 8
-                    columnSpacing: 8
+                    implicitHeight: versionContextContent.implicitHeight + Theme.spaceXl
+                    radius: Theme.radiusCard
+                    color: Theme.palette.background
+                    border.width: 1
+                    border.color: Theme.palette.border
 
-                    VrButton {
-                        text: "Detalhes e Variantes"
-                        variant: root.versionSubTab === 0 ? "primary" : "secondary"
-                        implicitHeight: 32
-                        onClicked: root.versionSubTab = 0
-                    }
+                    ColumnLayout {
+                        id: versionContextContent
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceMd
+                        spacing: Theme.spaceMd
 
-                    VrButton {
-                        text: "Descompilação e Índice"
-                        variant: root.versionSubTab === 1 ? "primary" : "secondary"
-                        implicitHeight: 32
-                        onClicked: root.versionSubTab = 1
-                    }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            columns: width < 640 ? 1 : 2
+                            columnSpacing: Theme.spaceLg
+                            rowSpacing: Theme.spaceSm
 
-                    VrButton {
-                        text: "Comparação de Versões"
-                        variant: root.versionSubTab === 2 ? "primary" : "secondary"
-                        implicitHeight: 32
-                        onClicked: root.versionSubTab = 2
-                    }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: Theme.spaceMd
 
-                    VrButton {
-                        text: "Pacotes de Origem"
-                        variant: root.versionSubTab === 3 ? "primary" : "secondary"
-                        implicitHeight: 32
-                        onClicked: root.versionSubTab = 3
-                    }
-                    VrButton {
-                        text: "Código"
-                        variant: root.versionSubTab === 4 ? "primary" : "secondary"
-                        onClicked: {
-                            root.versionSubTab = 4
-                            chat.loadApplicationSources("", 0, "")
+                                VrAppIcon {
+                                    Layout.preferredWidth: 40
+                                    Layout.preferredHeight: 40
+                                    appName: root.activeApplication
+                                        ? (root.activeApplication.name || root.activeApplication.appId)
+                                        : root.activeAppId
+                                    iconSize: 26
+                                    containerSize: 40
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: 2
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: root.activeApplication
+                                            ? (root.activeApplication.name || root.activeApplication.appId)
+                                            : root.activeAppId
+                                        color: Theme.palette.headingText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeControl
+                                        font.weight: Theme.weightDemiBold
+                                        elide: Text.ElideRight
+                                        renderType: Theme.textRenderType
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Versão " + root.activeVersion
+                                        color: Theme.palette.text
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSize(17)
+                                        font.weight: Theme.weightDemiBold
+                                        elide: Text.ElideRight
+                                        renderType: Theme.textRenderType
+                                    }
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                Layout.alignment: versionContextContent.width < 640 ? Qt.AlignLeft : Qt.AlignRight
+                                spacing: Theme.spaceXs
+
+                                VrStatusBadge {
+                                    text: root.selectedOriginState() === "ready" ? "Origem pronta"
+                                        : (root.selectedOriginState() === "failed" ? "Falha na origem" : "Origem pendente")
+                                    kind: root.selectedOriginState() === "ready" ? "success" : "warning"
+                                }
+                                VrStatusBadge {
+                                    text: Number(chat.selectedVersionDetails.indexed_classes || 0) + " classes indexadas"
+                                    kind: "info"
+                                }
+                            }
                         }
+
+                        GridLayout {
+                            objectName: "applicationVersionSelectionGrid"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            columns: width >= 760 ? 2 : 1
+                            columnSpacing: Theme.spaceMd
+                            rowSpacing: Theme.spaceSm
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: Theme.spaceXs
+                                Text {
+                                    text: "Variante"
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    renderType: Theme.textRenderType
+                                }
+                                VrComboBox {
+                                    objectName: "appVariantPicker"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    model: [{"variant_id": "", "label": "Selecione a variante (SHA-256)"}].concat(
+                                        chat.appVariants.map(function(v) { return {variant_id: v.variant_id, label: v.sha256}; }))
+                                    textRole: "label"
+                                    currentIndex: {
+                                        for (var i = 0; i < model.length; i++)
+                                            if (model[i].variant_id === chat.selectedAppVariantId) return i;
+                                        return 0;
+                                    }
+                                    onActivated: index => chat.selectAppVariant(model[index].variant_id)
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: Theme.spaceXs
+                                Text {
+                                    text: "Origem"
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    renderType: Theme.textRenderType
+                                }
+                                VrComboBox {
+                                    objectName: "appOriginPicker"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    model: [{package_id: "", package_name: "Selecione a origem e suas dependências"}].concat(chat.selectedVersionDetails.origin_packages || [])
+                                    textRole: "package_name"
+                                    currentIndex: {
+                                        for (var i = 0; i < model.length; i++)
+                                            if (model[i].package_id === chat.selectedAppOriginId) return i;
+                                        return 0;
+                                    }
+                                    onActivated: index => chat.selectAppOrigin(model[index].package_id)
+                                }
+                            }
+                        }
+
+                        Flow {
+                            objectName: "applicationVersionActions"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: Theme.spaceSm
+
+                            VrButton {
+                                objectName: "useApplicationInUltra"
+                                text: "Usar no Ultra"
+                                variant: "primary"
+                                enabled: !!chat.selectedAppVariantId && !!chat.selectedAppOriginId
+                                onClicked: {
+                                    if (chat.addSelectedApplicationContext()) root.ultraContextAdded = true
+                                }
+                            }
+
+                            VrButton {
+                                objectName: "exportDecompiledCodeButton"
+                                text: chat.decompiledExportRunning
+                                    ? "Exportando código descompilado…"
+                                    : "Exportar código descompilado"
+                                enabled: !!chat.selectedAppId
+                                    && !!chat.selectedAppVersion
+                                    && !!chat.selectedAppVariantId
+                                    && !!chat.selectedAppOriginId
+                                    && chat.decompiledCodeExportAvailable
+                                    && !chat.releaseSnapshotRunning
+                                    && !chat.codeProcessingRunning
+                                    && !chat.decompiledExportRunning
+                                variant: "secondary"
+                                implicitHeight: Theme.controlHeightCompact
+                                ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
+                                ToolTip.text: "Nenhum código decompilado disponível para esta versão."
+                                onClicked: chat.exportDecompiledCode("")
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            visible: root.ultraContextAdded
+                            text: "Contexto atualizado. Ative a análise de código na aba VR Ultra. Outros aplicativos selecionados são mantidos."
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            wrapMode: Text.WordWrap
+                            renderType: Theme.textRenderType
+                        }
+                    }
+                }
+
+                VrTabBar {
+                    objectName: "applicationVersionTabs"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    model: ["Resumo", "Processamento", "Comparação", "Origens", "Código"]
+                    currentIndex: root.versionSubTab
+                    onActivated: function(index) {
+                        root.versionSubTab = index
+                        if (index === 4)
+                            chat.loadApplicationSources("", 0, "")
                     }
                 }
 
@@ -1553,33 +1950,88 @@ Item {
                     spacing: 12
                     visible: root.versionSubTab === 0
 
-                    GridLayout {
+                    Rectangle {
+                        objectName: "applicationVersionIdentificationCard"
                         Layout.fillWidth: true
-                        columns: root.width < 800 ? 1 : 2
-                        VrTextField {
-                            id: correctedVersion
-                            Layout.fillWidth: true
-                            placeholderText: "Informar ou corrigir versão desta variante"
-                        }
-                        VrButton {
-                            text: "Salvar versão da variante"
-                            enabled: !!chat.selectedAppVariantId && correctedVersion.text.trim().length > 0
-                            onClicked: {
-                                if (chat.overrideVariantVersion(chat.selectedAppId, chat.selectedAppVersion, chat.selectedAppVariantId, correctedVersion.text.trim())) {
-                                    root.activeVersion = correctedVersion.text.trim()
-                                    correctedVersion.text = ""
+                        Layout.minimumWidth: 0
+                        implicitHeight: identificationContent.implicitHeight + Theme.spaceXl
+                        radius: Theme.radiusCard
+                        color: Theme.palette.background
+                        border.width: 1
+                        border.color: Theme.palette.border
+
+                        ColumnLayout {
+                            id: identificationContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spaceMd
+                            spacing: Theme.spaceSm
+
+                            Text {
+                                text: "Identificação da versão"
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeControl
+                                font.weight: Theme.weightDemiBold
+                                renderType: Theme.textRenderType
+                            }
+
+                            Text {
+                                text: "Versão identificada"
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeCaption
+                                renderType: Theme.textRenderType
+                            }
+
+                            GridLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                columns: width < 620 ? 1 : 2
+                                columnSpacing: Theme.spaceSm
+                                rowSpacing: Theme.spaceSm
+
+                                VrTextField {
+                                    id: correctedVersion
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    placeholderText: "Informar ou corrigir versão desta variante"
                                 }
+                                VrButton {
+                                    Layout.alignment: identificationContent.width < 620 ? Qt.AlignLeft : Qt.AlignRight
+                                    text: "Salvar versão"
+                                    variant: "primary"
+                                    enabled: !!chat.selectedAppVariantId && correctedVersion.text.trim().length > 0
+                                    onClicked: {
+                                        if (chat.overrideVariantVersion(chat.selectedAppId, chat.selectedAppVersion, chat.selectedAppVariantId, correctedVersion.text.trim())) {
+                                            root.activeVersion = correctedVersion.text.trim()
+                                            correctedVersion.text = ""
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                text: "A correção vale somente para a variante selecionada e preserva a identificação original."
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeMicro
+                                wrapMode: Text.WordWrap
+                                renderType: Theme.textRenderType
                             }
                         }
                     }
+
                     Rectangle {
+                        objectName: "applicationVersionMetadataCard"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitHeight: detailsCardLayout.implicitHeight + 24
-                        radius: Theme.radiusSmall
-                        color: Theme.palette.codeSurface
+                        radius: Theme.radiusCard
+                        color: Theme.palette.background
                         border.width: 1
-                        border.color: Theme.palette.chatBorder
+                        border.color: Theme.palette.border
 
                         ColumnLayout {
                             id: detailsCardLayout
@@ -1588,47 +2040,58 @@ Item {
                             spacing: 8
 
                             Text {
-                                text: "Metadados da Versão"
+                                text: "Metadados"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(14)
                                 font.weight: Font.DemiBold
                             }
 
-                            Text {
-                                text: "Aplicativo: " + (root.activeAppId ? root.activeAppId.toUpperCase() : "")
-                                color: Theme.palette.text
-                                font.pixelSize: Theme.fontSize(12)
-                            }
-
-                            Text {
-                                text: "Versão: " + root.activeVersion
-                                color: Theme.palette.text
-                                font.pixelSize: Theme.fontSize(12)
-                            }
-
-                            Text {
+                            GridLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                wrapMode: Text.WrapAnywhere
-                                text: "Variante selecionada (SHA-256): " + (chat.selectedAppVariantId || "—")
-                                color: Theme.palette.text
-                                font.pixelSize: Theme.fontSize(12)
-                            }
+                                columns: width >= 720 ? 2 : 1
+                                columnSpacing: Theme.spaceLg
+                                rowSpacing: Theme.spaceMd
 
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                wrapMode: Text.WrapAnywhere
-                                text: "Caminho relativo: " + (chat.selectedVersionDetails.relative_path || "—")
-                                color: Theme.palette.subtleText
-                                font.pixelSize: Theme.fontSize(12)
-                            }
+                                Repeater {
+                                    model: [
+                                        { "label": "Aplicativo", "value": root.activeApplication
+                                            ? (root.activeApplication.name || root.activeApplication.appId) : root.activeAppId, "technical": false },
+                                        { "label": "Versão", "value": root.activeVersion || "—", "technical": false },
+                                        { "label": "SHA-256 da variante", "value": chat.selectedVersionDetails.sha256 || chat.selectedAppVariantId || "—", "technical": true },
+                                        { "label": "Caminho relativo", "value": chat.selectedVersionDetails.relative_path || "—", "technical": true },
+                                        { "label": "Classe principal", "value": chat.selectedVersionDetails.manifest_main_class || "Não declarada", "technical": true },
+                                        { "label": "Origem selecionada", "value": chat.selectedAppOriginId || "—", "technical": true }
+                                    ]
 
-                            Text {
-                                text: "Classe principal do manifesto: " + (chat.selectedVersionDetails.manifest_main_class || "Não declarada")
-                                color: Theme.palette.subtleText
-                                font.pixelSize: Theme.fontSize(12)
+                                    delegate: ColumnLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 2
+
+                                        Text {
+                                            text: modelData.label
+                                            color: Theme.palette.mutedText
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeMicro
+                                            renderType: Theme.textRenderType
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: modelData.value
+                                            color: Theme.palette.text
+                                            font.family: modelData.technical ? Theme.monospaceFontFamily : Theme.fontFamily
+                                            font.pixelSize: modelData.technical
+                                                ? Theme.monospaceFontSize(11) : Theme.fontSizeCaption
+                                            wrapMode: Text.WrapAnywhere
+                                            textFormat: Text.PlainText
+                                            renderType: Theme.textRenderType
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1793,13 +2256,34 @@ Item {
                                 }
                             }
 
-                            // Sliders and hardware limits
-                            GridLayout {
+                            VrButton {
+                                objectName: "processingAdvancedToggle"
+                                text: root.processingAdvancedExpanded
+                                    ? "Ocultar configurações avançadas"
+                                    : "Configurações avançadas"
+                                variant: "secondary"
+                                implicitHeight: Theme.controlHeightCompact
+                                onClicked: root.processingAdvancedExpanded = !root.processingAdvancedExpanded
+                            }
+
+                            Rectangle {
+                                objectName: "processingAdvancedPanel"
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                columns: root.width < 600 ? 1 : 2
-                                rowSpacing: 8
-                                columnSpacing: 12
+                                visible: root.processingAdvancedExpanded
+                                implicitHeight: processingAdvancedGrid.implicitHeight + Theme.spaceXl
+                                radius: Theme.radiusSmall
+                                color: Theme.palette.background
+                                border.width: 1
+                                border.color: Theme.palette.border
+
+                                GridLayout {
+                                    id: processingAdvancedGrid
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spaceMd
+                                    columns: width < 600 ? 1 : 2
+                                    rowSpacing: Theme.spaceSm
+                                    columnSpacing: Theme.spaceMd
 
                                 Text {
                                     text: "Memória Máxima da JVM"
@@ -1920,13 +2404,16 @@ Item {
                                     }
                                     onActivated: index => chat.setCodeProcessingRetryBatch(model[index].batchId)
                                 }
+                                }
                             }
 
                             // Orphan Cleanup & Storage Capacity
-                            RowLayout {
+                            GridLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                spacing: 10
+                                columns: width < 620 ? 1 : 2
+                                rowSpacing: Theme.spaceSm
+                                columnSpacing: Theme.spaceMd
 
                                 Text {
                                     objectName: "vrUltraCodeProcessingCapacity"
@@ -1938,13 +2425,28 @@ Item {
                                     Layout.minimumWidth: 0
                                 }
 
-                                VrButton {
-                                    objectName: "vrUltraCleanCodeProcessingOrphans"
-                                    text: "Limpar órfãos"
-                                    variant: "ghost"
-                                    implicitHeight: 28
-                                    enabled: !chat.codeProcessingRunning
-                                    onClicked: cleanOrphansDialog.open()
+                                Flow {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    Layout.alignment: decompCardLayout.width < 620 ? Qt.AlignLeft : Qt.AlignRight
+                                    spacing: Theme.spaceXs
+
+                                    VrButton {
+                                        text: "Configurações globais"
+                                        variant: "secondary"
+                                        implicitHeight: 28
+                                        enabled: !chat.codeProcessingRunning
+                                        onClicked: globalDecompileConfigDialog.open()
+                                    }
+
+                                    VrButton {
+                                        objectName: "vrUltraCleanCodeProcessingOrphans"
+                                        text: "Limpar órfãos"
+                                        variant: "ghost"
+                                        implicitHeight: 28
+                                        enabled: !chat.codeProcessingRunning
+                                        onClicked: cleanOrphansDialog.open()
+                                    }
                                 }
                             }
                         }
@@ -2086,19 +2588,22 @@ Item {
                                     }
                                 }
 
-                                RowLayout {
+                                GridLayout {
+                                    objectName: "applicationComparisonMetrics"
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    spacing: 8
+                                    columns: width >= 720 ? 4 : (width >= 460 ? 2 : 1)
+                                    rowSpacing: Theme.spaceSm
+                                    columnSpacing: Theme.spaceSm
 
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
-                                        radius: Theme.radiusSmall
-                                        color: Theme.palette.chatBackground
+                                        radius: Theme.radiusCard
+                                        color: Theme.palette.background
                                         border.width: 1
-                                        border.color: Theme.palette.chatBorder
+                                        border.color: Theme.palette.border
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
@@ -2123,10 +2628,10 @@ Item {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
-                                        radius: Theme.radiusSmall
-                                        color: Theme.palette.chatBackground
+                                        radius: Theme.radiusCard
+                                        color: Theme.palette.background
                                         border.width: 1
-                                        border.color: Theme.palette.chatBorder
+                                        border.color: Theme.palette.border
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
@@ -2151,10 +2656,10 @@ Item {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
-                                        radius: Theme.radiusSmall
-                                        color: Theme.palette.chatBackground
+                                        radius: Theme.radiusCard
+                                        color: Theme.palette.background
                                         border.width: 1
-                                        border.color: Theme.palette.chatBorder
+                                        border.color: Theme.palette.border
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
@@ -2218,92 +2723,287 @@ Item {
                             {label: "Modificadas", values: chat.versionComparisonResult.modifiedClasses || []},
                             {label: "Verificação pendente", values: chat.versionComparisonResult.pendingVerificationClasses || []}
                         ]
-                        delegate: Text {
+                        delegate: Rectangle {
                             required property var modelData
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             visible: modelData.values.length > 0
-                            text: modelData.label + ":\n" + modelData.values.join("\n")
-                            textFormat: Text.PlainText
-                            color: Theme.palette.text
-                            font.family: Theme.fontFamily
-                            wrapMode: Text.WrapAnywhere
+                            implicitHeight: comparisonCategoryContent.implicitHeight + Theme.spaceXl
+                            radius: Theme.radiusCard
+                            color: Theme.palette.background
+                            border.width: 1
+                            border.color: Theme.palette.border
+
+                            ColumnLayout {
+                                id: comparisonCategoryContent
+                                anchors.fill: parent
+                                anchors.margins: Theme.spaceMd
+                                spacing: Theme.spaceSm
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: Theme.palette.headingText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeControl
+                                        font.weight: Theme.weightDemiBold
+                                        renderType: Theme.textRenderType
+                                    }
+                                    VrStatusBadge {
+                                        text: modelData.values.length.toString()
+                                        kind: modelData.label === "Verificação pendente" ? "warning" : "info"
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    text: modelData.values.join("\n")
+                                    textFormat: Text.PlainText
+                                    color: Theme.palette.text
+                                    font.family: Theme.monospaceFontFamily
+                                    font.pixelSize: Theme.monospaceFontSize(11)
+                                    wrapMode: Text.WrapAnywhere
+                                    renderType: Theme.textRenderType
+                                }
+                            }
                         }
                     }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     visible: root.versionSubTab === 4
+                    spacing: Theme.spaceSm
+
                     Text {
                         Layout.fillWidth: true
-                        text: chat.applicationSources.context_label || "Selecione uma variante e origem para consultar as classes indexadas."
+                        Layout.minimumWidth: 0
+                        text: chat.applicationSources.context_label || "Navegue pelas classes indexadas da variante e origem selecionadas."
                         color: Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WrapAnywhere
+                        renderType: Theme.textRenderType
                     }
-                    VrTextField {
-                        id: sourceQuery
-                        objectName: "applicationSourceQuery"
-                        Layout.fillWidth: true
-                        placeholderText: "Filtrar pelo nome da classe"
-                        onAccepted: chat.loadApplicationSources(text, 0, "")
-                    }
-                    VrButton {
-                        text: "Buscar classes"
-                        enabled: chat.applicationSources.state !== "running"
-                        onClicked: chat.loadApplicationSources(sourceQuery.text, 0, "")
-                    }
+
                     Text {
                         Layout.fillWidth: true
-                        text: chat.applicationSources.state === "running" ? "Carregando…" : (chat.applicationSources.error || ((chat.applicationSources.sources || []).length ? "" : "Nenhuma classe encontrada. Confira o processamento ou ajuste o filtro."))
+                        Layout.minimumWidth: 0
+                        text: (!chat.selectedAppVariantId || !chat.selectedAppOriginId)
+                            ? "Selecione uma variante e uma origem para consultar o código."
+                            : (chat.applicationSources.state === "running"
+                                ? "Carregando classes…"
+                                : (chat.applicationSources.error
+                                    || ((chat.applicationSources.sources || []).length ? ""
+                                        : "Nenhuma classe encontrada. Ajuste o filtro ou confira o processamento.")))
                         visible: text.length > 0
-                        color: Theme.palette.mutedText
+                        color: chat.applicationSources.error ? Theme.palette.danger : Theme.palette.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WordWrap
+                        renderType: Theme.textRenderType
                     }
-                    VrComboBox {
-                        id: sourcePicker
-                        objectName: "applicationSourcePicker"
+
+                    GridLayout {
+                        objectName: "applicationSourceBrowserGrid"
                         Layout.fillWidth: true
-                        model: [{source_key: "", qualified_name: "Selecione a classe"}].concat(chat.applicationSources.sources || [])
-                        textRole: "qualified_name"
-                        currentIndex: {
-                            for (var i = 0; i < model.length; i++)
-                                if (model[i].source_key === chat.applicationSources.source_key) return i
-                            return 0
+                        Layout.minimumWidth: 0
+                        columns: width >= 900 ? 2 : 1
+                        columnSpacing: Theme.spaceMd
+                        rowSpacing: Theme.spaceMd
+
+                        Rectangle {
+                            objectName: "applicationSourceListPanel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredHeight: 440
+                            radius: Theme.radiusCard
+                            color: Theme.palette.background
+                            border.width: 1
+                            border.color: Theme.palette.border
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: Theme.spaceMd
+                                spacing: Theme.spaceSm
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: Theme.spaceSm
+
+                                    VrTextField {
+                                        id: sourceQuery
+                                        objectName: "applicationSourceQuery"
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        placeholderText: "Filtrar pelo nome da classe"
+                                        onAccepted: chat.loadApplicationSources(text, 0, "")
+                                    }
+                                    VrButton {
+                                        text: "Buscar"
+                                        variant: "secondary"
+                                        enabled: chat.applicationSources.state !== "running"
+                                        onClicked: chat.loadApplicationSources(sourceQuery.text, 0, "")
+                                    }
+                                }
+
+                                ListView {
+                                    id: applicationSourceList
+                                    objectName: "applicationSourceList"
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.minimumWidth: 0
+                                    clip: true
+                                    spacing: 2
+                                    model: chat.applicationSources.sources || []
+                                    ScrollIndicator.vertical: ScrollIndicator { }
+
+                                    delegate: Rectangle {
+                                        required property int index
+                                        required property var modelData
+                                        width: applicationSourceList.width
+                                        height: 38
+                                        radius: Theme.radiusSmall
+                                        color: modelData.source_key === chat.applicationSources.source_key
+                                            ? Theme.palette.selection
+                                            : (sourceItemMouse.containsMouse ? Theme.palette.hover : "transparent")
+                                        border.width: modelData.source_key === chat.applicationSources.source_key ? 1 : 0
+                                        border.color: Theme.palette.focus
+
+                                        Text {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: Theme.spaceSm
+                                            anchors.rightMargin: Theme.spaceSm
+                                            text: modelData.qualified_name
+                                            color: Theme.palette.text
+                                            font.family: Theme.monospaceFontFamily
+                                            font.pixelSize: Theme.monospaceFontSize(11)
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideMiddle
+                                            renderType: Theme.textRenderType
+                                        }
+
+                                        MouseArea {
+                                            id: sourceItemMouse
+                                            objectName: "applicationSourceItemClickArea"
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: chat.loadApplicationSources(
+                                                sourceQuery.text,
+                                                chat.applicationSources.offset || 0,
+                                                modelData.source_key)
+                                        }
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: Theme.spaceSm
+                                    VrButton {
+                                        text: "Anteriores"
+                                        variant: "ghost"
+                                        enabled: (chat.applicationSources.offset || 0) > 0
+                                            && chat.applicationSources.state !== "running"
+                                        onClicked: chat.loadApplicationSources(
+                                            sourceQuery.text,
+                                            Math.max(0, chat.applicationSources.offset - 100), "")
+                                    }
+                                    Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
+                                    VrButton {
+                                        text: "Próximas"
+                                        variant: "ghost"
+                                        enabled: !!chat.applicationSources.has_more
+                                            && chat.applicationSources.state !== "running"
+                                        onClicked: chat.loadApplicationSources(
+                                            sourceQuery.text, chat.applicationSources.offset + 100, "")
+                                    }
+                                }
+                            }
                         }
-                        onActivated: index => {
-                            if (model[index].source_key) chat.loadApplicationSources(sourceQuery.text, chat.applicationSources.offset || 0, model[index].source_key)
+
+                        Rectangle {
+                            objectName: "applicationSourceBodyPanel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredHeight: 440
+                            radius: Theme.radiusCard
+                            color: Theme.palette.background
+                            border.width: 1
+                            border.color: Theme.palette.border
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: Theme.spaceMd
+                                spacing: Theme.spaceSm
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: Theme.spaceSm
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        text: chat.applicationSources.title || "Selecione uma classe"
+                                        color: Theme.palette.headingText
+                                        font.family: Theme.monospaceFontFamily
+                                        font.pixelSize: Theme.monospaceFontSize(12)
+                                        font.weight: Theme.weightDemiBold
+                                        elide: Text.ElideMiddle
+                                        renderType: Theme.textRenderType
+                                    }
+                                    VrButton {
+                                        objectName: "copyApplicationSourceButton"
+                                        text: "Copiar código"
+                                        variant: "secondary"
+                                        enabled: !!chat.applicationSources.body
+                                        onClicked: studio.copyText(chat.applicationSources.body || "")
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    visible: !!chat.applicationSources.truncated
+                                    text: "Exibindo os primeiros 200 mil caracteres da classe."
+                                    color: Theme.palette.warning
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeMicro
+                                    wrapMode: Text.WordWrap
+                                    renderType: Theme.textRenderType
+                                }
+
+                                ScrollView {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.minimumWidth: 0
+                                    clip: true
+
+                                    TextArea {
+                                        objectName: "applicationSourceBody"
+                                        width: parent.width
+                                        readOnly: true
+                                        selectByMouse: true
+                                        textFormat: TextEdit.PlainText
+                                        text: chat.applicationSources.body || ""
+                                        color: Theme.palette.text
+                                        font.family: Theme.monospaceFontFamily
+                                        font.pixelSize: Theme.monospaceFontSize(12)
+                                        wrapMode: TextEdit.NoWrap
+                                        background: Rectangle {
+                                            color: Theme.palette.codeSurface
+                                            radius: Theme.radiusSmall
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                    RowLayout {
-                        VrButton {
-                            text: "Anteriores"
-                            enabled: (chat.applicationSources.offset || 0) > 0 && chat.applicationSources.state !== "running"
-                            onClicked: chat.loadApplicationSources(sourceQuery.text, Math.max(0, chat.applicationSources.offset - 100), "")
-                        }
-                        VrButton {
-                            text: "Próximas"
-                            enabled: !!chat.applicationSources.has_more && chat.applicationSources.state !== "running"
-                            onClicked: chat.loadApplicationSources(sourceQuery.text, chat.applicationSources.offset + 100, "")
-                        }
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        visible: !!chat.applicationSources.truncated
-                        text: "Exibindo os primeiros 200 mil caracteres da classe."
-                        color: Theme.palette.warning
-                        wrapMode: Text.WordWrap
-                    }
-                    TextArea {
-                        objectName: "applicationSourceBody"
-                        Layout.fillWidth: true
-                        readOnly: true
-                        selectByMouse: true
-                        textFormat: TextEdit.PlainText
-                        text: chat.applicationSources.body || ""
-                        color: Theme.palette.text
-                        font.family: "Consolas"
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: TextEdit.WrapAnywhere
-                        background: Rectangle { color: Theme.palette.codeSurface; radius: Theme.radiusSmall }
                     }
                 }
 
@@ -2314,38 +3014,140 @@ Item {
                     spacing: 12
                     visible: root.versionSubTab === 3
 
-                    Text {
+                    Rectangle {
+                        objectName: "applicationOriginSummaryCard"
                         Layout.fillWidth: true
-                        text: chat.selectedAppOriginId
-                            ? "Origem selecionada: " + chat.selectedAppOriginId + "\nDistribuição: "
-                                + (root.selectedDistribution.distribution_id || "—") + "\nBibliotecas catalogadas: "
-                                + (root.selectedDistribution.dependencies || []).length
-                            : "Selecione uma origem para consultar suas bibliotecas."
-                        color: Theme.palette.text
-                        font.family: Theme.fontFamily
-                        wrapMode: Text.WrapAnywhere
-                    }
-                    Repeater {
-                        model: root.selectedDistribution.dependencies || []
-                        delegate: Text {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            text: modelData.relative_path + "\nSHA-256: " + modelData.sha256
-                            textFormat: Text.PlainText
-                            color: Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            wrapMode: Text.WrapAnywhere
+                        Layout.minimumWidth: 0
+                        implicitHeight: originSummaryContent.implicitHeight + Theme.spaceXl
+                        radius: Theme.radiusCard
+                        color: Theme.palette.background
+                        border.width: 1
+                        border.color: Theme.palette.border
+
+                        ColumnLayout {
+                            id: originSummaryContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spaceMd
+                            spacing: Theme.spaceMd
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Resumo da origem"
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeControl
+                                font.weight: Theme.weightDemiBold
+                                renderType: Theme.textRenderType
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                visible: !chat.selectedAppOriginId
+                                text: "Selecione uma origem para consultar sua distribuição e bibliotecas."
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeCaption
+                                wrapMode: Text.WordWrap
+                                renderType: Theme.textRenderType
+                            }
+
+                            GridLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                visible: !!chat.selectedAppOriginId
+                                columns: width >= 720 ? 3 : 1
+                                columnSpacing: Theme.spaceLg
+                                rowSpacing: Theme.spaceSm
+
+                                Repeater {
+                                    model: [
+                                        { "label": "Origem", "value": chat.selectedAppOriginId || "—" },
+                                        { "label": "Distribuição", "value": root.selectedDistribution.distribution_id || "—" },
+                                        { "label": "Bibliotecas", "value": (root.selectedDistribution.dependencies || []).length }
+                                    ]
+                                    delegate: ColumnLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 2
+                                        Text {
+                                            text: modelData.label
+                                            color: Theme.palette.mutedText
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSizeMicro
+                                            renderType: Theme.textRenderType
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: modelData.value
+                                            color: Theme.palette.text
+                                            font.family: modelData.label === "Bibliotecas"
+                                                ? Theme.fontFamily : Theme.monospaceFontFamily
+                                            font.pixelSize: modelData.label === "Bibliotecas"
+                                                ? Theme.fontSizeCaption : Theme.monospaceFontSize(11)
+                                            wrapMode: Text.WrapAnywhere
+                                            renderType: Theme.textRenderType
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: root.selectedDistribution.dependencies || []
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: dependencyContent.implicitHeight + Theme.spaceLg
+                                    radius: Theme.radiusSmall
+                                    color: Theme.palette.codeSurface
+                                    border.width: 1
+                                    border.color: Theme.palette.chatBorder
+
+                                    ColumnLayout {
+                                        id: dependencyContent
+                                        anchors.fill: parent
+                                        anchors.margins: Theme.spaceSm
+                                        spacing: 2
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: modelData.relative_path || "—"
+                                            textFormat: Text.PlainText
+                                            color: Theme.palette.text
+                                            font.family: Theme.monospaceFontFamily
+                                            font.pixelSize: Theme.monospaceFontSize(11)
+                                            wrapMode: Text.WrapAnywhere
+                                            renderType: Theme.textRenderType
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            text: "SHA-256: " + (modelData.sha256 || "—")
+                                            textFormat: Text.PlainText
+                                            color: Theme.palette.mutedText
+                                            font.family: Theme.monospaceFontFamily
+                                            font.pixelSize: Theme.monospaceFontSize(11)
+                                            wrapMode: Text.WrapAnywhere
+                                            renderType: Theme.textRenderType
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
                     Rectangle {
+                        objectName: "applicationOriginPackagesCard"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitHeight: originsCardLayout.implicitHeight + 24
-                        radius: Theme.radiusSmall
-                        color: Theme.palette.codeSurface
+                        radius: Theme.radiusCard
+                        color: Theme.palette.background
                         border.width: 1
-                        border.color: Theme.palette.chatBorder
+                        border.color: Theme.palette.border
 
                         ColumnLayout {
                             id: originsCardLayout
@@ -2363,18 +3165,52 @@ Item {
 
                             Repeater {
                                 model: chat.selectedVersionDetails.origin_packages || []
-                                delegate: RowLayout {
+                                delegate: Rectangle {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    spacing: 8
+                                    implicitHeight: packageOriginRow.implicitHeight + Theme.spaceLg
+                                    radius: Theme.radiusSmall
+                                    color: modelData.package_id === chat.selectedAppOriginId
+                                        ? Theme.palette.selection : Theme.palette.codeSurface
+                                    border.width: 1
+                                    border.color: modelData.package_id === chat.selectedAppOriginId
+                                        ? Theme.palette.focus : Theme.palette.chatBorder
 
-                                    Text {
-                                        text: "• " + (modelData.package_name || modelData.package_id) + " (Importado: " + (modelData.imported_at || "—") + ")"
-                                        wrapMode: Text.Wrap
-                                        color: Theme.palette.text
-                                        font.pixelSize: Theme.fontSize(12)
-                                        Layout.fillWidth: true
-                                        Layout.minimumWidth: 0
+                                    RowLayout {
+                                        id: packageOriginRow
+                                        anchors.fill: parent
+                                        anchors.margins: Theme.spaceSm
+                                        spacing: Theme.spaceSm
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            spacing: 2
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.package_name || modelData.package_id
+                                                wrapMode: Text.Wrap
+                                                color: Theme.palette.text
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                font.weight: Theme.weightMedium
+                                                renderType: Theme.textRenderType
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: "Importado: " + (modelData.imported_at || "—")
+                                                color: Theme.palette.mutedText
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeMicro
+                                                renderType: Theme.textRenderType
+                                            }
+                                        }
+
+                                        VrStatusBadge {
+                                            visible: modelData.package_id === chat.selectedAppOriginId
+                                            text: "Selecionada"
+                                            kind: "info"
+                                        }
                                     }
                                 }
                             }
