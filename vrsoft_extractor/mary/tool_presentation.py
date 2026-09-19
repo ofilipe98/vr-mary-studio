@@ -60,7 +60,7 @@ class ToolPresentation:
     status: ToolStatus
     kind: str = "tool"
     item_type: str = "tool"
-    state: str = "running"  # "running" | "completed" | "error" | "cancelled" | "waiting_approval"
+    state: str = "running"  # "running" | "completed" | "error" | "cancelled" | "interrupted" | "waiting_approval"
     text: str = ""
     subtitle: str = ""
     detail: str = ""
@@ -184,7 +184,9 @@ def _map_state(status: ToolStatus) -> str:
         return "error"
     if status == ToolStatus.SUCCESS:
         return "completed"
-    if status in (ToolStatus.CANCELLED, ToolStatus.INTERRUPTED):
+    if status == ToolStatus.INTERRUPTED:
+        return "interrupted"
+    if status == ToolStatus.CANCELLED:
         return "cancelled"
     if status == ToolStatus.WAITING_APPROVAL:
         return "waiting_approval"
@@ -262,6 +264,10 @@ class CommandExecutionFormatter(ToolFormatter):
             icon = "check"
             badge_variant = "success"
             badge_text = "sucesso"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -363,6 +369,10 @@ class FileChangeFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = f"+{additions} -{deletions}" if (additions or deletions) else "modificado"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -439,6 +449,10 @@ class FileReadFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "lido"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -509,6 +523,10 @@ class WebSearchFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "encontrado"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -596,6 +614,10 @@ class McpToolCallFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "concluído"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -674,6 +696,10 @@ class BrowserFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "pronto"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -738,6 +764,10 @@ class SubagentFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "concluído"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -798,6 +828,10 @@ class GenericFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "sucesso"
+        elif state == "interrupted":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "interrompido"
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
@@ -897,10 +931,22 @@ class ToolPresentationRegistry:
             )
             return self.format(activity)
 
-        # Basic fallback for non-normalized event
+        # Basic fallback for non-normalized event (never reuse shared "tool" id).
         text = event.text or "Atividade"
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        fallback_id = str(
+            payload.get("id")
+            or payload.get("runtime_event_id")
+            or payload.get("request_id")
+            or payload.get("execution_id")
+            or ""
+        ).strip()
+        if fallback_id.lower() in {"", "tool", "unknown", "item"}:
+            import time as _time
+
+            fallback_id = f"anon:{str(payload.get('execution_id') or 'exec')}:{int(_time.time() * 1000) % 1000000}"
         return ToolPresentation(
-            tool_id=str(event.payload.get("id") or "tool"),
+            tool_id=fallback_id,
             tool_type=ToolType.UNKNOWN,
             status=ToolStatus.RUNNING,
             kind="tool",
@@ -934,7 +980,7 @@ class ToolPresentationRegistry:
 
         running_count = sum(1 for item in items if item.state == "running")
         failed_count = sum(1 for item in items if item.state == "error")
-        cancelled_count = sum(1 for item in items if item.state == "cancelled")
+        cancelled_count = sum(1 for item in items if item.state in {"cancelled", "interrupted"})
         waiting_count = sum(1 for item in items if item.state == "waiting_approval")
 
         # Group status resolution

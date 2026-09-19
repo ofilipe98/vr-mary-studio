@@ -285,7 +285,8 @@ def coalesce_output(
                 return new_output
             if curr_output.startswith(new_output):
                 return curr_output
-            return curr_output + new_output
+            # Disjoint snapshot: newest buffer is authoritative, replace.
+            return new_output
         return new_output
 
     if delta is not None and delta != "":
@@ -437,6 +438,13 @@ class NormalizedToolEvent:
         return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
+GENERIC_TOOL_IDS = {"", "tool", "unknown", "item", "none", "null", "undefined"}
+
+
+def is_generic_tool_id(tool_id: str | None) -> bool:
+    return str(tool_id or "").strip().lower() in GENERIC_TOOL_IDS
+
+
 class ToolLifecycleReducer:
     """Central lifecycle reducer and coalescer for tool calls.
     
@@ -456,6 +464,38 @@ class ToolLifecycleReducer:
         self._tool_order: list[str] = []
         self._processed_event_ids: set[str] = set()
         self._processed_digests: set[str] = set()
+        self._event_to_tool: dict[str, str] = {}
+        self._digest_to_tool: dict[str, str] = {}
+        self._anon_counter: int = 0
+
+    def _mint_anonymous_id(self, event: NormalizedToolEvent) -> str:
+        """Mint an ephemeral unique identity for tools without stable provider ID.
+
+        Never reuses a shared fixed identity like "tool"/"unknown"/"item".
+        Prefers stable event info (execution_id, runtime_event_id, event_id,
+        request_id, sequence) so retries with the same event_id stay idempotent,
+        while distinct anonymous tools never coalesce.
+        """
+        self._anon_counter += 1
+        exec_part = str(event.execution_id or "").strip() or "exec"
+        meta = event.metadata if isinstance(event.metadata, dict) else {}
+        runtime_hint = str(
+            meta.get("runtime_event_id")
+            or meta.get("runtimeEventId")
+            or meta.get("request_id")
+            or meta.get("requestId")
+            or ""
+        ).strip()
+        event_hint = str(event.event_id or "").strip()
+        # Deterministic when a stable per-event hint exists (retry dedupe);
+        # otherwise suffix a monotonic counter to guarantee distinctness.
+        if event_hint:
+            return f"anon:{exec_part}:{event_hint}"
+        if runtime_hint:
+            return f"anon:{exec_part}:{runtime_hint}:{self._anon_counter}"
+        if event.sequence:
+            return f"anon:{exec_part}:seq{event.sequence}:{self._anon_counter}"
+        return f"anon:{exec_part}:noid:{self._anon_counter}"
 
     @property
     def activities(self) -> dict[str, ToolActivity]:
@@ -466,10 +506,19 @@ class ToolLifecycleReducer:
         return self._tools
 
     def reduce(self, event: NormalizedToolEvent) -> ToolActivity:
+        # TC-05: never coalesce tools without a stable provider identity.
+        if is_generic_tool_id(event.tool_id):
+            event.tool_id = self._mint_anonymous_id(event)
+
         # 1. Idempotency check by event_id
         if event.event_id and event.event_id in self._processed_event_ids:
             logger.debug("Duplicate event_id ignored: %s (tool_id=%s)", event.event_id, event.tool_id)
-            return self._tools[event.tool_id]
+            mapped = self._event_to_tool.get(event.event_id)
+            if mapped is not None and mapped in self._tools:
+                return self._tools[mapped]
+            if event.tool_id in self._tools:
+                return self._tools[event.tool_id]
+            # Fall through to create (should not happen for deterministic anon ids).
 
         digest = event.payload_digest()
         # Deduplication prioritizes explicit identity (event_id/sequence).
@@ -478,6 +527,9 @@ class ToolLifecycleReducer:
         is_explicit_delta = str(getattr(event, "output_mode", "") or "").lower() == "delta"
         if not event.event_id and not is_explicit_delta and digest in self._processed_digests:
             logger.debug("Duplicate event digest ignored: %s (tool_id=%s)", digest, event.tool_id)
+            mapped = self._digest_to_tool.get(digest)
+            if mapped is not None and mapped in self._tools:
+                return self._tools[mapped]
             if event.tool_id in self._tools:
                 return self._tools[event.tool_id]
 
@@ -512,19 +564,52 @@ class ToolLifecycleReducer:
                 )
                 return tool
 
-            # 4. Monotonic Terminal State Invariant
-            # Once in a terminal status, tool cannot regress or have its terminal status mutated
+            # 4. Monotonic Terminal State Invariant + terminal enrichment
+            # Once in a terminal status, tool cannot regress or have its terminal status mutated,
+            # but diagnostic data may still be enriched monotonically (TC-03).
             if tool.is_terminal():
-                # Enrich metadata, error details, output or exit code if missing, but NEVER mutate terminal status
-                if event.error_details and not tool.error_details:
-                    tool.error_details = event.error_details
-                if event.output is not None and not tool.output:
-                    tool.output = event.output
-                if event.exit_code is not None and tool.exit_code is None:
+                if event.error_details:
+                    if not tool.error_details:
+                        tool.error_details = event.error_details
+                    elif event.error_details != tool.error_details and len(str(event.error_details)) > len(str(tool.error_details)):
+                        tool.error_details = event.error_details
+                if event.error:
+                    summary, details = sanitize_error_summary(event.error)
+                    if summary and summary != tool.error:
+                        # Prefer a more informative summary when available.
+                        if not tool.error or len(summary) > len(str(tool.error)):
+                            tool.error = summary
+                    if details and details != tool.error_details:
+                        if not tool.error_details or len(str(details)) > len(str(tool.error_details)):
+                            tool.error_details = details
+                # Terminal output enrichment: allow authoritative snapshots /
+                # terminal diagnostics to complete the record, but ignore stale
+                # incremental deltas after terminal (late provider chunks must
+                # not append to a completed/cancelled card).
+                if event.output is not None:
+                    merged = coalesce_output(
+                        tool.output,
+                        new_output=event.output,
+                        delta=None,
+                        output_mode=getattr(event, "output_mode", "") or "snapshot",
+                    )
+                    if merged != tool.output:
+                        tool.output = _truncate_tool_output(merged)
+                if event.exit_code is not None:
                     tool.exit_code = event.exit_code
+                if event.metadata:
+                    tool.metadata.update(event.metadata)
+                if event.files:
+                    for f in event.files:
+                        if f and f not in tool.files:
+                            tool.files.append(f)
+                if event.locations:
+                    tool.locations.extend(event.locations)
                 if event.event_id:
                     self._processed_event_ids.add(event.event_id)
+                    self._event_to_tool[event.event_id] = tool.id
                 self._processed_digests.add(digest)
+                self._digest_to_tool[digest] = tool.id
                 logger.info(
                     "Ignored event %s for tool %s already in terminal status %s",
                     event.kind,
@@ -640,11 +725,10 @@ class ToolLifecycleReducer:
         if raw_error_details and not tool.error_details:
             tool.error_details = raw_error_details
 
-        # If exit_code indicates failure and status is still running/success, ensure status is failure
-        if tool.exit_code is not None and tool.exit_code != 0 and not tool.status.is_terminal:
-            tool.status = ToolStatus.FAILURE
-            if not tool.finished_at:
-                tool.finished_at = event.timestamp or utc_now()
+        # TC-03: UPDATED + exit_code != 0 must NOT terminalize on its own.
+        # Lifecycle follows only canonical terminal events (FAILED/COMPLETED/
+        # CANCELLED/APPROVAL_RESOLVED denied). exit_code is stored for
+        # diagnostics (section 5 above) without forcing a terminal status.
 
         # Sanitize title
         tool.title = sanitize_title(
@@ -658,7 +742,9 @@ class ToolLifecycleReducer:
         # 11. Mark event as processed
         if event.event_id:
             self._processed_event_ids.add(event.event_id)
+            self._event_to_tool[event.event_id] = tool.id
         self._processed_digests.add(digest)
+        self._digest_to_tool[digest] = tool.id
 
         return tool
 

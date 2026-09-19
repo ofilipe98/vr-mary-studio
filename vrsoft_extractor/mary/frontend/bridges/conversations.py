@@ -795,6 +795,10 @@ class ConversationsDomain:
         self._preferences.sync()
 
 
+    def isConversationPinned(self, conversation_id: str) -> bool:  # noqa: N802
+        """TC-07: pin state of the menu target (not the current selection)."""
+        return str(conversation_id or "").strip() in self._pinned_conversation_ids
+
     def togglePinnedConversation(self, conversation_id: str) -> None:  # noqa: N802
         """Toggle pin for the explicitly targeted conversation (no reselection)."""
         cid = str(conversation_id or "").strip()

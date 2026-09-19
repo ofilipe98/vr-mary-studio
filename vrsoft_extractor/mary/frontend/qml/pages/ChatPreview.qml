@@ -2851,7 +2851,7 @@ Item {
             spacing: 2
             Repeater {
                 model: [
-                    { kind: "pin", label: root.chatBridge.selectedPinned ? "Desafixar conversa" : "Fixar conversa", action: "pin" },
+                    { kind: "pin", label: (root.conversationMenuConversationId ? root.chatBridge.isConversationPinned(root.conversationMenuConversationId) : root.chatBridge.selectedPinned) ? "Desafixar conversa" : "Fixar conversa", action: "pin" },
                     { kind: "archive", label: "Arquivar conversa", action: "archive" },
                     { kind: "trash", label: "Excluir conversa", action: "delete" }
                 ]

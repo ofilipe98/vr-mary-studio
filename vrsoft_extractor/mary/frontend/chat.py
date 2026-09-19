@@ -32,7 +32,8 @@ from ..db import MaryDatabase
 from ..models import RuntimeEvent
 from ..task_plan import TaskPlan, derive_task_progress
 from ..orchestrator import ChatOrchestrator
-from ..tool_activity import ToolLifecycleReducer
+from ..tool_activity import ToolLifecycleReducer, ToolStatus
+from ..tool_presentation import DEFAULT_PRESENTATION_REGISTRY
 from ..workspace import is_managed_conversation_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -2057,6 +2058,11 @@ class ChatBridge(QObject):
     def togglePinnedConversation(self, conversation_id: str) -> None:  # noqa: N802
         return self._Conversations_domain.togglePinnedConversation(conversation_id)
 
+    @Slot(str, result=bool)
+    def isConversationPinned(self, conversation_id: str) -> bool:  # noqa: N802
+        """TC-07: QML menu label must reflect the menu target, not the selection."""
+        return self._Conversations_domain.isConversationPinned(conversation_id)
+
     @Slot()
     def togglePinnedCurrent(self) -> None:  # noqa: N802
         return self._Conversations_domain.togglePinnedConversation(
@@ -3030,6 +3036,11 @@ class ChatBridge(QObject):
             and r.get("conversation_id") == conversation_id
             and r.get("_dynamic") == request.get("_dynamic")
         )]
+        # TC-06: reflect the decision on the linked ToolActivity card.
+        try:
+            self._Activity_domain._on_approval_decision(conversation_id, request_id, bool(approved))
+        except Exception:
+            pass
         if conversation_id == self._selected_conversation_id():
             self._status_text = "Aprovado" if approved else "Negado"
         self._Activity_domain._show_next_approval()
@@ -3758,6 +3769,7 @@ class ChatBridge(QObject):
             if row["execution_id"] and row["role"] == "assistant":
                 persisted[f"{row['execution_id']}:{row['execution_ordinal']}"] = row
         terminal_ids: set[int] = set()
+        terminal_kind_by_eid: dict[int, str] = {}
         assistant_counts: dict[int, int] = {}
         for record in events:
             payload = json.loads(record["payload_json"] or "{}")
@@ -3770,6 +3782,7 @@ class ChatBridge(QObject):
             key = str(payload.get("message_key") or "")
             if kind in {"turn_completed", "orchestration_cancelled", "error", "turn_recovered"}:
                 terminal_ids.add(eid)
+                terminal_kind_by_eid[eid] = str(kind or "")
             if kind == "tool_event":
                 payload["runtime_event_id"] = record["id"]
                 if not hasattr(self, "_timeline_reducers"):
@@ -3835,24 +3848,54 @@ class ChatBridge(QObject):
         if not running:
             self._ui_terminal_executions.update((cid, eid) for eid in terminal_ids)
             self._ui_finalized_executions.update((cid, eid) for eid in terminal_ids)
+        # TC-01: replay single source of truth — runtime events -> reducer ->
+        # finalize_turn -> presentation registry -> activityData final.
+        # Never patch already-serialized cards manually.
+        for group_id, group in groups.items():
+            reducer = getattr(self, "_timeline_reducers", {}).get((cid, group_id))
+            terminal_kind = terminal_kind_by_eid.get(group_id, "")
+            needs_finalize = group_id in terminal_ids or not running
+            if reducer is not None and needs_finalize:
+                if terminal_kind == "orchestration_cancelled":
+                    terminal_status = ToolStatus.CANCELLED
+                elif terminal_kind == "error":
+                    terminal_status = ToolStatus.FAILURE
+                elif terminal_kind in {"turn_completed", "turn_recovered"}:
+                    terminal_status = ToolStatus.INTERRUPTED
+                else:
+                    cstatus = str((conversation["status"] if conversation else "") or "")
+                    if cstatus == "error":
+                        terminal_status = ToolStatus.FAILURE
+                    elif cstatus == "cancelled":
+                        terminal_status = ToolStatus.CANCELLED
+                    else:
+                        terminal_status = ToolStatus.INTERRUPTED
+                reducer.finalize_turn(terminal_status)
+                by_id = {tool.id: tool for tool in reducer.get_all_tools()}
+                for item in group.values():
+                    cards = item.get("activityData")
+                    if not cards:
+                        continue
+                    rebuilt: list[dict[str, Any]] = []
+                    for old_card in cards:
+                        tool = by_id.get(str(old_card.get("id") or ""))
+                        if tool is None:
+                            rebuilt.append(old_card)
+                            continue
+                        presentation = DEFAULT_PRESENTATION_REGISTRY.format(tool)
+                        entry = presentation.to_dict()
+                        entry["id"] = tool.id
+                        if tool.output is not None:
+                            entry["output"] = tool.output
+                        entry["state"] = presentation.state
+                        if not entry.get("detail") and old_card.get("detail"):
+                            entry["detail"] = old_card["detail"]
+                        rebuilt.append(entry)
+                    item["activityData"] = rebuilt
         for group_id, group in groups.items():
             for item in group.values():
                 if group_id in terminal_ids or not running:
                     item["isStreaming"] = False
-                    for activity in item.get("activityData", []):
-                        if activity.get("state") == "running":
-                            if conversation and conversation["status"] == "error":
-                                activity["state"] = "error"
-                                activity["badgeText"] = "falhou"
-                                activity["badgeVariant"] = "error"
-                            elif conversation and conversation["status"] == "cancelled":
-                                activity["state"] = "cancelled"
-                                activity["badgeText"] = "cancelado"
-                                activity["badgeVariant"] = "warning"
-                            else:
-                                activity["state"] = "interrupted"
-                                activity["badgeText"] = "interrompido"
-                                activity["badgeVariant"] = "warning"
                 item["displayContent"] = markdown_for_display(item["content"])
                 if item["role"] == "assistant":
                     item["segments"] = segments_for_display(item["content"])

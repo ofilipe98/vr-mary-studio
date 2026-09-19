@@ -222,6 +222,8 @@ def normalize_antigravity_event(
 
     if session_update in ("tool_call", "tool_call_update"):
         tool_call = update.get("toolCall") or {}
+        if not isinstance(tool_call, dict):
+            tool_call = {}
         call_id = str(tool_call.get("toolCallId") or tool_call.get("id") or "")
         raw_name = str(tool_call.get("name") or tool_call.get("title") or "ferramenta")
         tool_type = ToolType.from_string(raw_name)
@@ -241,6 +243,53 @@ def normalize_antigravity_event(
         command_str = ""
         if tool_type == ToolType.COMMAND_EXECUTION and isinstance(args, dict):
             command_str = str(args.get("CommandLine") or args.get("command") or "")
+        # TC-04: tool_call_update must carry real content updates (output /
+        # content / result / delta / rawOutput / status), with correct
+        # delta vs snapshot semantics. Never emit an empty update with only
+        # id/name/input.
+        output = (
+            tool_call.get("output")
+            if tool_call.get("output") is not None
+            else tool_call.get("content")
+            if tool_call.get("content") is not None
+            else tool_call.get("result")
+            if tool_call.get("result") is not None
+            else tool_call.get("rawOutput")
+            if tool_call.get("rawOutput") is not None
+            else update.get("output")
+            if update.get("output") is not None
+            else update.get("content")
+            if update.get("content") is not None
+            else None
+        )
+        delta = (
+            tool_call.get("delta")
+            if tool_call.get("delta") is not None
+            else update.get("delta")
+            if update.get("delta") is not None
+            else None
+        )
+        status_raw = str(
+            tool_call.get("status") or update.get("status") or ""
+        ).strip()
+        error_text = str(tool_call.get("error") or update.get("error") or "")
+        exit_code = tool_call.get("exitCode")
+        if exit_code is None:
+            exit_code = tool_call.get("exit_code")
+        if session_update == "tool_call_update" and (
+            output is None
+            and delta is None
+            and not status_raw
+            and not error_text
+            and exit_code is None
+        ):
+            return None
+        if delta is not None and output is None:
+            output_mode = "delta"
+        elif output is not None:
+            output_mode = "snapshot"
+        else:
+            output_mode = ""
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=kind,
@@ -251,6 +300,11 @@ def normalize_antigravity_event(
             title=title,
             command=command_str,
             input=args,
+            output=output,
+            delta=delta,
+            output_mode=output_mode,
+            error=error_text,
+            exit_code=exit_code,
             metadata=dict(params),
         )
 
@@ -306,11 +360,24 @@ def normalize_opencode_event(
     payload: dict[str, Any],
     conversation_id: str = "",
 ) -> NormalizedToolEvent | None:
-    """Normalize OpenCode CLI/streaming payload into a NormalizedToolEvent."""
+    """Normalize OpenCode CLI/streaming payload into a NormalizedToolEvent.
+
+    Intermediate streaming updates (same callID, partial output) are routed
+    to the same tool_event pipeline as started/completed — never dropped.
+    """
     kind = str(payload.get("type") or "")
     part = payload.get("part") or {}
+    if not isinstance(part, dict):
+        part = {}
+    kind_lc = kind.lower()
+    is_tool_payload = (
+        kind == "tool_use"
+        or "tool" in part
+        or part.get("type") == "tool"
+        or ("tool" in kind_lc and isinstance(part, dict) and part)
+    )
 
-    if kind == "tool_use" or "tool" in part or part.get("type") == "tool":
+    if is_tool_payload:
         call_id = str(
             part.get("callID")
             or part.get("id")
@@ -333,13 +400,30 @@ def normalize_opencode_event(
         ).lower()
         input_data = (
             part.get("args")
-            or part.get("input")
-            or payload.get("args")
+            if part.get("args") is not None
+            else part.get("input")
+            if part.get("input") is not None
+            else payload.get("args")
         )
         output_data = (
             part.get("output")
-            or part.get("result")
-            or payload.get("output")
+            if part.get("output") is not None
+            else part.get("result")
+            if part.get("result") is not None
+            else part.get("content")
+            if part.get("content") is not None and isinstance(part.get("content"), str)
+            else payload.get("output")
+            if payload.get("output") is not None
+            else payload.get("result")
+            if payload.get("result") is not None
+            else None
+        )
+        delta_data = (
+            part.get("delta")
+            if part.get("delta") is not None
+            else payload.get("delta")
+            if payload.get("delta") is not None
+            else None
         )
         error_data = str(part.get("error") or payload.get("error") or "")
 
@@ -368,6 +452,12 @@ def normalize_opencode_event(
             error=error_data,
         )
 
+        if delta_data is not None and output_data is None:
+            output_mode = "delta"
+        elif output_data is not None:
+            output_mode = "snapshot"
+        else:
+            output_mode = ""
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=event_kind,
@@ -379,7 +469,8 @@ def normalize_opencode_event(
             command=command_str,
             input=input_data,
             output=output_data,
-            output_mode="snapshot" if output_data is not None else "",
+            delta=delta_data,
+            output_mode=output_mode,
             error=error_data,
             metadata=dict(payload),
         )
@@ -472,15 +563,38 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
         return None
 
-    identity = str(
+    raw_identity = str(
         item.get("id")
         or payload.get("itemId")
+        or payload.get("item_id")
         or payload.get("toolCallId")
+        or payload.get("tool_call_id")
         or payload.get("callId")
-        or payload.get("runtime_event_id")
-        or payload.get("request_id")
-        or "tool"
-    )
+        or payload.get("callID")
+        or ""
+    ).strip()
+    # TC-05: never reuse a shared fixed identity ("tool"/"unknown"/"item").
+    # Prefer stable per-event info (runtime_event_id/request_id) only when no
+    # stable tool id exists; the reducer mints a distinct anon id otherwise.
+    # Here we keep runtime_event_id/request_id as identity only if they look
+    # like a stable tool correlation; otherwise leave empty for the reducer
+    # to mint anon:{execution}:{hint} (never "tool").
+    if raw_identity and raw_identity.lower() not in {"tool", "unknown", "item", "none", "null", "undefined"}:
+        identity = raw_identity
+    else:
+        stable_hint = str(
+            payload.get("runtime_event_id")
+            or payload.get("request_id")
+            or payload.get("requestId")
+            or ""
+        ).strip()
+        if stable_hint and stable_hint.lower() not in {"tool", "unknown", "item"}:
+            # Use execution-scoped ephemeral hint; reducer guarantees
+            # distinctness across anonymous tools via counter/digest.
+            exec_hint = str(payload.get("execution_id") or "").strip() or "exec"
+            identity = f"anon:{exec_hint}:{stable_hint}"
+        else:
+            identity = ""
     tool_type = ToolType.from_string(item_type or item.get("name"))
     lifecycle = str(payload.get("lifecycle") or "")
     status_raw = str(item.get("status") or payload.get("status") or "").lower()

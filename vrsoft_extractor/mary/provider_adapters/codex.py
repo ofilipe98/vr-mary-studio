@@ -469,6 +469,25 @@ class CodexProvider(AgentProvider):
                     payload,
                 )
             )
+        elif method in {"item/commandExecution/outputDelta", "item/outputDelta", "item/updated"}:
+            # TC-04: streaming tool updates must reach the same semantic
+            # pipeline (reducer) as start/completed via RuntimeEvent tool_event.
+            norm = normalize_codex_event(params, method, conversation_id)
+            payload = {"lifecycle": method, **params}
+            if norm:
+                payload["canonical_event"] = asdict(norm)
+            if norm is None:
+                callback(RuntimeEvent(conversation_id, "runtime_event", method, params))
+            else:
+                title = norm.title or _item_summary(params.get("item") or {})
+                callback(
+                    RuntimeEvent(
+                        conversation_id,
+                        "tool_event",
+                        title,
+                        payload,
+                    )
+                )
         elif method == "error":
             error = params.get("error") or {}
             callback(RuntimeEvent(conversation_id, "error", str(error.get("message", error)), params))

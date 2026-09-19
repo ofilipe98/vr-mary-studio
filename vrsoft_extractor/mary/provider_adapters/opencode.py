@@ -305,6 +305,13 @@ class OpenCodeProvider(AgentProvider):
                     payload["canonical_event"] = asdict(norm)
                 callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
             elif kind in {"step_finish", "step_completed"}:
+                # Check for tool payloads wrapped in step events before treating as usage.
+                _norm_step = normalize_opencode_event(payload, conversation_id)
+                if _norm_step is not None:
+                    tool = _norm_step.title or str(part.get("tool") or part.get("name") or "ferramenta")
+                    payload["canonical_event"] = asdict(_norm_step)
+                    callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
+                    continue
                 token_usage = _opencode_token_usage(payload)
                 if token_usage:
                     callback(
@@ -322,6 +329,14 @@ class OpenCodeProvider(AgentProvider):
                 elif not reported_error:
                     reported_error = True
                     callback(RuntimeEvent(conversation_id, "error", message, payload))
+            else:
+                # TC-04: route any intermediate tool streaming updates that
+                # arrive under other type names to the same tool_event pipeline.
+                _norm_other = normalize_opencode_event(payload, conversation_id)
+                if _norm_other is not None:
+                    tool = _norm_other.title or str(part.get("tool") or part.get("name") or "ferramenta")
+                    payload["canonical_event"] = asdict(_norm_other)
+                    callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
         exit_code = process.wait()
         stderr_reader.join(timeout=1)
         if (exit_code or not emitted_text) and not reported_error:

@@ -6,7 +6,15 @@ from pathlib import Path
 from typing import Any
 from ...models import RuntimeEvent
 from ...tool_presentation import DEFAULT_PRESENTATION_REGISTRY
-from ...tool_activity import ToolActivity, ToolLifecycleReducer, ToolStatus, ToolEventKind, sanitize_error_summary
+from ...tool_activity import (
+    NormalizedToolEvent,
+    ToolActivity,
+    ToolLifecycleReducer,
+    ToolStatus,
+    ToolEventKind,
+    ToolType,
+    sanitize_error_summary,
+)
 from ...provider_adapters.tool_normalizer import normalize_generic_event
 from ...task_plan import TaskPlan
 
@@ -214,6 +222,7 @@ class ActivityDomain:
                 self._stream_timer.start()
         elif event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
             self._enqueue_approval(event)
+            self._integrate_approval_into_tool_lifecycle(event)
         elif event.kind == "reasoning_delta":
             self._reasoning_text += str(event.text or "")
             self._record_trace_text_delta(event, item_type="reasoning")
@@ -276,12 +285,6 @@ class ActivityDomain:
                         if tool.output is not None:
                             entry["output"] = tool.output
                         entry["state"] = presentation.state
-                        # Distinguish interrupted (turn ended without tool.completed)
-                        # from explicit user cancellation; both are non-success.
-                        if tool.status == ToolStatus.INTERRUPTED:
-                            entry["state"] = "interrupted"
-                            entry["badgeText"] = "interrompido"
-                            entry["badgeVariant"] = "warning"
                         matched = True
                         updated.append(entry)
                     if matched:
@@ -308,6 +311,7 @@ class ActivityDomain:
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
         if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
             self._enqueue_approval(event)
+            self._integrate_approval_into_tool_lifecycle(event)
             return
         if event.kind == "turn_started":
             self._finalize_pending_terminal_before_new_turn(event.conversation_id)
@@ -365,6 +369,217 @@ class ActivityDomain:
                                    if r.get("conversation_id") != conversation_id]
         if self._approval_request.get("conversation_id") == conversation_id:
             self._show_next_approval()
+
+    @staticmethod
+    def _approval_tool_id_from_payload(payload: dict[str, Any]) -> str:
+        """Resolve the tool identity an approval refers to.
+
+        Prefers stable tool correlation (toolCallId/itemId) over the
+        transient approval request_id. Falls back to "" when nothing stable
+        exists (caller mints an ephemeral anon id via the reducer).
+        """
+        tool_call = payload.get("tool_call") or payload.get("toolCall")
+        if not isinstance(tool_call, dict):
+            tool_call = {}
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            item = {}
+        for candidate in (
+            tool_call.get("toolCallId"),
+            tool_call.get("id"),
+            item.get("id"),
+            payload.get("toolCallId"),
+            payload.get("tool_call_id"),
+            payload.get("itemId"),
+            payload.get("item_id"),
+            payload.get("itemID"),
+        ):
+            text = str(candidate or "").strip()
+            if text and text.lower() not in {"tool", "unknown", "item"}:
+                return text
+        return ""
+
+    def _integrate_approval_into_tool_lifecycle(self, event: RuntimeEvent) -> None:
+        """TC-06: mirror approval_requested into the same ToolActivity lifecycle.
+
+        tool/requestApproval -> waiting_approval card; the later user decision
+        (via _on_approval_decision) moves it to running or cancelled/denied.
+        """
+        try:
+            payload = dict(event.payload or {})
+            conversation_id = str(event.conversation_id or "")
+            if not conversation_id:
+                return
+            request_id = str(payload.get("request_id") or "")
+            execution_id = int(payload.get("execution_id") or 0)
+            if not execution_id:
+                try:
+                    execution_id = int(self._ui_execution_ids.get(conversation_id, 0) or 0)
+                except Exception:
+                    execution_id = 0
+            tool_id = self._approval_tool_id_from_payload(payload)
+            if not tool_id:
+                # Explicit mapping when provider gives no stable tool id:
+                # anchor the approval card to the request itself.
+                tool_id = str(request_id or "").strip() or f"approval:{event.created_at}"
+            # Infer tool type/name/command from available approval context.
+            tool_call = payload.get("tool_call") or payload.get("toolCall") or {}
+            if not isinstance(tool_call, dict):
+                tool_call = {}
+            raw_name = str(
+                tool_call.get("name")
+                or tool_call.get("title")
+                or payload.get("command")
+                or payload.get("name")
+                or "ferramenta"
+            )
+            tool_type = ToolType.from_string(raw_name)
+            command = str(
+                tool_call.get("command")
+                or payload.get("command")
+                or ""
+            )
+            title_text = str(event.text or payload.get("description") or tool_id)
+            norm = NormalizedToolEvent(
+                tool_id=tool_id,
+                kind=ToolEventKind.APPROVAL_REQUESTED,
+                provider=str(payload.get("provider") or ""),
+                conversation_id=conversation_id,
+                execution_id=execution_id,
+                type=tool_type,
+                name=raw_name,
+                title=title_text,
+                command=command,
+                metadata=dict(payload),
+            )
+            if not hasattr(self, "_tool_reducers"):
+                self._tool_reducers = {}
+            reducer_key = (conversation_id, execution_id)
+            reducer = self._tool_reducers.setdefault(reducer_key, ToolLifecycleReducer())
+            activity = reducer.reduce(norm)
+            if request_id:
+                if not hasattr(self, "_approval_tool_map"):
+                    self._approval_tool_map = {}
+                self._approval_tool_map[(conversation_id, request_id)] = (execution_id, activity.id)
+            # Render/update the waiting_approval card when this is the selected view.
+            try:
+                selected_id = self._selected_conversation_id()
+            except Exception:
+                selected_id = ""
+            if conversation_id != selected_id:
+                return
+            presentation = DEFAULT_PRESENTATION_REGISTRY.format(activity)
+            entry = presentation.to_dict()
+            entry["id"] = activity.id
+            if activity.output is not None:
+                entry["output"] = activity.output
+            entry["state"] = presentation.state
+            # Reuse the same activity-row grouping as tool_event.
+            assistant_count = sum(
+                1 for r in self._messages._items
+                if r.get("role") == "assistant"
+                and str(r.get("messageKey") or "").startswith(f"{execution_id}:")
+            )
+            activity_key = f"activity:{execution_id}:{assistant_count}"
+            existing_activity = next(
+                (r for r in self._messages._items
+                 if str(r.get("messageKey") or "").startswith(f"activity:{execution_id}:")
+                 and any(t.get("id") == entry["id"] for t in r.get("activityData", []))),
+                None,
+            )
+            if existing_activity is not None:
+                activity_key = existing_activity["messageKey"]
+            else:
+                existing_activity = next((r for r in self._messages._items if r.get("messageKey") == activity_key), None)
+            if existing_activity is not None:
+                activity_data = list(existing_activity.get("activityData") or [])
+                found = False
+                for idx, current in enumerate(activity_data):
+                    if current.get("id") == entry["id"]:
+                        activity_data[idx] = entry
+                        found = True
+                        break
+                if not found:
+                    activity_data.append(entry)
+                self._messages.update_by_key(
+                    "messageKey",
+                    activity_key,
+                    activityData=activity_data,
+                    isStreaming=True,
+                )
+            else:
+                self._messages.append({
+                    "messageId": -2,
+                    "role": "activity",
+                    "content": "",
+                    "displayContent": "",
+                    "segments": [],
+                    "createdAt": event.created_at,
+                    "responseMode": "activity",
+                    "messageKey": activity_key,
+                    "isStreaming": True,
+                    "activityData": [entry],
+                })
+        except Exception:
+            return
+
+    def _on_approval_decision(self, conversation_id: str, request_id: str, approved: bool) -> None:
+        """TC-06: apply the user approval decision to the linked ToolActivity.
+
+        approve -> running; deny -> cancelled/denied (badge negado).
+        """
+        try:
+            mapping = getattr(self, "_approval_tool_map", {}).pop((conversation_id, request_id), None)
+            if mapping is None:
+                return
+            execution_id, tool_id = mapping
+            reducer = getattr(self, "_tool_reducers", {}).get((conversation_id, execution_id))
+            if reducer is None:
+                return
+            tool = reducer.get_tool(tool_id)
+            if tool is None or tool.is_terminal():
+                # Denied terminal tools stay terminal; approved terminal tools
+                # cannot regress (reducer guards). Nothing to render.
+                if tool is not None and tool.is_terminal():
+                    return
+            norm = NormalizedToolEvent(
+                tool_id=tool_id,
+                kind=ToolEventKind.APPROVAL_RESOLVED,
+                provider="",
+                conversation_id=conversation_id,
+                execution_id=execution_id,
+                approved=bool(approved),
+                metadata={"approved": bool(approved), "request_id": request_id},
+            )
+            activity = reducer.reduce(norm)
+            try:
+                selected_id = self._selected_conversation_id()
+            except Exception:
+                selected_id = ""
+            if conversation_id != selected_id:
+                return
+            presentation = DEFAULT_PRESENTATION_REGISTRY.format(activity)
+            entry = presentation.to_dict()
+            entry["id"] = activity.id
+            if activity.output is not None:
+                entry["output"] = activity.output
+            entry["state"] = presentation.state
+            for row in list(self._messages._items):
+                if row.get("role") != "activity":
+                    continue
+                cards = list(row.get("activityData") or [])
+                for idx, card in enumerate(cards):
+                    if str(card.get("id") or "") == activity.id:
+                        cards[idx] = entry
+                        still_running = any(c.get("state") == "running" or c.get("state") == "waiting_approval" for c in cards)
+                        self._messages.update_by_key(
+                            "messageKey", row.get("messageKey"),
+                            activityData=cards,
+                            isStreaming=still_running,
+                        )
+                        break
+        except Exception:
+            return
 
     def _ensure_streaming_message(self) -> None:
         if self._current_message_key and any(row.get("messageKey") == self._current_message_key for row in self._messages._items):
