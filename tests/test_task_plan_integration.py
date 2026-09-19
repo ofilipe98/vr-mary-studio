@@ -1,6 +1,8 @@
 import json
 
 import pytest
+from unittest.mock import patch
+
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
@@ -601,6 +603,153 @@ def test_antigravity_plan_updated_e2e(tmp_path):
         assert bridge.taskProgress == {}
         assert bridge.taskPlanVisible is False
         assert [s["state"] for s in bridge.taskSteps] == ["completed", "running", "pending"]
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_immediate_followup_survives_previous_pending_terminal(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("Followup", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
+            orch._handle_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+
+        # 1. Turn A starts
+        emit("turn_started", payload={"execution_id": 100})
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 100,
+                "steps": [
+                    {"text": "Step A1", "state": "running"},
+                    {"text": "Step A2", "state": "pending"},
+                ],
+            },
+        )
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step A1", "completed": 0, "total": 2}
+
+        # Assistant delta for Turn A
+        emit("assistant_delta", "Delta response from turn A", payload={"execution_id": 100})
+
+        # 2. Force visual backlog and queue terminal for Turn A
+        bridge._stream_pending_text = "Draining text backlog from turn A"
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+
+        # Invariants: pending terminal exists, active progress cleared, turnRunning is False
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["conversation_id"] == cid
+        assert bridge._pending_terminal["execution_id"] == 100
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+
+        # 3. User sends immediate follow-up B
+        with patch.object(bridge._orchestrator, "send"):
+            bridge.sendMessage("Follow-up message B")
+
+        # Invariant: Turn B is running and pending terminal from A cannot clear B
+        assert bridge.turnRunning is True
+        assert cid in bridge._active_turns
+        assert bridge._pending_terminal is None
+        assert bridge._stream_pending_text == ""
+
+        # Draining / flushing from Turn A or stale terminal step cannot clear B
+        bridge._flush_stream_step()
+        assert bridge.turnRunning is True
+        assert cid in bridge._active_turns
+
+        # 4. A fresh task plan arrives for Turn B
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 101,
+                "steps": [
+                    {"text": "Step B1", "state": "running"},
+                    {"text": "Step B2", "state": "pending"},
+                ],
+            },
+        )
+        assert bridge.taskProgress != {}
+        assert bridge.taskProgress == {"step": "Step B1", "completed": 0, "total": 2}
+        assert bridge.taskPlanVisible is True
+
+        # 5. Finalize B and assert normal cleanup
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=101)
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_execution_id_isolation_between_consecutive_turns(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("Isolation", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
+            orch._handle_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+
+        # Turn A with execution_id = 100 starts and finishes
+        emit("turn_started", payload={"execution_id": 100})
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 100,
+                "steps": [{"text": "Plan A", "state": "running"}],
+            },
+        )
+        assert bridge.taskPlanVisible is True
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+
+        # Turn B with execution_id = 101 starts and supplies its plan
+        emit("turn_started", payload={"execution_id": 101})
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 101,
+                "steps": [
+                    {"text": "Plan B1", "state": "running"},
+                    {"text": "Plan B2", "state": "pending"},
+                ],
+            },
+        )
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Plan B1", "completed": 0, "total": 2}
+        status_before = bridge.statusText
+
+        # Any terminal with execution_id = 100 arriving late cannot alter Turn B's state
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        bridge._finalize_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        emit("turn_completed", payload={"execution_id": 100})
+
+        # Turn B remains completely unaffected: still running, plan visible, progress intact
+        assert bridge.turnRunning is True
+        assert cid in bridge._active_turns
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Plan B1", "completed": 0, "total": 2}
+        assert bridge.statusText == status_before
+        assert bridge.statusText != "Pronto"
+
+        # Terminal for Turn B (execution_id = 101) finalizes normally
+        emit("turn_completed", payload={"execution_id": 101})
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
     finally:
         bridge.close()
         app.processEvents()

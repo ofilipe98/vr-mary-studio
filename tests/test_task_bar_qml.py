@@ -152,6 +152,8 @@ def test_vr_task_bar_runtime_interactions_and_lifecycle(tmp_path):
     frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
     chat = ChatBridge(settings, db, prefs)
     studio = StudioBridge(settings, db, prefs)
+    engine = None
+    window = None
 
     try:
         with patch.object(chat, "refreshModels"):
@@ -237,5 +239,10 @@ def test_vr_task_bar_runtime_interactions_and_lifecycle(tmp_path):
         assert chat.taskPlanVisible is False
         assert bar.property("visible") is False
     finally:
+        if window is not None:
+            window.close()
+        if engine is not None:
+            engine.deleteLater()
         chat.close()
+        studio.close()
         app.processEvents()

@@ -173,6 +173,7 @@ class ChatBridge(QObject):
         self._current_message_key: str = ""
         self._ui_execution_ids: dict[str, int] = {}
         self._ui_terminal_executions: set[tuple[str, int]] = set()
+        self._ui_finalized_executions: set[tuple[str, int]] = set()
         self._message_streaming_texts: dict[str, str] = {}
         self._message_displayed_texts: dict[str, str] = {}
         self._message_pending_texts: dict[str, str] = {}
@@ -2813,6 +2814,8 @@ class ChatBridge(QObject):
             if item["path"] in reference_paths
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
+        self._finalize_pending_terminal_before_new_turn(conversation_id)
+        self._reset_stream_state()
         self._active_turns.add(conversation_id)
         self._active_turn_started_epochs[conversation_id] = time.time()
         self._sync_selected_turn_state()
@@ -2822,7 +2825,6 @@ class ChatBridge(QObject):
         self._activity_items = []
         self._reset_trace_state()
         self._reasoning_text = ""
-        self._reset_stream_state()
         self._activity_started_at = time.monotonic()
         self._activity_elapsed_seconds = 0
         self._activity_clock.start()
@@ -3001,6 +3003,29 @@ class ChatBridge(QObject):
     def _flush_stream_step(self) -> None:
         return self._Activity_domain._flush_stream_step()
 
+    def _finalize_pending_terminal_before_new_turn(
+        self, conversation_id: str | None = None
+    ) -> None:
+        pending = getattr(self, "_pending_terminal", None)
+        if not pending:
+            return
+        pending_cid = str(
+            pending.get("conversation_id")
+            or self._selected_conversation_id()
+            or ""
+        )
+        if conversation_id and pending_cid and pending_cid != str(conversation_id):
+            return
+        if hasattr(self, "_stream_timer"):
+            self._stream_timer.stop()
+        self._pending_terminal = None
+        self._stream_terminal_kind = ""
+        self._finalize_terminal_state(
+            pending.get("kind", "turn_completed"),
+            conversation_id=pending_cid,
+            execution_id=pending.get("execution_id", 0),
+        )
+
     def _queue_terminal_state(
         self,
         kind: str,
@@ -3008,6 +3033,12 @@ class ChatBridge(QObject):
         execution_id: int = 0,
     ) -> None:
         cid = str(conversation_id or self._selected_conversation_id() or "")
+        if not cid:
+            return
+        if execution_id and execution_id < self._ui_execution_ids.get(cid, 0):
+            return
+        if execution_id and (cid, execution_id) in self._ui_terminal_executions:
+            return
         is_selected = cid == self._selected_conversation_id()
         if (
             not self.turnRunning
@@ -3079,11 +3110,16 @@ class ChatBridge(QObject):
         cid = str(conversation_id or self._selected_conversation_id() or "")
         if not cid:
             return
+        if execution_id and execution_id < self._ui_execution_ids.get(cid, 0):
+            return
+        if execution_id and (cid, execution_id) in self._ui_finalized_executions:
+            return
         self._active_turns.discard(cid)
         self._active_turn_started_epochs.pop(cid, None)
         self._clear_task_progress_for(cid)
         if execution_id:
             self._ui_terminal_executions.add((cid, execution_id))
+            self._ui_finalized_executions.add((cid, execution_id))
         is_selected = cid == self._selected_conversation_id()
         if is_selected:
             self._sync_selected_turn_state()
@@ -3644,6 +3680,7 @@ class ChatBridge(QObject):
         running = conversation is not None and conversation["status"] == "running"
         if not running:
             self._ui_terminal_executions.update((cid, eid) for eid in terminal_ids)
+            self._ui_finalized_executions.update((cid, eid) for eid in terminal_ids)
         for group_id, group in groups.items():
             for item in group.values():
                 if group_id in terminal_ids or not running:

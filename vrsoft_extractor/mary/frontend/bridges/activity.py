@@ -32,6 +32,7 @@ class ActivityDomain:
             if event.kind in {"turn_completed", "orchestration_completed", "orchestration_cancelled", "error"}:
                 self._ui_terminal_executions.add((event.conversation_id, execution_id))
         if event.kind == "turn_started":
+            self._finalize_pending_terminal_before_new_turn(event.conversation_id)
             self._active_turns.add(event.conversation_id)
         selected_id = self._selected_conversation_id()
         if event.conversation_id != selected_id:
@@ -227,6 +228,7 @@ class ActivityDomain:
             self._enqueue_approval(event)
             return
         if event.kind == "turn_started":
+            self._finalize_pending_terminal_before_new_turn(event.conversation_id)
             self._active_turns.add(event.conversation_id)
             self._begin_task_turn(event.conversation_id)
             self.stateChanged.emit()
@@ -309,13 +311,7 @@ class ActivityDomain:
             self._activity_clock.stop()
         pending = getattr(self, "_pending_terminal", None)
         if pending:
-            self._pending_terminal = None
-            self._stream_terminal_kind = ""
-            self._finalize_terminal_state(
-                pending["kind"],
-                conversation_id=pending.get("conversation_id"),
-                execution_id=pending.get("execution_id", 0),
-            )
+            self._finalize_pending_terminal_before_new_turn()
         self._current_message_key = ""
         self._message_streaming_texts.clear()
         self._message_displayed_texts.clear()
@@ -384,16 +380,11 @@ class ActivityDomain:
             return
         self._stream_timer.stop()
         pending = getattr(self, "_pending_terminal", None)
-        self._pending_terminal = None
         terminal_kind = self._stream_terminal_kind
-        self._stream_terminal_kind = ""
         if pending:
-            self._finalize_terminal_state(
-                pending["kind"],
-                conversation_id=pending.get("conversation_id"),
-                execution_id=pending.get("execution_id", 0),
-            )
+            self._finalize_pending_terminal_before_new_turn()
         elif terminal_kind:
+            self._stream_terminal_kind = ""
             self._finalize_terminal_state(terminal_kind)
 
 

@@ -555,15 +555,7 @@ class ConversationsDomain:
         changing_conversation = previous_id != str(selected.get("conversationId") or "")
         self._draft = False
         if changing_conversation:
-            pending = getattr(self, "_pending_terminal", None)
-            if pending:
-                self._pending_terminal = None
-                self._stream_terminal_kind = ""
-                self._finalize_terminal_state(
-                    pending["kind"],
-                    conversation_id=pending.get("conversation_id"),
-                    execution_id=pending.get("execution_id", 0),
-                )
+            self._finalize_pending_terminal_before_new_turn()
             self._reset_stream_state()
             self._activity_steps = []
             # Detach the selected view; per-conversation plans in
