@@ -24,12 +24,22 @@ class ActivityDomain:
         if not isinstance(event, RuntimeEvent):
             return
         execution_id = int(event.payload.get("execution_id") or 0)
+        is_terminal = event.kind in {
+            "turn_completed",
+            "orchestration_completed",
+            "orchestration_cancelled",
+            "error",
+        }
         if execution_id:
             previous = self._ui_execution_ids.get(event.conversation_id, 0)
-            if execution_id < previous or (event.conversation_id, execution_id) in self._ui_terminal_executions:
+            if execution_id < previous:
                 return
-            self._ui_execution_ids[event.conversation_id] = execution_id
-            if event.kind in {"turn_completed", "orchestration_completed", "orchestration_cancelled", "error"}:
+            if is_terminal and previous and execution_id != previous:
+                return
+            if (event.conversation_id, execution_id) in self._ui_terminal_executions:
+                return
+            self._ui_execution_ids[event.conversation_id] = max(previous, execution_id)
+            if is_terminal:
                 self._ui_terminal_executions.add((event.conversation_id, execution_id))
         if event.kind == "turn_started":
             self._finalize_pending_terminal_before_new_turn(event.conversation_id)

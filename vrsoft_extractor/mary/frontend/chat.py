@@ -3020,6 +3020,9 @@ class ChatBridge(QObject):
             self._stream_timer.stop()
         self._pending_terminal = None
         self._stream_terminal_kind = ""
+        self._stream_pending_text = ""
+        if hasattr(self, "_message_pending_texts"):
+            self._message_pending_texts.clear()
         self._finalize_terminal_state(
             pending.get("kind", "turn_completed"),
             conversation_id=pending_cid,
@@ -3035,10 +3038,17 @@ class ChatBridge(QObject):
         cid = str(conversation_id or self._selected_conversation_id() or "")
         if not cid:
             return
-        if execution_id and execution_id < self._ui_execution_ids.get(cid, 0):
-            return
-        if execution_id and (cid, execution_id) in self._ui_finalized_executions:
-            return
+        current_execution = self._ui_execution_ids.get(cid, 0)
+        if execution_id:
+            if execution_id < current_execution:
+                return
+            if current_execution and execution_id != current_execution:
+                return
+            if (cid, execution_id) in self._ui_finalized_executions:
+                return
+            if not current_execution:
+                self._ui_execution_ids[cid] = execution_id
+            self._ui_terminal_executions.add((cid, execution_id))
         is_selected = cid == self._selected_conversation_id()
         if (
             not self.turnRunning
@@ -3053,8 +3063,6 @@ class ChatBridge(QObject):
             self._active_turns.discard(cid)
             self._active_turn_started_epochs.pop(cid, None)
             self._clear_task_progress_for(cid)
-        if execution_id and cid:
-            self._ui_terminal_executions.add((cid, execution_id))
 
         if is_selected:
             if self._activity_started_at:
@@ -3110,16 +3118,19 @@ class ChatBridge(QObject):
         cid = str(conversation_id or self._selected_conversation_id() or "")
         if not cid:
             return
-        if execution_id and execution_id < self._ui_execution_ids.get(cid, 0):
-            return
-        if execution_id and (cid, execution_id) in self._ui_finalized_executions:
-            return
+        current_execution = self._ui_execution_ids.get(cid, 0)
+        if execution_id:
+            if execution_id < current_execution:
+                return
+            if current_execution and execution_id != current_execution:
+                return
+            if (cid, execution_id) in self._ui_finalized_executions:
+                return
+            if not current_execution:
+                self._ui_execution_ids[cid] = execution_id
         self._active_turns.discard(cid)
         self._active_turn_started_epochs.pop(cid, None)
         self._clear_task_progress_for(cid)
-        if execution_id:
-            self._ui_terminal_executions.add((cid, execution_id))
-            self._ui_finalized_executions.add((cid, execution_id))
         is_selected = cid == self._selected_conversation_id()
         if is_selected:
             self._sync_selected_turn_state()
@@ -3131,6 +3142,9 @@ class ChatBridge(QObject):
             self._reload_selected_messages()
         else:
             self._sync_selected_turn_state()
+        if execution_id:
+            self._ui_terminal_executions.add((cid, execution_id))
+            self._ui_finalized_executions.add((cid, execution_id))
         self.refresh()
         self.stateChanged.emit()
 

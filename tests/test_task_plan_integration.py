@@ -753,3 +753,181 @@ def test_execution_id_isolation_between_consecutive_turns(tmp_path):
     finally:
         bridge.close()
         app.processEvents()
+
+
+def test_terminal_first_valid_execution_and_duplicate_idempotency(tmp_path):
+    """Teste A & Teste B: First valid terminal finalizes; duplicate terminal is idempotent."""
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("TerminalLifecycle", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+
+        # 1. Turn starts with execution_id = 100 via real event flow
+        bridge._on_runtime_event(RuntimeEvent(cid, "turn_started", "", {"execution_id": 100}))
+        bridge._on_runtime_event(
+            RuntimeEvent(
+                cid,
+                "task_plan_updated",
+                "",
+                {
+                    "execution_id": 100,
+                    "steps": [{"text": "Step 1", "state": "running"}],
+                },
+            )
+        )
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step 1", "completed": 0, "total": 1}
+
+        # Teste A: First valid terminal arrives via _on_runtime_event -> _queue_terminal_state -> _finalize_terminal_state
+        db.update_conversation(cid, status="idle")
+        bridge._on_runtime_event(RuntimeEvent(cid, "turn_completed", "", {"execution_id": 100}))
+
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert (cid, 100) in bridge._ui_finalized_executions
+        assert (cid, 100) in bridge._ui_terminal_executions
+
+        # Teste B: Duplicate terminal event arrives via _on_runtime_event
+        bridge._on_runtime_event(RuntimeEvent(cid, "turn_completed", "", {"execution_id": 100}))
+        # Direct duplicate calls to _queue_terminal_state and _finalize_terminal_state
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        bridge._finalize_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+
+        # Confirm idempotent: no exception, remains cleanly finalized
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert (cid, 100) in bridge._ui_finalized_executions
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_consecutive_executions_stale_rejection_and_isolation(tmp_path):
+    """Teste C, Teste D & Teste F: Old terminal does not affect new turn, current B finalizes."""
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("ConsecutiveTurns", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+
+        def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
+            bridge._on_runtime_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+
+        # Turn A starts (execution_id = 100)
+        emit("turn_started", payload={"execution_id": 100})
+        emit("task_plan_updated", payload={"execution_id": 100, "steps": [{"text": "A1", "state": "running"}]})
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+
+        # Turn A finishes
+        db.update_conversation(cid, status="idle")
+        emit("turn_completed", payload={"execution_id": 100})
+        assert bridge.turnRunning is False
+        assert (cid, 100) in bridge._ui_finalized_executions
+
+        # Turn B starts (execution_id = 101)
+        db.update_conversation(cid, status="running")
+        emit("turn_started", payload={"execution_id": 101})
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 101,
+                "steps": [
+                    {"text": "B1", "state": "running"},
+                    {"text": "B2", "state": "pending"},
+                ],
+            },
+        )
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "B1", "completed": 0, "total": 2}
+        status_before = bridge.statusText
+
+        # Teste C & F: Late/stale terminal of A (100) arrives via emit and direct calls
+        emit("turn_completed", payload={"execution_id": 100})
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        bridge._finalize_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+
+        # Non-started execution 102 terminal arrives
+        emit("turn_completed", payload={"execution_id": 102})
+
+        # Turn B remains completely unaffected
+        assert bridge.turnRunning is True
+        assert cid in bridge._active_turns
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "B1", "completed": 0, "total": 2}
+        assert bridge.statusText == status_before
+
+        # Teste D: Terminal of Turn B (101) arrives via emit and finalizes normally
+        db.update_conversation(cid, status="idle")
+        emit("turn_completed", payload={"execution_id": 101})
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert (cid, 101) in bridge._ui_finalized_executions
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_terminal_isolation_between_different_conversations(tmp_path):
+    """Teste G: Simultaneous turns in different conversations are isolated."""
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid_a = db.create_conversation("ConvA", "codex", "test", bridge._settings.root)
+        cid_b = db.create_conversation("ConvB", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid_b)
+
+        # Both conversations are running in background / foreground
+        db.update_conversation(cid_a, status="running")
+        db.update_conversation(cid_b, status="running")
+        # Conv A starts turn with execution_id = 10
+        bridge._on_runtime_event(RuntimeEvent(cid_a, "turn_started", "", {"execution_id": 10}))
+        # Conv B starts turn with execution_id = 20 (selected conversation)
+        bridge._on_runtime_event(RuntimeEvent(cid_b, "turn_started", "", {"execution_id": 20}))
+        bridge._on_runtime_event(
+            RuntimeEvent(
+                cid_b,
+                "task_plan_updated",
+                "",
+                {
+                    "execution_id": 20,
+                    "steps": [{"text": "Step B", "state": "running"}],
+                },
+            )
+        )
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step B", "completed": 0, "total": 1}
+        assert cid_a in bridge._active_turns
+        assert cid_b in bridge._active_turns
+
+        # Terminal of Conv A arrives (background conversation)
+        db.update_conversation(cid_a, status="idle")
+        bridge._on_runtime_event(RuntimeEvent(cid_a, "turn_completed", "", {"execution_id": 10}))
+
+        # Conv A should be finalized and removed from active turns; Conv B must NOT be altered
+        assert cid_a not in bridge._active_turns
+        assert cid_b in bridge._active_turns
+        assert bridge.turnRunning is True
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step B", "completed": 0, "total": 1}
+        assert (cid_a, 10) in bridge._ui_finalized_executions
+        assert (cid_b, 20) not in bridge._ui_finalized_executions
+
+        # Now terminal of Conv B arrives
+        db.update_conversation(cid_b, status="idle")
+        bridge._on_runtime_event(RuntimeEvent(cid_b, "turn_completed", "", {"execution_id": 20}))
+        assert cid_b not in bridge._active_turns
+        assert bridge.turnRunning is False
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert (cid_b, 20) in bridge._ui_finalized_executions
+    finally:
+        bridge.close()
+        app.processEvents()
