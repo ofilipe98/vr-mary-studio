@@ -219,7 +219,7 @@ class ActivityDomain:
                                             "cancelled" if event.kind == "orchestration_cancelled" else "completed")
                     self._messages.update_by_key("messageKey", row.get("messageKey"),
                                                  isStreaming=False, activityData=activities)
-            self._queue_terminal_state(event.kind)
+            self._queue_terminal_state(event.kind, conversation_id=event.conversation_id, execution_id=execution_id)
 
 
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
@@ -234,7 +234,7 @@ class ActivityDomain:
         if event.kind == "task_plan_updated":
             steps = event.payload.get("steps")
             if isinstance(steps, list):
-                self._apply_task_snapshot(
+                if self._apply_task_snapshot(
                     event.conversation_id,
                     steps,
                     event.created_at,
@@ -243,8 +243,8 @@ class ActivityDomain:
                         or event.payload.get("execution_id")
                         or ""
                     ),
-                )
-                self.stateChanged.emit()
+                ):
+                    self.stateChanged.emit()
             return
         if event.kind in {
             "turn_completed",
@@ -252,8 +252,11 @@ class ActivityDomain:
             "error",
             "orchestration_cancelled",
         }:
+            execution_id = int(event.payload.get("execution_id") or 0)
             self._discard_conversation_approvals(event.conversation_id)
-            self._finish_background_turn(event.conversation_id)
+            self._finish_background_turn(
+                event.conversation_id, kind=event.kind, execution_id=execution_id
+            )
 
 
     def _enqueue_approval(self, event: RuntimeEvent) -> None:
@@ -304,6 +307,15 @@ class ActivityDomain:
             self._stream_timer.stop()
         if hasattr(self, "_activity_clock"):
             self._activity_clock.stop()
+        pending = getattr(self, "_pending_terminal", None)
+        if pending:
+            self._pending_terminal = None
+            self._stream_terminal_kind = ""
+            self._finalize_terminal_state(
+                pending["kind"],
+                conversation_id=pending.get("conversation_id"),
+                execution_id=pending.get("execution_id", 0),
+            )
         self._current_message_key = ""
         self._message_streaming_texts.clear()
         self._message_displayed_texts.clear()
@@ -371,9 +383,17 @@ class ActivityDomain:
                 self._messages.update_last(**update_kwargs)
             return
         self._stream_timer.stop()
-        if self._stream_terminal_kind:
-            terminal_kind = self._stream_terminal_kind
-            self._stream_terminal_kind = ""
+        pending = getattr(self, "_pending_terminal", None)
+        self._pending_terminal = None
+        terminal_kind = self._stream_terminal_kind
+        self._stream_terminal_kind = ""
+        if pending:
+            self._finalize_terminal_state(
+                pending["kind"],
+                conversation_id=pending.get("conversation_id"),
+                execution_id=pending.get("execution_id", 0),
+            )
+        elif terminal_kind:
             self._finalize_terminal_state(terminal_kind)
 
 
@@ -490,8 +510,10 @@ class ActivityDomain:
                     terminal = True
         finally:
             self._restoring_turn_history = False
-        current_in_latest = any(
-            str(row["kind"]) == "task_plan_updated" for row in rows
+        current_in_latest = (
+            any(str(row["kind"]) == "task_plan_updated" for row in rows)
+            and not terminal
+            and key in self._active_turns
         )
         self._task_plan_current_by_id[key] = current_in_latest
         self._task_plan_current = current_in_latest

@@ -49,7 +49,7 @@ def claude_task_result(
                 if identifier not in blocked:
                     blocked.append(identifier)
             removed = inputs.get("removeBlockedBy") or []
-            task["blockedBy"] = [
+            task["blockedBy"] = [\
                 identifier for identifier in blocked if identifier not in removed
             ]
     else:
@@ -76,7 +76,7 @@ def _normalize_task_state(status: object) -> str:
     text = str(status or "").strip()
     if text == "completed":
         return "completed"
-    if text in {"inProgress", "in_progress", "in-progress", "in_progress_running"}:
+    if text in {"inProgress", "in_progress", "in-progress", "in_progress_running", "running"}:
         return "running"
     return "pending"
 
@@ -84,7 +84,7 @@ def _normalize_task_state(status: object) -> str:
 def _extract_todo_list(inputs: object) -> list | None:
     if not isinstance(inputs, dict):
         return None
-    for key in ("todos", "tasks", "plan", "items"):
+    for key in ("todos", "tasks", "plan", "items", "entries", "steps"):
         value = inputs.get(key)
         if isinstance(value, list):
             return value
@@ -102,6 +102,12 @@ def provider_plan(event: RuntimeEvent) -> list[dict[str, str]] | None:
             raw = _extract_todo_list(payload)
     elif event.kind == "task_plan_updated":
         raw = payload.get("plan")
+        if raw is None:
+            raw = payload.get("steps")
+        if raw is None:
+            raw = payload.get("entries")
+        if raw is None:
+            raw = _extract_todo_list(payload)
     elif event.kind == "tool_event":
         item = payload.get("item") or payload.get("part") or payload
         if not isinstance(item, dict):
@@ -144,10 +150,11 @@ def provider_plan(event: RuntimeEvent) -> list[dict[str, str]] | None:
         )
         if not isinstance(label, str) or not label.strip():
             continue
+        status_val = item.get("status") if item.get("status") is not None else item.get("state")
         steps.append(
             {
                 "text": label.strip(),
-                "state": _normalize_task_state(item.get("status")),
+                "state": _normalize_task_state(status_val),
             }
         )
     # Empty arrays clear the plan; malformed nonempty snapshots do not.
@@ -201,14 +208,17 @@ class TaskPlan:
 
     def update(
         self, steps: list[dict[str, str]], created_at: str, turn_id: str = ""
-    ) -> None:
+    ) -> bool:
+        """Apply snapshot; return True if accepted, False if rejected."""
+        if not isinstance(steps, list):
+            return False
         if any(
             not isinstance(step, dict)
             or not isinstance(step.get("text"), str)
             or step.get("state") not in {"pending", "running", "completed"}
             for step in steps
         ):
-            return
+            return False
         if turn_id and turn_id != self._turn_id:
             self._timings.clear()
             self._turn_id = turn_id
@@ -217,7 +227,7 @@ class TaskPlan:
             self.steps = []
             self._timings.clear()
             self._previous_completed_at = None
-            return
+            return True
         try:
             timestamp = datetime.fromisoformat(created_at).timestamp()
         except (ValueError, TypeError):
@@ -249,3 +259,4 @@ class TaskPlan:
                         item["durationMs"] = int(elapsed * 1000)
             result.append(item)
         self.steps = result
+        return True

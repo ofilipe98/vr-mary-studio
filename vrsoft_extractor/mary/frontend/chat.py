@@ -179,6 +179,7 @@ class ChatBridge(QObject):
         self._displayed_streaming_text = ""
         self._stream_pending_text = ""
         self._stream_terminal_kind = ""
+        self._pending_terminal: dict[str, Any] | None = None
         self._assistant_stream_started = False
         self._approval_request: dict[str, Any] = {}
         self._pending_approvals: list[dict[str, Any]] = []
@@ -1232,9 +1233,7 @@ class ChatBridge(QObject):
 
     @Property(bool, notify=stateChanged)
     def taskPlanVisible(self) -> bool:  # noqa: N802
-        return self.turnRunning and self._task_plan_current and any(
-            step["state"] != "completed" for step in self._task_plan.steps
-        )
+        return bool(self.turnRunning and self._task_plan_current and self.taskProgress)
 
     @Property("QVariantMap", notify=stateChanged)
     def taskProgress(self) -> dict[str, Any]:  # noqa: N802
@@ -1312,7 +1311,9 @@ class ChatBridge(QObject):
         before_steps = [dict(step) for step in plan.steps]
         before_current = bool(self._task_plan_current_by_id.get(key))
         before_progress = self._task_progress_by_id.get(key)
-        plan.update(steps, created_at, turn_id)
+        accepted = plan.update(steps, created_at, turn_id)
+        if not accepted:
+            return False
         self._task_plan_current_by_id[key] = True
         after_progress = derive_task_progress(plan.steps)
         if after_progress is None:
@@ -1343,9 +1344,10 @@ class ChatBridge(QObject):
     def _clear_task_progress_for(self, conversation_id: str) -> None:
         """Terminal state: drop active progress, keep the persisted plan."""
         key = str(conversation_id or "")
+        self._task_plan_current_by_id[key] = False
         self._task_progress_by_id.pop(key, None)
-        # Keep _task_plan_current_by_id untouched so the full plan survives
-        # restoration; active progress is gated on _active_turns anyway.
+        if key == self._selected_conversation_id():
+            self._task_plan_current = False
         self._update_conversation_task_item(key)
 
     def _update_conversation_task_item(self, conversation_id: str) -> None:
@@ -2972,14 +2974,12 @@ class ChatBridge(QObject):
     def _on_background_runtime_event(self, event: RuntimeEvent) -> None:
         return self._Activity_domain._on_background_runtime_event(event)
 
-    def _finish_background_turn(self, conversation_id: str) -> None:
-        key = str(conversation_id or "")
-        self._active_turns.discard(key)
-        self._active_turn_started_epochs.pop(key, None)
-        self._clear_task_progress_for(key)
-        self._sync_selected_turn_state()
-        self.stateChanged.emit()
-        self.refresh()
+    def _finish_background_turn(
+        self, conversation_id: str, kind: str = "turn_completed", execution_id: int = 0
+    ) -> None:
+        self._finalize_terminal_state(
+            kind, conversation_id=conversation_id, execution_id=execution_id
+        )
 
     def _ensure_streaming_message(self) -> None:
         return self._Activity_domain._ensure_streaming_message()
@@ -3001,66 +3001,100 @@ class ChatBridge(QObject):
     def _flush_stream_step(self) -> None:
         return self._Activity_domain._flush_stream_step()
 
-    def _queue_terminal_state(self, kind: str) -> None:
+    def _queue_terminal_state(
+        self,
+        kind: str,
+        conversation_id: str | None = None,
+        execution_id: int = 0,
+    ) -> None:
+        cid = str(conversation_id or self._selected_conversation_id() or "")
+        is_selected = cid == self._selected_conversation_id()
         if (
             not self.turnRunning
             and kind in {"turn_completed", "orchestration_completed"}
             and self._status_text in {"Erro", "Interrompido"}
+            and is_selected
         ):
             return
-        self._stream_terminal_kind = kind
-        if self._activity_started_at:
-            self._activity_elapsed_seconds = max(
-                self._activity_elapsed_seconds,
-                int(time.monotonic() - self._activity_started_at),
+
+        # Immediate active turn & progress invalidation for the target conversation.
+        if cid:
+            self._active_turns.discard(cid)
+            self._active_turn_started_epochs.pop(cid, None)
+            self._clear_task_progress_for(cid)
+        if execution_id and cid:
+            self._ui_terminal_executions.add((cid, execution_id))
+
+        if is_selected:
+            if self._activity_started_at:
+                self._activity_elapsed_seconds = max(
+                    self._activity_elapsed_seconds,
+                    int(time.monotonic() - self._activity_started_at),
+                )
+            self._activity_clock.stop()
+            for step in self._activity_steps:
+                if step.get("state") not in {"error", "cancelled"}:
+                    if kind in {"error", "orchestration_cancelled"}:
+                        if step.get("state") == "running":
+                            step["state"] = "error" if kind == "error" else "cancelled"
+                    else:
+                        step["state"] = "completed"
+            terminal_state = (
+                "error"
+                if kind == "error"
+                else "cancelled" if kind == "orchestration_cancelled" else "completed"
             )
-        self._activity_clock.stop()
-        for step in self._activity_steps:
-            if step.get("state") not in {"error", "cancelled"}:
-                if kind in {"error", "orchestration_cancelled"}:
-                    if step.get("state") == "running":
-                        step["state"] = "error" if kind == "error" else "cancelled"
-                else:
-                    step["state"] = "completed"
-        terminal_state = (
-            "error"
-            if kind == "error"
-            else "cancelled" if kind == "orchestration_cancelled" else "completed"
-        )
-        for item in self._activity_items:
-            if item.get("state") == "running":
-                item["state"] = terminal_state
-        for item in self._trace_items:
-            if item.get("state") == "running":
-                item["state"] = terminal_state
-        selected_id = self._selected_conversation_id()
-        if selected_id:
-            # Active progress must vanish immediately on terminal state;
-            # the persisted full plan stays untouched.
-            self._clear_task_progress_for(selected_id)
-        if self._stream_pending_text:
+            for item in self._activity_items:
+                if item.get("state") == "running":
+                    item["state"] = terminal_state
+            for item in self._trace_items:
+                if item.get("state") == "running":
+                    item["state"] = terminal_state
+
+        if is_selected and self._stream_pending_text:
+            self._pending_terminal = {
+                "conversation_id": cid,
+                "execution_id": execution_id,
+                "kind": kind,
+            }
+            self._stream_terminal_kind = kind
             self._status_text = "Finalizando resposta…"
             if not self._stream_timer.isActive():
                 self._stream_timer.start()
             self.stateChanged.emit()
             return
-        terminal_kind = self._stream_terminal_kind
-        self._stream_terminal_kind = ""
-        self._finalize_terminal_state(terminal_kind)
 
-    def _finalize_terminal_state(self, kind: str) -> None:
-        conversation_id = self._selected_conversation_id()
-        self._active_turns.discard(conversation_id)
-        self._active_turn_started_epochs.pop(conversation_id, None)
-        if conversation_id:
-            self._clear_task_progress_for(conversation_id)
-        self._sync_selected_turn_state()
-        self._status_text = (
-            "Erro"
-            if kind == "error"
-            else "Interrompido" if kind == "orchestration_cancelled" else "Pronto"
+        self._pending_terminal = None
+        self._stream_terminal_kind = ""
+        self._finalize_terminal_state(
+            kind, conversation_id=cid, execution_id=execution_id
         )
-        self._reload_selected_messages()
+
+    def _finalize_terminal_state(
+        self,
+        kind: str,
+        conversation_id: str | None = None,
+        execution_id: int = 0,
+    ) -> None:
+        cid = str(conversation_id or self._selected_conversation_id() or "")
+        if not cid:
+            return
+        self._active_turns.discard(cid)
+        self._active_turn_started_epochs.pop(cid, None)
+        self._clear_task_progress_for(cid)
+        if execution_id:
+            self._ui_terminal_executions.add((cid, execution_id))
+        is_selected = cid == self._selected_conversation_id()
+        if is_selected:
+            self._sync_selected_turn_state()
+            self._status_text = (
+                "Erro"
+                if kind == "error"
+                else "Interrompido" if kind == "orchestration_cancelled" else "Pronto"
+            )
+            self._reload_selected_messages()
+        else:
+            self._sync_selected_turn_state()
         self.refresh()
         self.stateChanged.emit()
 
@@ -3152,10 +3186,7 @@ class ChatBridge(QObject):
                         or ""
                     ),
                 )
-                if emit_state and (
-                    changed
-                    or event.conversation_id == self._selected_conversation_id()
-                ):
+                if emit_state and changed:
                     self.stateChanged.emit()
             return
         execution_kinds = {

@@ -334,3 +334,60 @@ def test_claude_stream_task_results_are_correlated_and_errors_ignored():
     results = [event for event in events if event.kind == "task_tool_result"]
     assert len(results) == 1
     assert results[0].payload["result"]["task"]["id"] == "1"
+
+
+def test_task_plan_update_return_semantics():
+    plan = TaskPlan()
+    # 1. Valid snapshot returns True
+    assert plan.update([{"text": "Step 1", "state": "running"}], "2026-09-13T12:00:00Z") is True
+    assert len(plan.steps) == 1
+    # 2. Invalid non-list returns False
+    assert plan.update("invalid", "2026-09-13T12:00:01Z") is False
+    assert len(plan.steps) == 1
+    # 3. Invalid list items return False and leave plan untouched
+    assert plan.update([{"text": "Bad state", "state": "unknown"}], "2026-09-13T12:00:01Z") is False
+    assert plan.update([{"no_text": True, "state": "running"}], "2026-09-13T12:00:01Z") is False
+    assert plan.update([None], "2026-09-13T12:00:01Z") is False
+    assert len(plan.steps) == 1
+    assert plan.steps[0]["text"] == "Step 1"
+    # 4. Valid empty list [] returns True and clears plan
+    assert plan.update([], "2026-09-13T12:00:02Z") is True
+    assert plan.steps == []
+
+
+def test_antigravity_plan_updated_acp_parity():
+    from vrsoft_extractor.mary.provider_adapters.antigravity import AntigravityProvider
+
+    events = []
+    provider = AntigravityProvider()
+    state = {"session": "sess_123", "cancelled": False}
+
+    # 1. sessionUpdate: PlanUpdated with entries
+    params = {
+        "sessionId": "sess_123",
+        "update": {
+            "sessionUpdate": "PlanUpdated",
+            "entries": [
+                {"content": "Analise do esquema", "status": "completed"},
+                {"content": "Implementacao do patch", "status": "inProgress"},
+                {"content": "Execucao dos testes", "status": "pending"},
+            ],
+        },
+    }
+    provider._update("c_ag", state, events.append, "session/update", params)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.kind == "task_plan_updated"
+    assert ev.payload["steps"] == [
+        {"text": "Analise do esquema", "state": "completed"},
+        {"text": "Implementacao do patch", "state": "running"},
+        {"text": "Execucao dos testes", "state": "pending"},
+    ]
+
+    # 2. Empty entries clears the plan
+    events.clear()
+    params["update"]["entries"] = []
+    provider._update("c_ag", state, events.append, "session/update", params)
+    assert len(events) == 1
+    assert events[0].kind == "task_plan_updated"
+    assert events[0].payload["steps"] == []

@@ -389,6 +389,27 @@ class AntigravityProvider(AgentProvider):
                 }
             }
             callback(RuntimeEvent(cid, "token_usage", payload=payload))
+        elif (
+            isinstance(kind, str)
+            and kind.casefold() in {"plan", "plan_update", "planupdated", "plan_updated"}
+        ):
+            from ..task_plan import provider_plan
+
+            raw = None
+            for key in ("entries", "plan", "steps", "todos", "items"):
+                if key in update:
+                    raw = update[key]
+                    break
+            temp_event = RuntimeEvent(cid, "task_plan_updated", payload={"plan": raw})
+            normalized_steps = provider_plan(temp_event)
+            if normalized_steps is not None:
+                callback(
+                    RuntimeEvent(
+                        cid,
+                        "task_plan_updated",
+                        payload={"steps": normalized_steps},
+                    )
+                )
 
     def _permission(self, cid, state, callback, request_id, method, params):
         if method != "session/request_permission":

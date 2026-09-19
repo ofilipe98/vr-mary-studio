@@ -318,3 +318,284 @@ def test_cancel_error_and_late_events_do_not_resurrect_plan(tmp_path):
     finally:
         bridge.close()
         app.processEvents()
+
+
+def test_streaming_backlog_clears_active_progress_immediately_while_draining(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("StreamTerminal", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        orch._handle_event(RuntimeEvent(cid, "turn_started"))
+        orch._handle_event(RuntimeEvent(
+            cid,
+            "task_plan_updated",
+            payload={"steps": [
+                {"text": "Step 1", "state": "completed"},
+                {"text": "Step 2", "state": "running"},
+                {"text": "Step 3", "state": "pending"},
+            ]},
+        ))
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step 2", "completed": 1, "total": 3}
+
+        # Simulate streaming backlog
+        bridge._stream_pending_text = "More streaming text pending to be displayed"
+        bridge._stream_terminal_kind = ""
+
+        # Terminal arrives while streaming is still pending
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid)
+
+        # Invariants: active progress & visibility vanish IMMEDIATELY
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert bridge._status_text == "Finalizando resposta…"
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["conversation_id"] == cid
+        assert bridge._pending_terminal["kind"] == "turn_completed"
+
+        # Sidebar conversation task info is also cleared immediately
+        bridge.refresh()
+        row = next(r for r in bridge._all_conversations if r["conversationId"] == cid)
+        assert row["taskStep"] == ""
+
+        # Persisted plan remains intact with original states (does NOT mark pending as completed)
+        assert len(bridge.taskSteps) == 3
+        assert bridge.taskSteps[1]["state"] == "running"
+        assert bridge.taskSteps[2]["state"] == "pending"
+
+        # Now simulate flushing the remaining stream
+        bridge._stream_pending_text = ""
+        bridge._flush_stream_step()
+
+        # Terminal state fully finalized
+        assert bridge._status_text == "Pronto"
+        assert bridge._pending_terminal is None
+        assert bridge.taskSteps[2]["state"] == "pending"
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_switch_conversation_during_terminal_flush(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid_a = db.create_conversation("ConvA", "codex", "test", bridge._settings.root)
+        cid_b = db.create_conversation("ConvB", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid_a)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid_a] = bridge._on_runtime_event
+        orch._external_callbacks[cid_b] = bridge._on_runtime_event
+
+        # Turn starts on Conv A with plan
+        orch._handle_event(RuntimeEvent(cid_a, "turn_started"))
+        orch._handle_event(RuntimeEvent(
+            cid_a,
+            "task_plan_updated",
+            payload={"steps": [
+                {"text": "A Step 1", "state": "running"},
+                {"text": "A Step 2", "state": "pending"},
+            ]},
+        ))
+        assert bridge.taskProgress == {"step": "A Step 1", "completed": 0, "total": 2}
+
+        # Conv A enters pending terminal due to streaming text
+        bridge._stream_pending_text = "Pending output for A"
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid_a)
+        assert bridge.taskProgress == {}
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["conversation_id"] == cid_a
+
+        # User switches to Conv B while A is flushing
+        bridge.selectConversationId(cid_b)
+
+        # Invariants: Conv B does not inherit A's pending terminal or stream text
+        assert bridge._selected_conversation_id() == cid_b
+        assert bridge._pending_terminal is None
+        assert bridge._stream_pending_text == ""
+        assert bridge._status_text == "Pronto"
+        assert bridge.taskProgress == {}
+
+        # Switching back to Conv A shows it properly finalized and clean
+        bridge.selectConversationId(cid_a)
+        assert bridge._selected_conversation_id() == cid_a
+        assert bridge._stream_pending_text == ""
+        assert bridge.taskProgress == {}
+        assert bridge._status_text == "Pronto"
+        # Persisted plan for A survived
+        assert len(bridge.taskSteps) == 2
+        assert bridge.taskSteps[0]["text"] == "A Step 1"
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_two_concurrent_terminals_interleaved(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid_a = db.create_conversation("ConvA", "codex", "test", bridge._settings.root)
+        cid_b = db.create_conversation("ConvB", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid_a)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid_a] = bridge._on_runtime_event
+        orch._external_callbacks[cid_b] = bridge._on_background_runtime_event
+
+        # Both turns active
+        orch._handle_event(RuntimeEvent(cid_a, "turn_started"))
+        orch._handle_event(RuntimeEvent(cid_b, "turn_started"))
+        orch._handle_event(RuntimeEvent(
+            cid_a, "task_plan_updated", payload={"steps": [{"text": "Plan A", "state": "running"}]}
+        ))
+        orch._handle_event(RuntimeEvent(
+            cid_b, "task_plan_updated", payload={"steps": [{"text": "Plan B", "state": "running"}]}
+        ))
+
+        assert bridge.taskProgress == {"step": "Plan A", "completed": 0, "total": 1}
+        bridge.refresh()
+        rows = {r["conversationId"]: r for r in bridge._all_conversations}
+        assert rows[cid_a]["taskStep"] == "Plan A"
+        assert rows[cid_b]["taskStep"] == "Plan B"
+
+        # Background terminal for B arrives
+        orch._handle_event(RuntimeEvent(cid_b, "turn_completed"))
+        assert cid_b not in bridge._active_turns
+        bridge.refresh()
+        rows = {r["conversationId"]: r for r in bridge._all_conversations}
+        assert rows[cid_b]["taskStep"] == ""
+        # Conv A remains active in foreground
+        assert rows[cid_a]["taskStep"] == "Plan A"
+        assert bridge.taskProgress == {"step": "Plan A", "completed": 0, "total": 1}
+
+        # Terminal for A arrives
+        orch._handle_event(RuntimeEvent(cid_a, "turn_completed"))
+        assert cid_a not in bridge._active_turns
+        assert bridge.taskProgress == {}
+
+        # Check persisted plans of both
+        assert bridge._task_plans[cid_a].steps[0]["text"] == "Plan A"
+        assert bridge._task_plans[cid_b].steps[0]["text"] == "Plan B"
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_malformed_snapshot_does_not_resurrect_persisted_plan(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("MalformedTest", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        # Previous turn had a plan
+        orch._handle_event(RuntimeEvent(cid, "turn_started"))
+        orch._handle_event(RuntimeEvent(
+            cid, "task_plan_updated", payload={"steps": [{"text": "Old Plan", "state": "running"}]}
+        ))
+        assert bridge.taskPlanVisible is True
+        orch._handle_event(RuntimeEvent(cid, "turn_completed"))
+        assert bridge.taskPlanVisible is False
+        assert bridge.taskProgress == {}
+
+        # Follow-up turn starts without a plan
+        orch._handle_event(RuntimeEvent(cid, "turn_started"))
+        assert bridge._is_task_plan_current(cid) is False
+        assert bridge.taskPlanVisible is False
+        assert bridge.taskProgress == {}
+
+        # Malformed snapshot arrives: must be strictly a no-op
+        applied = bridge._apply_task_snapshot(
+            cid,
+            [{"invalid_key": "no text or state"}],
+            "2026-09-13T12:00:00Z",
+        )
+        assert applied is False
+        assert bridge._is_task_plan_current(cid) is False
+        assert bridge.taskPlanVisible is False
+        assert bridge.taskProgress == {}
+        # Old plan persisted steps still untouched
+        assert bridge._task_plans[cid].steps[0]["text"] == "Old Plan"
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_empty_snapshot_clears_active_plan(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("EmptySnapshot", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        orch._handle_event(RuntimeEvent(cid, "turn_started"))
+        orch._handle_event(RuntimeEvent(
+            cid, "task_plan_updated", payload={"steps": [{"text": "Active Step", "state": "running"}]}
+        ))
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Active Step", "completed": 0, "total": 1}
+
+        # Empty snapshot [] arrives
+        orch._handle_event(RuntimeEvent(cid, "task_plan_updated", payload={"steps": []}))
+        assert bridge.taskSteps == []
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+
+        bridge.refresh()
+        row = next(r for r in bridge._all_conversations if r["conversationId"] == cid)
+        assert row["taskStep"] == ""
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_antigravity_plan_updated_e2e(tmp_path):
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("AG", "antigravity", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+        orch = bridge._orchestrator
+        orch._external_callbacks[cid] = bridge._on_runtime_event
+
+        from vrsoft_extractor.mary.provider_adapters.antigravity import AntigravityProvider
+
+        provider = AntigravityProvider()
+        state = {"session": "sess_ag", "cancelled": False}
+
+        orch._handle_event(RuntimeEvent(cid, "turn_started"))
+
+        # ACP sends session/update with PlanUpdated
+        params = {
+            "sessionId": "sess_ag",
+            "update": {
+                "sessionUpdate": "PlanUpdated",
+                "entries": [
+                    {"content": "Step 1", "status": "completed"},
+                    {"content": "Step 2", "status": "in_progress"},
+                    {"content": "Step 3", "status": "pending"},
+                ],
+            },
+        }
+        # Provider updates and dispatches canonical event to callback (orch._handle_event)
+        provider._update(cid, state, orch._handle_event, "session/update", params)
+
+        assert bridge.taskPlanVisible is True
+        assert bridge.taskProgress == {"step": "Step 2", "completed": 1, "total": 3}
+        assert [s["state"] for s in bridge.taskSteps] == ["completed", "running", "pending"]
+
+        # Terminal clears active progress
+        orch._handle_event(RuntimeEvent(cid, "turn_completed"))
+        assert bridge.taskProgress == {}
+        assert bridge.taskPlanVisible is False
+        assert [s["state"] for s in bridge.taskSteps] == ["completed", "running", "pending"]
+    finally:
+        bridge.close()
+        app.processEvents()
