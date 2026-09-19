@@ -177,8 +177,9 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
     """Split and sanitize error text into (summary, details/stack).
     
     Handles patterns like:
-    null\nvratacarejo.service.notasaida.NotaSaidaFiscalService...
-    -> ("NullPointerException", full stack)
+    - Traceback (most recent call last): ... FileNotFoundError: ...
+    - null\nvratacarejo.service.notasaida.NotaSaidaFiscalService... -> ("NullPointerException", full stack)
+    - java.lang.NullPointerException: Cannot invoke ... -> ("NullPointerException", full stack)
     """
     if not raw_error:
         return "", ""
@@ -191,27 +192,35 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
         return "", ""
 
     first_line = lines[0]
+
+    # Check for Python traceback: the actual exception is on the final lines
+    if first_line.startswith("Traceback (most recent call last)"):
+        for line in reversed(lines):
+            if any(term in line for term in ("Error", "Exception", "Warning")):
+                summary = line.split(":")[0].strip()
+                return summary[:120], text
+        return lines[-1][:120], text
+
     # Check if first line is literal "null" followed by Java/Python stack trace
     if first_line.lower() in INVALID_TEXT_VALUES:
         # Check remaining lines for exception name or stack
         for line in lines[1:]:
             if "Exception" in line or "Error" in line:
-                # Extract exception name e.g. NullPointerException or java.lang.NullPointerException
                 parts = line.split(":")
                 candidate = parts[0].split(".")[-1].strip()
                 if candidate:
                     return candidate, text
-        # If subsequent lines exist (e.g. stack trace without explicit Exception name):
-        # In Java/backend logs, 'null' followed by code frames almost always signifies NullPointerException
         if len(lines) > 1:
             return "NullPointerException", text
         return "Erro desconhecido", text
 
-    # Normal first line error
-    summary = first_line
-    if ":" in summary and ("Exception" in summary or "Error" in summary):
-        summary = summary.split(":")[0].split(".")[-1].strip()
-    return summary[:120], text
+    # Check for Java fully qualified exception e.g. java.lang.NullPointerException: ...
+    if ":" in first_line and ("Exception" in first_line or "Error" in first_line):
+        candidate = first_line.split(":")[0].split(".")[-1].strip()
+        if candidate:
+            return candidate[:120], text
+
+    return first_line[:120], text
 
 
 @dataclass
@@ -241,6 +250,10 @@ class ToolActivity:
     locations: list[dict[str, Any]] = field(default_factory=list)
     sequence: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def tool_id(self) -> str:
+        return self.id
 
     def is_terminal(self) -> bool:
         return self.status.is_terminal

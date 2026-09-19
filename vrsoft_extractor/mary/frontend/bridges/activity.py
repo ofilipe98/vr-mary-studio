@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from ...models import RuntimeEvent
+from ...tool_presentation import DEFAULT_PRESENTATION_REGISTRY
 from ...task_plan import TaskPlan
 
 from .presentation import (markdown_for_display, short_event_text, segments_for_display)
@@ -962,6 +963,11 @@ class ActivityDomain:
         item_type = str(item.get("type") or item.get("step_type") or payload.get("step_type") or "tool")
         if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
             return None
+
+        # Delegate to canonical presentation registry
+        presentation = DEFAULT_PRESENTATION_REGISTRY.format_from_event(event)
+        entry = presentation.to_dict()
+
         identity = str(
             item.get("id")
             or payload.get("itemId")
@@ -969,39 +975,13 @@ class ActivityDomain:
             or payload.get("callId")
             or payload.get("runtime_event_id")
             or payload.get("request_id")
+            or entry.get("id")
             or "tool"
         )
-        lifecycle = str(payload.get("lifecycle") or "")
-        complete = (
-            lifecycle.endswith("completed")
-            or item.get("status") in {"completed", "error", "failed"}
-            or payload.get("success") is not None
-        )
-        state = (
-            "error"
-            if payload.get("success") is False or item.get("status") in {"error", "failed"}
-            else "completed"
-            if complete
-            else "running"
-        )
-        detail = str(
-            item.get("command")
-            or item.get("arguments")
-            or item.get("input")
-            or payload.get("arguments")
-            or item.get("output")
-            or payload.get("output")
-            or ""
-        )[:8000]
-        label = short_event_text(event.text or item.get("name") or item.get("tool") or item_type)
-        return {
-            "id": identity,
-            "kind": "tool",
-            "itemType": item_type,
-            "text": label,
-            "detail": detail,
-            "state": state,
-        }
+        entry["id"] = identity
+        if not entry.get("text"):
+            entry["text"] = short_event_text(event.text or item.get("name") or item.get("tool") or item_type)
+        return entry
 
     @staticmethod
     def _execution_activity(event: RuntimeEvent) -> dict[str, Any] | None:

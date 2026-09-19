@@ -3743,6 +3743,14 @@ class ChatBridge(QObject):
                         group[act_key] = activity
                     existing_tool = next((t for t in activity["activityData"] if t.get("id") == tool_entry["id"]), None)
                     if existing_tool is not None:
+                        old_state = existing_tool.get("state")
+                        if old_state in {"completed", "error", "failed", "cancelled", "interrupted"}:
+                            if tool_entry.get("state") in {"running", "pending", "waiting_approval"}:
+                                tool_entry["state"] = old_state
+                                if "badgeText" in existing_tool:
+                                    tool_entry["badgeText"] = existing_tool["badgeText"]
+                                if "badgeVariant" in existing_tool:
+                                    tool_entry["badgeVariant"] = existing_tool["badgeVariant"]
                         detail = existing_tool.get("detail", "")
                         existing_tool.update(tool_entry)
                         if not tool_entry.get("detail"):
@@ -3781,8 +3789,19 @@ class ChatBridge(QObject):
                 if group_id in terminal_ids or not running:
                     item["isStreaming"] = False
                     for activity in item.get("activityData", []):
-                        if activity["state"] == "running":
-                            activity["state"] = "interrupted" if conversation and conversation["status"] != "idle" else "completed"
+                        if activity.get("state") == "running":
+                            if conversation and conversation["status"] == "error":
+                                activity["state"] = "error"
+                                activity["badgeText"] = "falhou"
+                                activity["badgeVariant"] = "error"
+                            elif conversation and conversation["status"] == "cancelled":
+                                activity["state"] = "cancelled"
+                                activity["badgeText"] = "cancelado"
+                                activity["badgeVariant"] = "warning"
+                            else:
+                                activity["state"] = "interrupted"
+                                activity["badgeText"] = "interrompido"
+                                activity["badgeVariant"] = "warning"
                 item["displayContent"] = markdown_for_display(item["content"])
                 if item["role"] == "assistant":
                     item["segments"] = segments_for_display(item["content"])

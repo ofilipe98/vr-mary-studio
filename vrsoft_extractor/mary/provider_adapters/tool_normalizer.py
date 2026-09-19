@@ -465,6 +465,9 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     output = item.get("output") or payload.get("output")
     input_data = item.get("input") or item.get("arguments") or payload.get("arguments")
     command = str(item.get("command") or payload.get("command") or "")
+    cwd = str(item.get("cwd") or payload.get("cwd") or "")
+    exit_code_raw = item.get("exit_code") or payload.get("exit_code")
+    exit_code = int(exit_code_raw) if exit_code_raw is not None else None
 
     return NormalizedToolEvent(
         tool_id=identity,
@@ -475,6 +478,8 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
         name=raw_name,
         title=title,
         command=command,
+        cwd=cwd,
+        exit_code=exit_code,
         input=input_data,
         output=output,
         error=error,
