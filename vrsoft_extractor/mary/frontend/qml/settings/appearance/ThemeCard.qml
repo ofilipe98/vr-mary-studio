@@ -50,9 +50,9 @@ Rectangle {
             font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold
             Layout.fillWidth: true; elide: Text.ElideRight
         }
-        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "edit"; ToolTip.text: "Editar tema"; onClicked: root.editRequested() }
-        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "download"; ToolTip.text: "Exportar tema"; onClicked: root.exportRequested() }
-        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "trash"; ToolTip.text: "Excluir tema"; onClicked: root.deleteRequested() }
-        AppearanceAction { objectName: "duplicateTheme_" + root.themeId; quiet: true; iconKind: "copy"; ToolTip.text: "Duplicar tema"; onClicked: root.duplicateRequested() }
+        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "edit"; Accessible.name: "Editar tema"; onClicked: root.editRequested() }
+        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "download"; Accessible.name: "Exportar tema"; onClicked: root.exportRequested() }
+        AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "trash"; Accessible.name: "Excluir tema"; onClicked: root.deleteRequested() }
+        AppearanceAction { objectName: "duplicateTheme_" + root.themeId; quiet: true; iconKind: "copy"; Accessible.name: "Duplicar tema"; onClicked: root.duplicateRequested() }
     }
 }

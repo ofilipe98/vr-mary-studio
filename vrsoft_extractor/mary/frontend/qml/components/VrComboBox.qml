@@ -90,8 +90,7 @@ ComboBox {
                     foreground: settingsMouse.containsMouse
                         ? Theme.palette.text : Theme.palette.mutedText
                 }
-                ToolTip.visible: settingsMouse.containsMouse
-                ToolTip.text: "Configurar pasta"
+                Accessible.name: "Configurar pasta"
                 MouseArea {
                     id: settingsMouse
                     anchors.fill: parent

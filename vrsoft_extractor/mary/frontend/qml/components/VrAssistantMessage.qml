@@ -94,8 +94,7 @@ Column {
             width: 28; height: 26; iconSize: Theme.iconSmall
             iconKind: root.copied ? "check" : "copy"
             opacity: hover.hovered || hovered || activeFocus || root.copied ? 1 : 0
-            ToolTip.visible: hovered || activeFocus
-            ToolTip.text: root.copied ? "Copiado" : "Copiar resposta"
+            Accessible.name: root.copied ? "Copiado" : "Copiar resposta"
             onClicked: { root.copyRequested(); root.copied = true; copiedTimer.restart() }
             Behavior on opacity { enabled: !frontend.reduceMotion; NumberAnimation { duration: Theme.fastDuration } }
         }

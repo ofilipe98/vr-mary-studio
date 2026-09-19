@@ -460,9 +460,6 @@ Item {
                                                 checked: !!root.selected.enabled
                                                 enabled: !!root.selected.id
                                                 Accessible.name: "Ativar " + (root.selected.name || "provedor")
-                                                ToolTip.text: "Dispon\u00edvel para novas conversas"
-                                                ToolTip.visible: hovered || activeFocus
-                                                ToolTip.delay: 600
                                                 onToggled: {
                                                     studio.setProviderEnabled(root.selected.id, checked)
                                                     checked = Qt.binding(function() { return !!root.selected.enabled })
@@ -475,9 +472,7 @@ Item {
                                                 variant: "secondary"
                                                 implicitHeight: 32
                                                 enabled: !root.refreshing && !root.runtimeBusy
-                                                ToolTip.text: "Verificar os execut\u00e1veis instalados nesta m\u00e1quina"
-                                                ToolTip.visible: hovered || activeFocus
-                                                ToolTip.delay: 600
+                                                Accessible.name: "Verificar os execut\u00e1veis instalados nesta m\u00e1quina"
                                                 onClicked: {
                                                     root.refreshing = true
                                                     root.refreshFeedback = ""
@@ -646,9 +641,6 @@ Item {
                                                 font.family: Theme.monospaceFontFamily
                                                 font.pixelSize: Theme.monospaceFontSize(12)
                                                 Accessible.name: "Caminho do execut\u00e1vel: " + text
-                                                ToolTip.text: text
-                                                ToolTip.visible: truncated && (pathHover.hovered || copyPath.activeFocus)
-                                                ToolTip.delay: 500
                                             }
 
                                             VrIconButton {
@@ -660,8 +652,6 @@ Item {
                                                 iconKind: root.copied ? "check" : "copy"
                                                 opacity: pathHover.hovered || hovered || activeFocus || root.copied ? 1 : 0.6
                                                 Accessible.name: root.copied ? "Caminho copiado" : "Copiar caminho do execut\u00e1vel"
-                                                ToolTip.text: Accessible.name
-                                                ToolTip.visible: hovered || activeFocus
                                                 onClicked: {
                                                     studio.copyText(root.selected.command)
                                                     root.copied = true

@@ -94,7 +94,4 @@ Item {
         }
     }
 
-    ToolTip.visible: root.compact && pointer.hovered
-    ToolTip.text: root.title
-    ToolTip.delay: 450
 }

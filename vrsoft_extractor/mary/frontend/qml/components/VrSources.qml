@@ -28,9 +28,6 @@ Column {
             height: 36
             padding: 8
             Accessible.name: modelData.content + ", " + modelData.origin
-            ToolTip.visible: hovered || activeFocus
-            ToolTip.delay: 500
-            ToolTip.text: modelData.url
             onClicked: { if (studio) studio.openExternalUrl(modelData.url) }
             contentItem: RowLayout {
                 spacing: 8

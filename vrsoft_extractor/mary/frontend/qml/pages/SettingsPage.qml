@@ -39,7 +39,6 @@ Item {
         anchors.margins: Theme.pageMargin
         iconKind: "back"
         Accessible.name: "Retornar ao Chat VR"
-        ToolTip.text: Accessible.name; ToolTip.visible: hovered || activeFocus
         onClicked: frontend.setCurrentPage(1)
     }
 

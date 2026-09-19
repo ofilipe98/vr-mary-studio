@@ -111,8 +111,7 @@ Rectangle {
                 foreground: checked
                     ? (Theme.palette.headingText || "#FFFFFF")
                     : (hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                ToolTip.visible: hovered || activeFocus
-                ToolTip.text: checked ? "Desativar quebra de linhas" : "Quebrar linhas"
+                Accessible.name: checked ? "Desativar quebra de linhas" : "Quebrar linhas"
             }
 
             VrIconButton {
@@ -128,8 +127,7 @@ Rectangle {
                 foreground: root.copied
                     ? (Theme.palette.success || "#34d399")
                     : (hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                ToolTip.visible: hovered || activeFocus
-                ToolTip.text: root.copied ? "Copiado!" : "Copiar código"
+                Accessible.name: root.copied ? "Copiado!" : "Copiar código"
                 onClicked: root.copyCode()
             }
         }
