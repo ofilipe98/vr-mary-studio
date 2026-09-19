@@ -349,3 +349,132 @@ class TestGroupingInvariants:
         grouped = group_consecutive_tools(activities, threshold=2)
         standalone_ids = [g.tool_id for g in grouped if getattr(g, "kind", None) != "action_group"]
         assert "r-3" in standalone_ids
+
+
+    def test_adversarial_snapshot_progressive_duplicate_divergent(self):
+        """Authoritative snapshot semantics: progressive replaces, identical keeps, divergent replaces."""
+        # Initial snapshot
+        out = coalesce_output(None, new_output="phase 1: preparing", output_mode="snapshot")
+        assert out == "phase 1: preparing"
+
+        # Progressive snapshot replaces
+        out = coalesce_output(out, new_output="phase 1: preparing\nphase 2: building", output_mode="snapshot")
+        assert out == "phase 1: preparing\nphase 2: building"
+
+        # Identical snapshot maintains value
+        out2 = coalesce_output(out, new_output="phase 1: preparing\nphase 2: building", output_mode="snapshot")
+        assert out2 == out
+
+        # Divergent snapshot replaces without textual concatenation
+        out = coalesce_output(out, new_output="final result: success", output_mode="snapshot")
+        assert out == "final result: success"
+        assert "phase 1" not in out
+
+    def test_adversarial_snapshot_out_of_order_sequence(self):
+        """Out-of-order delayed snapshot with lower sequence is ignored by reducer."""
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="call-snap-ooo",
+            kind=ToolEventKind.STARTED,
+            sequence=1,
+        ))
+        # Sequence 3 arrives
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="call-snap-ooo",
+            kind=ToolEventKind.UPDATED,
+            output="Step 3 Complete",
+            output_mode="snapshot",
+            sequence=3,
+        ))
+        # Stale Sequence 2 arrives late -> must NOT overwrite sequence 3!
+        t = reducer.reduce(NormalizedToolEvent(
+            tool_id="call-snap-ooo",
+            kind=ToolEventKind.UPDATED,
+            output="Step 2 In Progress",
+            output_mode="snapshot",
+            sequence=2,
+        ))
+        assert t.output == "Step 3 Complete"
+        assert t.sequence == 3
+
+    def test_adversarial_delta_distinct_event_ids_vs_retry_dedup(self):
+        """Deltas with distinct event_ids append; identical event_id retry is ignored."""
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="call-delta-adv",
+            kind=ToolEventKind.STARTED,
+        ))
+        # Distinct event_ids: "A" + "A" -> "AA"
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="call-delta-adv",
+            kind=ToolEventKind.UPDATED,
+            delta="chunk\n",
+            output_mode="delta",
+            event_id="eid-1001",
+        ))
+        t = reducer.reduce(NormalizedToolEvent(
+            tool_id="call-delta-adv",
+            kind=ToolEventKind.UPDATED,
+            delta="chunk\n",
+            output_mode="delta",
+            event_id="eid-1002",
+        ))
+        assert t.output == "chunk\nchunk\n"
+
+        # Retry of eid-1002: must be dropped
+        t = reducer.reduce(NormalizedToolEvent(
+            tool_id="call-delta-adv",
+            kind=ToolEventKind.UPDATED,
+            delta="chunk\n",
+            output_mode="delta",
+            event_id="eid-1002",
+        ))
+        assert t.output == "chunk\nchunk\n"
+
+    def test_adversarial_provider_normalizers_extract_heterogeneous_keys(self):
+        """Verify extraction of event_id and sequence from all provider flavors."""
+        from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
+            normalize_codex_event,
+            normalize_antigravity_event,
+            normalize_opencode_event,
+            normalize_claude_event,
+            normalize_generic_event,
+        )
+        from vrsoft_extractor.mary.models import RuntimeEvent
+        from dataclasses import asdict
+
+        # Codex with eventId & seq
+        ev_codex = normalize_codex_event(
+            {"item": {"id": "c1", "type": "commandExecution", "eventId": "codex-99", "seq": "12"}},
+            "item/started",
+        )
+        assert ev_codex.event_id == "codex-99"
+        assert ev_codex.sequence == 12
+
+        # Antigravity with update_id & output_index
+        ev_anti = normalize_antigravity_event(
+            {"update": {"sessionUpdate": "tool_call", "toolCall": {"toolCallId": "a1", "update_id": "anti-88", "output_index": "22"}}},
+            "session/update",
+        )
+        assert ev_anti.event_id == "anti-88"
+        assert ev_anti.sequence == 22
+
+        # OpenCode with updateId & index
+        ev_open = normalize_opencode_event(
+            {"part": {"type": "tool", "callID": "o1", "tool": "exec", "updateId": "open-77", "index": "33"}},
+        )
+        assert ev_open.event_id == "open-77"
+        assert ev_open.sequence == 33
+
+        # Claude with event_id & sequence
+        ev_claude = normalize_claude_event(
+            {"type": "tool_use", "id": "cl1", "name": "view", "event_id": "claude-66", "sequence": "44"},
+        )
+        assert ev_claude.event_id == "claude-66"
+        assert ev_claude.sequence == 44
+
+        # Roundtrip via canonical_event in RuntimeEvent
+        rt = RuntimeEvent("cid", "tool_event", "", {"canonical_event": asdict(ev_claude)})
+        ev_generic = normalize_generic_event(rt)
+        assert ev_generic.event_id == "claude-66"
+        assert ev_generic.sequence == 44

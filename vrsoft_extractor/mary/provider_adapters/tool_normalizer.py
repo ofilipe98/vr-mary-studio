@@ -25,14 +25,45 @@ from ..tool_activity import (
 logger = logging.getLogger("mary.tool_normalizer")
 
 
+def _extract_event_id(*containers: Any) -> str:
+    """Extract explicit event identity from heterogeneous provider payloads."""
+    for c in containers:
+        if not isinstance(c, dict):
+            continue
+        for key in ("event_id", "eventId", "update_id", "updateId"):
+            val = c.get(key)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+    return ""
+
+
+def _extract_sequence(*containers: Any) -> int:
+    """Extract sequence or ordering index from heterogeneous provider payloads."""
+    for c in containers:
+        if not isinstance(c, dict):
+            continue
+        for key in ("sequence", "seq", "output_index", "index"):
+            val = c.get(key)
+            if val is None or val == "":
+                continue
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
 def normalize_codex_event(
     params: dict[str, Any],
     method: str,
     conversation_id: str = "",
 ) -> NormalizedToolEvent | None:
     """Normalize Codex RPC notifications into a NormalizedToolEvent."""
+    item = params.get("item") if isinstance(params.get("item"), dict) else {}
+    event_id = _extract_event_id(params, item)
+    sequence = _extract_sequence(params, item)
+
     if method == "item/started":
-        item = params.get("item") or {}
         item_id = str(item.get("id") or "")
         item_type = str(item.get("type") or "")
         if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
@@ -61,6 +92,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=ToolEventKind.STARTED,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=tool_type,
@@ -109,6 +142,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=kind,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=tool_type,
@@ -132,6 +167,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=ToolEventKind.UPDATED,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=ToolType.FILE_CHANGE,
@@ -146,6 +183,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=ToolEventKind.UPDATED,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=ToolType.COMMAND_EXECUTION if "commandExecution" in method else ToolType.UNKNOWN,
@@ -172,6 +211,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=ToolEventKind.UPDATED,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=tool_type,
@@ -200,6 +241,8 @@ def normalize_codex_event(
         return NormalizedToolEvent(
             tool_id=req_id,
             kind=ToolEventKind.APPROVAL_REQUESTED,
+            event_id=event_id,
+            sequence=sequence,
             provider="codex",
             conversation_id=conversation_id,
             type=tool_type,
@@ -224,6 +267,8 @@ def normalize_antigravity_event(
         tool_call = update.get("toolCall") or {}
         if not isinstance(tool_call, dict):
             tool_call = {}
+        event_id = _extract_event_id(params, update, tool_call)
+        sequence = _extract_sequence(params, update, tool_call)
         call_id = str(tool_call.get("toolCallId") or tool_call.get("id") or "")
         raw_name = str(tool_call.get("name") or tool_call.get("title") or "ferramenta")
         tool_type = ToolType.from_string(raw_name)
@@ -293,6 +338,8 @@ def normalize_antigravity_event(
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=kind,
+            event_id=event_id,
+            sequence=sequence,
             provider="antigravity",
             conversation_id=conversation_id,
             type=tool_type,
@@ -310,6 +357,10 @@ def normalize_antigravity_event(
 
     if session_update == "tool_result":
         tool_result = update.get("toolResult") or {}
+        if not isinstance(tool_result, dict):
+            tool_result = {}
+        event_id = _extract_event_id(params, update, tool_result)
+        sequence = _extract_sequence(params, update, tool_result)
         call_id = str(
             tool_result.get("toolCallId")
             or tool_result.get("id")
@@ -342,6 +393,8 @@ def normalize_antigravity_event(
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=kind,
+            event_id=event_id,
+            sequence=sequence,
             provider="antigravity",
             conversation_id=conversation_id,
             type=tool_type,
@@ -378,6 +431,8 @@ def normalize_opencode_event(
     )
 
     if is_tool_payload:
+        event_id = _extract_event_id(payload, part)
+        sequence = _extract_sequence(payload, part)
         call_id = str(
             part.get("callID")
             or part.get("id")
@@ -461,6 +516,8 @@ def normalize_opencode_event(
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=event_kind,
+            event_id=event_id,
+            sequence=sequence,
             provider="opencode",
             conversation_id=conversation_id,
             type=tool_type,
@@ -483,6 +540,8 @@ def normalize_claude_event(
     conversation_id: str = "",
 ) -> NormalizedToolEvent | None:
     """Normalize Claude Code CLI tool_use / tool_result blocks."""
+    event_id = _extract_event_id(block_or_payload)
+    sequence = _extract_sequence(block_or_payload)
     block_type = str(block_or_payload.get("type") or "")
     if block_type == "tool_use":
         tool_id = str(block_or_payload.get("id") or "")
@@ -496,6 +555,8 @@ def normalize_claude_event(
         return NormalizedToolEvent(
             tool_id=tool_id,
             kind=ToolEventKind.STARTED,
+            event_id=event_id,
+            sequence=sequence,
             provider="claude",
             conversation_id=conversation_id,
             type=tool_type,
@@ -520,6 +581,8 @@ def normalize_claude_event(
         return NormalizedToolEvent(
             tool_id=tool_id,
             kind=kind,
+            event_id=event_id,
+            sequence=sequence,
             provider="claude",
             conversation_id=conversation_id,
             output=output,
@@ -538,6 +601,23 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     payload = dict(event.payload or {})
     if "canonical_event" in payload and isinstance(payload["canonical_event"], dict):
         d = dict(payload["canonical_event"])
+        item = (
+            payload.get("item")
+            or payload.get("part")
+            or payload.get("toolCall")
+            or payload.get("toolResult")
+            or {}
+        )
+        if not d.get("event_id"):
+            ext_ev_id = _extract_event_id(payload, item)
+            if ext_ev_id:
+                d["event_id"] = ext_ev_id
+        if not d.get("sequence"):
+            ext_seq = _extract_sequence(payload, item)
+            if ext_seq:
+                d["sequence"] = ext_seq
+        if not d.get("conversation_id") and event.conversation_id:
+            d["conversation_id"] = event.conversation_id
         kind = ToolEventKind.from_string(d.pop("kind", None))
         type_ = ToolType.from_string(d.pop("type", None))
         status = ToolStatus(d["status"]) if "status" in d and d["status"] else None
@@ -637,25 +717,8 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     exit_code_raw = item.get("exit_code") or payload.get("exit_code")
     exit_code = int(exit_code_raw) if exit_code_raw is not None else None
     # Explicit provider event identity prioritized over content heuristics.
-    event_id = str(
-        payload.get("event_id")
-        or payload.get("eventId")
-        or item.get("event_id")
-        or item.get("eventId")
-        or payload.get("update_id")
-        or payload.get("updateId")
-        or ""
-    )
-    sequence = 0
-    for seq_key in ("sequence", "seq", "output_index", "index"):
-        raw_seq = payload.get(seq_key, item.get(seq_key, None)) if isinstance(item, dict) else payload.get(seq_key)
-        if raw_seq is None or raw_seq == "":
-            continue
-        try:
-            sequence = int(raw_seq)
-            break
-        except (TypeError, ValueError):
-            continue
+    event_id = _extract_event_id(payload, item)
+    sequence = _extract_sequence(payload, item)
     # Explicit output semantics: incremental delta vs cumulative snapshot.
     # Only providers that declare cumulative snapshots use snapshot coalescing;
     # true deltas always append literally (even when textually equal).

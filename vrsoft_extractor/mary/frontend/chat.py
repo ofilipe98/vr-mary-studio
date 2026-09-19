@@ -218,6 +218,7 @@ class ChatBridge(QObject):
         self._model_items: list[dict[str, Any]] = []
         self._favorite_model_keys = self._load_favorite_model_keys()
         self._model_catalog_loading = False
+        self._timeline_reducers: dict[tuple[str, int], ToolLifecycleReducer] = {}
         self._model_catalog_results: queue.SimpleQueue[list[dict[str, Any]]] = (
             queue.SimpleQueue()
         )
@@ -1494,6 +1495,8 @@ class ChatBridge(QObject):
             self._package_operation_thread.join(timeout=2.0)
         self._orchestrator.close()
         self._active_turns.clear()
+        if hasattr(self, "_timeline_reducers"):
+            self._timeline_reducers.clear()
         self._sync_selected_turn_state()
 
     def _selected_conversation_id(self) -> str:
@@ -2062,6 +2065,10 @@ class ChatBridge(QObject):
     def isConversationPinned(self, conversation_id: str) -> bool:  # noqa: N802
         """TC-07: QML menu label must reflect the menu target, not the selection."""
         return self._Conversations_domain.isConversationPinned(conversation_id)
+
+    @Slot(str, result=str)
+    def conversationPinLabel(self, conversation_id: str) -> str:  # noqa: N802
+        return self._Conversations_domain.conversationPinLabel(conversation_id)
 
     @Slot()
     def togglePinnedCurrent(self) -> None:  # noqa: N802
@@ -3761,6 +3768,11 @@ class ChatBridge(QObject):
         Runtime event PK supplies the shared order for messages and work. Old
         rows with no execution metadata retain the existing history path.
         """
+        if not hasattr(self, "_timeline_reducers"):
+            self._timeline_reducers = {}
+        for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == cid]:
+            self._timeline_reducers.pop(k, None)
+
         with self._database.connect() as connection:
             events = connection.execute("SELECT * FROM runtime_events WHERE conversation_id=? ORDER BY id", (cid,)).fetchall()
         groups: dict[int, dict[str, dict[str, Any]]] = {}
@@ -3892,6 +3904,11 @@ class ChatBridge(QObject):
                             entry["detail"] = old_card["detail"]
                         rebuilt.append(entry)
                     item["activityData"] = rebuilt
+                if hasattr(self, "_timeline_reducers"):
+                    self._timeline_reducers.pop((cid, group_id), None)
+        if not running and hasattr(self, "_timeline_reducers"):
+            for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == cid]:
+                self._timeline_reducers.pop(k, None)
         for group_id, group in groups.items():
             for item in group.values():
                 if group_id in terminal_ids or not running:

@@ -2865,7 +2865,7 @@ Item {
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9; spacing: 8
                         VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
-                        Text { Layout.fillWidth: true; text: conversationAction.modelData.label; color: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                        Text { Layout.fillWidth: true; text: conversationAction.modelData.action === "pin" ? (root.conversationMenuConversationId ? (root.chatBridge.isConversationPinned(root.conversationMenuConversationId) ? "Desafixar conversa" : "Fixar conversa") : conversationAction.modelData.label) : conversationAction.modelData.label; color: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                     }
                     HoverHandler { id: menuHover }
                     TapHandler {

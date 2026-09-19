@@ -1,3 +1,12 @@
+from dataclasses import asdict
+from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
+    normalize_codex_event,
+    normalize_antigravity_event,
+    normalize_opencode_event,
+    normalize_claude_event,
+    normalize_generic_event,
+)
+
 """Mandatory regression tests for audit 13731f0 follow-up (P1/P2).
 
 Covers:
@@ -263,6 +272,233 @@ class AuditRegressionTest(unittest.TestCase):
             {"toolCallId": "e1", "step_type": "commandExecution", "status": "error", "error": "boom"},
         ])
         self.assertEqual(c_err["e1"]["state"], "error")
+
+
+
+    def test_p1_roundtrip_all_providers_preserves_event_id_and_sequence(self):
+        # 1. Codex
+        codex_payload = {
+            "item": {
+                "id": "codex-item-1",
+                "type": "commandExecution",
+                "command": "git status",
+                "status": "in_progress",
+                "event_id": "codex-ev-100",
+                "sequence": 15,
+            }
+        }
+        codex_norm = normalize_codex_event(codex_payload, "item/started", "cid-rt")
+        self.assertIsNotNone(codex_norm)
+        self.assertEqual(codex_norm.event_id, "codex-ev-100")
+        self.assertEqual(codex_norm.sequence, 15)
+        rt_codex = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(codex_norm)})
+        gen_codex = normalize_generic_event(rt_codex)
+        self.assertIsNotNone(gen_codex)
+        self.assertEqual(gen_codex.event_id, "codex-ev-100")
+        self.assertEqual(gen_codex.sequence, 15)
+        r = ToolLifecycleReducer()
+        t_codex = r.reduce(gen_codex)
+        self.assertEqual(t_codex.id, "codex-item-1")
+        self.assertEqual(t_codex.sequence, 15)
+
+        # 2. Antigravity
+        anti_payload = {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCall": {
+                    "toolCallId": "anti-call-200",
+                    "name": "read_file",
+                    "title": "Lendo",
+                    "eventId": "anti-ev-200",
+                    "seq": 25,
+                },
+            }
+        }
+        anti_norm = normalize_antigravity_event(anti_payload, "session/update", "cid-rt")
+        self.assertIsNotNone(anti_norm)
+        self.assertEqual(anti_norm.event_id, "anti-ev-200")
+        self.assertEqual(anti_norm.sequence, 25)
+        rt_anti = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(anti_norm)})
+        gen_anti = normalize_generic_event(rt_anti)
+        self.assertIsNotNone(gen_anti)
+        self.assertEqual(gen_anti.event_id, "anti-ev-200")
+        self.assertEqual(gen_anti.sequence, 25)
+        t_anti = r.reduce(gen_anti)
+        self.assertEqual(t_anti.id, "anti-call-200")
+        self.assertEqual(t_anti.sequence, 25)
+
+        # 3. OpenCode
+        open_payload = {
+            "part": {
+                "type": "tool",
+                "callID": "open-call-300",
+                "tool": "terminal",
+                "state": "running",
+                "update_id": "open-ev-300",
+                "output_index": 35,
+            }
+        }
+        open_norm = normalize_opencode_event(open_payload, "cid-rt")
+        self.assertIsNotNone(open_norm)
+        self.assertEqual(open_norm.event_id, "open-ev-300")
+        self.assertEqual(open_norm.sequence, 35)
+        rt_open = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(open_norm)})
+        gen_open = normalize_generic_event(rt_open)
+        self.assertIsNotNone(gen_open)
+        self.assertEqual(gen_open.event_id, "open-ev-300")
+        self.assertEqual(gen_open.sequence, 35)
+        t_open = r.reduce(gen_open)
+        self.assertEqual(t_open.id, "open-call-300")
+        self.assertEqual(t_open.sequence, 35)
+
+        # 4. Claude
+        claude_payload = {
+            "type": "tool_use",
+            "id": "claude-call-400",
+            "name": "edit",
+            "updateId": "claude-ev-400",
+            "index": 45,
+        }
+        claude_norm = normalize_claude_event(claude_payload, "cid-rt")
+        self.assertIsNotNone(claude_norm)
+        self.assertEqual(claude_norm.event_id, "claude-ev-400")
+        self.assertEqual(claude_norm.sequence, 45)
+        rt_claude = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(claude_norm)})
+        gen_claude = normalize_generic_event(rt_claude)
+        self.assertIsNotNone(gen_claude)
+        self.assertEqual(gen_claude.event_id, "claude-ev-400")
+        self.assertEqual(gen_claude.sequence, 45)
+        t_claude = r.reduce(gen_claude)
+        self.assertEqual(t_claude.id, "claude-call-400")
+        self.assertEqual(t_claude.sequence, 45)
+
+    def test_p1_canonical_event_defense_never_overwrites_explicit_identity(self):
+        raw_canonical = asdict(NormalizedToolEvent(tool_id="def-1", kind=ToolEventKind.STARTED))
+        raw_canonical["event_id"] = "orig-id"
+        raw_canonical["sequence"] = 12
+        payload = {
+            "canonical_event": raw_canonical,
+            "event_id": "different-id",
+            "sequence": 99,
+        }
+        ev = normalize_generic_event(RuntimeEvent("cid", "tool_event", "", payload))
+        self.assertEqual(ev.event_id, "orig-id")
+        self.assertEqual(ev.sequence, 12)
+
+        # But if canonical event is missing event_id/sequence, enrich from outer payload
+        raw_canonical_empty = asdict(NormalizedToolEvent(tool_id="def-2", kind=ToolEventKind.STARTED))
+        raw_canonical_empty["event_id"] = ""
+        raw_canonical_empty["sequence"] = 0
+        payload_enrich = {
+            "canonical_event": raw_canonical_empty,
+            "event_id": "enriched-id",
+            "sequence": 77,
+        }
+        ev_enrich = normalize_generic_event(RuntimeEvent("cid", "tool_event", "", payload_enrich))
+        self.assertEqual(ev_enrich.event_id, "enriched-id")
+        self.assertEqual(ev_enrich.sequence, 77)
+
+    def test_p2_snapshot_divergent_and_out_of_order(self):
+        # Identical snapshot maintains output
+        self.assertEqual(coalesce_output("output A", new_output="output A", output_mode="snapshot"), "output A")
+        # Progressive snapshot replaces
+        self.assertEqual(coalesce_output("step 1", new_output="step 1\nstep 2", output_mode="snapshot"), "step 1\nstep 2")
+        # Divergent / disjoint snapshot replaces without string concatenation
+        self.assertEqual(coalesce_output("phase 1", new_output="final result", output_mode="snapshot"), "final result")
+        # Stale sequence in snapshot mode is ignored
+        self.assertEqual(
+            coalesce_output("current buffer", new_output="stale buffer", output_mode="snapshot", sequence=1, current_sequence=2),
+            "current buffer",
+        )
+
+        # Reducer integration: sequence order authoritative
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="s1", kind=ToolEventKind.STARTED, sequence=1))
+        r.reduce(NormalizedToolEvent(tool_id="s1", kind=ToolEventKind.UPDATED, output="seq 2 result", output_mode="snapshot", sequence=2))
+        # Out-of-order event with sequence 1 arrives late -> ignored
+        tool = r.reduce(NormalizedToolEvent(tool_id="s1", kind=ToolEventKind.UPDATED, output="seq 1 result", output_mode="snapshot", sequence=1))
+        self.assertEqual(tool.output, "seq 2 result")
+        # Newer event sequence 3 replaces
+        tool = r.reduce(NormalizedToolEvent(tool_id="s1", kind=ToolEventKind.UPDATED, output="seq 3 result", output_mode="snapshot", sequence=3))
+        self.assertEqual(tool.output, "seq 3 result")
+
+    def test_p2_delta_distinct_event_ids_append_vs_retry_dedup(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="d1", kind=ToolEventKind.STARTED))
+        # Two legitimate distinct chunks with identical text but distinct event_id must accumulate
+        r.reduce(NormalizedToolEvent(tool_id="d1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", event_id="chunk-1"))
+        tool = r.reduce(NormalizedToolEvent(tool_id="d1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", event_id="chunk-2"))
+        self.assertEqual(tool.output, "AA")
+
+        # But a retry of chunk-2 with the exact same event_id must be ignored
+        tool = r.reduce(NormalizedToolEvent(tool_id="d1", kind=ToolEventKind.UPDATED, delta="A", output_mode="delta", event_id="chunk-2"))
+        self.assertEqual(tool.output, "AA")
+
+    def test_p2_context_menu_pin_labels_all_four_scenarios(self):
+        chat1 = self._database.create_conversation("Chat 1", "codex", "modelo", self._settings.root)
+        chat2 = self._database.create_conversation("Chat 2", "codex", "modelo", self._settings.root)
+        self._bridge.refresh()
+
+        # Scenario 1: Chat 1 selected & pinned; Chat 2 unpinned. Context menu opened on Chat 2.
+        self._bridge.selectConversationId(chat1)
+        self.assertEqual(self._bridge._selected_conversation_id(), chat1)
+        self._bridge.togglePinnedConversation(chat1)
+        self.assertTrue(self._bridge.isConversationPinned(chat1))
+        self.assertFalse(self._bridge.isConversationPinned(chat2))
+        # Menu for target chat2 must display "Fixar conversa", NOT "Desafixar conversa"
+        self.assertEqual(self._bridge.conversationPinLabel(chat2), "Fixar conversa")
+        self.assertEqual(self._bridge.conversationPinLabel(chat1), "Desafixar conversa")
+
+        # Scenario 2: Chat 2 is pinned; Chat 1 is selected and unpinned. Context menu opened on Chat 2.
+        self._bridge.togglePinnedConversation(chat1)  # unpin chat1
+        self._bridge.togglePinnedConversation(chat2)  # pin chat2
+        self.assertFalse(self._bridge.isConversationPinned(chat1))
+        self.assertTrue(self._bridge.isConversationPinned(chat2))
+        self._bridge.selectConversationId(chat1)
+        self.assertEqual(self._bridge._selected_conversation_id(), chat1)
+        # Target is chat2 (pinned), selection is chat1 (unpinned) -> menu on chat2 must display "Desafixar conversa"
+        self.assertEqual(self._bridge.conversationPinLabel(chat2), "Desafixar conversa")
+        self.assertEqual(self._bridge.conversationPinLabel(chat1), "Fixar conversa")
+
+        # Scenario 3: Action executed from menu operates on target chat2, NOT on selected chat1
+        self._bridge.togglePinnedConversation(chat2)
+        # Chat 2 is now unpinned; Chat 1 remains unpinned and still selected
+        self.assertFalse(self._bridge.isConversationPinned(chat2))
+        self.assertFalse(self._bridge.isConversationPinned(chat1))
+        self.assertEqual(self._bridge._selected_conversation_id(), chat1)
+
+        # Scenario 4: Target pin label verification matches target pin state dynamically
+        self.assertEqual(self._bridge.conversationPinLabel(chat2), "Fixar conversa")
+        self._bridge.togglePinnedConversation(chat2)
+        self.assertEqual(self._bridge.conversationPinLabel(chat2), "Desafixar conversa")
+
+    def test_p3_timeline_reducers_cleanup_no_leaks(self):
+        cid = self._database.create_conversation("Leak Test", "codex", "modelo", self._settings.root)
+        eid = 42
+        for i in range(3):
+            self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+                "execution_id": eid,
+                "toolCallId": f"t-{i}",
+                "step_type": "commandExecution",
+                "status": "success",
+                "output": f"ok-{i}",
+            }))
+        self._database.add_event(RuntimeEvent(cid, "turn_completed", "", {"execution_id": eid}))
+        self._database.begin_user_turn(cid, "hello")
+        rows = self._database.messages(cid)
+
+        # Reload timeline multiple times
+        for _ in range(5):
+            ok = self._bridge._reload_execution_timeline(cid, rows)
+            self.assertTrue(ok)
+            # Reconstructed finished turn removes reducers without leak
+            self.assertEqual(len(self._bridge._timeline_reducers), 0)
+
+        # close() clears map
+        self._bridge._timeline_reducers[(cid, 999)] = ToolLifecycleReducer()
+        self.assertEqual(len(self._bridge._timeline_reducers), 1)
+        self._bridge.close()
+        self.assertEqual(len(self._bridge._timeline_reducers), 0)
 
 
 if __name__ == "__main__":

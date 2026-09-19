@@ -253,14 +253,17 @@ def coalesce_output(
     delta: Any = None,
     *,
     output_mode: str = "",
+    sequence: int = 0,
+    current_sequence: int = 0,
 ) -> Any:
     """Coalesce incoming output chunk or snapshot with current output.
 
     Explicit ``output_mode`` avoids inferring provider semantics from text:
     - ``"delta"``: incremental chunk, always appended literally
       (``"A"`` + ``"A"`` -> ``"AA"``).
-    - ``"snapshot"``: cumulative buffer, coalesced without duplication
-      (``"A"``, ``"AB"``, ``"ABC"`` -> ``"ABC"``).
+    - ``"snapshot"``: cumulative buffer, newest authoritative value replaces
+      progressive or divergent buffers; duplicate maintains value; out-of-order
+      stale sequence ignored when sequence information is available.
     - ``""`` (legacy): heuristic parity with T3Code streaming & coalescing:
       delta stream ("A", "B", "C") -> "ABC";
       snapshot stream ("A", "AB", "ABC") -> "ABC";
@@ -269,25 +272,30 @@ def coalesce_output(
     Handles string, dict/list (MCP/JSON payloads), and None seamlessly.
     """
     mode = str(output_mode or "").strip().lower()
-    if mode == "delta" and delta is not None and delta != "":
-        delta_str = str(delta)
-        if curr_output is None or curr_output == "":
-            return delta_str
-        return str(curr_output) + delta_str
+    if mode == "delta":
+        candidate = delta if delta is not None else new_output
+        if candidate is not None and candidate != "":
+            delta_str = str(candidate)
+            if curr_output is None or curr_output == "":
+                return delta_str
+            return str(curr_output) + delta_str
+        return curr_output
 
-    if mode == "snapshot" and new_output is not None:
-        if curr_output is None or curr_output == "":
-            return new_output
-        if curr_output == new_output:
+    if mode == "snapshot":
+        if sequence > 0 and current_sequence > 0 and sequence < current_sequence:
             return curr_output
-        if isinstance(curr_output, str) and isinstance(new_output, str):
-            if new_output.startswith(curr_output):
-                return new_output
-            if curr_output.startswith(new_output):
+        candidate = new_output if new_output is not None else delta
+        if candidate is not None:
+            if curr_output is None or curr_output == "":
+                return candidate
+            if curr_output == candidate:
                 return curr_output
-            # Disjoint snapshot: newest buffer is authoritative, replace.
-            return new_output
-        return new_output
+            # In explicit snapshot mode, newest buffer is authoritative:
+            # progressive replaces ("A" -> "AB" -> "ABC"),
+            # divergent replaces ("phase 1" -> "final result"),
+            # never concatenate or use text heuristics.
+            return candidate
+        return curr_output
 
     if delta is not None and delta != "":
         delta_str = str(delta)
@@ -592,6 +600,8 @@ class ToolLifecycleReducer:
                         new_output=event.output,
                         delta=None,
                         output_mode=getattr(event, "output_mode", "") or "snapshot",
+                        sequence=event.sequence,
+                        current_sequence=tool.sequence,
                     )
                     if merged != tool.output:
                         tool.output = _truncate_tool_output(merged)
@@ -637,6 +647,7 @@ class ToolLifecycleReducer:
             tool.cwd = event.cwd
         if event.exit_code is not None:
             tool.exit_code = event.exit_code
+        prev_sequence = tool.sequence
         if event.sequence > tool.sequence:
             tool.sequence = event.sequence
         if event.metadata:
@@ -655,6 +666,8 @@ class ToolLifecycleReducer:
                 new_output=event.output,
                 delta=event.delta,
                 output_mode=getattr(event, "output_mode", "") or "",
+                sequence=event.sequence,
+                current_sequence=prev_sequence,
             )
         )
 

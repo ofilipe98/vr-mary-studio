@@ -555,6 +555,9 @@ class ConversationsDomain:
         changing_conversation = previous_id != str(selected.get("conversationId") or "")
         self._draft = False
         if changing_conversation:
+            if hasattr(self, "_timeline_reducers") and previous_id:
+                for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == previous_id]:
+                    self._timeline_reducers.pop(k, None)
             self._finalize_pending_terminal_before_new_turn()
             self._reset_stream_state()
             self._activity_steps = []
@@ -799,6 +802,13 @@ class ConversationsDomain:
         """TC-07: pin state of the menu target (not the current selection)."""
         return str(conversation_id or "").strip() in self._pinned_conversation_ids
 
+    def conversationPinLabel(self, conversation_id: str) -> str:  # noqa: N802
+        return (
+            "Desafixar conversa"
+            if self.isConversationPinned(conversation_id)
+            else "Fixar conversa"
+        )
+
     def togglePinnedConversation(self, conversation_id: str) -> None:  # noqa: N802
         """Toggle pin for the explicitly targeted conversation (no reselection)."""
         cid = str(conversation_id or "").strip()
@@ -891,6 +901,9 @@ class ConversationsDomain:
         cid = str(conversation_id or "").strip()
         if not cid or cid in self._deleting_conversation_ids:
             return
+        if hasattr(self, "_timeline_reducers") and cid:
+            for k in [k for k in list(self._timeline_reducers.keys()) if k[0] == cid]:
+                self._timeline_reducers.pop(k, None)
         is_selected = cid == self._selected_conversation_id()
         self._conversation_delete_running = True
         self._conversation_delete_id = cid
