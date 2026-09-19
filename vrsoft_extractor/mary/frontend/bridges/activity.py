@@ -255,9 +255,19 @@ class ActivityDomain:
                 if row.get("role") == "activity":
                     activities = [dict(act) for act in row.get("activityData", [])]
                     for act in activities:
-                        if act.get("state") == "running":
-                            act["state"] = ("error" if event.kind == "error" else
-                                            "cancelled" if event.kind == "orchestration_cancelled" else "completed")
+                        if act.get("state") in {"running", "waiting_approval", "pending"}:
+                            if event.kind == "error":
+                                act["state"] = "error"
+                                act["badgeText"] = "falhou"
+                                act["badgeVariant"] = "error"
+                            elif event.kind == "orchestration_cancelled":
+                                act["state"] = "cancelled"
+                                act["badgeText"] = "cancelado"
+                                act["badgeVariant"] = "warning"
+                            else:
+                                act["state"] = "interrupted"
+                                act["badgeText"] = "interrompido"
+                                act["badgeVariant"] = "warning"
                     self._messages.update_by_key("messageKey", row.get("messageKey"),
                                                  isStreaming=False, activityData=activities)
             self._queue_terminal_state(event.kind, conversation_id=event.conversation_id, execution_id=execution_id)
@@ -976,6 +986,13 @@ class ActivityDomain:
             activity = reducer.reduce(norm)
         else:
             clean_summary, clean_details = sanitize_error_summary(norm.error or "")
+            fallback_status = (
+                ToolStatus.FAILURE if norm.kind == ToolEventKind.FAILED
+                else (ToolStatus.SUCCESS if norm.kind == ToolEventKind.COMPLETED
+                else (ToolStatus.WAITING_APPROVAL if norm.kind == ToolEventKind.APPROVAL_REQUESTED
+                else (ToolStatus.CANCELLED if norm.kind == ToolEventKind.CANCELLED
+                else ToolStatus.RUNNING)))
+            )
             activity = ToolActivity(
                 id=norm.tool_id,
                 conversation_id=event.conversation_id,
@@ -991,11 +1008,7 @@ class ActivityDomain:
                 error=clean_summary,
                 error_details=clean_details,
                 exit_code=norm.exit_code,
-                status=norm.status or (
-                    ToolStatus.FAILURE if norm.kind == ToolEventKind.FAILED
-                    else (ToolStatus.SUCCESS if norm.kind == ToolEventKind.COMPLETED
-                    else ToolStatus.RUNNING)
-                ),
+                status=norm.status or fallback_status,
                 started_at=event.created_at,
                 metadata=dict(event.payload),
             )

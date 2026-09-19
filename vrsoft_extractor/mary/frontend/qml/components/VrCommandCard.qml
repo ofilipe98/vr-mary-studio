@@ -20,6 +20,7 @@ Item {
     readonly property bool isRunning: stateValue === "running"
     readonly property bool isError: stateValue === "error" || stateValue === "failed"
     readonly property bool isSuccess: stateValue === "completed" || stateValue === "success"
+    readonly property bool isWaitingApproval: stateValue === "waiting_approval"
 
     implicitHeight: mainColumn.implicitHeight
 
@@ -67,10 +68,12 @@ Item {
                 VrLineIcon {
                     Layout.preferredWidth: 14
                     Layout.preferredHeight: 14
-                    kind: root.isError ? "close" : (root.isSuccess ? "check" : "terminalPrompt")
+                    kind: root.isError ? "close" : (root.isSuccess ? "check" : (root.isWaitingApproval ? "alert" : "terminalPrompt"))
                     foreground: root.isError
                         ? Theme.palette.danger
-                        : (root.isSuccess ? Theme.palette.success : Theme.palette.mutedText)
+                        : (root.isSuccess
+                            ? Theme.palette.success
+                            : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
                 }
 
                 Text {
@@ -78,10 +81,12 @@ Item {
                     text: root.commandText
                     color: root.isError
                         ? Theme.palette.danger
-                        : (root.isRunning ? Theme.palette.text : Theme.palette.mutedText)
+                        : (root.isWaitingApproval
+                            ? Theme.palette.warning
+                            : (root.isRunning ? Theme.palette.text : Theme.palette.mutedText))
                     font.family: Theme.monospaceFontFamily
                     font.pixelSize: Theme.fontSize(12)
-                    font.weight: root.isRunning ? Font.DemiBold : Font.Normal
+                    font.weight: (root.isRunning || root.isWaitingApproval) ? Font.DemiBold : Font.Normal
                     elide: Text.ElideRight
                     renderType: Theme.textRenderType
                 }
@@ -106,7 +111,9 @@ Item {
                         ? Qt.rgba(Theme.palette.danger.r, Theme.palette.danger.g, Theme.palette.danger.b, 0.15)
                         : (root.isSuccess
                             ? Qt.rgba(Theme.palette.success.r, Theme.palette.success.g, Theme.palette.success.b, 0.15)
-                            : Qt.rgba(Theme.palette.mutedText.r, Theme.palette.mutedText.g, Theme.palette.mutedText.b, 0.12))
+                            : (root.isWaitingApproval
+                                ? Qt.rgba(Theme.palette.warning.r, Theme.palette.warning.g, Theme.palette.warning.b, 0.15)
+                                : Qt.rgba(Theme.palette.mutedText.r, Theme.palette.mutedText.g, Theme.palette.mutedText.b, 0.12)))
 
                     Text {
                         id: badgeLabel
@@ -114,7 +121,9 @@ Item {
                         text: String(root.modelData.badgeText || "")
                         color: root.isError
                             ? Theme.palette.danger
-                            : (root.isSuccess ? Theme.palette.success : Theme.palette.mutedText)
+                            : (root.isSuccess
+                                ? Theme.palette.success
+                                : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
                         font.family: Theme.monospaceFontFamily
                         font.pixelSize: Theme.fontSizeMicro
                         font.weight: Font.Medium
@@ -130,14 +139,14 @@ Item {
                 }
             }
 
-            // Specular highlight shimmer animation on running tool call
+            // Specular highlight shimmer animation on running tool call (disabled when reduceMotion is set)
             Rectangle {
                 id: specularShimmer
                 anchors.fill: parent
                 radius: parent.radius
                 clip: true
                 color: "transparent"
-                visible: root.isRunning
+                visible: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
 
                 Rectangle {
                     id: shimmerBeam
@@ -154,7 +163,7 @@ Item {
                         GradientStop { position: 1.0; color: "transparent" }
                     }
                     NumberAnimation on x {
-                        running: root.isRunning
+                        running: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
                         from: -shimmerBeam.width
                         to: specularShimmer.width + shimmerBeam.width
                         duration: 1500
@@ -205,8 +214,17 @@ Item {
                         renderType: Theme.textRenderType
                     }
 
+                    Text {
+                        visible: root.modelData.exitCode !== undefined && root.modelData.exitCode !== null
+                        text: "exit: " + root.modelData.exitCode
+                        color: Number(root.modelData.exitCode) === 0 ? Theme.palette.success : Theme.palette.danger
+                        font.family: Theme.monospaceFontFamily
+                        font.pixelSize: Theme.fontSizeMicro
+                        renderType: Theme.textRenderType
+                    }
+
                     Item {
-                        visible: !root.modelData.cwd
+                        visible: !root.modelData.cwd && (root.modelData.exitCode === undefined || root.modelData.exitCode === null)
                         Layout.fillWidth: true
                     }
 

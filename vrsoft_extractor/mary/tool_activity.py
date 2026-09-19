@@ -307,6 +307,7 @@ class ToolActivity:
     locations: list[dict[str, Any]] = field(default_factory=list)
     sequence: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    _explicit_duration_ms: int | None = None
 
     @property
     def tool_id(self) -> str:
@@ -316,6 +317,8 @@ class ToolActivity:
         return self.status.is_terminal
 
     def duration_ms(self) -> int | None:
+        if self._explicit_duration_ms is not None:
+            return self._explicit_duration_ms
         if not self.started_at:
             return None
         end_str = self.finished_at or self.updated_at
@@ -407,6 +410,14 @@ class ToolLifecycleReducer:
         self._tool_order: list[str] = []
         self._processed_event_ids: set[str] = set()
         self._processed_digests: set[str] = set()
+
+    @property
+    def activities(self) -> dict[str, ToolActivity]:
+        return self._tools
+
+    @property
+    def tools(self) -> dict[str, ToolActivity]:
+        return self._tools
 
     def reduce(self, event: NormalizedToolEvent) -> ToolActivity:
         # 1. Idempotency check by event_id
@@ -529,11 +540,12 @@ class ToolLifecycleReducer:
                 new_status = ToolStatus.WAITING_APPROVAL
         elif event.kind == ToolEventKind.APPROVAL_RESOLVED:
             if not tool.is_terminal():
-                if event.approved is True:
+                is_approved = event.approved if event.approved is not None else event.metadata.get("approved")
+                if is_approved is True:
                     new_status = ToolStatus.RUNNING
                     if not tool.started_at:
                         tool.started_at = event.timestamp or utc_now()
-                elif event.approved is False:
+                elif is_approved is False:
                     new_status = ToolStatus.CANCELLED
                     tool.metadata["denied"] = True
                     tool.finished_at = event.timestamp or utc_now()

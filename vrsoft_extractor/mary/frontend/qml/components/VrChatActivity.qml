@@ -24,7 +24,7 @@ Rectangle {
     color: "transparent"
     clip: true
     Behavior on implicitHeight {
-        enabled: !frontend.reduceMotion && !root.running
+        enabled: !(typeof frontend !== "undefined" && frontend.reduceMotion) && !root.running
         NumberAnimation { duration: Theme.fastDuration }
     }
 
@@ -71,7 +71,7 @@ Rectangle {
 
         // Horizontal hairline separator below header
         Rectangle {
-            visible: (root.expanded || root.running) && root.items && root.items.length > 0
+            visible: (root.expanded || root.visibleItems().length > 0) && root.items && root.items.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: Theme.palette.chatBorder
@@ -79,7 +79,7 @@ Rectangle {
         }
 
         ColumnLayout {
-            visible: root.expanded || (root.running && root.items && root.items.length > 0)
+            visible: root.expanded || root.visibleItems().length > 0
             Layout.fillWidth: true
             Layout.leftMargin: 0
             spacing: 3
@@ -110,6 +110,7 @@ Rectangle {
                         var t = String(modelData.itemType || "")
                         if (k === "commentary") return commentaryComponent
                         if (k === "file_changes" || t === "fileChange") return changedFilesComponent
+                        if (k === "action_group" || (modelData.items && modelData.items.length > 0)) return toolGroupComponent
                         if (t === "commandExecution" || k === "command") return commandCardComponent
                         return toolCardComponent
                     }
@@ -179,6 +180,14 @@ Rectangle {
     }
 
     Component {
+        id: toolGroupComponent
+
+        VrToolGroupCard {
+            property var modelData: ({})
+        }
+    }
+
+    Component {
         id: changedFilesComponent
 
         VrChangedFilesCard {
@@ -217,12 +226,23 @@ Rectangle {
 
     function visibleItems() {
         if (root.expanded || root.logExpanded)
-            return root.items
-        if (root.running) {
-            var runningItems = root.items.filter(function(i) { return i.state === "running" })
-            if (runningItems.length > 0) return runningItems
-            return root.items.slice(-1)
-        }
+            return root.items || []
+        if (!root.items || root.items.length === 0)
+            return []
+
+        // When collapsed, prioritize showing running tools or waiting approval
+        var activeItems = root.items.filter(function(i) {
+            return i.state === "running" || i.state === "waiting_approval"
+        })
+        if (activeItems.length > 0) return activeItems
+
+        // If no running tools, show recent failures
+        var failedItems = root.items.filter(function(i) {
+            return i.state === "error" || i.state === "failed"
+        })
+        if (failedItems.length > 0) return failedItems.slice(-1)
+
+        // Otherwise show last item
         return root.items.slice(-1)
     }
 }

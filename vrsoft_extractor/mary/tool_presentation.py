@@ -24,8 +24,9 @@ import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .models import RuntimeEvent
-from .provider_adapters.tool_normalizer import normalize_generic_event
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .models import RuntimeEvent
 from .tool_activity import (
     ToolActivity,
     ToolEventKind,
@@ -84,6 +85,10 @@ class ToolPresentation:
     can_expand: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def title(self) -> str:
+        return self.text
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize into a dict compatible with both legacy and new QML items."""
         return {
@@ -136,6 +141,14 @@ class ToolGroupPresentation:
     running_count: int
     failed_count: int
     items: list[ToolPresentation] = field(default_factory=list)
+
+    @property
+    def kind(self) -> str:
+        return "action_group"
+
+    @property
+    def tool_id(self) -> str:
+        return self.group_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -853,7 +866,8 @@ class ToolPresentationRegistry:
     def format_many(self, activities: list[ToolActivity]) -> list[ToolPresentation]:
         return [self.format(a) for a in activities]
 
-    def format_from_event(self, event: RuntimeEvent) -> ToolPresentation:
+    def format_from_event(self, event: Any) -> ToolPresentation:
+        from .provider_adapters.tool_normalizer import normalize_generic_event
         """Helper to convert a RuntimeEvent into ToolPresentation via normalization."""
         norm = normalize_generic_event(event)
         if norm:
@@ -1039,3 +1053,10 @@ class ToolPresentationRegistry:
 
 
 DEFAULT_PRESENTATION_REGISTRY = ToolPresentationRegistry()
+
+
+def group_consecutive_tools(
+    activities: list[ToolActivity],
+    threshold: int = 3,
+) -> list[ToolPresentation | ToolGroupPresentation]:
+    return DEFAULT_PRESENTATION_REGISTRY.group_consecutive_tools(activities, threshold=threshold)

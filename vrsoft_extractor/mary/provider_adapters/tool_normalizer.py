@@ -139,6 +139,41 @@ def normalize_codex_event(
             metadata=dict(params),
         )
 
+    if method in {"item/commandExecution/outputDelta", "item/outputDelta"}:
+        item_id = str(params.get("itemId") or params.get("item_id") or "")
+        delta = params.get("delta") or params.get("outputDelta") or params.get("output")
+        return NormalizedToolEvent(
+            tool_id=item_id,
+            kind=ToolEventKind.UPDATED,
+            provider="codex",
+            conversation_id=conversation_id,
+            type=ToolType.COMMAND_EXECUTION if "commandExecution" in method else ToolType.UNKNOWN,
+            delta=delta,
+            metadata=dict(params),
+        )
+
+    if method == "item/updated":
+        item = params.get("item") or {}
+        item_id = str(item.get("id") or params.get("itemId") or params.get("item_id") or "")
+        item_type = str(item.get("type") or "")
+        tool_type = ToolType.from_string(item_type) if item_type else ToolType.UNKNOWN
+        output = item.get("output")
+        delta = params.get("delta") or item.get("delta")
+        exit_code = item.get("exitCode") or item.get("exit_code")
+        error = str(item.get("error") or "")
+        return NormalizedToolEvent(
+            tool_id=item_id,
+            kind=ToolEventKind.UPDATED,
+            provider="codex",
+            conversation_id=conversation_id,
+            type=tool_type,
+            output=output,
+            delta=delta,
+            exit_code=exit_code,
+            error=error,
+            metadata=dict(params),
+        )
+
     if method in {
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
@@ -388,6 +423,7 @@ def normalize_claude_event(
             output=output,
             error=error,
             title=title,
+            status=tool_status,
             metadata=dict(block_or_payload),
         )
 
