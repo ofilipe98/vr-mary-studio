@@ -109,9 +109,17 @@ def test_export_preserves_tree_filters_selection_deduplicates_and_writes_manifes
     manifest = json.loads((exported / "vrstudio-export.json").read_text(encoding="utf-8"))
     assert manifest | {"exported_at": "ignored"} == {
         "schema_version": 1, "application": "VRMaster", "application_id": "vrmaster",
-        "version": "4.1.0", "release_id": "release-a", "origin_id": "release-a",
+        "version": "4.1.0", "variant_id": "sha-master", "release_id": "release-a",
+        "origin_id": "release-a", "artifact_sha256": "sha-master",
+        "jar_relative_path": "VRMaster.jar",
         "exported_at": "ignored", "file_count": 1, "total_bytes": len("class Venda {}"),
     }
+    assert manifest["application_id"] == "vrmaster"
+    assert manifest["version"] == "4.1.0"
+    assert manifest["variant_id"] == "sha-master"
+    assert manifest["origin_id"] == "release-a"
+    assert manifest["artifact_sha256"] == "sha-master"
+    assert manifest["jar_relative_path"] == "VRMaster.jar"
     assert str(workspace) not in json.dumps(manifest)
 
 
@@ -142,6 +150,21 @@ def test_export_rejects_path_traversal_and_leaves_no_partial_folder(tmp_path, fi
     _prepare(workspace, [{field: value}])
 
     with pytest.raises(ValueError, match="inválid|fora do workspace"):
+        _export(workspace, destination)
+
+    assert list(destination.iterdir()) == []
+
+
+@pytest.mark.parametrize("source_path", [
+    "CON.java", "NUL.kt", "COM1.java", "LPT9.kt", "Foo.", "Foo ",
+    "Foo.java.", "Foo.java ", "Bad<Name>.java", "Bad:Name.java", "Bad?.java",
+])
+def test_export_rejects_windows_incompatible_source_components(tmp_path, source_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [{"output_reference": "", "source_relative_path": source_path}])
+
+    with pytest.raises(ValueError, match="incompatível com Windows"):
         _export(workspace, destination)
 
     assert list(destination.iterdir()) == []
@@ -215,6 +238,20 @@ def test_export_falls_back_to_index_body_when_physical_source_changed(tmp_path):
     assert (Path(result["destination"]) / "br/Venda.java").read_text(encoding="utf-8") == indexed
 
 
+def test_export_uses_indexed_lf_body_when_physical_source_is_crlf(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    indexed = "package br;\nclass Venda {}\n"
+    _prepare(workspace, [{"body": indexed}])
+    source = workspace / "sources/master/br/Venda.java"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(indexed.replace("\n", "\r\n").encode("utf-8"))
+
+    result = _export(workspace, destination)
+
+    assert (Path(result["destination"]) / "br/Venda.java").read_bytes() == indexed.encode("utf-8")
+
+
 def test_export_rejects_changed_physical_source_without_valid_body(tmp_path):
     workspace, destination = tmp_path / "workspace", tmp_path / "exports"
     destination.mkdir()
@@ -269,3 +306,79 @@ def test_export_rejects_conflicting_contents_for_same_relative_path(tmp_path):
         _export(workspace, destination)
 
     assert list(destination.iterdir()) == []
+
+
+@pytest.mark.parametrize("bodies", [
+    ("class Foo {}", "class Foo {}"),
+    ("class Foo {}", "class foo {}"),
+])
+def test_export_rejects_case_insensitive_source_path_collisions(tmp_path, bodies):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {"source_relative_path": "br/Foo.java", "body": bodies[0]},
+        {"source_key": "case-collision", "source_relative_path": "br/foo.java", "body": bodies[1]},
+    ])
+
+    with pytest.raises(ValueError, match="caminhos incompatíveis com Windows"):
+        _export(workspace, destination)
+
+    assert list(destination.iterdir()) == []
+
+
+def test_export_iterates_index_rows_without_fetchall(tmp_path, monkeypatch):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    records = [
+        {
+            "source_key": f"bulk-{number}",
+            "output_reference": "",
+            "source_relative_path": f"bulk/File{number}.java",
+            "body": f"class File{number} {{}}",
+        }
+        for number in range(128)
+    ]
+    _prepare(workspace, records)
+
+    import vrsoft_extractor.mary.decompiled_export as export_module
+
+    real_connect = export_module.sqlite3.connect
+
+    class CursorGuard:
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def __iter__(self):
+            return iter(self._cursor)
+
+        def fetchall(self):
+            raise AssertionError("exportação não deve carregar todas as linhas")
+
+    class ConnectionGuard:
+        def __init__(self, connection):
+            self._connection = connection
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._connection.__exit__(*args)
+
+        def __setattr__(self, name, value):
+            if name == "_connection":
+                object.__setattr__(self, name, value)
+            else:
+                setattr(self._connection, name, value)
+
+        def execute(self, *args, **kwargs):
+            return CursorGuard(self._connection.execute(*args, **kwargs))
+
+    def guarded_connect(*args, **kwargs):
+        return ConnectionGuard(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(export_module.sqlite3, "connect", guarded_connect)
+    result = _export(workspace, destination)
+
+    assert result["file_count"] == 128
+    assert len(list(Path(result["destination"]).glob("bulk/*.java"))) == 128

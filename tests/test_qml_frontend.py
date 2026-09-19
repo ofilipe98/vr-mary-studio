@@ -25,6 +25,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
+from vrsoft_extractor.mary.frontend.bridges import codeadmin
 from vrsoft_extractor.mary.frontend.chat import (
     CODE_PROCESSING_HARDWARE,
     DEFAULT_ERP_JAR_SOURCE_PATH,
@@ -4688,6 +4689,27 @@ class QmlFrontendTest(unittest.TestCase):
                 self.application.processEvents()
                 self.assertTrue(export_button.isVisible())
                 self.assertTrue(export_button.property("enabled"))
+
+                export_calls = []
+
+                def fake_export(*args, **kwargs):
+                    export_calls.append((args, kwargs))
+                    return {"success": True, "destination": str(root), "file_count": 1, "total_bytes": 1}
+
+                with patch.object(codeadmin.QFileDialog, "getExistingDirectory", return_value=str(root)):
+                    with patch.object(codeadmin, "export_decompiled_source", side_effect=fake_export):
+                        self.assertTrue(QMetaObject.invokeMethod(export_button, "click"))
+                        for _attempt in range(100):
+                            self.application.processEvents()
+                            if export_calls and not chat_bridge.releaseSnapshotRunning:
+                                break
+                            QTest.qWait(10)
+
+                self.assertEqual(len(export_calls), 1)
+                self.assertEqual(export_calls[0][1]["application_id"], "vrmaster")
+                self.assertEqual(export_calls[0][1]["version"], "4.1.0")
+                self.assertEqual(export_calls[0][1]["variant_id"], "sha-master")
+                self.assertEqual(export_calls[0][1]["origin_id"], "release-a")
 
                 for field in ("_selected_app_origin_id", "_selected_app_variant_id"):
                     previous = getattr(chat_bridge, field)

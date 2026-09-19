@@ -17,6 +17,7 @@ from vrsoft_extractor.mary.antigravity_auth import (
     OAuthCallbackError, OAuthValidationError, forward_callback_to_listener,
     validate_authorization_url, validate_callback_url,
 )
+from vrsoft_extractor.mary.antigravity_acp import AcpError, AcpRuntimeInfo
 
 
 def auth_url(redirect="http://127.0.0.1:45678/", state="opaque"):
@@ -387,4 +388,87 @@ def test_authenticated_open_login_preserves_saved_token(bridge, tmp_path):
     assert token_file.read_text(encoding="utf-8") == '{"token":"saved"}'
     mock_validate.assert_called_once_with()
     mock_start.assert_not_called()
+
+
+def test_rejected_saved_token_allows_new_non_destructive_oauth(bridge, tmp_path):
+    result, app = bridge
+    token_file = tmp_path / "antigravity-acp" / "acp_token.json"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text('{"token":"rejected"}', encoding="utf-8")
+    runtime = AcpRuntimeInfo(executable_path="srv", harness_path="harness", version="1.0")
+    result._antigravity_auth._active_attempt = LoginAttempt(
+        "rejected-validation", state="failed"
+    )
+
+    class RejectClient:
+        process = MagicMock()
+
+        def start(self, timeout=None):
+            pass
+
+        def request(self, method, params, timeout=None):
+            if method == "authenticate":
+                raise AcpError("authenticate", -32000, "rejected")
+            raise AssertionError(f"unexpected silent method: {method}")
+
+        def close(self):
+            pass
+
+    new_url = auth_url(state="new-attempt")
+    browser_opened = threading.Event()
+
+    class OAuthClient:
+        def __init__(self, on_auth_url):
+            self.process = MagicMock()
+            self._on_auth_url = on_auth_url
+
+        def start(self, timeout=None):
+            pass
+
+        def request(self, method, params, timeout=None):
+            if method == "authenticate":
+                self._on_auth_url(new_url)
+                browser_opened.wait(2)
+                return {}
+            if method == "session/new":
+                return {"sessionId": "new-session", "models": {
+                    "availableModels": [{"modelId": "new-model"}]}}
+            raise AssertionError(f"unexpected OAuth method: {method}")
+
+        def close(self):
+            pass
+
+    with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp_runtime", return_value=runtime), \
+         patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
+         patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client", return_value=RejectClient()), \
+         patch("vrsoft_extractor.mary.frontend.studio.prepare_profile"):
+        result.validateAntigravityAccount()
+        deadline = time.monotonic() + 3
+        while result._agy_check_running and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.005)
+
+    assert result._antigravity_auth.account_state == "unauthenticated"
+    rejected_attempt_id = result._antigravity_auth.active_attempt.attempt_id
+
+    def spawn_oauth(**kwargs):
+        return OAuthClient(kwargs["on_auth_url"])
+
+    with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp_runtime", return_value=runtime), \
+         patch("vrsoft_extractor.mary.antigravity_acp.prepare_profile"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.preflight_browser_helper"), \
+         patch("vrsoft_extractor.mary.antigravity_acp.spawn_acp_client", side_effect=spawn_oauth), \
+         patch.object(result, "_open_browser_url", return_value=True) as open_browser, \
+         patch.object(result._antigravity_auth, "start_login", wraps=result._antigravity_auth.start_login) as start_login:
+        result.openAntigravityLogin()
+        deadline = time.monotonic() + 3
+        while not open_browser.called and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.005)
+        browser_opened.set()
+
+    start_login.assert_called_once_with(force=False)
+    assert open_browser.call_args.args[0] == new_url
+    assert result._antigravity_auth.active_attempt.attempt_id != rejected_attempt_id
+    assert token_file.read_text(encoding="utf-8") == '{"token":"rejected"}'
 
