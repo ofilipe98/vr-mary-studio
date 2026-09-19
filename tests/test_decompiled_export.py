@@ -1,4 +1,5 @@
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -57,6 +58,10 @@ def _prepare(workspace: Path, records: list[dict], *, catalog=None) -> None:
                 "body": "class Venda {}", "indexed_at": "2026-01-01T00:00:00Z",
             }
             values.update(record)
+            if "source_sha256" not in record:
+                values["source_sha256"] = hashlib.sha256(
+                    str(values["body"]).encode("utf-8")
+                ).hexdigest()
             columns = ", ".join(values)
             placeholders = ", ".join("?" for _ in values)
             connection.execute(
@@ -115,7 +120,7 @@ def test_export_uses_non_destructive_numbered_destination(tmp_path):
     destination.mkdir()
     _prepare(workspace, [{}])
     (workspace / "sources/master/br").mkdir(parents=True)
-    (workspace / "sources/master/br/Venda.java").write_text("x", encoding="utf-8")
+    (workspace / "sources/master/br/Venda.java").write_text("class Venda {}", encoding="utf-8")
     existing = destination / "VRMaster-4.1.0-decompiled"
     existing.mkdir()
     (existing / "keep.txt").write_text("keep", encoding="utf-8")
@@ -142,14 +147,15 @@ def test_export_rejects_path_traversal_and_leaves_no_partial_folder(tmp_path, fi
     assert list(destination.iterdir()) == []
 
 
-def test_export_missing_indexed_file_is_controlled_and_atomic(tmp_path):
+def test_export_missing_indexed_file_without_valid_body_is_controlled_and_atomic(tmp_path):
     workspace, destination = tmp_path / "workspace", tmp_path / "exports"
     destination.mkdir()
-    _prepare(workspace, [{}, {"source_key": "second", "source_relative_path": "Missing.kt"}])
+    _prepare(workspace, [{}, {"source_key": "second", "source_relative_path": "Missing.kt",
+                             "body": "", "source_sha256": "0" * 64}])
     (workspace / "sources/master/br").mkdir(parents=True)
     (workspace / "sources/master/br/Venda.java").write_text("x", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="não encontrado"):
+    with pytest.raises(ValueError, match="alterada|inconsistente"):
         _export(workspace, destination)
 
     assert list(destination.iterdir()) == []
@@ -173,9 +179,93 @@ def test_export_does_not_mix_versions(tmp_path):
              "output_reference": "sources/new", "source_relative_path": "New.java"},
     ], catalog=catalog)
     (workspace / "sources/master/br").mkdir(parents=True)
-    (workspace / "sources/master/br/Venda.java").write_text("old", encoding="utf-8")
+    (workspace / "sources/master/br/Venda.java").write_text("class Venda {}", encoding="utf-8")
     (workspace / "sources/new").mkdir(parents=True)
     (workspace / "sources/new/New.java").write_text("new", encoding="utf-8")
 
     result = _export(workspace, destination)
     assert not (Path(result["destination"]) / "New.java").exists()
+
+
+def test_export_validates_physical_source_hash_when_body_is_also_present(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    body = "class Venda { int valor; }"
+    _prepare(workspace, [{"body": body}])
+    source = workspace / "sources/master/br/Venda.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(body, encoding="utf-8")
+
+    result = _export(workspace, destination)
+
+    assert (Path(result["destination"]) / "br/Venda.java").read_text(encoding="utf-8") == body
+
+
+def test_export_falls_back_to_index_body_when_physical_source_changed(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    indexed = "class Venda { int original; }"
+    _prepare(workspace, [{"body": indexed}])
+    source = workspace / "sources/master/br/Venda.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Venda { int changed; }", encoding="utf-8")
+
+    result = _export(workspace, destination)
+
+    assert (Path(result["destination"]) / "br/Venda.java").read_text(encoding="utf-8") == indexed
+
+
+def test_export_rejects_changed_physical_source_without_valid_body(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    indexed_hash = hashlib.sha256(b"class Original {}").hexdigest()
+    _prepare(workspace, [{"body": "", "source_sha256": indexed_hash}])
+    source = workspace / "sources/master/br/Venda.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Changed {}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="alterada|inconsistente"):
+        _export(workspace, destination)
+
+    assert list(destination.iterdir()) == []
+
+
+def test_export_materializes_imported_vridx_body_without_physical_file(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    body = "package br;\nclass Importada {}\n"
+    _prepare(workspace, [{
+        "tool": "imported", "output_reference": "", "body": body,
+        "source_relative_path": "br/Importada.java",
+    }])
+
+    result = _export(workspace, destination)
+
+    assert (Path(result["destination"]) / "br/Importada.java").read_text(encoding="utf-8") == body
+
+
+def test_export_rejects_invalid_body_hash_and_removes_staging(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [{
+        "output_reference": "", "body": "class Invalid {}", "source_sha256": "0" * 64,
+    }])
+
+    with pytest.raises(ValueError, match="alterada|inconsistente"):
+        _export(workspace, destination)
+
+    assert list(destination.iterdir()) == []
+
+
+def test_export_rejects_conflicting_contents_for_same_relative_path(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {"output_reference": "", "body": "class Venda {}"},
+        {"source_key": "conflict", "output_reference": "", "body": "class Venda { int x; }"},
+    ])
+
+    with pytest.raises(ValueError, match="conflitantes"):
+        _export(workspace, destination)
+
+    assert list(destination.iterdir()) == []

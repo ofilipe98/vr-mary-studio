@@ -4662,6 +4662,54 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIsNotNone(app_selector)
                 self.assertTrue(app_selector.property("visible"))
 
+                apps_page = window.findChild(QObject, "appsSettingsPage")
+                export_button = window.findChild(QObject, "exportDecompiledCodeButton")
+                import_card = window.findChild(QObject, "appsImportCard")
+                self.assertIsNotNone(apps_page)
+                self.assertIsNotNone(export_button)
+                self.assertIsNotNone(import_card)
+                self.assertEqual(apps_page.property("navigationLevel"), 0)
+                self.assertFalse(export_button.isVisible())
+                ancestor = export_button.parent()
+                while ancestor is not None:
+                    self.assertIsNot(ancestor, import_card)
+                    ancestor = ancestor.parent()
+
+                chat_bridge._selected_app_id = "vrmaster"
+                chat_bridge._selected_app_version = "4.1.0"
+                chat_bridge._selected_app_variant_id = "sha-master"
+                chat_bridge._selected_app_origin_id = "release-a"
+                chat_bridge._selected_version_details = {
+                    "indexed_classes": 1,
+                    "origin_packages": [{"package_id": "release-a", "index_state": "ready"}],
+                }
+                apps_page.setProperty("navigationLevel", 2)
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertTrue(export_button.isVisible())
+                self.assertTrue(export_button.property("enabled"))
+
+                for field in ("_selected_app_origin_id", "_selected_app_variant_id"):
+                    previous = getattr(chat_bridge, field)
+                    setattr(chat_bridge, field, "")
+                    chat_bridge.stateChanged.emit()
+                    self.application.processEvents()
+                    self.assertFalse(export_button.property("enabled"), field)
+                    setattr(chat_bridge, field, previous)
+
+                chat_bridge._code_processing_running = True
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(export_button.property("enabled"))
+                chat_bridge._code_processing_running = False
+                chat_bridge._decompiled_export_running = True
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(export_button.property("enabled"))
+                chat_bridge._decompiled_export_running = False
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+
                 app_selector.setProperty("searchText", "atacado")
                 filtered_raw = app_selector.property("filteredApps")
                 filtered = (

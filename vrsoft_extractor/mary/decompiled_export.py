@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import sqlite3
@@ -102,7 +102,7 @@ def export_decompiled_source(
     with sqlite3.connect(uri, uri=True) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
-            """SELECT output_reference, source_relative_path
+            """SELECT output_reference, source_relative_path, source_sha256, body, tool
                  FROM code_sources
                 WHERE release_id = ? AND artifact_sha256 = ? AND jar_relative_path = ?
                 ORDER BY source_relative_path, id""",
@@ -111,31 +111,44 @@ def export_decompiled_source(
     if not rows:
         raise ValueError("Nenhum código decompilado disponível para esta versão e origem.")
 
-    sources: dict[str, tuple[Path, Path]] = {}
-    physical_sources: set[Path] = set()
+    sources: dict[str, tuple[Path, bytes, str]] = {}
     for row in rows:
         output_raw = str(row["output_reference"] or "").replace("\\", "/")
         output_reference = PurePosixPath(output_raw)
-        if (not output_raw or output_reference.is_absolute()
+        if (output_raw and (output_reference.is_absolute()
                 or PureWindowsPath(output_raw).is_absolute()
-                or ".." in output_reference.parts):
+                or ".." in output_reference.parts)):
             raise ValueError("O índice contém uma referência de saída inválida.")
         relative = _relative_source_path(row["source_relative_path"])
-        source = _require_within(
-            workspace_root.joinpath(*output_reference.parts, relative),
-            workspace_root,
-            "O índice referencia um arquivo fora do workspace.",
-        )
-        if not source.is_file():
-            raise ValueError(f"Fonte indexado não encontrado: {relative.as_posix()}")
-        key = os.path.normcase(relative.as_posix())
+        expected_hash = str(row["source_sha256"] or "").strip().casefold()
+        content: bytes | None = None
+        if output_raw:
+            source = _require_within(
+                workspace_root.joinpath(*output_reference.parts, relative),
+                workspace_root,
+                "O índice referencia um arquivo fora do workspace.",
+            )
+            if source.is_file():
+                physical_content = source.read_bytes()
+                if hashlib.sha256(physical_content).hexdigest() == expected_hash:
+                    content = physical_content
+        if content is None and row["body"] is not None:
+            body_content = str(row["body"]).encode("utf-8")
+            if hashlib.sha256(body_content).hexdigest() == expected_hash:
+                content = body_content
+        if content is None:
+            raise ValueError(
+                "A fonte indexada foi alterada ou está inconsistente: "
+                f"{relative.as_posix()}"
+            )
+        key = relative.as_posix().casefold()
         previous = sources.get(key)
-        if previous and previous[0] != source:
-            raise ValueError(f"O índice contém fontes conflitantes para: {relative.as_posix()}")
-        if source in physical_sources:
+        content_hash = hashlib.sha256(content).hexdigest()
+        if previous:
+            if previous[2] != content_hash or previous[1] != content:
+                raise ValueError(f"O índice contém fontes conflitantes para: {relative.as_posix()}")
             continue
-        sources[key] = (source, relative)
-        physical_sources.add(source)
+        sources[key] = (relative, content, content_hash)
 
     app_name = str(app.get("name") or application_id)
     base_name = (
@@ -148,12 +161,17 @@ def export_decompiled_source(
     total_bytes = 0
     try:
         staging.mkdir()
-        for source, relative in sources.values():
-            target = staging / relative
+        staging_root = staging.resolve(strict=True)
+        for relative, content, _content_hash in sources.values():
+            target = _require_within(
+                staging_root / relative,
+                staging_root,
+                "O caminho de destino do fonte é inválido.",
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            target.write_bytes(content)
             file_count += 1
-            total_bytes += target.stat().st_size
+            total_bytes += len(content)
         manifest = {
             "schema_version": 1,
             "application": app_name,

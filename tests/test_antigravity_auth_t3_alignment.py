@@ -647,6 +647,27 @@ def test_31_startup_restore_account_no_browser_helper():
         assert bridge._antigravity_auth.active_attempt is None
 
 
+def test_31b_startup_restore_preserves_saved_token(tmp_path):
+    from vrsoft_extractor.mary.frontend.studio import StudioBridge
+
+    token_file = tmp_path / "antigravity-acp" / "acp_token.json"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text('{"token":"saved"}', encoding="utf-8")
+    bridge = StudioBridge(settings=MagicMock(), database=MagicMock())
+
+    with patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
+         patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path), \
+         patch.object(bridge, "validateAntigravityAccount") as mock_validate, \
+         patch.object(bridge._antigravity_auth, "start_login") as mock_start, \
+         patch.object(bridge, "_open_browser_url") as mock_browser:
+        bridge.restoreAntigravityAccount()
+
+    assert token_file.read_text(encoding="utf-8") == '{"token":"saved"}'
+    mock_validate.assert_called_once_with()
+    mock_start.assert_not_called()
+    mock_browser.assert_not_called()
+
+
 # 32. UI state dimensions and status badges reflect single dominant priority
 def test_32_ui_status_and_badges_single_dominant_state():
     from vrsoft_extractor.mary.frontend.studio import StudioBridge

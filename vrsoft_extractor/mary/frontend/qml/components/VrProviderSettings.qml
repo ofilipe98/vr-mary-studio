@@ -878,9 +878,9 @@ Item {
 
                                         VrProviderAction {
                                             objectName: "providerGoogleLogin"
+                                            visible: !root.authenticated || root.loginPending
                                             text: root.openingLogin || root.isStarting || root.isVerifying ? "Abrindo login\u2026"
                                                 : root.hasCallback ? "Abrir no navegador"
-                                                : root.authenticated && !root.authError ? "Verificar login"
                                                 : "Entrar com Google"
                                             variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
                                             implicitHeight: 32
@@ -910,11 +910,9 @@ Item {
 
                                         VrProviderAction {
                                             objectName: "validateGoogleAccount"
-                                            text: root.validating ? "Validando\u2026"
-                                                : root.authError ? "Tentar novamente"
-                                                : root.authenticated ? "Validar conex\u00e3o"
-                                                : "Validar conta"
-                                            variant: root.authError || root.loginPending ? "primary" : "secondary"
+                                            visible: root.authenticated && !root.loginPending
+                                            text: root.validating ? "Validando\u2026" : "Validar conex\u00e3o"
+                                            variant: root.authError ? "primary" : "secondary"
                                             implicitHeight: 32
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                             onClicked: studio.validateAntigravityAccount()

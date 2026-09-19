@@ -292,6 +292,17 @@ def test_export_runs_off_qt_thread_rejects_overlap_and_clears_busy(bridge, tmp_p
 
 def test_export_failure_clears_running_state(bridge, tmp_path, monkeypatch):
     _select_exportable_decompiled_code(bridge)
+    bridge._ultra_application_contexts = [{
+        "app_id": "vrmaster", "version": "4.1.0",
+        "variant_id": "sha-master", "package_id": "release-a",
+    }]
+    bridge._apps_catalog_data = {"data": {"applications": {"vrmaster": {"name": "VRMaster", "versions": {
+        "4.1.0": {"variants": {"sha-master": {"origin_packages": [{
+            "package_id": "release-a", "index_state": "ready",
+        }]}}}
+    }}}}}
+    before_error = bridge.applicationsCatalogError
+    assert bridge.ultraApplicationContextsReady is True
     monkeypatch.setattr(
         codeadmin, "export_decompiled_source",
         lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("fonte ausente")),
@@ -302,6 +313,30 @@ def test_export_failure_clears_running_state(bridge, tmp_path, monkeypatch):
 
     assert bridge.decompiledExportRunning is False
     assert bridge.releaseSnapshotStatus == "Não foi possível exportar o código descompilado: fonte ausente"
+    assert bridge.applicationsCatalogError == before_error
+    assert bridge.ultraApplicationContextsReady is True
+
+
+def test_export_from_previous_workspace_only_clears_running_state(bridge, tmp_path, monkeypatch):
+    _select_exportable_decompiled_code(bridge)
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(*args, **kwargs):
+        entered.set()
+        release.wait(5)
+        return {"success": True, "destination": str(tmp_path), "file_count": 1, "total_bytes": 1}
+
+    monkeypatch.setattr(codeadmin, "export_decompiled_source", blocked)
+    assert bridge.exportDecompiledCode(str(tmp_path))["pending"]
+    assert entered.wait(2)
+    object.__setattr__(bridge._settings, "root", tmp_path / "workspace-b")
+    bridge._release_snapshot_status = "Estado do workspace B"
+    release.set()
+
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+
+    assert bridge.decompiledExportRunning is False
+    assert bridge.releaseSnapshotStatus == "Estado do workspace B"
 
 
 def test_ready_state_is_projected_from_real_coverage(bridge, tmp_path, monkeypatch):

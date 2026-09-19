@@ -740,21 +740,6 @@ Item {
                                 }
                             }
 
-                            VrButton {
-                                objectName: "exportDecompiledCodeButton"
-                                text: chat.decompiledExportRunning
-                                    ? "Exportando código descompilado…"
-                                    : "Exportar código descompilado"
-                                enabled: chat.decompiledCodeExportAvailable
-                                    && !chat.releaseSnapshotRunning
-                                    && !chat.codeProcessingRunning
-                                    && !chat.decompiledExportRunning
-                                variant: "secondary"
-                                implicitHeight: 32
-                                ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
-                                ToolTip.text: "Nenhum código decompilado disponível para esta versão."
-                                onClicked: chat.exportDecompiledCode("")
-                            }
                         }
                     }
 
@@ -1477,6 +1462,26 @@ Item {
                         return 0;
                     }
                     onActivated: index => chat.selectAppOrigin(model[index].package_id)
+                }
+
+                VrButton {
+                    objectName: "exportDecompiledCodeButton"
+                    text: chat.decompiledExportRunning
+                        ? "Exportando código descompilado…"
+                        : "Exportar código descompilado"
+                    enabled: !!chat.selectedAppId
+                        && !!chat.selectedAppVersion
+                        && !!chat.selectedAppVariantId
+                        && !!chat.selectedAppOriginId
+                        && chat.decompiledCodeExportAvailable
+                        && !chat.releaseSnapshotRunning
+                        && !chat.codeProcessingRunning
+                        && !chat.decompiledExportRunning
+                    variant: "secondary"
+                    implicitHeight: 32
+                    ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
+                    ToolTip.text: "Nenhum código decompilado disponível para esta versão."
+                    onClicked: chat.exportDecompiledCode("")
                 }
 
                 VrButton {

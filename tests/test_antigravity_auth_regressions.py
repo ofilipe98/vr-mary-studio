@@ -324,14 +324,14 @@ def test_open_browser_url_fallback(bridge):
         mock_webbrowser.assert_called_once_with("https://accounts.google.com/test")
 
 
-def test_open_antigravity_login_forces_when_not_authenticated(bridge):
+def test_open_antigravity_login_starts_non_destructive_login_when_not_authenticated(bridge):
     result, _ = bridge
     assert result._antigravity_auth.account_state != "authenticated"
     with patch.object(result._antigravity_auth, "start_login") as mock_start, \
          patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="agy"):
         mock_start.return_value = LoginAttempt("test-id", state="starting")
         result.openAntigravityLogin()
-        mock_start.assert_called_once_with(force=True)
+        mock_start.assert_called_once_with(force=False)
 
 
 def test_open_antigravity_login_reopens_waiting_url(bridge):
@@ -354,12 +354,37 @@ def test_refresh_antigravity_auth_succeeded_triggers_validation(bridge):
         result._refresh_antigravity_auth()
         mock_validate.assert_not_called()
 
-def test_open_antigravity_login_forces_even_when_authenticated(bridge):
+def test_open_antigravity_login_validates_when_authenticated(bridge):
     result, _ = bridge
     result._antigravity_auth._account_state = "authenticated"
-    with patch.object(result._antigravity_auth, "start_login") as mock_start, \
-         patch("vrsoft_extractor.mary.frontend.studio.resolve_acp", return_value="agy"):
-        mock_start.return_value = LoginAttempt("test-id", state="starting")
+    with patch.object(result, "validateAntigravityAccount") as mock_validate, \
+         patch.object(result._antigravity_auth, "start_login") as mock_start:
         result.openAntigravityLogin()
-        mock_start.assert_called_once_with(force=True)
+        mock_validate.assert_called_once_with()
+        mock_start.assert_not_called()
+
+
+def test_reconnect_antigravity_account_is_explicitly_destructive(bridge):
+    result, _ = bridge
+    result._antigravity_auth._account_state = "authenticated"
+    with patch.object(result, "startAntigravityLogin") as mock_start:
+        result.reconnectAntigravityAccount()
+    mock_start.assert_called_once_with(force=True)
+
+
+def test_authenticated_open_login_preserves_saved_token(bridge, tmp_path):
+    result, _ = bridge
+    token_file = tmp_path / "antigravity-acp" / "acp_token.json"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text('{"token":"saved"}', encoding="utf-8")
+    result._antigravity_auth._account_state = "authenticated"
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path), \
+         patch.object(result, "validateAntigravityAccount") as mock_validate, \
+         patch.object(result._antigravity_auth, "start_login") as mock_start:
+        result.openAntigravityLogin()
+
+    assert token_file.read_text(encoding="utf-8") == '{"token":"saved"}'
+    mock_validate.assert_called_once_with()
+    mock_start.assert_not_called()
 

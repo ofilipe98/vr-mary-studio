@@ -21,7 +21,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from vrsoft_extractor.mary.antigravity_acp import AcpError, AcpRuntimeInfo
+from vrsoft_extractor.mary.antigravity_acp import AcpError, AcpRuntimeInfo, AcpTimeoutError
 from vrsoft_extractor.mary.antigravity_auth import AntigravityAuthManager
 
 
@@ -156,7 +156,7 @@ def _run_validate_and_wait(bridge, app, timeout=5.0):
 def _silent_client(auth_ok=True, session_mode="ok"):
     """Builds a fake ACP client for silent validation.
 
-    session_mode: "ok" | "fail32603" | "empty" | "auth32000"
+    session_mode: "ok" | "fail32603" | "empty" | "timeout" | "auth32000"
     """
     class C:
         def __init__(self, **kwargs):
@@ -173,6 +173,8 @@ def _silent_client(auth_ok=True, session_mode="ok"):
             if method == "session/new":
                 if session_mode == "fail32603":
                     raise AcpError("session/new", -32603, "internal")
+                if session_mode == "timeout":
+                    raise AcpTimeoutError("session/new", 30)
                 if session_mode == "empty":
                     return {"sessionId": "s", "models": {"availableModels": []}}
                 return {"sessionId": "s", "models": {"availableModels": [{"modelId": "m", "name": "M"}]}}
@@ -184,14 +186,20 @@ def _silent_client(auth_ok=True, session_mode="ok"):
     return C
 
 
-def test_01_silent_auth_ok_session_fail32603_preserves_authenticated(bridge):
+@pytest.mark.parametrize("session_mode", ["fail32603", "empty", "timeout"])
+def test_01_silent_post_auth_failure_preserves_account_and_token(bridge, tmp_path, session_mode):
     result, app = bridge
+    token_file = tmp_path / "antigravity-acp" / "acp_token.json"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text('{"token":"saved"}', encoding="utf-8")
     runtime = AcpRuntimeInfo(executable_path="srv", harness_path="harness", version="1.0")
-    fake = _silent_client(session_mode="fail32603")
+    fake = _silent_client(session_mode=session_mode)
     with patch("vrsoft_extractor.mary.frontend.studio.resolve_acp_runtime", return_value=runtime), \
          patch("vrsoft_extractor.mary.frontend.studio.has_saved_account", return_value=True), \
          patch("vrsoft_extractor.mary.frontend.studio.spawn_acp_client", return_value=fake()) as spawn, \
-         patch("vrsoft_extractor.mary.frontend.studio.prepare_profile"):
+         patch("vrsoft_extractor.mary.frontend.studio.prepare_profile"), \
+         patch.object(result._antigravity_auth, "start_login") as start_login, \
+         patch.object(result, "_open_browser_url") as open_browser:
         result.validateAntigravityAccount()
         _run_validate_and_wait((result, app), app)
     assert spawn.called
@@ -200,6 +208,9 @@ def test_01_silent_auth_ok_session_fail32603_preserves_authenticated(bridge):
     assert kwargs.get("on_auth_url", None) is None
     assert result._antigravity_auth.account_state == "authenticated"
     assert result._antigravity_auth.provider_readiness == "degraded"
+    assert token_file.read_text(encoding="utf-8") == '{"token":"saved"}'
+    start_login.assert_not_called()
+    open_browser.assert_not_called()
     label = result._antigravity_auth.account_status_label
     assert "Conta Google autenticada" in label
     assert "Login necessário" not in label
@@ -282,6 +293,19 @@ def test_06_ui_degraded_is_warning_not_success(bridge):
     text = qml.read_text(encoding="utf-8")
     assert 'p.providerReadiness === "degraded"' in text
     assert "Conta autenticada · falha ao carregar modelos" in text
+
+
+@pytest.mark.qml
+def test_06b_ui_exposes_distinct_login_validate_and_switch_actions():
+    qml = Path(__file__).parent.parent / "vrsoft_extractor" / "mary" / "frontend" / "qml" / "components" / "VrProviderSettings.qml"
+    text = qml.read_text(encoding="utf-8")
+
+    assert 'visible: !root.authenticated || root.loginPending' in text
+    assert 'visible: root.authenticated && !root.loginPending' in text
+    assert 'text: root.validating ? "Validando\\u2026" : "Validar conex\\u00e3o"' in text
+    assert 'text: "Trocar conta"' in text
+    assert 'studio.reconnectAntigravityAccount()' in text
+    assert '"Verificar login"' not in text
 
 
 # --- Single runtime resolution ------------------------------------------------

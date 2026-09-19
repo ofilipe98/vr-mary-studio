@@ -1986,14 +1986,17 @@ class StudioBridge(QObject):
             return
         if attempt and attempt.state in ("starting", "verifying"):
             return
-        self.startAntigravityLogin(force=True)
+        if self._antigravity_auth.account_state == "authenticated":
+            self.validateAntigravityAccount()
+            return
+        self.startAntigravityLogin(force=False)
 
     @Slot()
     def reconnectAntigravityAccount(self) -> None:
         self.startAntigravityLogin(force=True)
 
     @Slot(bool)
-    def startAntigravityLogin(self, force: bool = True) -> None:
+    def startAntigravityLogin(self, force: bool = False) -> None:
         if getattr(self, "_agy_check_running", False) or self._closed:
             return
         attempt = self._antigravity_auth.active_attempt

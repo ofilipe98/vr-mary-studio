@@ -1539,6 +1539,8 @@ class CodeAdminDomain:
             # must not resurrect the operation nor overwrite the final status.
             if not self._release_snapshot_running:
                 return
+            if latest_progress.get("workspace", self._settings.root) != self._settings.root:
+                return
             stage = str(latest_progress.get("stage") or "")
             current = latest_progress.get("current", 0)
             total = latest_progress.get("total", 0)
@@ -1567,13 +1569,15 @@ class CodeAdminDomain:
         if latest is None:
             return
 
+        operation = str(latest.get("operation") or "")
         self._release_snapshot_running = False
+        if operation == "export_decompiled":
+            self._decompiled_export_running = False
         self._release_snapshot_poll_timer.stop()
         if latest.get("workspace", self._settings.root) != self._settings.root:
+            self.stateChanged.emit()
             return
-        if latest.get("operation") in {"detect_decompiled", "import_decompiled", "export_decompiled", "delete_source_jars"}:
-            if latest.get("operation") == "export_decompiled":
-                self._decompiled_export_running = False
+        if operation in {"detect_decompiled", "import_decompiled", "export_decompiled", "delete_source_jars"}:
             if latest.get("ok"):
                 result = latest["result"]
                 if latest["operation"] == "detect_decompiled":
@@ -1594,10 +1598,11 @@ class CodeAdminDomain:
                     self.refreshApplicationsCatalog()
                     self.refreshCodeAnalysisReleases()
             else:
-                self._apps_catalog_error = latest["error"]
+                if operation != "export_decompiled":
+                    self._apps_catalog_error = latest["error"]
                 self._release_snapshot_status = (
                     f"Não foi possível exportar o código descompilado: {latest['error']}"
-                    if latest["operation"] == "export_decompiled"
+                    if operation == "export_decompiled"
                     else latest["error"]
                 )
             self.stateChanged.emit()
@@ -2449,7 +2454,8 @@ class CodeAdminDomain:
         }[operation]
         if operation == "export_decompiled":
             self._decompiled_export_running = True
-        self._apps_catalog_error = ""
+        if operation != "export_decompiled":
+            self._apps_catalog_error = ""
 
         def worker() -> None:
             result = {"operation": operation, "workspace": workspace}
