@@ -384,7 +384,9 @@ Item {
                                 leftPadding: 30
                                 rightPadding: 6
                                 placeholderText: "Pesquisar"
-                                Accessible.name: "Pesquisar conversas"
+                                ToolTip.visible: hovered && !activeFocus
+                                ToolTip.delay: 600
+                                ToolTip.text: "Pesquisar conversas"
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSize(14)
                                 font.weight: Font.Medium
@@ -469,6 +471,8 @@ Item {
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Criar novo projeto"
                                     Accessible.name: "Criar novo projeto"
                                     onClicked: {
                                         root.addProjectView = "sources"
@@ -486,6 +490,8 @@ Item {
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Nova conversa"
                                     Accessible.name: "Nova conversa"
                                     onClicked: {
                                         root.projectSettingsVisible = false
@@ -578,7 +584,9 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 30
                                     Layout.preferredWidth: Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 118)
-                                    Accessible.name: conversationItem.projectLabel
+                                    ToolTip.visible: projectLabelHover.hovered
+                                    ToolTip.delay: 500
+                                    ToolTip.text: conversationItem.projectLabel
                                     HoverHandler { id: projectLabelHover }
                                 }
                                 Rectangle {
@@ -601,7 +609,9 @@ Item {
                                         font.weight: Font.DemiBold
                                     }
 
-                                    Accessible.name: conversationItem.vrMode === "ultra" ? "VR Ultra ativo" : "VR ativo"
+                                    ToolTip.visible: conversationVrBadgeHover.hovered
+                                    ToolTip.text: conversationItem.vrMode === "ultra" ? "VR Ultra ativo" : "VR ativo"
+                                    ToolTip.delay: 300
 
                                     HoverHandler {
                                         id: conversationVrBadgeHover
@@ -661,6 +671,9 @@ Item {
                                     round: true
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Descartar rascunho"
+                                    ToolTip.delay: 300
                                     Accessible.name: "Descartar rascunho"
                                     onClicked: {
                                         if (conversationItem.conversationId === root.chatBridge.selectedConversationId) {
@@ -696,7 +709,9 @@ Item {
                                     renderType: Theme.textRenderType
                                     elide: Text.ElideRight
                                     maximumLineCount: 1
-                                    Accessible.name: (conversationItem.running && conversationItem.taskTotal > 0 && conversationItem.taskStep.length > 0) ? conversationItem.taskCompleted + "/" + conversationItem.taskTotal + " · " + conversationItem.taskStep : text
+                                    ToolTip.visible: taskHover.hovered && (conversationItem.running && conversationItem.taskTotal > 0 && conversationItem.taskStep.length > 0)
+                                    ToolTip.delay: 500
+                                    ToolTip.text: conversationItem.taskCompleted + "/" + conversationItem.taskTotal + " · " + conversationItem.taskStep
                                     HoverHandler { id: taskHover }
                                 }
                                 Rectangle {
@@ -768,6 +783,8 @@ Item {
                     implicitHeight: 38
                     iconKind: "settings"
                     foreground: Theme.palette.mutedText
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Configurações"
                     Accessible.name: "Abrir Configurações"
                     onClicked: root.frontendBridge.setCurrentPage(7)
                 }
@@ -1719,7 +1736,8 @@ Item {
                                 implicitHeight: 34
                                 iconKind: "plus"
                                 foreground: Theme.palette.mutedText
-                                Accessible.name: "Abrir superfície"
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Abrir superfície"
                                 onClicked: surfacePickerPopup.visible
                                     ? surfacePickerPopup.close() : surfacePickerPopup.open()
                             }
@@ -1738,7 +1756,9 @@ Item {
                         iconSize: 17
                         iconKind: "panelRight"
                         foreground: Theme.palette.mutedText
-                        Accessible.name: "Recolher painel direito"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Recolher painel direito"
+                        Accessible.name: ToolTip.text
                         onClicked: root.surfaceVisible = false
                         background: Rectangle {
                             radius: 8
@@ -1918,9 +1938,9 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.margins: 8
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "back"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; Accessible.name: "Voltar"; onClicked: root.browserBack() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "forward"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; Accessible.name: "Avançar"; onClicked: root.browserForward() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "reload"; foreground: Theme.palette.mutedText; enabled: browserLoader.item !== null; Accessible.name: "Recarregar"; onClicked: root.reloadBrowser() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "back"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; ToolTip.visible: hovered; ToolTip.text: "Voltar"; onClicked: root.browserBack() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "forward"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; ToolTip.visible: hovered; ToolTip.text: "Avançar"; onClicked: root.browserForward() }
+                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "reload"; foreground: Theme.palette.mutedText; enabled: browserLoader.item !== null; ToolTip.visible: hovered; ToolTip.text: "Recarregar"; onClicked: root.reloadBrowser() }
                             VrTextField { id: browserAddress; Layout.fillWidth: true; placeholderText: "Pesquisar ou inserir URL"; onAccepted: root.navigateBrowser(text) }
                         }
                         Loader {
@@ -2378,7 +2398,8 @@ Item {
                     implicitHeight: 34
                     iconKind: "back"
                     foreground: Theme.palette.mutedText
-                    Accessible.name: "Voltar"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Voltar"
                     onClicked: newChatProjectPopup.close()
                 }
                 VrTextField {
@@ -2926,7 +2947,8 @@ Item {
                         width: ListView.view.width
                         text: (modelData.kind === "skill" ? "Skill · " : "MCP · ") + modelData.name
                         checked: modelData.selected
-                        Accessible.name: text + (modelData.description ? (" · " + modelData.description) : "")
+                        ToolTip.visible: hovered
+                        ToolTip.text: modelData.description
                         onToggled: root.chatBridge.toggleExtension(index, checked)
                     }
                     VrEmptyState {

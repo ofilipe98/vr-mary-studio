@@ -126,7 +126,10 @@ Button {
         }
     }
 
-    Accessible.name: compact ? (currentIndex > 0 && currentItem.label ? ("Projeto: " + currentItem.label) : "Filtrar chats por projeto") : (currentItem.label || "Todos os projetos")
+    ToolTip.visible: compact && hovered
+    ToolTip.text: currentIndex > 0 && currentItem.label
+        ? ("Projeto: " + currentItem.label) : "Filtrar chats por projeto"
+    Accessible.name: compact ? ToolTip.text : (currentItem.label || "Todos os projetos")
 
     contentItem: Item {
         implicitWidth: control.compact ? 32 : -1
@@ -394,13 +397,17 @@ Button {
                             iconKind: "settings"
                             iconSize: 14
                             foreground: hovered ? "#ffffff" : Qt.rgba(150/255, 156/255, 166/255, 1.0)
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Configurar projeto"
                             Accessible.name: "Configurar " + projectRow.modelData.label
                             onClicked: projectRow.activateSettings()
                             z: 2
                         }
                     }
 
-                    Accessible.name: projectRow.fullTitle
+                    ToolTip.visible: rowHover.hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: projectRow.fullTitle
 
                     HoverHandler { id: rowHover }
                     MouseArea {

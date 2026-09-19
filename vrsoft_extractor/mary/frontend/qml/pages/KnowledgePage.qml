@@ -178,12 +178,14 @@ Item {
                         VrIconButton {
                             symbol: "↗"
                             enabled: studio.knowledgeLocalPath.length > 0
-                            Accessible.name: "Abrir arquivo local"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Abrir arquivo local"
                             onClicked: studio.openLocalPath(studio.knowledgeLocalPath)
                         }
                         VrIconButton {
                             symbol: root.documentExpanded ? "◫" : "▣"
-                            Accessible.name: root.documentExpanded
+                            ToolTip.visible: hovered
+                            ToolTip.text: root.documentExpanded
                                 ? "Restaurar lista de documentos" : "Expandir documento"
                             onClicked: root.documentExpanded = !root.documentExpanded
                         }

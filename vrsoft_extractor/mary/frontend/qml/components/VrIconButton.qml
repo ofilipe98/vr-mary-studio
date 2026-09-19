@@ -16,8 +16,9 @@ Button {
     implicitHeight: Theme.iconButtonNormal
     padding: 0
     focusPolicy: Qt.StrongFocus
-    Accessible.name: text || iconKind || symbol
+    Accessible.name: ToolTip.text || text || iconKind || symbol
     opacity: enabled ? 1 : 0.38
+    ToolTip.delay: 500
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down && control.enabled ? 0.91 : 1
 

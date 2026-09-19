@@ -27,6 +27,8 @@ Item {
             iconKind: "panelLeft"
             iconSize: 16
             foreground: root.toggleColor
+            ToolTip.visible: hovered
+            ToolTip.text: "Voltar para o Chat VR"
             Accessible.name: "Voltar para o Chat VR"
             onClicked: {
                 root.toggleRequested()

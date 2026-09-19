@@ -5046,18 +5046,5 @@ class QmlFrontendTest(unittest.TestCase):
             item.deleteLater()
 
 
-    def test_qml_contains_no_explanatory_tooltips(self) -> None:
-        remaining = [
-            str(path)
-            for path in MAIN_QML.parent.rglob("*.qml")
-            if "ToolTip." in path.read_text(encoding="utf-8")
-        ]
-        self.assertEqual(
-            remaining,
-            [],
-            f"Expected no QML files with ToolTip., but found: {remaining}",
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

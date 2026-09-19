@@ -101,8 +101,10 @@ Item {
             iconSize: 16
             focusPolicy: Qt.NoFocus
             foreground: Theme.palette.mutedText
-            Accessible.name: (root.chatPage && root.chatPage.conversationSidebarVisible)
+            ToolTip.visible: hovered
+            ToolTip.text: (root.chatPage && root.chatPage.conversationSidebarVisible)
                 ? "Recolher barra lateral" : "Mostrar conversas"
+            Accessible.name: ToolTip.text
             onClicked: {
                 if (root.chatPage)
                     root.chatPage.conversationSidebarVisible = !root.chatPage.conversationSidebarVisible
@@ -354,8 +356,10 @@ Item {
             focusPolicy: Qt.NoFocus
             foreground: (root.chatPage && root.chatPage.surfaceVisible)
                 ? Theme.palette.brandOrange : Theme.palette.mutedText
-            Accessible.name: (root.chatPage && root.chatPage.surfaceVisible)
+            ToolTip.visible: hovered
+            ToolTip.text: (root.chatPage && root.chatPage.surfaceVisible)
                 ? "Recolher painel direito" : "Expandir painel direito"
+            Accessible.name: ToolTip.text
             onClicked: {
                 if (root.chatPage)
                     root.chatPage.surfaceVisible = !root.chatPage.surfaceVisible

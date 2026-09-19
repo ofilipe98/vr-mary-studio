@@ -570,6 +570,8 @@ Rectangle {
         iconSize: 18
         foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         enabled: !composerCard.page.chatBridge.turnRunning
+        ToolTip.visible: hovered
+        ToolTip.text: "Anexar arquivos"
         Accessible.name: "Anexar arquivos"
         onClicked: composerCard.page.chatBridge.chooseAttachments()
     }
@@ -586,6 +588,8 @@ Rectangle {
         implicitHeight: 32
         round: true
         enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
+        ToolTip.visible: hovered || activeFocus
+        ToolTip.text: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar · Enter (Shift+Enter para nova linha)"
         Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
         iconSource: Qt.resolvedUrl(composerCard.page.chatBridge.turnRunning
             ? "../../../assets/chat-stop.svg"

@@ -206,6 +206,8 @@ Item {
                             implicitWidth: 28
                             implicitHeight: 28
                             foreground: Theme.palette.mutedText
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Voltar ao automático"
                             Accessible.name: "Voltar ao ícone automático"
                             onClicked: control.iconCleared()
                         }
@@ -223,7 +225,8 @@ Item {
                             text: "Choose file"
                             variant: "secondary"
                             implicitHeight: 32
-                            Accessible.name: "Escolher imagem do disco"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Escolher imagem do disco"
                             onClicked: control.iconRequested()
                         }
                     }
@@ -342,9 +345,10 @@ Item {
                     Item {
                         Layout.preferredWidth: 26
                         Layout.preferredHeight: 26
-                        Accessible.name: "Copiar caminho"
                         VrLineIcon { anchors.centerIn: parent; width: 15; height: 15; kind: "copy"; foreground: copyMouse.containsMouse ? Theme.palette.text : Theme.palette.mutedText }
                         MouseArea { id: copyMouse; anchors.fill: parent; hoverEnabled: true; onClicked: control.copyPathRequested() }
+                        ToolTip.visible: copyMouse.containsMouse
+                        ToolTip.text: "Copiar caminho"
                     }
                     Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 20; color: Theme.palette.chatDivider }
                     VrComboBox {

@@ -13,7 +13,7 @@ Button {
     padding: quiet ? 4 : 6
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
-    Accessible.name: text
+    Accessible.name: text || ToolTip.text
     background: Rectangle {
         radius: 7
         color: control.hovered ? Theme.palette.hover : control.quiet ? "transparent" : Theme.palette.chatControl
@@ -35,4 +35,5 @@ Button {
             font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold
         }
     }
+    ToolTip.visible: hovered && ToolTip.text !== ""
 }

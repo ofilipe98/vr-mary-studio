@@ -64,7 +64,7 @@ Popup {
 
                 VrIconButton {
                     iconKind: "close"
-                    Accessible.name: "Fechar"
+                    ToolTip.text: "Fechar"
                     onClicked: modal.close()
                 }
             }

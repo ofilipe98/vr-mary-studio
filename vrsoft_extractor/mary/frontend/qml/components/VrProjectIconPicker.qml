@@ -235,7 +235,8 @@ Popup {
                     border.color: "#FFFFFF"
                     HoverHandler { id: dotHover; cursorShape: Qt.PointingHandCursor }
                     TapHandler { onTapped: root.selColor = colorDot.dotColor }
-                    Accessible.name: dotColor
+                    ToolTip.visible: dotHover.hovered
+                    ToolTip.text: dotColor
                     Rectangle {
                         visible: colorDot.selected
                         anchors.fill: parent
@@ -315,7 +316,9 @@ Popup {
                         kind: iconCell.modelData.kind
                         foreground: iconCell.selected ? root.selColor : Theme.palette.mutedText
                     }
-                    Accessible.name: iconCell.modelData.label
+                    ToolTip.visible: cellHover.hovered
+                    ToolTip.delay: 400
+                    ToolTip.text: iconCell.modelData.label
                     HoverHandler { id: cellHover; cursorShape: Qt.PointingHandCursor }
                     TapHandler { onTapped: root.selKind = iconCell.modelData.kind }
                 }

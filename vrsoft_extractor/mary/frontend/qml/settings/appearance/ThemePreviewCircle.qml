@@ -51,4 +51,6 @@ AbstractButton {
     onAccentColorChanged: orb.requestPaint()
     onActionColorChanged: orb.requestPaint()
     onModeChanged: orb.requestPaint()
+    ToolTip.visible: hovered
+    ToolTip.text: mode === "light" ? "Usar apenas no modo claro" : "Usar apenas no modo escuro"
 }
