@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import traceback
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,14 @@ from vrsoft_extractor.mary.monitor_ephemeral import (
     MonitorEphemeralError,
     MonitorEphemeralSession,
     MonitorTurnRequest,
+)
+from vrsoft_extractor.mary.monitor_egress import (
+    PILOT_AUTH_METHOD,
+    PILOT_ENDPOINT,
+    PILOT_PROVIDER_ID,
+    MonitorEgressEvidence,
+    MonitorEgressManifest,
+    attest_monitor_egress,
 )
 from vrsoft_extractor.mary.monitor_isolation import (
     MonitorIsolationEvidence,
@@ -67,9 +76,56 @@ def isolation_attestation(root: Path):
     )
 
 
+def egress_attestation():
+    today = datetime.now(timezone.utc).date()
+    fields = ("input", "instructions", "model", "store", "stream")
+    manifest = MonitorEgressManifest(
+        provider_id=PILOT_PROVIDER_ID,
+        provider_version="0.155.1",
+        model_id="synthetic-model-2026-09-01",
+        endpoint=PILOT_ENDPOINT,
+        auth_method=PILOT_AUTH_METHOD,
+        account_scope_sha256=hashlib.sha256(b"synthetic-project").hexdigest(),
+        evidence_sha256=hashlib.sha256(b"synthetic-capture").hexdigest(),
+        retention_mode="zero_data_retention",
+        retention_days=0,
+        telemetry_mode="disabled",
+        request_fields=fields,
+        store_content=False,
+        web_search_enabled=False,
+        plugins_enabled=False,
+        sync_enabled=False,
+        provider_fanout_enabled=False,
+    )
+    evidence = MonitorEgressEvidence(
+        reviewed_on=today,
+        expires_on=today + timedelta(days=30),
+        observed_destinations=(PILOT_ENDPOINT,),
+        observed_request_fields=fields,
+        dedicated_provider_account=True,
+        retention_control_verified=True,
+        telemetry_disabled_verified=True,
+        network_allowlist_enforced=True,
+        direct_egress_denied=True,
+        egress_capture_reviewed=True,
+        payload_inventory_reviewed=True,
+    )
+    return attest_monitor_egress(manifest, evidence)
+
+
 def isolated_session(provider, isolation, **kwargs):
+    egress = egress_attestation()
     provider.isolation_manifest_digest = isolation.manifest_digest
-    return MonitorEphemeralSession(provider, monitor_options(), isolation, **kwargs)
+    provider.provider_id = egress.provider_id
+    provider.model_id = egress.model_id
+    provider.egress_manifest_digest = egress.manifest_digest
+    return MonitorEphemeralSession(
+        provider,
+        monitor_options(),
+        isolation,
+        egress,
+        **kwargs,
+    )
 
 
 def tree_snapshot(root: Path) -> dict[str, str]:
@@ -259,9 +315,30 @@ def test_contract_is_rejected_before_an_unapproved_provider_runs(tmp_path: Path)
             provider,
             monitor_options(),
             isolation_attestation(tmp_path),
+            object(),
         )
 
     assert provider.called is False
+
+
+def test_session_rejects_missing_or_mismatched_egress_attestation(
+    tmp_path: Path,
+) -> None:
+    isolation = isolation_attestation(tmp_path)
+    egress = egress_attestation()
+    provider = EchoProvider("blocked")
+    provider.isolation_manifest_digest = isolation.manifest_digest
+    provider.provider_id = egress.provider_id
+    provider.model_id = egress.model_id
+    provider.egress_manifest_digest = egress.manifest_digest
+
+    with pytest.raises(MonitorEphemeralError, match="monitor_egress_required"):
+        MonitorEphemeralSession(provider, monitor_options(), isolation, object())
+
+    provider.model_id = "different-model"
+    with pytest.raises(MonitorEphemeralError, match="monitor_egress_required"):
+        MonitorEphemeralSession(provider, monitor_options(), isolation, egress)
+    assert provider.retained_request is None
 
 
 def test_provider_request_has_no_central_identity_or_target_surface(tmp_path: Path) -> None:
@@ -298,9 +375,18 @@ def test_abrupt_process_exit_leaves_no_content_in_working_tree(tmp_path: Path) -
 import hashlib
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from vrsoft_extractor.mary.models import ConversationOptions
 from vrsoft_extractor.mary.monitor_ephemeral import MonitorEphemeralSession
+from vrsoft_extractor.mary.monitor_egress import (
+    PILOT_AUTH_METHOD,
+    PILOT_ENDPOINT,
+    PILOT_PROVIDER_ID,
+    MonitorEgressEvidence,
+    MonitorEgressManifest,
+    attest_monitor_egress,
+)
 from vrsoft_extractor.mary.monitor_isolation import (
     MonitorIsolationEvidence,
     MonitorProcessManifest,
@@ -335,9 +421,46 @@ evidence = MonitorIsolationEvidence(True, True, False, True, True)
 isolation = attest_monitor_process(
     manifest, evidence, forbidden_roots=((root / "central-secrets").resolve(),)
 )
+today = datetime.now(timezone.utc).date()
+fields = ("input", "instructions", "model", "store", "stream")
+egress_manifest = MonitorEgressManifest(
+    PILOT_PROVIDER_ID,
+    "0.155.1",
+    "synthetic-model-2026-09-01",
+    PILOT_ENDPOINT,
+    PILOT_AUTH_METHOD,
+    hashlib.sha256(b"synthetic-project").hexdigest(),
+    hashlib.sha256(b"synthetic-capture").hexdigest(),
+    "zero_data_retention",
+    0,
+    "disabled",
+    fields,
+    False,
+    False,
+    False,
+    False,
+    False,
+)
+egress_evidence = MonitorEgressEvidence(
+    today,
+    today + timedelta(days=30),
+    (PILOT_ENDPOINT,),
+    fields,
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+)
+egress = attest_monitor_egress(egress_manifest, egress_evidence)
 provider = CrashProvider()
 provider.isolation_manifest_digest = isolation.manifest_digest
-MonitorEphemeralSession(provider, options, isolation).run_turn(sys.stdin.read())
+provider.provider_id = egress.provider_id
+provider.model_id = egress.model_id
+provider.egress_manifest_digest = egress.manifest_digest
+MonitorEphemeralSession(provider, options, isolation, egress).run_turn(sys.stdin.read())
 """
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"

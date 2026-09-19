@@ -50,6 +50,35 @@ prova uma ACL/conta do Windows. Os providers atuais continuam recusados. H04 som
 poderá ser encerrada após validar a conta de serviço, ACLs e isolamento reais no ambiente
 de implantação.
 
+## Provider e egress do piloto
+
+`monitor_egress` reserva o piloto ao provider `codex`, mas não aprova o adapter Codex
+genérico. O manifesto exige autenticação por chave de API, versão e modelo exatos (sem
+`latest`), conta/projeto representado apenas por SHA-256, um único destino
+`https://api.openai.com/v1/responses`, `store=false`, Zero Data Retention e telemetria
+desativada. Busca Web, plugins, sync e fan-out entre providers precisam permanecer
+desligados.
+
+A atestação só é emitida quando a revisão da conta e uma captura isolada de egress
+declaram o mesmo destino e o mesmo inventário de campos, com allowlist de rede aplicada,
+egress direto negado e validade máxima de 90 dias. A sessão efêmera compara provider,
+modelo e digest do manifesto antes de entregar o payload. Evidência ausente, expirada ou
+divergente fecha o caminho.
+
+Em 2026-09-19, o inventário desta máquina encontrou apenas Codex CLI 0.155.1; os outros
+três CLIs não estavam instalados. Isso não é evidência de aprovação. O adapter existente
+usa `app-server`, herda o environment e suporta retomada, portanto continua proibido no
+Monitor. Nenhum manifesto operacional, identificador de projeto, captura de tráfego ou
+declaração ZDR real foi incluído no repositório.
+
+Pela documentação oficial, uso com chave de API segue os controles da organização da
+API; o padrão pode manter logs de abuso por até 30 dias e ZDR depende de aprovação da
+OpenAI. A H05 só poderá ser encerrada após confirmar a política na conta/projeto dedicado,
+desativar a telemetria, executar a captura no broker isolado e revisar o inventário real.
+Referências consultadas em 2026-09-19:
+[controles de dados](https://developers.openai.com/api/docs/guides/your-data) e
+[autenticação do Codex](https://developers.openai.com/es-419/docs/auth).
+
 O padrão de conversas novas também passa a ser `supervised`. Conversas existentes que
 tenham um perfil válido preservam a escolha; trocar de provider volta para
 `supervised`. `full_access` continua disponível como escolha explícita para fluxos
@@ -64,7 +93,8 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
    adulteração/revogação de ponta a ponta;
 3. implementar o broker externo e validar conta de serviço/ACLs reais contra o
    manifesto de processo aprovado;
-4. provider único, destinos de egress fixos e retenção/telemetria aprovadas;
+4. materializar e validar em ambiente a conta, ZDR, telemetria e captura exigidos pelo
+   manifesto de egress;
 5. limites de streaming, subprocesso, tempo, cancelamento e concorrência;
 6. versões, hashes e atualização controlada da cadeia executada;
 7. matriz dinâmica completa com canários antes de qualquer aprovação.
@@ -76,6 +106,7 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_restricted_profile.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_ephemeral.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_isolation.py -q -x
+.\.venv\Scripts\python.exe -m pytest tests/test_monitor_egress.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_antigravity_acp.py -q -x
 ```
 

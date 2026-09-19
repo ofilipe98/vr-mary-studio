@@ -17,6 +17,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from vrsoft_extractor.mary.models import ConversationOptions
+from vrsoft_extractor.mary.monitor_egress import (
+    MonitorEgressAttestation,
+    egress_attested,
+)
 from vrsoft_extractor.mary.monitor_isolation import (
     MonitorIsolationAttestation,
     isolation_attested,
@@ -161,6 +165,9 @@ class MonitorEphemeralProvider(Protocol):
     """Provider contract required by :class:`MonitorEphemeralSession`."""
 
     ephemeral_contract_version: int
+    provider_id: str
+    model_id: str
+    egress_manifest_digest: str
     isolation_manifest_digest: str
     persists_content: bool
     supports_resume: bool
@@ -202,6 +209,7 @@ class MonitorEphemeralSession:
         provider: MonitorEphemeralProvider,
         options: ConversationOptions,
         isolation: MonitorIsolationAttestation,
+        egress: MonitorEgressAttestation,
         *,
         event_sink: MonitorEventSink | None = None,
         max_input_bytes: int = 64 * 1024,
@@ -225,6 +233,15 @@ class MonitorEphemeralSession:
             != isolation.manifest_digest
         ):
             raise MonitorEphemeralError("monitor_isolation_required")
+        if not egress_attested(egress):
+            raise MonitorEphemeralError("monitor_egress_required")
+        if (
+            getattr(provider, "provider_id", "") != egress.provider_id
+            or getattr(provider, "model_id", "") != egress.model_id
+            or getattr(provider, "egress_manifest_digest", "")
+            != egress.manifest_digest
+        ):
+            raise MonitorEphemeralError("monitor_egress_required")
         if max_input_bytes <= 0 or max_output_bytes <= 0:
             raise ValueError("Monitor byte limits must be positive.")
 
