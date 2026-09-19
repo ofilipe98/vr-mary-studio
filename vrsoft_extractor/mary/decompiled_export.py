@@ -186,7 +186,8 @@ def export_decompiled_source(
                             "O índice contém caminhos incompatíveis com Windows: "
                             f"{previous_spelling} / {relative.as_posix()}"
                         )
-                    if previous_hash != content_hash:
+                    previous_content = (staging_root / relative).read_bytes()
+                    if previous_hash != content_hash or previous_content != content:
                         raise ValueError(
                             f"O índice contém fontes conflitantes para: {relative.as_posix()}"
                         )
