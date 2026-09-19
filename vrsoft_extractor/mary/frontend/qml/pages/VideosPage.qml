@@ -177,16 +177,14 @@ Item {
                     implicitWidth: 26
                     implicitHeight: 26
                     iconKind: "chevronRight"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Recolher todas as pastas"
+                    Accessible.name: "Recolher todas as pastas"
                     onClicked: root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
                 }
                 VrIconButton {
                     implicitWidth: 26
                     implicitHeight: 26
                     iconKind: "chevronDown"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Expandir todas as pastas"
+                    Accessible.name: "Expandir todas as pastas"
                     onClicked: root.collapsedNodeIds = []
                 }
             }
@@ -266,8 +264,7 @@ Item {
                                         ? "chevronRight" : "chevronDown"
                                     iconSize: 14
                                     foreground: frontend.palette.mutedText
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: root.nodeCollapsed(videoRow.nodeId)
+                                    Accessible.name: root.nodeCollapsed(videoRow.nodeId)
                                         ? "Expandir pasta" : "Recolher pasta"
                                     onClicked: root.toggleNode(videoRow.nodeId)
                                 }

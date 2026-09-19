@@ -33,7 +33,7 @@ Item {
                 AppearanceAction {
                     objectName: root.resetKey + "Reset"
                     visible: root.resetVisible; quiet: true; iconKind: "reset"
-                    implicitHeight: 18; ToolTip.text: "Restaurar " + root.title.toLowerCase()
+                    implicitHeight: 18; Accessible.name: "Restaurar " + root.title.toLowerCase()
                     onClicked: frontend.resetAppearanceSetting(root.resetKey)
                 }
             }

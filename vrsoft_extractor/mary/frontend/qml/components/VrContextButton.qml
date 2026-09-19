@@ -25,8 +25,6 @@ Button {
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down ? 0.92 : 1
     Accessible.name: "Uso da janela de contexto"
-    ToolTip.visible: hovered && !detailsPopup.opened
-    ToolTip.text: "Uso da janela de contexto"
 
     Behavior on scale {
         enabled: !frontend.reduceMotion

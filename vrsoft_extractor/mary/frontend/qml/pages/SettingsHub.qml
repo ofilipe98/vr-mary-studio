@@ -328,8 +328,7 @@ Item {
                         iconKind: "close"
                         iconSize: 11
                         foreground: Theme.palette.mutedText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Limpar pesquisa"
+                        Accessible.name: "Limpar pesquisa"
                         onClicked: settingsConversationSearch.clear()
                     }
                 }

@@ -1910,8 +1910,6 @@ Item {
                                     && !chat.decompiledExportRunning
                                 variant: "secondary"
                                 implicitHeight: Theme.controlHeightCompact
-                                ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
-                                ToolTip.text: "Nenhum código decompilado disponível para esta versão."
                                 onClicked: chat.exportDecompiledCode("")
                             }
                         }
