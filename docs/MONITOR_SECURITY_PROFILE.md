@@ -7,11 +7,23 @@ são normalizados para `supervised`; a resolução direta de um preset desconhec
 
 ## Estado atual
 
-Esta revisão prepara a primeira barreira do gate de integração. Codex, Claude,
-OpenCode e Antigravity recusam `monitor_mode` antes de iniciar ou retomar uma sessão.
-O perfil só poderá executar quando existir um adapter Monitor dedicado com ferramentas,
-destino e identidade central fixados. Adicionar o perfil a um provider genérico ou ao
-seletor da interface viola este contrato.
+Codex, Claude, OpenCode e Antigravity recusam `monitor_mode` antes de iniciar ou
+retomar uma sessão. O módulo `monitor_ephemeral` acrescenta o limite local da H02:
+ele executa um turno por vez, somente em memória, sem importar banco, orchestrator,
+logging, adapters genéricos ou qualquer API de filesystem. Não existem superfícies de
+histórico, resume ou exportação.
+
+O conteúdo de entrada fica em buffer mutável e é sobrescrito ao terminar, inclusive
+em erro ou cancelamento. O resultado transitório pertence ao transporte e precisa ser
+fechado depois da entrega. Eventos contêm somente IDs aleatórios, contagens de bytes,
+estado e código fechado de erro. Uma nova instância sempre recebe outra identidade e
+não recupera o turno anterior.
+
+Esse limite ainda não habilita o Monitor. O contrato declarado por um provider
+(`persists_content=False` e `supports_resume=False`) é uma barreira local, não uma
+prova de retenção. O adapter concreto, processo isolado, destino e retenção do
+provider continuam bloqueados pelos gates seguintes. Adicionar o perfil a um provider
+genérico ou ao seletor da interface viola este contrato.
 
 O padrão de conversas novas também passa a ser `supervised`. Conversas existentes que
 tenham um perfil válido preservam a escolha; trocar de provider volta para
@@ -22,21 +34,23 @@ gerais do Studio e não é permitido como substituto do perfil Monitor.
 
 Antes de habilitar uma sessão Monitor ainda são necessários:
 
-1. caminho efêmero sem mensagens, eventos, journal, resume ou exportação;
+1. conectar o transporte ao limite efêmero sem introduzir persistência;
 2. identidade de usuário, sessão e cliente obtida fora do prompt e revalidada no central;
 3. processo isolado, ambiente mínimo, filesystem e executáveis permitidos;
 4. provider único, destinos de egress fixos e retenção/telemetria aprovadas;
-5. limites de entrada, saída, subprocesso, cancelamento e concorrência;
+5. limites de streaming, subprocesso, tempo, cancelamento e concorrência;
 6. versões, hashes e atualização controlada da cadeia executada;
-7. testes dinâmicos com canários antes de qualquer aprovação.
+7. matriz dinâmica completa com canários antes de qualquer aprovação.
 
 ## Verificação
 
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_restricted_profile.py -q -x
+.\.venv\Scripts\python.exe -m pytest tests/test_monitor_ephemeral.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_antigravity_acp.py -q -x
 ```
 
-Esses testes provam somente a barreira de perfil. Eles não aprovam o adapter, um
+Os testes efêmeros usam canários em sucesso, erro, cancelamento, reinício e encerramento
+abrupto do processo. Eles provam o limite local isolado; não aprovam o adapter, um
 provider, o tratamento de dados de clientes ou a integração do VRMonitor.
