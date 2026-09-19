@@ -614,11 +614,9 @@ def test_immediate_followup_survives_previous_pending_terminal(tmp_path):
         cid = db.create_conversation("Followup", "codex", "test", bridge._settings.root)
         bridge.refresh()
         bridge.selectConversationId(cid)
-        orch = bridge._orchestrator
-        orch._external_callbacks[cid] = bridge._on_runtime_event
 
         def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
-            orch._handle_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+            bridge._on_runtime_event(RuntimeEvent(cid, kind, text, payload or {}, at))
 
         # 1. Turn A starts
         emit("turn_started", payload={"execution_id": 100})
@@ -650,7 +648,10 @@ def test_immediate_followup_survives_previous_pending_terminal(tmp_path):
         assert bridge.taskProgress == {}
 
         # 3. User sends immediate follow-up B
-        with patch.object(bridge._orchestrator, "send"):
+        def fake_send(conversation_id, *args, **kwargs):
+            bridge._database.update_conversation(conversation_id, status="running")
+
+        with patch.object(bridge._orchestrator, "send", side_effect=fake_send):
             bridge.sendMessage("Follow-up message B")
 
         # Invariant: Turn B is running and pending terminal from A cannot clear B
@@ -680,6 +681,7 @@ def test_immediate_followup_survives_previous_pending_terminal(tmp_path):
         assert bridge.taskPlanVisible is True
 
         # 5. Finalize B and assert normal cleanup
+        db.update_conversation(cid, status="idle")
         bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=101)
         assert bridge.turnRunning is False
         assert bridge.taskProgress == {}
@@ -695,11 +697,9 @@ def test_execution_id_isolation_between_consecutive_turns(tmp_path):
         cid = db.create_conversation("Isolation", "codex", "test", bridge._settings.root)
         bridge.refresh()
         bridge.selectConversationId(cid)
-        orch = bridge._orchestrator
-        orch._external_callbacks[cid] = bridge._on_runtime_event
 
         def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
-            orch._handle_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+            bridge._on_runtime_event(RuntimeEvent(cid, kind, text, payload or {}, at))
 
         # Turn A with execution_id = 100 starts and finishes
         emit("turn_started", payload={"execution_id": 100})

@@ -3037,7 +3037,7 @@ class ChatBridge(QObject):
             return
         if execution_id and execution_id < self._ui_execution_ids.get(cid, 0):
             return
-        if execution_id and (cid, execution_id) in self._ui_terminal_executions:
+        if execution_id and (cid, execution_id) in self._ui_finalized_executions:
             return
         is_selected = cid == self._selected_conversation_id()
         if (
