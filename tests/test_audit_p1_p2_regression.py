@@ -796,6 +796,161 @@ class AuditRegressionTest(unittest.TestCase):
         ))
         self.assertEqual(tool.output, "A")
 
+    # CORR-TC-TERM-02: first accepted terminal wins, live == reload.
+    def _run_live_two_terminals(self, chat_id, tool_events, first_terminal,
+                                second_terminal, execution_id=7):
+        self._database.update_conversation(chat_id, status="running")
+        self._bridge._active_turns.add(chat_id)
+        self._bridge.refresh()
+        self._bridge.selectConversationId(chat_id)
+        orig_reload = self._bridge._reload_execution_timeline
+        self._bridge._reload_execution_timeline = lambda cid, rows: True  # type: ignore
+        try:
+            for ev in tool_events:
+                payload = dict(ev)
+                payload.setdefault("execution_id", execution_id)
+                self._bridge._on_runtime_event(RuntimeEvent(chat_id, "tool_event", "", payload))
+                self.application.processEvents()
+            self._bridge._on_runtime_event(
+                RuntimeEvent(chat_id, first_terminal, "", {"execution_id": execution_id})
+            )
+            self.application.processEvents()
+            msg_first = next(
+                (m for m in self._bridge._messages._items if m.get("role") == "activity"), None,
+            )
+            self.assertIsNotNone(msg_first)
+            snapshot_first = {t["id"]: dict(t) for t in msg_first.get("activityData", [])}
+            count_first = len(self._bridge._messages._items)
+            self._bridge._on_runtime_event(
+                RuntimeEvent(chat_id, second_terminal, "", {"execution_id": execution_id})
+            )
+            self.application.processEvents()
+            msg_second = next(
+                (m for m in self._bridge._messages._items if m.get("role") == "activity"), None,
+            )
+            self.assertIsNotNone(msg_second)
+            snapshot_second = {t["id"]: dict(t) for t in msg_second.get("activityData", [])}
+            count_second = len(self._bridge._messages._items)
+        finally:
+            self._bridge._reload_execution_timeline = orig_reload  # type: ignore
+        return snapshot_first, snapshot_second, count_first, count_second
+
+    def _reload_two_terminals(self, tool_payloads, terminals, execution_id=25):
+        cid = self._database.create_conversation("R", "codex", "modelo", self._settings.root)
+        for p in tool_payloads:
+            payload = dict(p)
+            payload.setdefault("execution_id", execution_id)
+            self._database.add_event(RuntimeEvent(cid, "tool_event", "", payload))
+        for term in terminals:
+            self._database.add_event(RuntimeEvent(cid, term, "", {"execution_id": execution_id}))
+        self._database.begin_user_turn(cid, "hi")
+        rows = self._database.messages(cid)
+        bridge2_prefs = QSettings(str(Path(self._tmp.name) / f"{cid}_term02.ini"), QSettings.IniFormat)
+        bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
+        self.addCleanup(bridge2.close)
+        bridge2._selected = {"conversationId": cid}
+        ok = bridge2._reload_execution_timeline(cid, rows)
+        self.assertTrue(ok)
+        cards = {}
+        for m in bridge2._messages._items:
+            for t in m.get("activityData", []):
+                cards[t["id"]] = t
+        return cards
+
+    def test_corr_tc_term_02_error_then_completed_keeps_failure(self):
+        chat_id = self._database.create_conversation("C1", "codex", "m", self._settings.root)
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id,
+            [{"toolCallId": "t1", "step_type": "commandExecution", "status": "running"}],
+            "error", "turn_completed",
+        )
+        self.assertEqual(first["t1"]["state"], "error")
+        self.assertEqual(second["t1"]["state"], "error")
+        reloaded = self._reload_two_terminals(
+            [{"toolCallId": "t1", "step_type": "commandExecution", "status": "running"}],
+            ["error", "turn_completed"],
+        )
+        self.assertEqual(reloaded["t1"]["state"], "error")
+
+    def test_corr_tc_term_02_cancelled_then_completed_keeps_cancelled(self):
+        chat_id = self._database.create_conversation("C2", "codex", "m", self._settings.root)
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id,
+            [{"toolCallId": "t2", "step_type": "commandExecution", "status": "running"}],
+            "orchestration_cancelled", "turn_completed",
+        )
+        self.assertEqual(first["t2"]["state"], "cancelled")
+        self.assertEqual(second["t2"]["state"], "cancelled")
+        reloaded = self._reload_two_terminals(
+            [{"toolCallId": "t2", "step_type": "commandExecution", "status": "running"}],
+            ["orchestration_cancelled", "turn_completed"],
+        )
+        self.assertEqual(reloaded["t2"]["state"], "cancelled")
+
+    def test_corr_tc_term_02_completed_then_error_keeps_interrupted(self):
+        chat_id = self._database.create_conversation("C3", "codex", "m", self._settings.root)
+        eid = 7
+        first, second, count_first, count_second = self._run_live_two_terminals(
+            chat_id,
+            [{"toolCallId": "t3", "step_type": "commandExecution", "status": "running"}],
+            "turn_completed", "error", execution_id=eid,
+        )
+        self.assertEqual(first["t3"]["state"], "interrupted")
+        # Late terminal must not alter the card.
+        self.assertEqual(second, first)
+        self.assertEqual(count_second, count_first)
+        # Reducer must not be recreated for the terminated execution.
+        self.assertNotIn((chat_id, eid), getattr(self._bridge, "_tool_reducers", {}))
+        # Exactly the terminated execution is recorded, no second visual terminal.
+        term_execs = [k for k in self._bridge._ui_terminal_executions if k[0] == chat_id]
+        self.assertEqual(term_execs, [(chat_id, eid)])
+        reloaded = self._reload_two_terminals(
+            [{"toolCallId": "t3", "step_type": "commandExecution", "status": "running"}],
+            ["turn_completed", "error"],
+        )
+        self.assertEqual(reloaded["t3"]["state"], "interrupted")
+
+    def test_corr_tc_term_02_completed_then_cancelled_keeps_interrupted(self):
+        chat_id = self._database.create_conversation("C4", "codex", "m", self._settings.root)
+        eid = 7
+        first, second, count_first, count_second = self._run_live_two_terminals(
+            chat_id,
+            [{"toolCallId": "t4", "step_type": "commandExecution", "status": "running"}],
+            "turn_completed", "orchestration_cancelled", execution_id=eid,
+        )
+        self.assertEqual(first["t4"]["state"], "interrupted")
+        self.assertEqual(second, first)
+        self.assertEqual(count_second, count_first)
+        self.assertNotIn((chat_id, eid), getattr(self._bridge, "_tool_reducers", {}))
+        term_execs = [k for k in self._bridge._ui_terminal_executions if k[0] == chat_id]
+        self.assertEqual(term_execs, [(chat_id, eid)])
+        reloaded = self._reload_two_terminals(
+            [{"toolCallId": "t4", "step_type": "commandExecution", "status": "running"}],
+            ["turn_completed", "orchestration_cancelled"],
+        )
+        self.assertEqual(reloaded["t4"]["state"], "interrupted")
+
+    def test_corr_tc_term_02_explicit_success_survives_late_error(self):
+        tool_events = [
+            {"toolCallId": "t5", "step_type": "commandExecution", "status": "running"},
+            {"toolCallId": "t5", "step_type": "commandExecution", "status": "success", "output": "ok"},
+        ]
+        chat_id = self._database.create_conversation("C5", "codex", "m", self._settings.root)
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "turn_completed", "error",
+        )
+        self.assertEqual(first["t5"]["state"], "completed")
+        self.assertEqual(second["t5"]["state"], "completed")
+        reloaded = self._reload_two_terminals(tool_events, ["turn_completed", "error"])
+        self.assertEqual(reloaded["t5"]["state"], "completed")
+
+    def test_corr_tc_term_02_no_dead_terminal_priority_code(self):
+        root = Path(__file__).resolve().parent.parent / "vrsoft_extractor" / "mary" / "frontend"
+        for rel in ("bridges/activity.py", "chat.py", "bridges/conversations.py"):
+            text = (root / rel).read_text(encoding="utf-8")
+            self.assertNotIn("TERMINAL_PRIORITY", text)
+            self.assertNotIn("_ui_terminal_kinds", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,13 +20,6 @@ from ...task_plan import TaskPlan
 
 from .presentation import (markdown_for_display, short_event_text, segments_for_display)
 
-TERMINAL_PRIORITY: dict[str, int] = {
-    "error": 3,
-    "orchestration_cancelled": 2,
-    "turn_recovered": 1,
-    "turn_completed": 1,
-    "orchestration_completed": 1,
-}
 
 class ActivityDomain:
     """Domain operations using the facade as the sole state and transaction owner."""
@@ -74,23 +67,18 @@ class ActivityDomain:
                 return
             if is_terminal and previous and execution_id != previous:
                 return
+            # First-terminal-wins: the first accepted terminal for
+            # (conversation_id, execution_id) is canonical. Any later
+            # event for the same terminated execution is ignored before
+            # touching reducer, cards, visual state, or pending terminal.
+            # (Late tool updates were already dropped by the old priority
+            # guard since their priority was 0; late terminals no longer
+            # upgrade — the first terminal wins.)
             if (event.conversation_id, execution_id) in self._ui_terminal_executions:
-                if not hasattr(self, "_ui_terminal_kinds"):
-                    self._ui_terminal_kinds = {}
-                current_term = self._ui_terminal_kinds.get((event.conversation_id, execution_id))
-                if current_term is not None:
-                    cur_prio = TERMINAL_PRIORITY.get(current_term, 0)
-                    new_prio = TERMINAL_PRIORITY.get(event.kind, 0)
-                    if new_prio <= cur_prio:
-                        return
-                else:
-                    return
+                return
             self._ui_execution_ids[event.conversation_id] = max(previous, execution_id)
             if is_terminal:
-                if not hasattr(self, "_ui_terminal_kinds"):
-                    self._ui_terminal_kinds = {}
                 self._ui_terminal_executions.add((event.conversation_id, execution_id))
-                self._ui_terminal_kinds[(event.conversation_id, execution_id)] = event.kind
 
         # Maintain tool reducer state for every tool_event regardless of conversation selection
         tool_entry = None
@@ -366,6 +354,10 @@ class ActivityDomain:
             "orchestration_cancelled",
         }:
             execution_id = int(event.payload.get("execution_id") or 0)
+            # First-terminal-wins (background path): a later terminal for an
+            # already-terminated execution must not touch reducer or visuals.
+            if (event.conversation_id, execution_id) in self._ui_terminal_executions:
+                return
             self._discard_conversation_approvals(event.conversation_id)
             reducer_key = (event.conversation_id, execution_id)
             reducer = getattr(self, "_tool_reducers", {}).get(reducer_key)
