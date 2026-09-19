@@ -5,13 +5,16 @@ import QtQuick.Effects
 import QtQuick.Layouts
 import "../theme"
 
-Rectangle {
+Item {
     id: composerCard
     required property var page
     property alias approvalSelectorItem: approvalSelector
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
     property alias modelSelectorItem: modelSelector
+    // Compatibilidade: consumidores externos ainda leem radius/color do componente.
+    readonly property alias color: composerSurface.color
+    readonly property alias radius: composerSurface.radius
     readonly property bool isAtBottom: {
         var list = composerCard.page ? composerCard.page.messageListHandle : null
         if (!list || list.count === 0) return true
@@ -76,7 +79,8 @@ Rectangle {
 
     readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22
+    // Altura total do conjunto: card principal (mesma altura visual anterior) + parte exposta da bandeja.
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22 + Theme.compactControlHeight - Theme.spaceXs
     readonly property real compactHeight: 46
 
     objectName: "chatComposerCard"
@@ -89,23 +93,7 @@ Rectangle {
             (parent.height + composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 24 - height - composerCard.page.expertStripHeight) / 2)
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: isCompact ? compactHeight : normalHeight
-    radius: 16
-    clip: true
-    color: Theme.palette.chatComposer
     readonly property bool vrActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode !== "off")
-    border.width: 1
-    border.color: composerCard.page.composerDropActive
-        ? Theme.palette.brandOrange
-        : vrActive
-            ? (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45))
-            : (composerInput.activeFocus
-                ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
-                : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
-
-    Behavior on border.color {
-        enabled: !composerCard.page.frontendBridge.reduceMotion
-        ColorAnimation { duration: Theme.fastDuration }
-    }
 
     Behavior on height {
         enabled: !composerCard.page.frontendBridge.reduceMotion
@@ -123,314 +111,406 @@ Rectangle {
         }
     }
 
-    DropArea {
-        id: composerDropArea
-        objectName: "chatComposerDropArea"
-        anchors.fill: parent
-        z: 100
-        onEntered: function(drag) {
-            composerCard.page.composerDropActive = drag.hasUrls
-            drag.accepted = drag.hasUrls
-        }
-        onExited: composerCard.page.composerDropActive = false
-        onDropped: function(drop) {
-            composerCard.page.composerDropActive = false
-            if (drop.hasUrls) {
-                composerCard.page.chatBridge.addDroppedAttachments(drop.urls)
-                drop.acceptProposedAction()
-            }
-        }
-    }
-
-    // Top thumbnail preview row for image attachments (matching Image 2)
-    ListView {
-        id: attachmentThumbnailsList
-        objectName: "chatAttachmentThumbnailsList"
-        visible: composerCard.hasImageAttachments && !composerCard.isCompact
+    // Card principal de digitação: fundo, borda, raio e recorte do composer.
+    Rectangle {
+        id: composerSurface
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.leftMargin: 14
-        anchors.rightMargin: 14
-        anchors.topMargin: 12
-        height: visible ? 60 : 0
-        orientation: ListView.Horizontal
-        spacing: 10
+        height: composerCard.isCompact
+            ? composerCard.compactHeight
+            : composerCard.normalHeight - Theme.compactControlHeight + Theme.spaceXs
+        radius: 16
         clip: true
-        model: composerCard.page.chatBridge.attachments
-        delegate: Item {
-            id: thumbDelegate
-            required property int index
-            required property var modelData
-            readonly property bool isImage: {
-                var p = String((modelData && (modelData.path || modelData.name)) || "").toLowerCase()
-                return p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
-                       p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp") ||
-                       p.endsWith(".svg") || p.endsWith(".ico")
-            }
-            readonly property string imageSource: {
-                var p = String((modelData && modelData.path) || "")
-                if (!p.length) return ""
-                if (p.startsWith("file:///")) return p
-                if (p.indexOf(":") === 1) return "file:///" + p.replace(/\\/g, "/")
-                return "file://" + p.replace(/\\/g, "/")
-            }
-            visible: isImage
-            width: isImage ? 60 : 0
-            height: isImage ? 60 : 0
+        color: Theme.palette.chatComposer
+        border.width: 1
+        border.color: composerCard.page.composerDropActive
+            ? Theme.palette.brandOrange
+            : composerCard.vrActive
+                ? (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45))
+                : (composerInput.activeFocus
+                    ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
+                    : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
+        z: 1
 
-            Rectangle {
-                id: imageThumbnailCard
-                objectName: "chatAttachmentThumbnail"
-                anchors.fill: parent
-                radius: 8
-                color: Theme.palette.chatControl
-                border.width: 1
-                border.color: Theme.palette.chatBorder
-                clip: true
-
-                Image {
-                    id: thumbImage
-                    anchors.fill: parent
-                    source: thumbDelegate.imageSource
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    cache: true
-                    // Item.clip é retangular e não respeita o radius do card,
-                    // por isso a imagem vazava com cantos quadrados.
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        maskEnabled: true
-                        maskSource: thumbMask
-                    }
-                }
-
-                Rectangle {
-                    id: thumbMask
-                    anchors.fill: parent
-                    radius: 8
-                    visible: false
-                }
-
-                Rectangle {
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.margins: 3
-                    width: 16
-                    height: 16
-                    radius: 8
-                    color: Qt.rgba(0, 0, 0, 0.65)
-                    VrIconButton {
-                        anchors.centerIn: parent
-                        width: 16
-                        height: 16
-                        iconKind: "close"
-                        iconSize: 8
-                        foreground: "#FFFFFF"
-                        onClicked: composerCard.page.chatBridge.removeAttachment(thumbDelegate.index)
-                    }
-                }
-            }
+        Behavior on border.color {
+            enabled: !composerCard.page.frontendBridge.reduceMotion
+            ColorAnimation { duration: Theme.fastDuration }
         }
-    }
-
-    // Attachment chips row (below thumbnails, above text input; only non-image files)
-    ListView {
-        id: attachmentList
-        objectName: "chatAttachmentList"
-        visible: composerCard.hasFileAttachments && !composerCard.isCompact
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: attachmentThumbnailsList.visible ? attachmentThumbnailsList.bottom : parent.top
-        anchors.leftMargin: 14
-        anchors.rightMargin: 14
-        anchors.topMargin: attachmentThumbnailsList.visible ? 8 : 10
-        height: visible ? 30 : 0
-        orientation: ListView.Horizontal
-        spacing: 6
-        clip: true
-        model: composerCard.page.chatBridge.attachments
-        delegate: Rectangle {
-            id: attachmentChip
-            required property int index
-            required property var modelData
-            readonly property bool isImageChip: {
-                var p = String((modelData && (modelData.path || modelData.name)) || "").toLowerCase()
-                return p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
-                       p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp") ||
-                       p.endsWith(".svg") || p.endsWith(".ico")
-            }
-            visible: !isImageChip
-            width: isImageChip ? 0 : Math.min(220, chipText.implicitWidth + 38)
-            height: isImageChip ? 0 : 26
-            radius: 8
-            color: Theme.palette.chatControl
-            border.width: 1
-            border.color: Theme.palette.chatBorder
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 4
-                spacing: 5
-                VrLineIcon {
-                    width: 14
-                    height: 14
-                    anchors.verticalCenter: parent.verticalCenter
-                    kind: "file"
-                    foreground: Theme.palette.brandOrange
-                }
-                Text {
-                    id: chipText
-                    width: parent.parent.width - 36
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: attachmentChip.modelData.name || attachmentChip.modelData.path || ""
-                    elide: Text.ElideMiddle
-                    color: Theme.palette.text
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
-                }
-                VrIconButton {
-                    width: 22
-                    height: 22
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconKind: "close"
-                    iconSize: 12
-                    foreground: Theme.palette.mutedText
-                    onClicked: composerCard.page.chatBridge.removeAttachment(attachmentChip.index)
-                }
-            }
-        }
-    }
-
-    // ScrollView containing text input (placed below attachments)
-    ScrollView {
-        id: composerScroll
-        objectName: "chatComposerScroll"
-        property alias text: composerInput.text
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: 16
-        anchors.rightMargin: composerCard.isCompact ? 86 : 16
-        anchors.top: parent.top
-        anchors.topMargin: composerCard.composerTopMargin
-        height: composerCard.isCompact ? 34 : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
-            contentHeight + topPadding + bottomPadding))
-        clip: true
 
         Behavior on height {
             enabled: !composerCard.page.frontendBridge.reduceMotion
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
-        Behavior on anchors.topMargin {
-            enabled: !composerCard.page.frontendBridge.reduceMotion
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-        }
-        Behavior on anchors.rightMargin {
-            enabled: !composerCard.page.frontendBridge.reduceMotion
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
-        }
-        ScrollBar.vertical: VrScrollBar {
-            id: composerScrollBar
-            objectName: "chatComposerScrollBar"
-        }
 
-        VrTextArea {
-            id: composerInput
-            objectName: "chatComposerInput"
-            font.family: Theme.promptFontFamily
-            font.pixelSize: Theme.promptFontSize(14)
-            renderType: Theme.textRenderType
-            leftPadding: 0
-            rightPadding: 0
-            topPadding: 2
-            bottomPadding: 2
-            placeholderText: composerCard.page.chatMainHandle.width < 600 ? "Pergunte algo…" : "Pergunte algo…  @ arquivos · $ skills · / comandos"
-            placeholderTextColor: Theme.palette.subtleText || "#7d8b99"
-            readOnly: composerCard.page.chatBridge.turnRunning
-            verticalAlignment: composerCard.isCompact ? TextEdit.AlignVCenter : TextEdit.AlignTop
-            background: Item { }
-            onTextChanged: composerCard.page.composerAssistDelayHandle.restart()
-
-            Keys.priority: Keys.BeforeItem
-            Keys.onPressed: event => {
-                if (event.matches(StandardKey.Paste) && composerCard.page.chatBridge.pasteClipboardAttachment())
-                    event.accepted = true
+        DropArea {
+            id: composerDropArea
+            objectName: "chatComposerDropArea"
+            anchors.fill: parent
+            z: 100
+            onEntered: function(drag) {
+                composerCard.page.composerDropActive = drag.hasUrls
+                drag.accepted = drag.hasUrls
             }
-            Keys.onTabPressed: event => composerCard.page.handleComposerTab(event)
-            Keys.onBacktabPressed: event => composerCard.page.handleComposerTab(event)
-            Keys.onUpPressed: event => composerCard.page.handleComposerUp(event)
-            Keys.onDownPressed: event => composerCard.page.handleComposerDown(event)
-            Keys.onEscapePressed: event => composerCard.page.handleComposerEscape(event)
-            Keys.onReturnPressed: event => composerCard.page.handleComposerEnter(event)
-            Keys.onEnterPressed: event => composerCard.page.handleComposerEnter(event)
+            onExited: composerCard.page.composerDropActive = false
+            onDropped: function(drop) {
+                composerCard.page.composerDropActive = false
+                if (drop.hasUrls) {
+                    composerCard.page.chatBridge.addDroppedAttachments(drop.urls)
+                    drop.acceptProposedAction()
+                }
+            }
+        }
+
+        // Top thumbnail preview row for image attachments (matching Image 2)
+        ListView {
+            id: attachmentThumbnailsList
+            objectName: "chatAttachmentThumbnailsList"
+            visible: composerCard.hasImageAttachments && !composerCard.isCompact
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            anchors.topMargin: 12
+            height: visible ? 60 : 0
+            orientation: ListView.Horizontal
+            spacing: 10
+            clip: true
+            model: composerCard.page.chatBridge.attachments
+            delegate: Item {
+                id: thumbDelegate
+                required property int index
+                required property var modelData
+                readonly property bool isImage: {
+                    var p = String((modelData && (modelData.path || modelData.name)) || "").toLowerCase()
+                    return p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
+                           p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp") ||
+                           p.endsWith(".svg") || p.endsWith(".ico")
+                }
+                readonly property string imageSource: {
+                    var p = String((modelData && modelData.path) || "")
+                    if (!p.length) return ""
+                    if (p.startsWith("file:///")) return p
+                    if (p.indexOf(":") === 1) return "file:///" + p.replace(/\\/g, "/")
+                    return "file://" + p.replace(/\\/g, "/")
+                }
+                visible: isImage
+                width: isImage ? 60 : 0
+                height: isImage ? 60 : 0
+
+                Rectangle {
+                    id: imageThumbnailCard
+                    objectName: "chatAttachmentThumbnail"
+                    anchors.fill: parent
+                    radius: 8
+                    color: Theme.palette.chatControl
+                    border.width: 1
+                    border.color: Theme.palette.chatBorder
+                    clip: true
+
+                    Image {
+                        id: thumbImage
+                        anchors.fill: parent
+                        source: thumbDelegate.imageSource
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+                        // Item.clip é retangular e não respeita o radius do card,
+                        // por isso a imagem vazava com cantos quadrados.
+                        layer.enabled: true
+                        layer.effect: MultiEffect {
+                            maskEnabled: true
+                            maskSource: thumbMask
+                        }
+                    }
+
+                    Rectangle {
+                        id: thumbMask
+                        anchors.fill: parent
+                        radius: 8
+                        visible: false
+                    }
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: 3
+                        width: 16
+                        height: 16
+                        radius: 8
+                        color: Qt.rgba(0, 0, 0, 0.65)
+                        VrIconButton {
+                            anchors.centerIn: parent
+                            width: 16
+                            height: 16
+                            iconKind: "close"
+                            iconSize: 8
+                            foreground: "#FFFFFF"
+                            onClicked: composerCard.page.chatBridge.removeAttachment(thumbDelegate.index)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Attachment chips row (below thumbnails, above text input; only non-image files)
+        ListView {
+            id: attachmentList
+            objectName: "chatAttachmentList"
+            visible: composerCard.hasFileAttachments && !composerCard.isCompact
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: attachmentThumbnailsList.visible ? attachmentThumbnailsList.bottom : parent.top
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            anchors.topMargin: attachmentThumbnailsList.visible ? 8 : 10
+            height: visible ? 30 : 0
+            orientation: ListView.Horizontal
+            spacing: 6
+            clip: true
+            model: composerCard.page.chatBridge.attachments
+            delegate: Rectangle {
+                id: attachmentChip
+                required property int index
+                required property var modelData
+                readonly property bool isImageChip: {
+                    var p = String((modelData && (modelData.path || modelData.name)) || "").toLowerCase()
+                    return p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
+                           p.endsWith(".webp") || p.endsWith(".gif") || p.endsWith(".bmp") ||
+                           p.endsWith(".svg") || p.endsWith(".ico")
+                }
+                visible: !isImageChip
+                width: isImageChip ? 0 : Math.min(220, chipText.implicitWidth + 38)
+                height: isImageChip ? 0 : 26
+                radius: 8
+                color: Theme.palette.chatControl
+                border.width: 1
+                border.color: Theme.palette.chatBorder
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 4
+                    spacing: 5
+                    VrLineIcon {
+                        width: 14
+                        height: 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        kind: "file"
+                        foreground: Theme.palette.brandOrange
+                    }
+                    Text {
+                        id: chipText
+                        width: parent.parent.width - 36
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: attachmentChip.modelData.name || attachmentChip.modelData.path || ""
+                        elide: Text.ElideMiddle
+                        color: Theme.palette.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                    }
+                    VrIconButton {
+                        width: 22
+                        height: 22
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconKind: "close"
+                        iconSize: 12
+                        foreground: Theme.palette.mutedText
+                        onClicked: composerCard.page.chatBridge.removeAttachment(attachmentChip.index)
+                    }
+                }
+            }
+        }
+
+        // ScrollView containing text input (placed below attachments)
+        ScrollView {
+            id: composerScroll
+            objectName: "chatComposerScroll"
+            property alias text: composerInput.text
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 16
+            anchors.rightMargin: composerCard.isCompact ? 86 : 16
+            anchors.top: parent.top
+            anchors.topMargin: composerCard.composerTopMargin
+            height: composerCard.isCompact ? 34 : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
+                contentHeight + topPadding + bottomPadding))
+            clip: true
+
+            Behavior on height {
+                enabled: !composerCard.page.frontendBridge.reduceMotion
+                NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+            }
+            Behavior on anchors.topMargin {
+                enabled: !composerCard.page.frontendBridge.reduceMotion
+                NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+            }
+            Behavior on anchors.rightMargin {
+                enabled: !composerCard.page.frontendBridge.reduceMotion
+                NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+            }
+            ScrollBar.vertical: VrScrollBar {
+                id: composerScrollBar
+                objectName: "chatComposerScrollBar"
+            }
+
+            VrTextArea {
+                id: composerInput
+                objectName: "chatComposerInput"
+                font.family: Theme.promptFontFamily
+                font.pixelSize: Theme.promptFontSize(14)
+                renderType: Theme.textRenderType
+                leftPadding: 0
+                rightPadding: 0
+                topPadding: 2
+                bottomPadding: 2
+                placeholderText: composerCard.page.chatMainHandle.width < 600 ? "Pergunte algo…" : "Pergunte algo…  @ arquivos · $ skills · / comandos"
+                placeholderTextColor: Theme.palette.subtleText || "#7d8b99"
+                readOnly: composerCard.page.chatBridge.turnRunning
+                verticalAlignment: composerCard.isCompact ? TextEdit.AlignVCenter : TextEdit.AlignTop
+                background: Item { }
+                onTextChanged: composerCard.page.composerAssistDelayHandle.restart()
+
+                Keys.priority: Keys.BeforeItem
+                Keys.onPressed: event => {
+                    if (event.matches(StandardKey.Paste) && composerCard.page.chatBridge.pasteClipboardAttachment())
+                        event.accepted = true
+                }
+                Keys.onTabPressed: event => composerCard.page.handleComposerTab(event)
+                Keys.onBacktabPressed: event => composerCard.page.handleComposerTab(event)
+                Keys.onUpPressed: event => composerCard.page.handleComposerUp(event)
+                Keys.onDownPressed: event => composerCard.page.handleComposerDown(event)
+                Keys.onEscapePressed: event => composerCard.page.handleComposerEscape(event)
+                Keys.onReturnPressed: event => composerCard.page.handleComposerEnter(event)
+                Keys.onEnterPressed: event => composerCard.page.handleComposerEnter(event)
+            }
+        }
+
+        ListView {
+            id: skillChipList
+            objectName: "chatSkillChipList"
+            visible: composerCard.hasSkills && !composerCard.isCompact
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: composerScroll.bottom
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            anchors.topMargin: 2
+            height: visible ? 30 : 0
+            orientation: ListView.Horizontal
+            spacing: 6
+            clip: true
+            model: composerCard.page.chatBridge.activeSkills
+            delegate: Rectangle {
+                id: skillChip
+                required property int index
+                required property var modelData
+                width: Math.min(220, skillLabel.implicitWidth + 34)
+                height: 26
+                radius: 8
+                color: Theme.palette.chatControl
+                border.width: 1
+                border.color: Theme.palette.chatBorder
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 4
+                    spacing: 4
+                    Text {
+                        id: skillLabel
+                        width: parent.parent.width - 30
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "$" + (skillChip.modelData.name || skillChip.modelData.label || "")
+                        elide: Text.ElideMiddle
+                        color: Theme.palette.brandOrange
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12)
+                        font.weight: Font.DemiBold
+                    }
+                    VrIconButton {
+                        width: 22
+                        height: 22
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconKind: "close"
+                        iconSize: 12
+                        foreground: Theme.palette.mutedText
+                        onClicked: composerCard.page.chatBridge.removeActiveSkill(skillChip.index)
+                    }
+                }
+            }
+        }
+
+        VrIconButton {
+            id: attachButton
+            objectName: "chatAttachButton"
+            anchors.right: sendButton.left
+            anchors.rightMargin: 8
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 8
+            width: 32
+            height: 32
+            implicitWidth: 32
+            implicitHeight: 32
+            iconKind: "attachment"
+            iconSize: 18
+            foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            enabled: !composerCard.page.chatBridge.turnRunning
+            Accessible.name: "Anexar arquivos"
+            onClicked: composerCard.page.chatBridge.chooseAttachments()
+        }
+
+        VrIconButton {
+            id: sendButton
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 8
+            width: 32
+            height: 32
+            implicitWidth: 32
+            implicitHeight: 32
+            round: true
+            enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
+            Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
+            iconSource: Qt.resolvedUrl(composerCard.page.chatBridge.turnRunning
+                ? "../../../assets/chat-stop.svg"
+                : "../../../assets/chat-send.svg")
+            foreground: "#FFFFFF"
+            background: Rectangle {
+                radius: 16
+                color: composerCard.page.chatBridge.turnRunning
+                    ? (parent.down
+                        ? Qt.darker(Theme.palette.danger, 1.18)
+                        : parent.hovered
+                            ? Qt.darker(Theme.palette.danger, 1.08)
+                            : Theme.palette.danger)
+                    : (parent.down
+                        ? Theme.palette.brandOrange
+                        : parent.hovered
+                            ? Qt.lighter(Theme.palette.accessibleOrange, 1.12)
+                            : Theme.palette.accessibleOrange)
+                border.width: parent.activeFocus ? 2 : 0
+                border.color: Theme.palette.focus
+            }
+            onClicked: composerCard.page.chatBridge.turnRunning ? composerCard.page.chatBridge.stopTurn() : composerCard.page.submitMessage()
         }
     }
 
-    ListView {
-        id: skillChipList
-        objectName: "chatSkillChipList"
-        visible: composerCard.hasSkills && !composerCard.isCompact
+    // Bandeja horizontal encaixada abaixo do card principal, mais estreita que ele.
+    Rectangle {
+        id: composerControlsBox
+        anchors.top: composerSurface.bottom
+        anchors.topMargin: -Theme.spaceXs
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: composerScroll.bottom
-        anchors.leftMargin: 14
-        anchors.rightMargin: 14
-        anchors.topMargin: 2
-        height: visible ? 30 : 0
-        orientation: ListView.Horizontal
-        spacing: 6
-        clip: true
-        model: composerCard.page.chatBridge.activeSkills
-        delegate: Rectangle {
-            id: skillChip
-            required property int index
-            required property var modelData
-            width: Math.min(220, skillLabel.implicitWidth + 34)
-            height: 26
-            radius: 8
-            color: Theme.palette.chatControl
-            border.width: 1
-            border.color: Theme.palette.chatBorder
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 4
-                spacing: 4
-                Text {
-                    id: skillLabel
-                    width: parent.parent.width - 30
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "$" + (skillChip.modelData.name || skillChip.modelData.label || "")
-                    elide: Text.ElideMiddle
-                    color: Theme.palette.brandOrange
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
-                    font.weight: Font.DemiBold
-                }
-                VrIconButton {
-                    width: 22
-                    height: 22
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconKind: "close"
-                    iconSize: 12
-                    foreground: Theme.palette.mutedText
-                    onClicked: composerCard.page.chatBridge.removeActiveSkill(skillChip.index)
-                }
-            }
-        }
-    }
-
-    Flickable {
-        id: composerControls
-        anchors.left: parent.left
-        anchors.right: attachButton.left
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
-        anchors.leftMargin: 12
-        anchors.rightMargin: 8
+        anchors.leftMargin: Theme.spaceXl
+        anchors.rightMargin: Theme.spaceXl
         height: Theme.compactControlHeight
-        contentWidth: controlsRow.width
-        contentHeight: height
+        radius: Theme.radiusControl
+        color: Theme.palette.chatControl
+        border.width: 1
+        border.color: Theme.palette.chatBorder
+        z: 0
         clip: true
         visible: opacity > 0.001
         opacity: composerCard.isCompact ? 0.0 : 1.0
@@ -438,162 +518,117 @@ Rectangle {
             enabled: !composerCard.page.frontendBridge.reduceMotion
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
-        flickableDirection: Flickable.HorizontalFlick
-        boundsBehavior: Flickable.StopAtBounds
-        RowLayout {
-            id: controlsRow
-            width: Math.max(implicitWidth, composerControls.width)
-            height: Theme.compactControlHeight
-            spacing: 6
 
-            VrModelPicker {
-                id: modelSelector
-                objectName: "chatModelPicker"
-                model: composerCard.page.chatBridge.modelItems
-                currentIndex: composerCard.page.chatBridge.modelIndex
-                loading: composerCard.page.chatBridge.modelCatalogLoading
-                enabled: !composerCard.page.chatBridge.turnRunning
-                onActivated: index => composerCard.page.chatBridge.setModel(index)
-                onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
-            }
+        Flickable {
+            id: composerControls
+            anchors.fill: parent
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            contentWidth: controlsRow.width
+            contentHeight: height
+            clip: true
+            flickableDirection: Flickable.HorizontalFlick
+            boundsBehavior: Flickable.StopAtBounds
+            RowLayout {
+                id: controlsRow
+                width: Math.max(implicitWidth, composerControls.width)
+                height: Theme.compactControlHeight
+                spacing: 6
 
-            Rectangle {
-                visible: effortSelector.visible
-                Layout.preferredWidth: 1
-                Layout.preferredHeight: 14
-                Layout.alignment: Qt.AlignVCenter
-                color: Qt.rgba(255, 255, 255, 0.12)
-            }
+                VrModelPicker {
+                    id: modelSelector
+                    objectName: "chatModelPicker"
+                    model: composerCard.page.chatBridge.modelItems
+                    currentIndex: composerCard.page.chatBridge.modelIndex
+                    loading: composerCard.page.chatBridge.modelCatalogLoading
+                    enabled: !composerCard.page.chatBridge.turnRunning
+                    onActivated: index => composerCard.page.chatBridge.setModel(index)
+                    onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
+                }
 
-            VrReasoningPicker {
-                id: effortSelector
-                objectName: "chatReasoningPicker"
-                visible: composerCard.page.chatBridge.supportsReasoning
-                effortModel: composerCard.page.chatBridge.effortItems
-                tierModel: composerCard.page.chatBridge.serviceTierItems
-                currentEffortIndex: composerCard.page.chatBridge.effortIndex
-                currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
-                onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
-                onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
-            }
+                Rectangle {
+                    visible: effortSelector.visible
+                    Layout.preferredWidth: 1
+                    Layout.preferredHeight: 14
+                    Layout.alignment: Qt.AlignVCenter
+                    color: Qt.rgba(255, 255, 255, 0.12)
+                }
 
-            Rectangle {
-                Layout.preferredWidth: 1
-                Layout.preferredHeight: 14
-                Layout.alignment: Qt.AlignVCenter
-                color: Qt.rgba(255, 255, 255, 0.12)
-            }
+                VrReasoningPicker {
+                    id: effortSelector
+                    objectName: "chatReasoningPicker"
+                    visible: composerCard.page.chatBridge.supportsReasoning
+                    effortModel: composerCard.page.chatBridge.effortItems
+                    tierModel: composerCard.page.chatBridge.serviceTierItems
+                    currentEffortIndex: composerCard.page.chatBridge.effortIndex
+                    currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
+                    onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
+                    onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
+                }
 
-            VrPermissionPicker {
-                id: approvalSelector
-                objectName: "chatPermissionPicker"
-                model: composerCard.page.chatBridge.approvalItems
-                currentIndex: composerCard.page.chatBridge.approvalIndex
-                onActivated: index => composerCard.page.chatBridge.setApproval(index)
-            }
+                Rectangle {
+                    Layout.preferredWidth: 1
+                    Layout.preferredHeight: 14
+                    Layout.alignment: Qt.AlignVCenter
+                    color: Qt.rgba(255, 255, 255, 0.12)
+                }
 
-            Item { Layout.fillWidth: true }
+                VrPermissionPicker {
+                    id: approvalSelector
+                    objectName: "chatPermissionPicker"
+                    model: composerCard.page.chatBridge.approvalItems
+                    currentIndex: composerCard.page.chatBridge.approvalIndex
+                    onActivated: index => composerCard.page.chatBridge.setApproval(index)
+                }
 
-            Button {
-                id: vrModeButton
-                objectName: "vrModeButton"
-                property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
-                implicitWidth: vrModeContent.implicitWidth + 14
-                implicitHeight: 28
-                leftPadding: 6
-                rightPadding: 6
-                hoverEnabled: true
-                focusPolicy: Qt.StrongFocus
-                contentItem: Row {
-                    id: vrModeContent
-                    spacing: 4
-                    anchors.centerIn: parent
-                    Text {
-                        text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-                        color: composerCard.page.chatBridge.vrMode !== "off"
-                            ? (Theme.palette.brandOrange || "#f59e0b")
-                            : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12.5)
-                        font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
-                        renderType: Theme.textRenderType
-                        verticalAlignment: Text.AlignVCenter
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    id: vrModeButton
+                    objectName: "vrModeButton"
+                    property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
+                    implicitWidth: vrModeContent.implicitWidth + 14
+                    implicitHeight: 28
+                    leftPadding: 6
+                    rightPadding: 6
+                    hoverEnabled: true
+                    focusPolicy: Qt.StrongFocus
+                    contentItem: Row {
+                        id: vrModeContent
+                        spacing: 4
+                        anchors.centerIn: parent
+                        Text {
+                            text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
+                            color: composerCard.page.chatBridge.vrMode !== "off"
+                                ? (Theme.palette.brandOrange || "#f59e0b")
+                                : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(12.5)
+                            font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
+                            renderType: Theme.textRenderType
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
+                    background: Rectangle {
+                        radius: 6
+                        color: vrModeButton.down || vrModeButton.hovered
+                            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
+                    }
+                    onClicked: composerCard.page.chatBridge.cycleVrMode()
                 }
-                background: Rectangle {
-                    radius: 6
-                    color: vrModeButton.down || vrModeButton.hovered
-                        ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
-                }
-                onClicked: composerCard.page.chatBridge.cycleVrMode()
-            }
 
-            VrContextButton {
-                id: contextUsageButton
-                objectName: "contextUsageButton"
-                implicitWidth: 28
-                implicitHeight: 28
-                visible: composerCard.page.chatBridge.hasContextWindow
-                fraction: composerCard.page.chatBridge.contextUsageFraction
-                usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
-                totalLabel: composerCard.page.chatBridge.totalProcessedLabel
-                note: composerCard.page.chatBridge.contextUsageNote
+                VrContextButton {
+                    id: contextUsageButton
+                    objectName: "contextUsageButton"
+                    implicitWidth: 28
+                    implicitHeight: 28
+                    visible: composerCard.page.chatBridge.hasContextWindow
+                    fraction: composerCard.page.chatBridge.contextUsageFraction
+                    usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
+                    totalLabel: composerCard.page.chatBridge.totalProcessedLabel
+                    note: composerCard.page.chatBridge.contextUsageNote
+                }
             }
         }
-    }
-
-    VrIconButton {
-        id: attachButton
-        objectName: "chatAttachButton"
-        anchors.right: sendButton.left
-        anchors.rightMargin: 8
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
-        width: 32
-        height: 32
-        implicitWidth: 32
-        implicitHeight: 32
-        iconKind: "attachment"
-        iconSize: 18
-        foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
-        enabled: !composerCard.page.chatBridge.turnRunning
-        Accessible.name: "Anexar arquivos"
-        onClicked: composerCard.page.chatBridge.chooseAttachments()
-    }
-
-    VrIconButton {
-        id: sendButton
-        anchors.right: parent.right
-        anchors.rightMargin: 12
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
-        width: 32
-        height: 32
-        implicitWidth: 32
-        implicitHeight: 32
-        round: true
-        enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
-        Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
-        iconSource: Qt.resolvedUrl(composerCard.page.chatBridge.turnRunning
-            ? "../../../assets/chat-stop.svg"
-            : "../../../assets/chat-send.svg")
-        foreground: "#FFFFFF"
-        background: Rectangle {
-            radius: 16
-            color: composerCard.page.chatBridge.turnRunning
-                ? (parent.down
-                    ? Qt.darker(Theme.palette.danger, 1.18)
-                    : parent.hovered
-                        ? Qt.darker(Theme.palette.danger, 1.08)
-                        : Theme.palette.danger)
-                : (parent.down
-                    ? Theme.palette.brandOrange
-                    : parent.hovered
-                        ? Qt.lighter(Theme.palette.accessibleOrange, 1.12)
-                        : Theme.palette.accessibleOrange)
-            border.width: parent.activeFocus ? 2 : 0
-            border.color: Theme.palette.focus
-        }
-        onClicked: composerCard.page.chatBridge.turnRunning ? composerCard.page.chatBridge.stopTurn() : composerCard.page.submitMessage()
     }
 }
