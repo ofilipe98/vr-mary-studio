@@ -78,13 +78,20 @@ class MonitorProcessManifest:
 class MonitorIsolationAttestation:
     """Opaque result of validating one fixed process manifest."""
 
-    __slots__ = ("contract_version", "manifest_digest", "_token")
+    __slots__ = ("contract_version", "executable_sha256", "manifest_digest", "_token")
 
-    def __init__(self, manifest_digest: str, token: object) -> None:
+    def __init__(
+        self,
+        manifest_digest: str,
+        token: object,
+        *,
+        executable_sha256: str = "",
+    ) -> None:
         if token is not _ATTESTATION_TOKEN:
             raise MonitorIsolationError("monitor_isolation_invalid")
         self.contract_version = ISOLATION_CONTRACT_VERSION
         self.manifest_digest = manifest_digest
+        self.executable_sha256 = executable_sha256
         self._token = token
 
     def __repr__(self) -> str:
@@ -100,6 +107,7 @@ def isolation_attested(value: object) -> bool:
         and value.contract_version == ISOLATION_CONTRACT_VERSION
         and value._token is _ATTESTATION_TOKEN
         and bool(_SHA256.fullmatch(value.manifest_digest))
+        and bool(_SHA256.fullmatch(value.executable_sha256))
     )
 
 
@@ -203,7 +211,11 @@ def attest_monitor_process(
     digest = hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return MonitorIsolationAttestation(digest, _ATTESTATION_TOKEN)
+    return MonitorIsolationAttestation(
+        digest,
+        _ATTESTATION_TOKEN,
+        executable_sha256=manifest.executable_sha256,
+    )
 
 
 def _directory(path: Path) -> Path:

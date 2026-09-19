@@ -97,6 +97,27 @@ matar com segurança uma thread que ignora o contrato. O provider concreto preci
 processo externo da H04 e o broker deve provar término da árvore, limite de memória e
 fechamento dos pipes. H06 permanece aberta até esses casos passarem no broker real.
 
+## Cadeia executada e atualização
+
+`monitor_supply_chain` aceita somente um bundle offline revisado. O manifesto fixa a
+revisão Git do Studio, o artefato Codex, versão, SHA-256, origem versionada no repositório
+oficial `openai/codex`, hash do certificado assinante, lock de dependências, configuração
+e os digests dos manifestos H04/H05. A sessão exige o digest dessa cadeia, portanto trocar
+binário, versão, processo, destino ou configuração invalida a aprovação anterior.
+
+A evidência exige hashes verificados antes do launch, assinaturas válidas, distribuições
+de dependências com hash, revisão de fonte/vulnerabilidades, atualização automática
+desativada, rede de instalador negada e nova aprovação após qualquer mudança. O módulo
+não importa launcher, installer, adapter, subprocesso nem cliente de rede.
+
+Inventário local em 2026-09-19: Codex CLI 0.155.1, executável com SHA-256
+`eba0f32c976667cb9298efafd98513e823eeda7b576a03ec658bb8be8d336316` e assinatura
+Authenticode válida de `OpenAI OpCo, LLC`. Isso não forma um bundle aprovado: o binário
+está fora da raiz isolada e `constraints-windows-x64.txt` fixa versões, mas não hashes das
+distribuições. Nenhum manifesto operacional foi incluído. A documentação oficial aponta
+`openai/codex` como repositório do CLI e App Server; atualização integrada não é permitida
+em uma sessão Monitor.
+
 O padrão de conversas novas também passa a ser `supervised`. Conversas existentes que
 tenham um perfil válido preservam a escolha; trocar de provider volta para
 `supervised`. `full_access` continua disponível como escolha explícita para fluxos
@@ -114,8 +135,8 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
 4. materializar e validar em ambiente a conta, ZDR, telemetria e captura exigidos pelo
    manifesto de egress;
 5. aplicar e validar no broker real os limites de processo, memória e pipes;
-6. versões, hashes e atualização controlada da cadeia executada;
-7. matriz dinâmica completa com canários antes de qualquer aprovação.
+6. produzir o bundle offline com hashes de distribuições e validar a cadeia no broker;
+7. executar a matriz dinâmica completa com canários antes de qualquer aprovação.
 
 ## Verificação
 
@@ -125,6 +146,7 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_ephemeral.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_isolation.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_egress.py -q -x
+.\.venv\Scripts\python.exe -m pytest tests/test_monitor_supply_chain.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_antigravity_acp.py -q -x
 ```
 

@@ -26,6 +26,10 @@ from vrsoft_extractor.mary.monitor_isolation import (
     MonitorIsolationAttestation,
     isolation_attested,
 )
+from vrsoft_extractor.mary.monitor_supply_chain import (
+    MonitorSupplyChainAttestation,
+    supply_chain_attested,
+)
 
 
 EPHEMERAL_CONTRACT_VERSION = 2
@@ -231,6 +235,7 @@ class MonitorEphemeralProvider(Protocol):
     model_id: str
     egress_manifest_digest: str
     isolation_manifest_digest: str
+    supply_chain_manifest_digest: str
     persists_content: bool
     supports_resume: bool
 
@@ -279,6 +284,7 @@ class MonitorEphemeralSession:
         options: ConversationOptions,
         isolation: MonitorIsolationAttestation,
         egress: MonitorEgressAttestation,
+        supply_chain: MonitorSupplyChainAttestation,
         *,
         event_sink: MonitorEventSink | None = None,
         max_input_bytes: int = MAX_MONITOR_INPUT_BYTES,
@@ -316,6 +322,16 @@ class MonitorEphemeralSession:
             != egress.manifest_digest
         ):
             raise MonitorEphemeralError("monitor_egress_required")
+        if not supply_chain_attested(supply_chain):
+            raise MonitorEphemeralError("monitor_supply_chain_required")
+        if (
+            supply_chain.isolation_manifest_digest != isolation.manifest_digest
+            or supply_chain.egress_manifest_digest != egress.manifest_digest
+            or supply_chain.provider_version != egress.provider_version
+            or getattr(provider, "supply_chain_manifest_digest", "")
+            != supply_chain.manifest_digest
+        ):
+            raise MonitorEphemeralError("monitor_supply_chain_required")
         if not 0 < max_input_bytes <= MAX_MONITOR_INPUT_BYTES:
             raise ValueError("Monitor input limit exceeds the hard ceiling.")
         if not 0 < max_output_bytes <= MAX_MONITOR_OUTPUT_BYTES:

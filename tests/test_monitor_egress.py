@@ -137,7 +137,9 @@ def test_attestation_rejects_expired_or_mismatched_observation() -> None:
 
 def test_attestation_cannot_be_forged() -> None:
     with pytest.raises(MonitorEgressError, match="monitor_egress_invalid"):
-        MonitorEgressAttestation("codex", "model", "a" * 64, object())
+        MonitorEgressAttestation(
+            "codex", "0.155.1", "model", "a" * 64, object()
+        )
 
 
 def test_policy_module_has_no_network_or_provider_runtime_dependencies() -> None:

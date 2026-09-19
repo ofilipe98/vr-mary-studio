@@ -159,7 +159,7 @@ def test_ephemeral_session_refuses_missing_forged_or_mismatched_attestation(
     provider = Provider()
 
     with pytest.raises(MonitorEphemeralError, match="monitor_isolation_required"):
-        MonitorEphemeralSession(provider, options, object(), object())
+        MonitorEphemeralSession(provider, options, object(), object(), object())
     with pytest.raises(MonitorIsolationError, match="monitor_isolation_invalid"):
         MonitorIsolationAttestation("a" * 64, object())
     manifest, evidence, forbidden, _, _ = process_policy(tmp_path)
@@ -170,7 +170,7 @@ def test_ephemeral_session_refuses_missing_forged_or_mismatched_attestation(
     )
     provider.isolation_manifest_digest = "0" * 64
     with pytest.raises(MonitorEphemeralError, match="monitor_isolation_required"):
-        MonitorEphemeralSession(provider, options, attestation, object())
+        MonitorEphemeralSession(provider, options, attestation, object(), object())
     assert provider.called is False
 
 

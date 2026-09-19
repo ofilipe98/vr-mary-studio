@@ -87,12 +87,14 @@ class MonitorEgressAttestation:
         "manifest_digest",
         "model_id",
         "provider_id",
+        "provider_version",
         "_token",
     )
 
     def __init__(
         self,
         provider_id: str,
+        provider_version: str,
         model_id: str,
         manifest_digest: str,
         token: object,
@@ -101,6 +103,7 @@ class MonitorEgressAttestation:
             raise MonitorEgressError("monitor_egress_invalid")
         self.contract_version = EGRESS_CONTRACT_VERSION
         self.provider_id = provider_id
+        self.provider_version = provider_version
         self.model_id = model_id
         self.manifest_digest = manifest_digest
         self._token = token
@@ -120,6 +123,7 @@ def egress_attested(value: object) -> bool:
         and value.contract_version == EGRESS_CONTRACT_VERSION
         and value._token is _ATTESTATION_TOKEN
         and value.provider_id == PILOT_PROVIDER_ID
+        and _fixed_identifier(value.provider_version)
         and bool(_IDENTIFIER.fullmatch(value.model_id))
         and bool(_SHA256.fullmatch(value.manifest_digest))
     )
@@ -187,6 +191,7 @@ def attest_monitor_egress(
     digest = _manifest_digest(manifest)
     return MonitorEgressAttestation(
         manifest.provider_id,
+        manifest.provider_version,
         manifest.model_id,
         digest,
         _ATTESTATION_TOKEN,

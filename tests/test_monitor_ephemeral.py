@@ -36,6 +36,12 @@ from vrsoft_extractor.mary.monitor_isolation import (
     attest_monitor_process,
     minimal_monitor_environment,
 )
+from vrsoft_extractor.mary.monitor_supply_chain import (
+    MonitorArtifact,
+    MonitorSupplyChainEvidence,
+    MonitorSupplyChainManifest,
+    attest_monitor_supply_chain,
+)
 
 
 def monitor_options() -> ConversationOptions:
@@ -116,17 +122,58 @@ def egress_attestation():
     return attest_monitor_egress(manifest, evidence)
 
 
+def supply_chain_attestation(isolation, egress):
+    today = datetime.now(timezone.utc).date()
+    artifact = MonitorArtifact(
+        name=egress.provider_id,
+        version=egress.provider_version,
+        sha256=isolation.executable_sha256,
+        source=(
+            "https://github.com/openai/codex/releases/tag/"
+            f"rust-v{egress.provider_version}"
+        ),
+        signer_certificate_sha256=hashlib.sha256(b"synthetic-signer").hexdigest(),
+    )
+    manifest = MonitorSupplyChainManifest(
+        studio_revision="a" * 40,
+        artifacts=(artifact,),
+        dependency_lock_sha256=hashlib.sha256(b"synthetic-lock").hexdigest(),
+        configuration_sha256=hashlib.sha256(b"synthetic-config").hexdigest(),
+        isolation_manifest_digest=isolation.manifest_digest,
+        egress_manifest_digest=egress.manifest_digest,
+        update_policy="offline_reviewed_bundle",
+    )
+    evidence = MonitorSupplyChainEvidence(
+        reviewed_on=today,
+        expires_on=today + timedelta(days=30),
+        evidence_sha256=hashlib.sha256(b"synthetic-release-report").hexdigest(),
+        offline_bundle_built=True,
+        artifact_hashes_verified=True,
+        signatures_verified=True,
+        dependency_distributions_hashed=True,
+        source_reviewed=True,
+        vulnerability_reviewed=True,
+        auto_update_disabled=True,
+        installer_network_denied=True,
+        update_requires_reapproval=True,
+    )
+    return attest_monitor_supply_chain(manifest, evidence, isolation, egress)
+
+
 def isolated_session(provider, isolation, **kwargs):
     egress = egress_attestation()
+    supply_chain = supply_chain_attestation(isolation, egress)
     provider.isolation_manifest_digest = isolation.manifest_digest
     provider.provider_id = egress.provider_id
     provider.model_id = egress.model_id
     provider.egress_manifest_digest = egress.manifest_digest
+    provider.supply_chain_manifest_digest = supply_chain.manifest_digest
     return MonitorEphemeralSession(
         provider,
         monitor_options(),
         isolation,
         egress,
+        supply_chain,
         **kwargs,
     )
 
@@ -505,6 +552,7 @@ def test_contract_is_rejected_before_an_unapproved_provider_runs(tmp_path: Path)
             monitor_options(),
             isolation_attestation(tmp_path),
             object(),
+            object(),
         )
 
     assert provider.called is False
@@ -522,11 +570,39 @@ def test_session_rejects_missing_or_mismatched_egress_attestation(
     provider.egress_manifest_digest = egress.manifest_digest
 
     with pytest.raises(MonitorEphemeralError, match="monitor_egress_required"):
-        MonitorEphemeralSession(provider, monitor_options(), isolation, object())
+        MonitorEphemeralSession(
+            provider, monitor_options(), isolation, object(), object()
+        )
 
     provider.model_id = "different-model"
     with pytest.raises(MonitorEphemeralError, match="monitor_egress_required"):
-        MonitorEphemeralSession(provider, monitor_options(), isolation, egress)
+        MonitorEphemeralSession(provider, monitor_options(), isolation, egress, object())
+    assert provider.retained_request is None
+
+
+def test_session_rejects_missing_or_mismatched_supply_chain_attestation(
+    tmp_path: Path,
+) -> None:
+    isolation = isolation_attestation(tmp_path)
+    egress = egress_attestation()
+    supply_chain = supply_chain_attestation(isolation, egress)
+    provider = EchoProvider("blocked")
+    provider.isolation_manifest_digest = isolation.manifest_digest
+    provider.provider_id = egress.provider_id
+    provider.model_id = egress.model_id
+    provider.egress_manifest_digest = egress.manifest_digest
+    provider.supply_chain_manifest_digest = supply_chain.manifest_digest
+
+    with pytest.raises(MonitorEphemeralError, match="monitor_supply_chain_required"):
+        MonitorEphemeralSession(
+            provider, monitor_options(), isolation, egress, object()
+        )
+
+    provider.supply_chain_manifest_digest = "0" * 64
+    with pytest.raises(MonitorEphemeralError, match="monitor_supply_chain_required"):
+        MonitorEphemeralSession(
+            provider, monitor_options(), isolation, egress, supply_chain
+        )
     assert provider.retained_request is None
 
 
@@ -581,6 +657,12 @@ from vrsoft_extractor.mary.monitor_isolation import (
     MonitorProcessManifest,
     attest_monitor_process,
     minimal_monitor_environment,
+)
+from vrsoft_extractor.mary.monitor_supply_chain import (
+    MonitorArtifact,
+    MonitorSupplyChainEvidence,
+    MonitorSupplyChainManifest,
+    attest_monitor_supply_chain,
 )
 
 class CrashProvider:
@@ -647,12 +729,48 @@ egress_evidence = MonitorEgressEvidence(
     True,
 )
 egress = attest_monitor_egress(egress_manifest, egress_evidence)
+supply_artifact = MonitorArtifact(
+    PILOT_PROVIDER_ID,
+    egress.provider_version,
+    isolation.executable_sha256,
+    "https://github.com/openai/codex/releases/tag/rust-v0.155.1",
+    hashlib.sha256(b"synthetic-signer").hexdigest(),
+)
+supply_manifest = MonitorSupplyChainManifest(
+    "a" * 40,
+    (supply_artifact,),
+    hashlib.sha256(b"synthetic-lock").hexdigest(),
+    hashlib.sha256(b"synthetic-config").hexdigest(),
+    isolation.manifest_digest,
+    egress.manifest_digest,
+    "offline_reviewed_bundle",
+)
+supply_evidence = MonitorSupplyChainEvidence(
+    today,
+    today + timedelta(days=30),
+    hashlib.sha256(b"synthetic-release-report").hexdigest(),
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+    True,
+)
+supply_chain = attest_monitor_supply_chain(
+    supply_manifest, supply_evidence, isolation, egress
+)
 provider = CrashProvider()
 provider.isolation_manifest_digest = isolation.manifest_digest
 provider.provider_id = egress.provider_id
 provider.model_id = egress.model_id
 provider.egress_manifest_digest = egress.manifest_digest
-MonitorEphemeralSession(provider, options, isolation, egress).run_turn(sys.stdin.read())
+provider.supply_chain_manifest_digest = supply_chain.manifest_digest
+MonitorEphemeralSession(
+    provider, options, isolation, egress, supply_chain
+).run_turn(sys.stdin.read())
 """
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
