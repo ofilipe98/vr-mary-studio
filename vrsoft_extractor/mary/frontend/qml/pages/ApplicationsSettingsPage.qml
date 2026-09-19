@@ -739,6 +739,22 @@ Item {
                                     }
                                 }
                             }
+
+                            VrButton {
+                                objectName: "exportDecompiledCodeButton"
+                                text: chat.decompiledExportRunning
+                                    ? "Exportando código descompilado…"
+                                    : "Exportar código descompilado"
+                                enabled: chat.decompiledCodeExportAvailable
+                                    && !chat.releaseSnapshotRunning
+                                    && !chat.codeProcessingRunning
+                                    && !chat.decompiledExportRunning
+                                variant: "secondary"
+                                implicitHeight: 32
+                                ToolTip.visible: hovered && !chat.decompiledCodeExportAvailable
+                                ToolTip.text: "Nenhum código decompilado disponível para esta versão."
+                                onClicked: chat.exportDecompiledCode("")
+                            }
                         }
                     }
 

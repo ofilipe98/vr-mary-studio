@@ -237,6 +237,73 @@ def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path
     assert "decompiled failure" in bridge.releaseSnapshotStatus
 
 
+def _select_exportable_decompiled_code(bridge):
+    bridge._selected_app_id = "vrmaster"
+    bridge._selected_app_version = "4.1.0"
+    bridge._selected_app_variant_id = "sha-master"
+    bridge._selected_app_origin_id = "release-a"
+    bridge._selected_version_details = {
+        "indexed_classes": 2,
+        "origin_packages": [{"package_id": "release-a", "index_state": "ready"}],
+    }
+
+
+def test_export_slot_cancel_is_silent_and_does_not_start(bridge, monkeypatch):
+    _select_exportable_decompiled_code(bridge)
+    before = bridge.releaseSnapshotStatus
+    monkeypatch.setattr(codeadmin.QFileDialog, "getExistingDirectory", lambda *args: "")
+
+    result = bridge.exportDecompiledCode("")
+
+    assert result == {"success": False, "canceled": True}
+    assert bridge.releaseSnapshotRunning is False
+    assert bridge.decompiledExportRunning is False
+    assert bridge.releaseSnapshotStatus == before
+    assert bridge.metaObject().indexOfMethod("exportDecompiledCode(QString)") >= 0
+
+
+def test_export_runs_off_qt_thread_rejects_overlap_and_clears_busy(bridge, tmp_path, monkeypatch):
+    _select_exportable_decompiled_code(bridge)
+    entered, release, heartbeat = (threading.Event() for _ in range(3))
+    worker_threads = []
+
+    def blocked(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(5)
+        return {"success": True, "destination": str(tmp_path), "file_count": 1248, "total_bytes": 10}
+
+    monkeypatch.setattr(codeadmin, "export_decompiled_source", blocked)
+    try:
+        assert bridge.exportDecompiledCode(str(tmp_path))["pending"]
+        assert entered.wait(2)
+        assert bridge.releaseSnapshotRunning is True
+        assert bridge.decompiledExportRunning is True
+        assert bridge.exportDecompiledCode(str(tmp_path))["busy"]
+        QTimer.singleShot(0, heartbeat.set)
+        wait_until(heartbeat.is_set)
+        assert worker_threads != [threading.get_ident()]
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert bridge.decompiledExportRunning is False
+    assert "1.248 arquivos exportados" in bridge.releaseSnapshotStatus
+
+
+def test_export_failure_clears_running_state(bridge, tmp_path, monkeypatch):
+    _select_exportable_decompiled_code(bridge)
+    monkeypatch.setattr(
+        codeadmin, "export_decompiled_source",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("fonte ausente")),
+    )
+
+    assert bridge.exportDecompiledCode(str(tmp_path))["pending"]
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+
+    assert bridge.decompiledExportRunning is False
+    assert bridge.releaseSnapshotStatus == "Não foi possível exportar o código descompilado: fonte ausente"
+
+
 def test_ready_state_is_projected_from_real_coverage(bridge, tmp_path, monkeypatch):
     source = tmp_path / "source"
     _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))

@@ -565,6 +565,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "appSelector"))
             self.assertIsNotNone(window.findChild(QObject, "appsImportCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryCard"))
+            self.assertIsNotNone(window.findChild(QObject, "exportDecompiledCodeButton"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarDirectoryPicker"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraJarScopePicker"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSingleJarRow"))

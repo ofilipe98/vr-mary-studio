@@ -18,6 +18,7 @@ from ...jvm_batches import DecompilationBatchError
 from ...jvm_toolchain import JvmToolchain
 
 from ...decompiled_detection import detect_decompiled_source, import_decompiled_source
+from ...decompiled_export import export_decompiled_source
 from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
 
 class CodeAdminDomain:
@@ -1570,7 +1571,9 @@ class CodeAdminDomain:
         self._release_snapshot_poll_timer.stop()
         if latest.get("workspace", self._settings.root) != self._settings.root:
             return
-        if latest.get("operation") in {"detect_decompiled", "import_decompiled", "delete_source_jars"}:
+        if latest.get("operation") in {"detect_decompiled", "import_decompiled", "export_decompiled", "delete_source_jars"}:
+            if latest.get("operation") == "export_decompiled":
+                self._decompiled_export_running = False
             if latest.get("ok"):
                 result = latest["result"]
                 if latest["operation"] == "detect_decompiled":
@@ -1580,6 +1583,11 @@ class CodeAdminDomain:
                     self._release_snapshot_status = f"Exclusão concluída: {result['deleted_count']} JARs originais removidos."
                     self._refresh_code_analysis_jar_sources()
                     self.refreshApplicationsCatalog()
+                elif latest["operation"] == "export_decompiled":
+                    self._release_snapshot_status = (
+                        "Código descompilado exportado com sucesso. "
+                        f"{result['file_count']:,} arquivos exportados."
+                    ).replace(",", ".")
                 else:
                     self._release_snapshot_status = f"Importação concluída: {result['total_indexed_sources']} fontes indexados."
                     self._invalidate_release_coverage()
@@ -1587,7 +1595,11 @@ class CodeAdminDomain:
                     self.refreshCodeAnalysisReleases()
             else:
                 self._apps_catalog_error = latest["error"]
-                self._release_snapshot_status = latest["error"]
+                self._release_snapshot_status = (
+                    f"Não foi possível exportar o código descompilado: {latest['error']}"
+                    if latest["operation"] == "export_decompiled"
+                    else latest["error"]
+                )
             self.stateChanged.emit()
             return
         if latest.get("operation") == "preview":
@@ -2079,7 +2091,12 @@ class CodeAdminDomain:
                             for origin in variant.get("origin_packages", []):
                                 cov = coverage.get(origin["package_id"], {})
                                 jar = origin.get("relative_path") or variant["relative_path"]
-                                ready = jar in cov.get("covered_jars", [])
+                                direct_import_ready = (
+                                    not catalog.paths.manifest_for(origin["package_id"]).is_file()
+                                    and variant.get("index_state") == "ready"
+                                    and int(variant.get("indexed_classes") or 0) > 0
+                                )
+                                ready = direct_import_ready or jar in cov.get("covered_jars", [])
                                 partial = jar in cov.get("indexed_source_jars", [])
                                 failed = any(
                                     p.get("release_id") == origin["package_id"]
@@ -2394,6 +2411,31 @@ class CodeAdminDomain:
         ))
         return {"pending": True}
 
+    def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"success": False, "busy": True}
+        if not self.decompiledCodeExportAvailable:
+            return {"success": False, "error": "Nenhum código decompilado disponível para esta versão."}
+        target_dir = str(destination_parent or "").strip()
+        if not target_dir:
+            target_dir = QFileDialog.getExistingDirectory(
+                None, "Selecionar destino da exportação", str(Path.home())
+            )
+            if not target_dir:
+                return {"success": False, "canceled": True}
+        selection = {
+            "application_id": self._selected_app_id,
+            "version": self._selected_app_version,
+            "variant_id": self._selected_app_variant_id,
+            "origin_id": self._selected_app_origin_id,
+        }
+        workspace = self._settings.root
+        self._start_package_task(
+            "export_decompiled",
+            lambda: export_decompiled_source(workspace, target_dir, **selection),
+        )
+        return {"pending": True}
+
     def _start_package_task(self, operation: str, task: Any) -> None:
         workspace = self._settings.root
         results = self._release_snapshot_results
@@ -2402,8 +2444,11 @@ class CodeAdminDomain:
         self._release_snapshot_status = {
             "detect_decompiled": "Detectando fontes...",
             "import_decompiled": "Importando fontes...",
+            "export_decompiled": "Exportando código descompilado…",
             "delete_source_jars": "Verificando e excluindo JARs originais...",
         }[operation]
+        if operation == "export_decompiled":
+            self._decompiled_export_running = True
         self._apps_catalog_error = ""
 
         def worker() -> None:

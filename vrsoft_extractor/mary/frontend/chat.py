@@ -261,6 +261,7 @@ class ChatBridge(QObject):
         self._application_preview_thread = None
         self._package_operation_thread = None
         self._release_snapshot_running = False
+        self._decompiled_export_running = False
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -782,6 +783,25 @@ class ChatBridge(QObject):
     @Property(str, notify=stateChanged)
     def releaseSnapshotStatus(self) -> str:  # noqa: N802
         return self._release_snapshot_status
+
+    @Property(bool, notify=stateChanged)
+    def decompiledExportRunning(self) -> bool:  # noqa: N802
+        return self._decompiled_export_running
+
+    @Property(bool, notify=stateChanged)
+    def decompiledCodeExportAvailable(self) -> bool:  # noqa: N802
+        if not all((self._selected_app_id, self._selected_app_version,
+                    self._selected_app_variant_id, self._selected_app_origin_id)):
+            return False
+        origin = next(
+            (item for item in self._selected_version_details.get("origin_packages", [])
+             if item.get("package_id") == self._selected_app_origin_id),
+            {},
+        )
+        return (
+            origin.get("index_state") == "ready"
+            and int(self._selected_version_details.get("indexed_classes") or 0) > 0
+        )
 
     @Property(bool, notify=stateChanged)
     def codeAnalysisReleaseFresh(self) -> bool:  # noqa: N802
@@ -2456,6 +2476,11 @@ class ChatBridge(QObject):
     @Slot(str, result="QVariantMap")
     def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.importDecompiledDirectory(source_dir, release_id, package_name)
+
+    @Slot(result="QVariantMap")
+    @Slot(str, result="QVariantMap")
+    def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.exportDecompiledCode(destination_parent)
 
     @Slot(str, result=bool)
     @Slot(str, bool, result=bool)
