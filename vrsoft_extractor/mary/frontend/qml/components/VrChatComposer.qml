@@ -420,19 +420,17 @@ Rectangle {
         }
     }
 
-    Rectangle {
-        id: composerControlsBox
+    Flickable {
+        id: composerControls
         anchors.left: parent.left
         anchors.right: attachButton.left
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 8
         anchors.leftMargin: 12
-        anchors.rightMargin: Theme.spaceSm
+        anchors.rightMargin: 8
         height: Theme.compactControlHeight
-        radius: Theme.radiusSmall
-        color: Theme.palette.chatControl
-        border.width: 1
-        border.color: Theme.palette.chatBorder
+        contentWidth: controlsRow.width
+        contentHeight: height
         clip: true
         visible: opacity > 0.001
         opacity: composerCard.isCompact ? 0.0 : 1.0
@@ -440,117 +438,106 @@ Rectangle {
             enabled: !composerCard.page.frontendBridge.reduceMotion
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
+        flickableDirection: Flickable.HorizontalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        RowLayout {
+            id: controlsRow
+            width: Math.max(implicitWidth, composerControls.width)
+            height: Theme.compactControlHeight
+            spacing: 6
 
-        Flickable {
-            id: composerControls
-            anchors.fill: parent
-            anchors.leftMargin: Theme.spaceSm
-            anchors.rightMargin: Theme.spaceSm
-            contentWidth: controlsRow.width
-            contentHeight: height
-            clip: true
-            flickableDirection: Flickable.HorizontalFlick
-            boundsBehavior: Flickable.StopAtBounds
+            VrModelPicker {
+                id: modelSelector
+                objectName: "chatModelPicker"
+                model: composerCard.page.chatBridge.modelItems
+                currentIndex: composerCard.page.chatBridge.modelIndex
+                loading: composerCard.page.chatBridge.modelCatalogLoading
+                enabled: !composerCard.page.chatBridge.turnRunning
+                onActivated: index => composerCard.page.chatBridge.setModel(index)
+                onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
+            }
 
-            RowLayout {
-                id: controlsRow
-                width: Math.max(implicitWidth, composerControls.width)
-                height: composerControls.height
-                spacing: Theme.spaceSm
+            Rectangle {
+                visible: effortSelector.visible
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 14
+                Layout.alignment: Qt.AlignVCenter
+                color: Qt.rgba(255, 255, 255, 0.12)
+            }
 
-                VrModelPicker {
-                    id: modelSelector
-                    objectName: "chatModelPicker"
-                    model: composerCard.page.chatBridge.modelItems
-                    currentIndex: composerCard.page.chatBridge.modelIndex
-                    loading: composerCard.page.chatBridge.modelCatalogLoading
-                    enabled: !composerCard.page.chatBridge.turnRunning
-                    onActivated: index => composerCard.page.chatBridge.setModel(index)
-                    onFavoriteToggled: index => composerCard.page.chatBridge.toggleModelFavorite(index)
-                }
+            VrReasoningPicker {
+                id: effortSelector
+                objectName: "chatReasoningPicker"
+                visible: composerCard.page.chatBridge.supportsReasoning
+                effortModel: composerCard.page.chatBridge.effortItems
+                tierModel: composerCard.page.chatBridge.serviceTierItems
+                currentEffortIndex: composerCard.page.chatBridge.effortIndex
+                currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
+                onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
+                onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
+            }
 
-                Rectangle {
-                    visible: effortSelector.visible
-                    Layout.preferredWidth: 1
-                    Layout.preferredHeight: 14
-                    Layout.alignment: Qt.AlignVCenter
-                    color: Theme.palette.chatBorder
-                }
+            Rectangle {
+                Layout.preferredWidth: 1
+                Layout.preferredHeight: 14
+                Layout.alignment: Qt.AlignVCenter
+                color: Qt.rgba(255, 255, 255, 0.12)
+            }
 
-                VrReasoningPicker {
-                    id: effortSelector
-                    objectName: "chatReasoningPicker"
-                    visible: composerCard.page.chatBridge.supportsReasoning
-                    effortModel: composerCard.page.chatBridge.effortItems
-                    tierModel: composerCard.page.chatBridge.serviceTierItems
-                    currentEffortIndex: composerCard.page.chatBridge.effortIndex
-                    currentTierIndex: composerCard.page.chatBridge.serviceTierIndex
-                    onEffortActivated: index => composerCard.page.chatBridge.setEffort(index)
-                    onTierActivated: index => composerCard.page.chatBridge.setServiceTier(index)
-                }
+            VrPermissionPicker {
+                id: approvalSelector
+                objectName: "chatPermissionPicker"
+                model: composerCard.page.chatBridge.approvalItems
+                currentIndex: composerCard.page.chatBridge.approvalIndex
+                onActivated: index => composerCard.page.chatBridge.setApproval(index)
+            }
 
-                Rectangle {
-                    Layout.preferredWidth: 1
-                    Layout.preferredHeight: 14
-                    Layout.alignment: Qt.AlignVCenter
-                    color: Theme.palette.chatBorder
-                }
+            Item { Layout.fillWidth: true }
 
-                VrPermissionPicker {
-                    id: approvalSelector
-                    objectName: "chatPermissionPicker"
-                    model: composerCard.page.chatBridge.approvalItems
-                    currentIndex: composerCard.page.chatBridge.approvalIndex
-                    onActivated: index => composerCard.page.chatBridge.setApproval(index)
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    id: vrModeButton
-                    objectName: "vrModeButton"
-                    property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
-                    implicitWidth: vrModeContent.implicitWidth + 14
-                    implicitHeight: 28
-                    leftPadding: 6
-                    rightPadding: 6
-                    hoverEnabled: true
-                    focusPolicy: Qt.StrongFocus
-                    contentItem: Row {
-                        id: vrModeContent
-                        spacing: 4
-                        anchors.centerIn: parent
-                        Text {
-                            text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-                            color: composerCard.page.chatBridge.vrMode !== "off"
-                                ? (Theme.palette.brandOrange || "#f59e0b")
-                                : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12.5)
-                            font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
-                            renderType: Theme.textRenderType
-                            verticalAlignment: Text.AlignVCenter
-                        }
+            Button {
+                id: vrModeButton
+                objectName: "vrModeButton"
+                property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
+                implicitWidth: vrModeContent.implicitWidth + 14
+                implicitHeight: 28
+                leftPadding: 6
+                rightPadding: 6
+                hoverEnabled: true
+                focusPolicy: Qt.StrongFocus
+                contentItem: Row {
+                    id: vrModeContent
+                    spacing: 4
+                    anchors.centerIn: parent
+                    Text {
+                        text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
+                        color: composerCard.page.chatBridge.vrMode !== "off"
+                            ? (Theme.palette.brandOrange || "#f59e0b")
+                            : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize(12.5)
+                        font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
+                        renderType: Theme.textRenderType
+                        verticalAlignment: Text.AlignVCenter
                     }
-                    background: Rectangle {
-                        radius: 6
-                        color: vrModeButton.down || vrModeButton.hovered
-                            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
-                    }
-                    onClicked: composerCard.page.chatBridge.cycleVrMode()
                 }
+                background: Rectangle {
+                    radius: 6
+                    color: vrModeButton.down || vrModeButton.hovered
+                        ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
+                }
+                onClicked: composerCard.page.chatBridge.cycleVrMode()
+            }
 
-                VrContextButton {
-                    id: contextUsageButton
-                    objectName: "contextUsageButton"
-                    implicitWidth: 28
-                    implicitHeight: 28
-                    visible: composerCard.page.chatBridge.hasContextWindow
-                    fraction: composerCard.page.chatBridge.contextUsageFraction
-                    usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
-                    totalLabel: composerCard.page.chatBridge.totalProcessedLabel
-                    note: composerCard.page.chatBridge.contextUsageNote
-                }
+            VrContextButton {
+                id: contextUsageButton
+                objectName: "contextUsageButton"
+                implicitWidth: 28
+                implicitHeight: 28
+                visible: composerCard.page.chatBridge.hasContextWindow
+                fraction: composerCard.page.chatBridge.contextUsageFraction
+                usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
+                totalLabel: composerCard.page.chatBridge.totalProcessedLabel
+                note: composerCard.page.chatBridge.contextUsageNote
             }
         }
     }
