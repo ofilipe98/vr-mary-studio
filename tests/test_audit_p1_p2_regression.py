@@ -951,6 +951,80 @@ class AuditRegressionTest(unittest.TestCase):
             self.assertNotIn("TERMINAL_PRIORITY", text)
             self.assertNotIn("_ui_terminal_kinds", text)
 
+    # CORR-TC-FINAL Etapa 3: first background terminal is really processed.
+    def _setup_background_pair(self, eid=7):
+        chat_bg = self._database.create_conversation("BG", "codex", "m", self._settings.root)
+        chat_fg = self._database.create_conversation("FG", "codex", "m", self._settings.root)
+        self._database.update_conversation(chat_bg, status="running")
+        self._bridge._active_turns.add(chat_bg)
+        self._bridge.refresh()
+        self._bridge.selectConversationId(chat_fg)
+        self.application.processEvents()
+        return chat_bg, chat_fg, eid
+
+    def _send_bg_tool_running(self, chat_bg, tool_id="t1", eid=7):
+        self._bridge._on_runtime_event(RuntimeEvent(chat_bg, "tool_event", "", {
+            "toolCallId": tool_id, "step_type": "commandExecution",
+            "status": "running", "execution_id": eid,
+        }))
+        self.application.processEvents()
+        reducer = self._bridge._tool_reducers.get((chat_bg, eid))
+        self.assertIsNotNone(reducer)
+        return reducer
+
+    def _send_bg_terminal(self, chat_bg, kind, eid=7):
+        # Production persists idle before the terminal event; refresh()
+        # rebuilds _active_turns from persisted status.
+        self._database.update_conversation(chat_bg, status="idle")
+        self._bridge._on_runtime_event(RuntimeEvent(chat_bg, kind, "", {"execution_id": eid}))
+        self.application.processEvents()
+
+    def test_corr_tc_final_bg_error_finalizes_failure_and_cleans_up(self):
+        chat_bg, chat_fg, eid = self._setup_background_pair()
+        reducer = self._send_bg_tool_running(chat_bg, eid=eid)
+        seen = {}
+        orig_finalize = reducer.finalize_turn
+        reducer.finalize_turn = lambda status, *a, **k: (  # type: ignore
+            seen.setdefault("status", status), orig_finalize(status, *a, **k))[1]
+        self._send_bg_terminal(chat_bg, "error", eid)
+        self.assertEqual(seen.get("status"), ToolStatus.FAILURE)
+        self.assertEqual(reducer.get_tool("t1").status, ToolStatus.FAILURE)
+        self.assertNotIn((chat_bg, eid), getattr(self._bridge, "_tool_reducers", {}))
+        self.assertNotIn(chat_bg, self._bridge._active_turns)
+        self.assertIn((chat_bg, eid), self._bridge._ui_terminal_executions)
+        self.assertEqual(self._bridge._selected_conversation_id(), chat_fg)
+
+    def test_corr_tc_final_bg_completed_then_late_error_stays_interrupted(self):
+        chat_bg, chat_fg, eid = self._setup_background_pair()
+        reducer = self._send_bg_tool_running(chat_bg, eid=eid)
+        self._send_bg_terminal(chat_bg, "turn_completed", eid)
+        self.assertEqual(reducer.get_tool("t1").status, ToolStatus.INTERRUPTED)
+        self.assertNotIn((chat_bg, eid), getattr(self._bridge, "_tool_reducers", {}))
+        self.assertNotIn(chat_bg, self._bridge._active_turns)
+        self._bridge._on_runtime_event(RuntimeEvent(chat_bg, "error", "", {"execution_id": eid}))
+        self.application.processEvents()
+        self.assertNotIn((chat_bg, eid), getattr(self._bridge, "_tool_reducers", {}))
+        self.assertNotIn(chat_bg, self._bridge._active_turns)
+        self.assertIn((chat_bg, eid), self._bridge._ui_terminal_executions)
+        self.assertEqual(reducer.get_tool("t1").status, ToolStatus.INTERRUPTED)
+        self.assertEqual(self._bridge._selected_conversation_id(), chat_fg)
+
+    def test_corr_tc_final_bg_cancelled_then_late_terminal_keeps_cancelled(self):
+        chat_bg, chat_fg, eid = self._setup_background_pair()
+        reducer = self._send_bg_tool_running(chat_bg, eid=eid)
+        self._send_bg_terminal(chat_bg, 'orchestration_cancelled', eid)
+        self.assertEqual(reducer.get_tool("t1").status, ToolStatus.CANCELLED)
+        self.assertNotIn((chat_bg, eid), getattr(self._bridge, "_tool_reducers", {}))
+        self.assertNotIn(chat_bg, self._bridge._active_turns)
+        self._bridge._on_runtime_event(
+            RuntimeEvent(chat_bg, "turn_completed", "", {"execution_id": eid}))
+        self.application.processEvents()
+        self.assertNotIn((chat_bg, eid), getattr(self._bridge, "_tool_reducers", {}))
+        self.assertNotIn(chat_bg, self._bridge._active_turns)
+        self.assertIn((chat_bg, eid), self._bridge._ui_terminal_executions)
+        self.assertEqual(reducer.get_tool("t1").status, ToolStatus.CANCELLED)
+        self.assertEqual(self._bridge._selected_conversation_id(), chat_fg)
+
 
 if __name__ == "__main__":
     unittest.main()

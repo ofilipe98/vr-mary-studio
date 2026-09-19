@@ -354,10 +354,12 @@ class ActivityDomain:
             "orchestration_cancelled",
         }:
             execution_id = int(event.payload.get("execution_id") or 0)
-            # First-terminal-wins (background path): a later terminal for an
-            # already-terminated execution must not touch reducer or visuals.
-            if (event.conversation_id, execution_id) in self._ui_terminal_executions:
-                return
+            # No first-terminal-wins gate here: _on_runtime_event() is the
+            # sole decider of new vs. late terminal. It already registered
+            # the first terminal in _ui_terminal_executions before dispatch,
+            # so gating here would block the first background terminal
+            # itself. Late terminals never reach this handler (blocked
+            # upstream in _on_runtime_event()).
             self._discard_conversation_approvals(event.conversation_id)
             reducer_key = (event.conversation_id, execution_id)
             reducer = getattr(self, "_tool_reducers", {}).get(reducer_key)
