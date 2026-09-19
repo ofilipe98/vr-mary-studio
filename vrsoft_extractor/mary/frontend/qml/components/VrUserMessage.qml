@@ -5,32 +5,43 @@ import "../theme"
 Item {
     id: root
     property string content: ""
+    property string messageKey: ""
     property bool copied: false
     signal copyRequested()
+    signal layoutChanging()
+    signal toggled(bool expanded)
     implicitHeight: bubble.height + 18
     TextMetrics { id: measure; font: body.font; text: root.content }
     Rectangle {
         id: bubble
         anchors.right: parent.right
         width: Math.min(root.width * (root.width < 500 || root.content.length > 900 ? 0.9 : 0.8), Math.max(64, measure.advanceWidth + 28))
-        height: body.paintedHeight + 24
+        height: collapsible.implicitHeight + 24
         radius: Theme.messageRadius
         color: Theme.palette.messageSurface
-        TextEdit {
-            id: body
-            objectName: "messageBody"
+        VrCollapsibleMessageContent {
+            id: collapsible
             x: 14; y: 12; width: parent.width - 28
-            text: root.content
-            textFormat: TextEdit.PlainText
-            readOnly: true
-            selectByMouse: true
-            persistentSelection: true
-            wrapMode: TextEdit.Wrap
-            color: Theme.palette.text
-            renderType: Theme.textRenderType
-            selectionColor: Theme.palette.selection
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.bodySize
+            messageKey: root.messageKey
+            fadeColor: Theme.palette.messageSurface
+            onLayoutChanging: root.layoutChanging()
+            onToggled: expanded => root.toggled(expanded)
+            TextEdit {
+                id: body
+                objectName: "messageBody"
+                width: parent.width
+                text: root.content
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                selectByMouse: true
+                persistentSelection: true
+                wrapMode: TextEdit.Wrap
+                color: Theme.palette.text
+                renderType: Theme.textRenderType
+                selectionColor: Theme.palette.selection
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.bodySize
+            }
         }
     }
     VrIconButton {

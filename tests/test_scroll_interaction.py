@@ -4,7 +4,7 @@ import pytest
 
 from test_chat_presentation import (
     QApplication, QSettings, QTest, QObject, MarySettings, MaryDatabase,
-    FrontendBridge, ChatBridge, StudioBridge, create_engine,
+    FrontendBridge, ChatBridge, StudioBridge, create_engine, find_items,
 )
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent, QTextDocument
@@ -50,6 +50,13 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
             window.setWidth(1366)
             window.setHeight(768)
             QTest.qWait(350)
+            # Long messages start collapsed; expand to exercise scrolling
+            # over the full-height content this test targets.
+            for toggle in find_items(window.contentItem(), "messageExpandButton"):
+                if toggle.property("visible"):
+                    toggle.click()
+                    QTest.qWait(80)
+            QTest.qWait(150)
             timeline = window.findChild(QObject, 'messageList')
             bar = window.findChild(QObject, 'messageScrollBar')
             timeline.setProperty('followTail', False)

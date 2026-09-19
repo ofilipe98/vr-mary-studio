@@ -6,11 +6,13 @@ import "../theme"
 Column {
     id: root
     property string markdown: ""
+    property string messageKey: ""
     property bool streaming: false
     property var sources: []
     property bool copied: false
     signal copyRequested()
     signal layoutChanging()
+    signal toggled(bool expanded)
     spacing: 12
     // Update existing rows in place: completed blocks keep selection and code wrap.
     function syncBlocks() {
@@ -36,24 +38,33 @@ Column {
     onMarkdownChanged: syncBlocks()
     Component.onCompleted: syncBlocks()
     ListModel { id: blocks }
-    Repeater {
-        model: blocks
-        delegate: Loader {
-            id: block
-            required property string kind
-            required property string body
-            required property string language
-            required property int columns
-            width: root.width
-            sourceComponent: kind === "code" ? codeComponent : kind === "table" ? tableComponent : proseComponent
-            Component { id: proseComponent; VrMarkdownContent { markdown: block.body } }
-            Component { id: codeComponent; VrCodeBlock { code: block.body; language: block.language } }
-            Component {
-                id: tableComponent
-                VrTableBlock {
-                    markdown: block.body
-                    columns: block.columns
-                    onLayoutChanging: root.layoutChanging()
+    VrCollapsibleMessageContent {
+        id: collapsible
+        width: root.width
+        messageKey: root.messageKey
+        streaming: root.streaming
+        fadeColor: Theme.palette.chatBackground
+        onLayoutChanging: root.layoutChanging()
+        onToggled: expanded => root.toggled(expanded)
+        Repeater {
+            model: blocks
+            delegate: Loader {
+                id: block
+                required property string kind
+                required property string body
+                required property string language
+                required property int columns
+                width: collapsible.width
+                sourceComponent: kind === "code" ? codeComponent : kind === "table" ? tableComponent : proseComponent
+                Component { id: proseComponent; VrMarkdownContent { markdown: block.body } }
+                Component { id: codeComponent; VrCodeBlock { code: block.body; language: block.language } }
+                Component {
+                    id: tableComponent
+                    VrTableBlock {
+                        markdown: block.body
+                        columns: block.columns
+                        onLayoutChanging: root.layoutChanging()
+                    }
                 }
             }
         }

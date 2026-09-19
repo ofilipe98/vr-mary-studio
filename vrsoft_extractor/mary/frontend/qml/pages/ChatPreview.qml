@@ -894,7 +894,15 @@ Item {
                                 id: userComponent
                                 VrUserMessage {
                                     content: messageItem.displayContent
+                                    messageKey: messageItem.messageKey
+                                    onLayoutChanging: messageList.preserveReader()
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
+                                    onToggled: expanded => {
+                                        // Collapse must not push the block out of view:
+                                        // keep its top anchored when it sits above the viewport.
+                                        if (!expanded && messageItem.y < messageList.contentY)
+                                            messageList.contentY = Math.max(0, messageItem.y - 12)
+                                    }
                                 }
                             }
                             Component {
@@ -902,8 +910,13 @@ Item {
                                 VrAssistantMessage {
                                     onLayoutChanging: messageList.preserveReader()
                                     markdown: messageItem.displayContent
+                                    messageKey: messageItem.messageKey
                                     streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
+                                    onToggled: expanded => {
+                                        if (!expanded && messageItem.y < messageList.contentY)
+                                            messageList.contentY = Math.max(0, messageItem.y - 12)
+                                    }
                                 }
                             }
                         }
