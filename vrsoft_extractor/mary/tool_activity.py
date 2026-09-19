@@ -5,7 +5,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import hashlib
-import json
 import logging
 from typing import Any
 
@@ -521,48 +520,60 @@ class ToolLifecycleReducer:
         if is_generic_tool_id(event.tool_id):
             event.tool_id = self._mint_anonymous_id(event)
 
-        # 1. Idempotency check by event_id (highest priority)
-        if event.event_id and event.event_id in self._processed_event_ids:
-            logger.debug("Duplicate event_id ignored: %s (tool_id=%s)", event.event_id, event.tool_id)
-            mapped = self._event_to_tool.get(event.event_id)
-            if mapped is not None and mapped in self._tools:
-                return self._tools[mapped]
-            if event.tool_id in self._tools:
-                return self._tools[event.tool_id]
-            # Fall through to create (should not happen for deterministic anon ids).
+        has_event_id = bool(event.event_id and str(event.event_id).strip())
+        has_sequence = bool(event.sequence and event.sequence > 0)
 
-        # 2. Idempotency check by sequence (when sequence represents monotonic event identity)
+        # 1. Idempotency by event_id (highest priority, exclusive).
+        # When an explicit event_id exists, sequence must not participate
+        # in the dedup decision: a new event_id with a repeated sequence
+        # is a legitimate new event, while a repeated event_id with a
+        # different sequence is still a retry.
+        if has_event_id:
+            if event.event_id in self._processed_event_ids:
+                logger.debug("Duplicate event_id ignored: %s (tool_id=%s)", event.event_id, event.tool_id)
+                mapped = self._event_to_tool.get(event.event_id)
+                if mapped is not None and mapped in self._tools:
+                    return self._tools[mapped]
+                if event.tool_id in self._tools:
+                    return self._tools[event.tool_id]
+            # Explicit identity present: skip sequence/digest dedup entirely.
+        elif has_sequence:
+            # 2. Idempotency by sequence only without event_id.
+            # Keyed by the full (provider, tool_id, sequence) triple via
+            # _processed_provider_sequences only. The legacy (tool_id,
+            # sequence) key without provider must never block an event.
+            provider = str(event.provider or "").strip().lower()
+            provider_seq_key = (provider, event.tool_id, event.sequence)
+            if provider_seq_key in self._processed_provider_sequences:
+                logger.debug(
+                    "Duplicate sequence ignored: provider=%s tool_id=%s seq=%d",
+                    provider,
+                    event.tool_id,
+                    event.sequence,
+                )
+                mapped = self._sequence_to_tool.get(provider_seq_key)
+                if mapped is not None and mapped in self._tools:
+                    return self._tools[mapped]
+                if event.tool_id in self._tools:
+                    return self._tools[event.tool_id]
+        else:
+            digest = event.payload_digest()
+            # 3. Digest fallback only without event_id and without usable
+            # sequence. Explicit delta chunks must append literally even
+            # when textually equal ("A"+"A" -> "AA"); only
+            # snapshot/legacy payloads use digest heuristics.
+            is_explicit_delta = str(getattr(event, "output_mode", "") or "").lower() == "delta"
+            if not is_explicit_delta and digest in self._processed_digests:
+                logger.debug("Duplicate event digest ignored: %s (tool_id=%s)", digest, event.tool_id)
+                mapped = self._digest_to_tool.get(digest)
+                if mapped is not None and mapped in self._tools:
+                    return self._tools[mapped]
+                if event.tool_id in self._tools:
+                    return self._tools[event.tool_id]
+
         provider = str(event.provider or "").strip().lower()
-        tool_seq_key = (event.tool_id, event.sequence)
         provider_seq_key = (provider, event.tool_id, event.sequence)
-        if event.sequence > 0 and (
-            provider_seq_key in self._processed_provider_sequences
-            or tool_seq_key in self._processed_sequences
-        ):
-            logger.debug(
-                "Duplicate sequence ignored: provider=%s tool_id=%s seq=%d",
-                provider,
-                event.tool_id,
-                event.sequence,
-            )
-            mapped = self._sequence_to_tool.get(provider_seq_key)
-            if mapped is not None and mapped in self._tools:
-                return self._tools[mapped]
-            if event.tool_id in self._tools:
-                return self._tools[event.tool_id]
-
         digest = event.payload_digest()
-        # Deduplication prioritizes explicit identity (event_id/sequence).
-        # Explicit delta chunks must append literally even when textually equal
-        # ("A"+"A" -> "AA"); only snapshot/legacy payloads use digest heuristics.
-        is_explicit_delta = str(getattr(event, "output_mode", "") or "").lower() == "delta"
-        if not event.event_id and not is_explicit_delta and digest in self._processed_digests:
-            logger.debug("Duplicate event digest ignored: %s (tool_id=%s)", digest, event.tool_id)
-            mapped = self._digest_to_tool.get(digest)
-            if mapped is not None and mapped in self._tools:
-                return self._tools[mapped]
-            if event.tool_id in self._tools:
-                return self._tools[event.tool_id]
 
         # 2. Retrieve or initialize tool activity
         tool = self._tools.get(event.tool_id)
@@ -642,7 +653,8 @@ class ToolLifecycleReducer:
                     self._processed_event_ids.add(event.event_id)
                     self._event_to_tool[event.event_id] = tool.id
                 if event.sequence > 0:
-                    self._processed_sequences.add(tool_seq_key)
+                    # Legacy _processed_sequences is intentionally not updated:
+                    # sequence identity is keyed only by (provider, tool, seq).
                     self._processed_provider_sequences.add(provider_seq_key)
                     self._sequence_to_tool[provider_seq_key] = tool.id
                 self._processed_digests.add(digest)
@@ -784,7 +796,7 @@ class ToolLifecycleReducer:
             self._processed_event_ids.add(event.event_id)
             self._event_to_tool[event.event_id] = tool.id
         if event.sequence > 0:
-            self._processed_sequences.add(tool_seq_key)
+            # Legacy _processed_sequences is intentionally not updated.
             self._processed_provider_sequences.add(provider_seq_key)
             self._sequence_to_tool[provider_seq_key] = tool.id
         self._processed_digests.add(digest)
@@ -866,6 +878,8 @@ class ToolLifecycleReducer:
             reducer._tool_order.append(tool.id)
         reducer._processed_event_ids = set(data.get("processed_event_ids", []))
         reducer._processed_digests = set(data.get("processed_digests", []))
+        # Legacy compat: accept old payloads with processed_sequences but
+        # never consult _processed_sequences in reduce() again.
         reducer._processed_sequences = {tuple(x) for x in data.get("processed_sequences", [])}
         reducer._processed_provider_sequences = {tuple(x) for x in data.get("processed_provider_sequences", [])}
         return reducer

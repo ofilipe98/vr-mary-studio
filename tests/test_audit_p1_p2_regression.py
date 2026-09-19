@@ -36,6 +36,7 @@ from vrsoft_extractor.mary.tool_activity import (
     NormalizedToolEvent,
     ToolEventKind,
     ToolLifecycleReducer,
+    ToolStatus,
     coalesce_output,
 )
 
@@ -328,6 +329,7 @@ class AuditRegressionTest(unittest.TestCase):
         self.assertEqual(t_anti.sequence, 25)
 
         # 3. OpenCode
+        # CORR-TC-SEQ-01: output_index is NOT a monotonic sequence.
         open_payload = {
             "part": {
                 "type": "tool",
@@ -341,17 +343,19 @@ class AuditRegressionTest(unittest.TestCase):
         open_norm = normalize_opencode_event(open_payload, "cid-rt")
         self.assertIsNotNone(open_norm)
         self.assertEqual(open_norm.event_id, "open-ev-300")
-        self.assertEqual(open_norm.sequence, 35)
+        self.assertEqual(open_norm.sequence, 0)
+        self.assertEqual(open_norm.metadata["part"]["output_index"], 35)
         rt_open = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(open_norm)})
         gen_open = normalize_generic_event(rt_open)
         self.assertIsNotNone(gen_open)
         self.assertEqual(gen_open.event_id, "open-ev-300")
-        self.assertEqual(gen_open.sequence, 35)
+        self.assertEqual(gen_open.sequence, 0)
         t_open = r.reduce(gen_open)
         self.assertEqual(t_open.id, "open-call-300")
-        self.assertEqual(t_open.sequence, 35)
+        self.assertEqual(t_open.sequence, 0)
 
         # 4. Claude
+        # CORR-TC-SEQ-01: index is NOT a monotonic sequence.
         claude_payload = {
             "type": "tool_use",
             "id": "claude-call-400",
@@ -362,15 +366,15 @@ class AuditRegressionTest(unittest.TestCase):
         claude_norm = normalize_claude_event(claude_payload, "cid-rt")
         self.assertIsNotNone(claude_norm)
         self.assertEqual(claude_norm.event_id, "claude-ev-400")
-        self.assertEqual(claude_norm.sequence, 45)
+        self.assertEqual(claude_norm.sequence, 0)
         rt_claude = RuntimeEvent("cid-rt", "tool_event", "", {"canonical_event": asdict(claude_norm)})
         gen_claude = normalize_generic_event(rt_claude)
         self.assertIsNotNone(gen_claude)
         self.assertEqual(gen_claude.event_id, "claude-ev-400")
-        self.assertEqual(gen_claude.sequence, 45)
+        self.assertEqual(gen_claude.sequence, 0)
         t_claude = r.reduce(gen_claude)
         self.assertEqual(t_claude.id, "claude-call-400")
-        self.assertEqual(t_claude.sequence, 45)
+        self.assertEqual(t_claude.sequence, 0)
 
     def test_p1_canonical_event_defense_never_overwrites_explicit_identity(self):
         raw_canonical = asdict(NormalizedToolEvent(tool_id="def-1", kind=ToolEventKind.STARTED))
@@ -680,6 +684,117 @@ class AuditRegressionTest(unittest.TestCase):
         self.assertIsNotNone(msg_rel)
         cards_rel = {t["id"]: t for t in msg_rel.get("activityData", [])}
         self.assertEqual(cards_rel["t1"]["output"], "ABC")
+
+    # CORR-TC-SEQ-01: event_id has priority over sequence.
+    def test_corr_tc_seq_01_new_event_id_same_sequence_is_processed(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=10, provider="codex",
+        ))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", event_id="e2", sequence=10, provider="codex",
+        ))
+        self.assertEqual(tool.output, "AB")
+
+    def test_corr_tc_seq_01_same_event_id_different_sequence_is_retry(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=10, provider="codex",
+        ))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=11, provider="codex",
+        ))
+        self.assertEqual(tool.output, "A")
+
+    def test_corr_tc_seq_01_sequence_dedup_without_event_id(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        self.assertEqual(tool.output, "A")
+
+    def test_corr_tc_seq_01_same_sequence_different_providers_independent(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", sequence=10, provider="antigravity",
+        ))
+        self.assertEqual(tool.output, "AB")
+
+    def test_corr_tc_seq_01_index_output_index_never_become_sequence(self):
+        ev_idx = normalize_opencode_event(
+            {"part": {"type": "tool", "callID": "t-idx", "tool": "exec",
+                      "index": 7, "delta": "A"}},
+        )
+        self.assertIsNotNone(ev_idx)
+        self.assertEqual(ev_idx.sequence, 0)
+        ev_oidx = normalize_antigravity_event(
+            {"update": {"sessionUpdate": "tool_call",
+                        "toolCall": {"toolCallId": "t-oidx", "output_index": 7,
+                                     "delta": "B"}}},
+            "session/update",
+        )
+        self.assertIsNotNone(ev_oidx)
+        self.assertEqual(ev_oidx.sequence, 0)
+
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(tool_id="t-idx", kind=ToolEventKind.STARTED, provider="opencode"))
+        t1 = r.reduce(NormalizedToolEvent(
+            tool_id="t-idx", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", provider="opencode",
+            metadata={"index": 7},
+        ))
+        self.assertEqual(t1.output, "A")
+        t2 = r.reduce(NormalizedToolEvent(
+            tool_id="t-idx", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", provider="opencode",
+            metadata={"output_index": 7},
+        ))
+        self.assertEqual(t2.output, "AB")
+
+    def test_corr_tc_seq_01_started_completed_same_sequence_distinct_ids(self):
+        r = ToolLifecycleReducer()
+        r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.STARTED,
+            event_id="start-1", sequence=10, provider="codex",
+        ))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.COMPLETED,
+            event_id="done-1", sequence=10, provider="codex",
+        ))
+        self.assertEqual(tool.status, ToolStatus.SUCCESS)
+
+    def test_corr_tc_seq_01_legacy_processed_sequences_ignored(self):
+        r = ToolLifecycleReducer.from_dict({
+            "tools": [],
+            "processed_event_ids": [],
+            "processed_digests": [],
+            "processed_sequences": [["t1", 10]],
+            "processed_provider_sequences": [],
+        })
+        r.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        tool = r.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e-new", sequence=10, provider="codex",
+        ))
+        self.assertEqual(tool.output, "A")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,4 @@
 """Adversarial and parity test suite for Tool Calling lifecycle and UI presentation."""
-import pytest
 from vrsoft_extractor.mary.tool_activity import (
     ToolActivity,
     ToolLifecycleReducer,
@@ -452,19 +451,22 @@ class TestGroupingInvariants:
         assert ev_codex.sequence == 12
 
         # Antigravity with update_id & output_index
+        # CORR-TC-SEQ-01: output_index is not a monotonic sequence.
         ev_anti = normalize_antigravity_event(
             {"update": {"sessionUpdate": "tool_call", "toolCall": {"toolCallId": "a1", "update_id": "anti-88", "output_index": "22"}}},
             "session/update",
         )
         assert ev_anti.event_id == "anti-88"
-        assert ev_anti.sequence == 22
+        assert ev_anti.sequence == 0
+        assert ev_anti.metadata["update"]["toolCall"]["output_index"] == "22"
 
         # OpenCode with updateId & index
+        # CORR-TC-SEQ-01: index is not a monotonic sequence.
         ev_open = normalize_opencode_event(
             {"part": {"type": "tool", "callID": "o1", "tool": "exec", "updateId": "open-77", "index": "33"}},
         )
         assert ev_open.event_id == "open-77"
-        assert ev_open.sequence == 33
+        assert ev_open.sequence == 0
 
         # Claude with event_id & sequence
         ev_claude = normalize_claude_event(
@@ -478,3 +480,122 @@ class TestGroupingInvariants:
         ev_generic = normalize_generic_event(rt)
         assert ev_generic.event_id == "claude-66"
         assert ev_generic.sequence == 44
+
+
+class TestIdempotencyPrecedenceCorrTcSeq01:
+    """CORR-TC-SEQ-01: event_id priority, provider-scoped sequence, index exclusion."""
+
+    def test_new_event_id_same_sequence_is_processed(self):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=10, provider="codex",
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", event_id="e2", sequence=10, provider="codex",
+        ))
+        assert tool.output == "AB"
+
+    def test_same_event_id_different_sequence_is_retry(self):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=10, provider="codex",
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", event_id="e1", sequence=11, provider="codex",
+        ))
+        assert tool.output == "A"
+
+    def test_sequence_dedup_without_event_id_same_provider(self):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        assert tool.output == "A"
+
+    def test_same_sequence_different_providers_independent(self):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", sequence=10, provider="antigravity",
+        ))
+        assert tool.output == "AB"
+
+    def test_index_output_index_never_become_sequence(self):
+        from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
+            _extract_sequence,
+            normalize_antigravity_event,
+            normalize_opencode_event,
+        )
+
+        assert _extract_sequence({"index": 5, "output_index": 6}) == 0
+        assert _extract_sequence({"sequence": 7}) == 7
+        assert _extract_sequence({"seq": 8}) == 8
+
+        ev_a = normalize_opencode_event(
+            {"part": {"type": "tool", "callID": "t-seq", "tool": "exec",
+                      "index": 9, "delta": "A"}},
+        )
+        assert ev_a.sequence == 0
+        ev_b = normalize_antigravity_event(
+            {"update": {"sessionUpdate": "tool_call",
+                        "toolCall": {"toolCallId": "t-seq", "output_index": 9,
+                                     "delta": "B"}}},
+            "session/update",
+        )
+        assert ev_b.sequence == 0
+
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(tool_id="t-seq", kind=ToolEventKind.STARTED, provider="codex"))
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t-seq", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", provider="codex", metadata={"index": 9},
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t-seq", kind=ToolEventKind.UPDATED, delta="B",
+            output_mode="delta", provider="codex", metadata={"output_index": 9},
+        ))
+        assert tool.output == "AB"
+
+    def test_started_completed_same_sequence_distinct_ids_reaches_success(self):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.STARTED,
+            event_id="start-1", sequence=10, provider="codex",
+        ))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.COMPLETED,
+            event_id="done-1", sequence=10, provider="codex",
+        ))
+        assert tool.status == ToolStatus.SUCCESS
+
+    def test_legacy_processed_sequences_never_blocks(self):
+        reducer = ToolLifecycleReducer.from_dict({
+            "tools": [],
+            "processed_event_ids": [],
+            "processed_digests": [],
+            "processed_sequences": [["t1", 10]],
+            "processed_provider_sequences": [],
+        })
+        reducer.reduce(NormalizedToolEvent(tool_id="t1", kind=ToolEventKind.STARTED, provider="codex"))
+        tool = reducer.reduce(NormalizedToolEvent(
+            tool_id="t1", kind=ToolEventKind.UPDATED, delta="A",
+            output_mode="delta", sequence=10, provider="codex",
+        ))
+        assert tool.output == "A"

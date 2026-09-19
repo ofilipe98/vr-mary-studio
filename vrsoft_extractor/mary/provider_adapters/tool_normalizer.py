@@ -9,7 +9,6 @@ into canonical NormalizedToolEvent instances.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 import logging
 from typing import Any
 
@@ -38,12 +37,13 @@ def _extract_event_id(*containers: Any) -> str:
 
 
 def _extract_sequence(*containers: Any, provider: str = "") -> int:
-    """Extract sequence or ordering index from heterogeneous provider payloads."""
-    p = str(provider or "").strip().lower()
-    if p == "claude":
-        allowed_keys = ("sequence", "seq", "index")
-    else:
-        allowed_keys = ("sequence", "seq", "output_index", "index")
+    """Extract monotonic provider sequence from heterogeneous payloads.
+
+    Only explicit ``sequence``/``seq`` keys represent a monotonic provider
+    sequence. ``index``/``output_index`` are positional hints that stay in
+    the original metadata but must never drive idempotency or stale checks.
+    """
+    allowed_keys = ("sequence", "seq")
 
     for c in containers:
         if not isinstance(c, dict):
