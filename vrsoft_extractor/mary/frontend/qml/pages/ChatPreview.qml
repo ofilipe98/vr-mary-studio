@@ -829,6 +829,11 @@ Item {
                 property bool followTail: true
                 property bool holdingReader: false
                 property real readerY: 0
+                // Pending Mostrar mais/menos compensation, applied once the
+                // height change reaches contentHeight (see compensateToggle).
+                property real pendingFromY: 0
+                property real pendingDelta: 0
+                property bool hasPendingToggle: false
                 function beginManualScroll() {
                     wheelAnimation.stop()
                     followTail = false
@@ -846,6 +851,36 @@ Item {
                 function restoreReader() {
                     if (holdingReader && !followTail && !moving && !wheelAnimation.running && !messageScrollBar.pressed)
                         contentY = readerY
+                }
+                // Single predictable scroll adjustment for Mostrar mais/menos.
+                // heightDelta is old minus new message height (positive on
+                // collapse). Only the message's own height changed, so content
+                // above it is untouched: if the message starts above the
+                // viewport, shift contentY by the delta to keep the content
+                // under the reader visually stable; otherwise the message top
+                // is anchored and contentY needs no change. The toggle path
+                // never calls preserveReader(), so nothing reverts this.
+                // The adjustment is applied in onContentHeightChanged, when the
+                // new bounds are live: setting contentY synchronously inside
+                // toggled() would clamp against the stale contentHeight (and
+                // fake atYEnd with it, flipping followTail and yanking to the
+                // end via tailTimer). Rapid double toggles accumulate into one
+                // pending adjustment. followTail owns the pinned-to-bottom
+                // case (tailTimer).
+                function compensateToggle(item, heightDelta) {
+                    if (heightDelta === 0 || followTail)
+                        return
+                    if (hasPendingToggle) {
+                        pendingDelta += heightDelta
+                        return
+                    }
+                    var top = item.y
+                    var fromY = contentY
+                    if (top >= fromY)
+                        return
+                    pendingFromY = fromY
+                    pendingDelta = heightDelta
+                    hasPendingToggle = true
                 }
                 Timer {
                     id: readerTimer
@@ -912,11 +947,8 @@ Item {
                                     messageKey: messageItem.messageKey
                                     onLayoutChanging: messageList.preserveReader()
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
-                                    onToggled: expanded => {
-                                        // Collapse must not push the block out of view:
-                                        // keep its top anchored when it sits above the viewport.
-                                        if (!expanded && messageItem.y < messageList.contentY)
-                                            messageList.contentY = Math.max(0, messageItem.y - 12)
+                                    onToggled: (expanded, heightDelta) => {
+                                        messageList.compensateToggle(messageItem, heightDelta)
                                     }
                                 }
                             }
@@ -928,9 +960,8 @@ Item {
                                     messageKey: messageItem.messageKey
                                     streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
-                                    onToggled: expanded => {
-                                        if (!expanded && messageItem.y < messageList.contentY)
-                                            messageList.contentY = Math.max(0, messageItem.y - 12)
+                                    onToggled: (expanded, heightDelta) => {
+                                        messageList.compensateToggle(messageItem, heightDelta)
                                     }
                                 }
                             }
@@ -960,6 +991,11 @@ Item {
                 onContentHeightChanged: {
                     if (followTail && !moving) tailTimer.restart()
                     else if (holdingReader) Qt.callLater(restoreReader)
+                    if (hasPendingToggle) {
+                        hasPendingToggle = false
+                        var maxY = Math.max(0, contentHeight - height)
+                        contentY = Math.max(0, Math.min(maxY, pendingFromY - pendingDelta))
+                    }
                 }
                 onCountChanged: { if (followTail) tailTimer.restart() }
                 Timer { id: tailTimer; interval: 0; onTriggered: { if (messageList.followTail) messageList.positionViewAtEnd() } }

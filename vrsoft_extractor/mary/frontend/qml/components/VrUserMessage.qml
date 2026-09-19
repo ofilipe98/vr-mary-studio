@@ -9,7 +9,7 @@ Item {
     property bool copied: false
     signal copyRequested()
     signal layoutChanging()
-    signal toggled(bool expanded)
+    signal toggled(bool expanded, real heightDelta)
     implicitHeight: bubble.height + 18
     TextMetrics { id: measure; font: body.font; text: root.content }
     Rectangle {
@@ -25,7 +25,7 @@ Item {
             messageKey: root.messageKey
             fadeColor: Theme.palette.messageSurface
             onLayoutChanging: root.layoutChanging()
-            onToggled: expanded => root.toggled(expanded)
+            onToggled: (expanded, heightDelta) => root.toggled(expanded, heightDelta)
             TextEdit {
                 id: body
                 objectName: "messageBody"

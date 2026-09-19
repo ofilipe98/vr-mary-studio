@@ -13,16 +13,23 @@ Column {
 
     // Single visual budget for the collapsed state (density-consistent).
     property int collapsedMaxHeight: Theme.scaledGeometry(240)
+    // Inner spacing between message blocks. Hosts set it to preserve their
+    // pre-collapse rhythm (assistant Markdown used spacing 12).
+    property real contentSpacing: 0
     property bool expanded: false
-    // While streaming, show the full content so the tail stays followable.
-    // The message keeps expanded=true after streaming ends (no post-stream jump).
+    // While streaming, the full content stays visible so the tail can be
+    // followed. Never force `expanded` here: manual state must survive.
     property bool streaming: false
     // Reset per-message expansion when the delegate binds another message.
     property string messageKey: ""
     property color fadeColor: Theme.palette.chatBackground
     property bool overflows: false
     signal layoutChanging()
-    signal toggled(bool expanded)
+    // heightDelta is old viewport height minus new viewport height
+    // (positive when collapsing). The host applies a single scroll
+    // compensation once the height change reaches contentHeight; this
+    // signal never arms preserveReader().
+    signal toggled(bool expanded, real heightDelta)
 
     readonly property bool effectiveExpanded: expanded || streaming
     // Hosts declare their blocks as direct children; they land in contentColumn.
@@ -35,12 +42,10 @@ Column {
         Qt.callLater(root.updateOverflow)
     }
     onCollapsedMaxHeightChanged: Qt.callLater(root.updateOverflow)
-    onStreamingChanged: {
-        if (root.streaming && !root.expanded)
-            root.expanded = true
-        Qt.callLater(root.updateOverflow)
-    }
-    onWidthChanged: Qt.callLater(root.updateOverflow)
+    // Recalculate overflow when streaming starts/ends, but never rewrite
+    // the manual `expanded` state: a long message the user never expanded
+    // returns to collapsed once streaming ends.
+    onStreamingChanged: Qt.callLater(root.updateOverflow)
     Component.onCompleted: Qt.callLater(root.updateOverflow)
 
     function updateOverflow() {
@@ -55,9 +60,21 @@ Column {
     }
 
     function toggle() {
-        root.layoutChanging()
+        // The button is hidden while streaming; guard keyboard paths too.
+        if (root.streaming)
+            return
+        // Deterministic targets from the full content height: independent of
+        // the running height animation, so the host can compensate scroll
+        // with a single adjustment once the height change flushes to
+        // contentHeight. Deliberately no layoutChanging()/preserveReader()
+        // here: that would arm holdingReader + readerTimer and fight the
+        // compensation.
+        var full = contentColumn.implicitHeight
+        var collapsedH = Math.min(full, root.collapsedMaxHeight)
+        var oldH = root.expanded ? full : collapsedH
         root.expanded = !root.expanded
-        root.toggled(root.expanded)
+        var newH = root.expanded ? full : collapsedH
+        root.toggled(root.expanded, oldH - newH)
     }
 
     Item {
@@ -76,7 +93,9 @@ Column {
 
         Column {
             id: contentColumn
+            objectName: "collapsibleContentColumn"
             width: parent.width
+            spacing: root.contentSpacing
             onImplicitHeightChanged: {
                 // Content grew after first layout (Markdown, fonts, code
                 // wrap, tables, images): re-evaluate real overflow.
@@ -114,7 +133,9 @@ Column {
     Button {
         id: toggleButton
         objectName: "messageExpandButton"
-        visible: root.overflows
+        // Hidden while streaming: full content is shown and there is no
+        // collapsed state to toggle to, so no dead control is exposed.
+        visible: root.overflows && !root.streaming
         text: root.effectiveExpanded ? "Mostrar menos" : "Mostrar mais"
         focusPolicy: Qt.StrongFocus
         leftPadding: 8

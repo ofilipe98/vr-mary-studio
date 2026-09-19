@@ -12,7 +12,7 @@ Column {
     property bool copied: false
     signal copyRequested()
     signal layoutChanging()
-    signal toggled(bool expanded)
+    signal toggled(bool expanded, real heightDelta)
     spacing: 12
     // Update existing rows in place: completed blocks keep selection and code wrap.
     function syncBlocks() {
@@ -41,11 +41,13 @@ Column {
     VrCollapsibleMessageContent {
         id: collapsible
         width: root.width
+        // Preserve the pre-collapse Markdown block rhythm (spacing 12).
+        contentSpacing: 12
         messageKey: root.messageKey
         streaming: root.streaming
         fadeColor: Theme.palette.chatBackground
         onLayoutChanging: root.layoutChanging()
-        onToggled: expanded => root.toggled(expanded)
+        onToggled: (expanded, heightDelta) => root.toggled(expanded, heightDelta)
         Repeater {
             model: blocks
             delegate: Loader {
