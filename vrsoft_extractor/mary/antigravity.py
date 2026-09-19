@@ -207,7 +207,13 @@ class LegacyAntigravityProvider(AgentProvider):
                         text += delta
                         callback(RuntimeEvent(cid, "assistant_delta", delta, step))
                     elif step.get("step_type") == "tool":
-                        callback(RuntimeEvent(cid, "tool_event", str(step.get("tool_name", "ferramenta")), step))
+                        from .provider_adapters.tool_normalizer import normalize_generic_event
+                        from dataclasses import asdict
+                        norm = normalize_generic_event(RuntimeEvent(cid, "tool_event", str(step.get("tool_name", "ferramenta")), step))
+                        if norm:
+                            step["canonical_event"] = asdict(norm)
+                        title = norm.title if norm else str(step.get("tool_name", "ferramenta"))
+                        callback(RuntimeEvent(cid, "tool_event", title, step))
                 elif kind == "result":
                     result_seen = True
                     result = event.get("result") or {}

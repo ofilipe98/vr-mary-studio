@@ -124,6 +124,7 @@ Item {
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
+    property string conversationMenuConversationId: ""
     property bool composerDropActive: false
     property real clockNow: Date.now() / 1000
     property var expertProfiles: [
@@ -2996,6 +2997,7 @@ Item {
     }
 
     function openConversationMenu(conversationId, positionX, positionY) {
+        root.conversationMenuConversationId = String(conversationId || "")
         root.activateConversation(conversationId)
         conversationContextMenu.x = Math.max(4,
             Math.min(root.width - conversationContextMenu.width - 4, positionX))
@@ -3125,9 +3127,15 @@ Item {
                     variant: "danger"
                     enabled: !root.chatBridge.conversationDeleteRunning
                     onClicked: {
+                        var targetId = String(root.conversationMenuConversationId || "")
+                        var wasSelected = !targetId || targetId === root.chatBridge.selectedConversationId
                         conversationDeleteDialog.close()
-                        root.chatBridge.trashCurrentConversation()
-                        composerInput.clear()
+                        if (targetId)
+                            root.chatBridge.trashConversation(targetId)
+                        else
+                            root.chatBridge.trashCurrentConversation()
+                        if (wasSelected)
+                            composerInput.clear()
                     }
                 }
             }

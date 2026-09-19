@@ -797,8 +797,15 @@ class ConversationsDomain:
 
     def archiveCurrentConversation(self) -> None:  # noqa: N802
         conversation_id = self._selected_conversation_id()
-        if not conversation_id or conversation_id in self._active_turns:
+        if not conversation_id:
             return
+        if conversation_id in self._active_turns:
+            row = self._database.get_conversation(conversation_id)
+            if row is not None and str(row["status"] or "idle") == "running":
+                return
+            # Residual frontend state; reconcile instead of blocking.
+            self._active_turns.discard(conversation_id)
+            self._active_turn_started_epochs.pop(conversation_id, None)
         try:
             self._orchestrator.archive(conversation_id)
         except Exception as exc:
@@ -814,29 +821,60 @@ class ConversationsDomain:
         self.startNewChat()
 
 
-    def trashCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = self._selected_conversation_id()
-        if (
-            not conversation_id
-            or conversation_id in self._active_turns
-            or self._conversation_delete_running
-        ):
+    def trashConversation(self, conversation_id: str) -> None:  # noqa: N802
+        """Delete the explicitly targeted conversation.
+
+        Execution state is evaluated per ``conversation_id``: a running turn
+        blocks only the deletion of that same conversation. Stale frontend
+        entries (``_active_turns`` holding an id whose persisted status is no
+        longer ``running``) are reconciled instead of blocking the delete.
+        """
+        cid = str(conversation_id or "").strip()
+        if not cid:
             return
+        if cid in self._deleting_conversation_ids:
+            return
+        row = self._database.get_conversation(cid)
+        if row is None:
+            self.refresh()
+            return
+        persisted_status = str(row["status"] or "idle")
+        if cid in self._active_turns:
+            if persisted_status == "running":
+                self._status_text = "Esta conversa ainda está em execução."
+                self.stateChanged.emit()
+                return
+            # Residual frontend state: the turn already reached a terminal
+            # status in the database but the id was never removed locally.
+            # Reconcile instead of blocking an unrelated-or-finished delete.
+            self._active_turns.discard(cid)
+            self._active_turn_started_epochs.pop(cid, None)
+        self._begin_conversation_trash(cid)
+
+    def trashCurrentConversation(self) -> None:  # noqa: N802
+        return self.trashConversation(self._selected_conversation_id())
+
+    def _begin_conversation_trash(self, conversation_id: str) -> None:
+        cid = str(conversation_id or "").strip()
+        if not cid or cid in self._deleting_conversation_ids:
+            return
+        is_selected = cid == self._selected_conversation_id()
         self._conversation_delete_running = True
-        self._conversation_delete_id = conversation_id
-        self._deleting_conversation_ids.add(conversation_id)
-        self.startNewChat()
+        self._conversation_delete_id = cid
+        self._deleting_conversation_ids.add(cid)
+        if is_selected:
+            self.startNewChat()
         self.refresh()
         self._status_text = "Movendo conversa para a lixeira…"
         self.stateChanged.emit()
 
         def trash() -> None:
             result: dict[str, Any] = {
-                "conversation_id": conversation_id,
+                "conversation_id": cid,
                 "error": "",
             }
             try:
-                self._orchestrator.trash(conversation_id)
+                self._orchestrator.trash(cid)
             except Exception as exc:
                 result["error"] = str(exc)
             self._conversationTrashFinished.emit(result)
@@ -850,6 +888,9 @@ class ConversationsDomain:
         error = str(result.get("error") or "")
         self._deleting_conversation_ids.discard(conversation_id)
         if conversation_id == self._conversation_delete_id:
+            remaining = sorted(self._deleting_conversation_ids)
+            self._conversation_delete_id = remaining[0] if remaining else ""
+        if not self._deleting_conversation_ids:
             self._conversation_delete_running = False
             self._conversation_delete_id = ""
         if self._closed:

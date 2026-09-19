@@ -20,6 +20,8 @@ from ..antigravity_acp import (
     spawn_acp_client,
 )
 from ..models import ConversationOptions, RuntimeEvent
+from dataclasses import asdict
+from .tool_normalizer import normalize_antigravity_event
 from .base import AgentProvider, ProviderError
 
 NATIVE_PREFIX = "acp:"
@@ -341,12 +343,13 @@ class AntigravityProvider(AgentProvider):
             if text:
                 callback(RuntimeEvent(cid, "reasoning_delta", text))
         elif kind in ("tool_call", "tool_call_update"):
+            norm = normalize_antigravity_event(params, method, cid)
             tool_call = update.get("toolCall") or {}
             if not isinstance(tool_call, dict):
                 tool_call = {}
-            title = str(tool_call.get("title") or tool_call.get("name") or "Ferramenta externa")
+            title = norm.title if norm else str(tool_call.get("title") or tool_call.get("name") or "Ferramenta externa")
             status = str(update.get("status") or tool_call.get("status") or "")
-            callback(RuntimeEvent(cid, "tool_event", title, {
+            payload = {
                 "sessionUpdate": kind,
                 "status": status,
                 "title": title,
@@ -358,14 +361,18 @@ class AntigravityProvider(AgentProvider):
                     "status": status,
                     "title": title,
                 },
-            }))
+            }
+            if norm:
+                payload["canonical_event"] = asdict(norm)
+            callback(RuntimeEvent(cid, "tool_event", title, payload))
         elif kind == "tool_result":
+            norm = normalize_antigravity_event(params, method, cid)
             result = update.get("toolResult") or {}
             if not isinstance(result, dict):
                 result = {}
-            title = str(result.get("title") or result.get("name") or "Resultado")
+            title = norm.title if norm else str(result.get("title") or result.get("name") or "Resultado")
             status = str(update.get("status") or result.get("status") or "")
-            callback(RuntimeEvent(cid, "tool_event", title, {
+            payload = {
                 "sessionUpdate": kind,
                 "status": status,
                 "title": title,
@@ -377,7 +384,10 @@ class AntigravityProvider(AgentProvider):
                     "status": status,
                     "title": title,
                 },
-            }))
+            }
+            if norm:
+                payload["canonical_event"] = asdict(norm)
+            callback(RuntimeEvent(cid, "tool_event", title, payload))
         elif kind == "usage_update":
             used = update.get("used", 0)
             size = update.get("size", 0)

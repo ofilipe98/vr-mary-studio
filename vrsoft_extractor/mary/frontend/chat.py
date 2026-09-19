@@ -2839,6 +2839,14 @@ class ChatBridge(QObject):
             if item["path"] in reference_paths
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
+        # The user confirmed the send: the text is no longer an unsent draft,
+        # even if the provider fails afterwards. Clearing here (instead of
+        # after a successful send) keeps a failed conversation out of the
+        # draft/editing state so it stays deletable via trash. A genuinely
+        # unsent draft (never confirmed) is untouched.
+        if conversation_id in self._draft_records:
+            self._draft_records.pop(conversation_id, None)
+            self._persist_draft_records()
         self._finalize_pending_terminal_before_new_turn(conversation_id)
         self._reset_stream_state()
         self._active_turns.add(conversation_id)
@@ -2900,9 +2908,6 @@ class ChatBridge(QObject):
                 ),
                 **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
             )
-            if conversation_id in self._draft_records:
-                self._draft_records.pop(conversation_id, None)
-                self._persist_draft_records()
             self._attachments = []
             self._selected_extension_keys = set()
             self.refresh()
@@ -2934,6 +2939,10 @@ class ChatBridge(QObject):
     @Slot()
     def archiveCurrentConversation(self) -> None:  # noqa: N802
         return self._Conversations_domain.archiveCurrentConversation()
+
+    @Slot(str)
+    def trashConversation(self, conversation_id: str) -> None:  # noqa: N802
+        return self._Conversations_domain.trashConversation(conversation_id)
 
     @Slot()
     def trashCurrentConversation(self) -> None:  # noqa: N802

@@ -503,3 +503,15 @@ def approval_preset(profile: str) -> ApprovalPreset:
         return ApprovalPreset("research_readonly", "Pesquisa somente leitura", "Pesquisa recuperável sem alterações externas.",
                               "read-only", "readOnly", "never")
     return APPROVAL_PRESETS.get(str(profile), APPROVAL_PRESETS["full_access"])
+
+
+from vrsoft_extractor.mary.tool_activity import (
+    NormalizedToolEvent,
+    ToolActivity,
+    ToolEventKind,
+    ToolLifecycleReducer,
+    ToolStatus,
+    ToolType,
+    sanitize_error_summary,
+    sanitize_title,
+)

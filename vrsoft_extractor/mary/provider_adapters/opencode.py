@@ -8,6 +8,8 @@ import uuid
 from collections import deque
 from pathlib import Path
 from typing import Any
+from dataclasses import asdict
+from .tool_normalizer import normalize_opencode_event
 from ..models import ConversationOptions, RuntimeEvent
 
 from .base import (AgentProvider, EventCallback, ProviderError, ProviderRateLimited, _opencode_environment, _opencode_error_message, _opencode_token_usage, _parse_opencode_models, _resolve_opencode_command, normalize_effort)
@@ -297,7 +299,10 @@ class OpenCodeProvider(AgentProvider):
                 if text:
                     callback(RuntimeEvent(conversation_id, "reasoning_delta", text, payload))
             elif kind == "tool_use":
-                tool = str(part.get("tool") or part.get("name") or "ferramenta")
+                norm = normalize_opencode_event(payload, conversation_id)
+                tool = norm.title if norm else str(part.get("tool") or part.get("name") or "ferramenta")
+                if norm:
+                    payload["canonical_event"] = asdict(norm)
                 callback(RuntimeEvent(conversation_id, "tool_event", tool, payload))
             elif kind in {"step_finish", "step_completed"}:
                 token_usage = _opencode_token_usage(payload)

@@ -9,6 +9,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 from ..provider_cli import resolve_cli
+from dataclasses import asdict
+from .tool_normalizer import normalize_claude_event
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 
 from .base import (AgentProvider, EventCallback, ProviderError, UUID4_PATTERN, _claude_token_usage, normalize_effort)
@@ -300,12 +302,17 @@ class ClaudeProvider(AgentProvider):
                     if block.get("type") == "tool_use":
                         if block.get("name") in {"TaskCreate", "TaskUpdate", "TaskList"}:
                             task_calls[str(block.get("id") or "")] = block
+                        norm = normalize_claude_event(block, conversation_id)
+                        block_payload = dict(block)
+                        if norm:
+                            block_payload["canonical_event"] = asdict(norm)
+                        title = norm.title if norm else f"{block.get('name', 'ferramenta')}"
                         callback(
                             RuntimeEvent(
                                 conversation_id,
                                 "tool_event",
-                                f"{block.get('name', 'ferramenta')}",
-                                block,
+                                title,
+                                block_payload,
                             )
                         )
             elif kind == "user":

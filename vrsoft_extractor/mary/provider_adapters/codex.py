@@ -12,6 +12,8 @@ from ..chat_tools import mcp_thread_config
 from ..provider_cli import resolve_cli
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 
+from dataclasses import asdict
+from .tool_normalizer import normalize_codex_event
 from .base import (AgentProvider, EventCallback, ProviderError, _item_summary, _seconds_from_env, normalize_effort)
 
 class CodexProvider(AgentProvider):
@@ -445,21 +447,26 @@ class CodexProvider(AgentProvider):
         elif method == "item/fileChange/patchUpdated":
             item_id = str(params.get("itemId") or params.get("item_id") or "")
             changes = list(params.get("changes") or [])
+            payload = {
+                "lifecycle": method,
+                **params,
+                "item": {
+                    "id": item_id,
+                    "type": "fileChange",
+                    "status": "inProgress",
+                    "changes": changes,
+                },
+            }
+            norm = normalize_codex_event(params, method, conversation_id)
+            if norm:
+                payload["canonical_event"] = asdict(norm)
+            title = norm.title if norm else f"Alterações de arquivo: {len(changes)}"
             callback(
                 RuntimeEvent(
                     conversation_id,
                     "tool_event",
-                    f"Alterações de arquivo: {len(changes)}",
-                    {
-                        "lifecycle": method,
-                        **params,
-                        "item": {
-                            "id": item_id,
-                            "type": "fileChange",
-                            "status": "inProgress",
-                            "changes": changes,
-                        },
-                    },
+                    title,
+                    payload,
                 )
             )
         elif method == "error":
@@ -509,12 +516,17 @@ class CodexProvider(AgentProvider):
                         )
                     )
             else:
+                norm = normalize_codex_event(params, method, conversation_id)
+                payload = {"lifecycle": method, **params}
+                if norm:
+                    payload["canonical_event"] = asdict(norm)
+                title = norm.title if norm else _item_summary(item)
                 callback(
                     RuntimeEvent(
                         conversation_id,
                         "tool_event",
-                        _item_summary(item),
-                        {"lifecycle": method, **params},
+                        title,
+                        payload,
                     )
                 )
         else:
