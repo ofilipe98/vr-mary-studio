@@ -146,9 +146,11 @@ def test_ephemeral_session_refuses_missing_forged_or_mismatched_attestation(
         supports_resume = False
         called = False
 
-        def run_turn(self, request, cancel_event):
+        def run_turn(self, request, output, cancel_event):
             self.called = True
-            return bytearray()
+
+        def terminate_turn(self, correlation_id):
+            pass
 
     options = ConversationOptions(
         approval_profile=ConversationOptions.MONITOR_APPROVAL_PROFILE,

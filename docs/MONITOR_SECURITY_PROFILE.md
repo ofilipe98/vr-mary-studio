@@ -79,6 +79,24 @@ Referências consultadas em 2026-09-19:
 [controles de dados](https://developers.openai.com/api/docs/guides/your-data) e
 [autenticação do Codex](https://developers.openai.com/es-419/docs/auth).
 
+## Limites do turno
+
+O contrato efêmero v2 não aceita mais uma resposta monolítica retornada pelo provider.
+O provider precisa escrever em `MonitorOutputSink`, que limita cada chunk a 64 KiB e a
+captura total a 1 MiB antes de copiar bytes. Entrada permanece limitada a 64 KiB. Esses
+valores são tetos: uma integração pode reduzi-los, mas não aumentá-los por configuração.
+
+Cada turno tem deadline de até 300 s e graça de término de até 5 s. Os padrões do piloto
+são 30 s e 1 s. Timeout, cancelamento explícito ou fechamento da sessão marcam o token de
+cancelamento e chamam `terminate_turn(correlation_id)`. Conteúdo capturado é sobrescrito;
+erros do provider e stderr não atravessam a fronteira. A sessão permite um turno ativo e
+recusa concorrência imediatamente com `monitor_busy`, sem fila.
+
+Essa barreira evita captura ilimitada dentro do processo Studio, mas Python não consegue
+matar com segurança uma thread que ignora o contrato. O provider concreto precisa ser o
+processo externo da H04 e o broker deve provar término da árvore, limite de memória e
+fechamento dos pipes. H06 permanece aberta até esses casos passarem no broker real.
+
 O padrão de conversas novas também passa a ser `supervised`. Conversas existentes que
 tenham um perfil válido preservam a escolha; trocar de provider volta para
 `supervised`. `full_access` continua disponível como escolha explícita para fluxos
@@ -95,7 +113,7 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
    manifesto de processo aprovado;
 4. materializar e validar em ambiente a conta, ZDR, telemetria e captura exigidos pelo
    manifesto de egress;
-5. limites de streaming, subprocesso, tempo, cancelamento e concorrência;
+5. aplicar e validar no broker real os limites de processo, memória e pipes;
 6. versões, hashes e atualização controlada da cadeia executada;
 7. matriz dinâmica completa com canários antes de qualquer aprovação.
 

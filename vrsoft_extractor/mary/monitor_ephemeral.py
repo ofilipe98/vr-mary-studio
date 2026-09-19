@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -27,8 +28,12 @@ from vrsoft_extractor.mary.monitor_isolation import (
 )
 
 
-EPHEMERAL_CONTRACT_VERSION = 1
-_PROVIDER_FAILED = object()
+EPHEMERAL_CONTRACT_VERSION = 2
+MAX_MONITOR_INPUT_BYTES = 64 * 1024
+MAX_MONITOR_OUTPUT_BYTES = 1024 * 1024
+MAX_MONITOR_OUTPUT_CHUNK_BYTES = 64 * 1024
+MAX_MONITOR_TURN_SECONDS = 300.0
+MAX_MONITOR_CANCEL_GRACE_SECONDS = 5.0
 
 
 class MonitorEphemeralError(RuntimeError):
@@ -149,6 +154,63 @@ class MonitorTurnResult:
         )
 
 
+class MonitorOutputSink:
+    """Thread-safe output collector which rejects data before exceeding its cap."""
+
+    __slots__ = ("_buffer", "_cancel_event", "_chunk_limit", "_closed", "_limit", "_lock")
+
+    def __init__(
+        self,
+        *,
+        limit: int,
+        chunk_limit: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        self._buffer = bytearray()
+        self._limit = limit
+        self._chunk_limit = chunk_limit
+        self._cancel_event = cancel_event
+        self._closed = False
+        self._lock = threading.Lock()
+
+    @property
+    def size(self) -> int:
+        with self._lock:
+            return len(self._buffer)
+
+    def write(self, chunk: bytes | bytearray) -> None:
+        if not isinstance(chunk, (bytes, bytearray)) or not chunk:
+            self._reject()
+        if len(chunk) > self._chunk_limit:
+            self._reject()
+        with self._lock:
+            if self._closed or len(self._buffer) + len(chunk) > self._limit:
+                self._cancel_event.set()
+                raise MonitorEphemeralError("monitor_output_rejected")
+            self._buffer.extend(chunk)
+
+    def take(self) -> bytearray:
+        with self._lock:
+            if self._closed:
+                raise MonitorEphemeralError("monitor_output_rejected")
+            value = self._buffer
+            self._buffer = bytearray()
+            self._closed = True
+            return value
+
+    def close(self) -> None:
+        with self._lock:
+            self._buffer[:] = b"\x00" * len(self._buffer)
+            self._closed = True
+
+    def _reject(self) -> None:
+        self._cancel_event.set()
+        raise MonitorEphemeralError("monitor_output_rejected")
+
+    def __repr__(self) -> str:
+        return f"MonitorOutputSink(size={self.size}, closed={self._closed})"
+
+
 @dataclass(frozen=True)
 class MonitorTurnEvent:
     """Content-free lifecycle event suitable for operational counters."""
@@ -175,9 +237,13 @@ class MonitorEphemeralProvider(Protocol):
     def run_turn(
         self,
         request: MonitorTurnRequest,
+        output: MonitorOutputSink,
         cancel_event: threading.Event,
-    ) -> bytes | bytearray:
-        """Execute one isolated turn and return mutable or copyable UTF-8 bytes."""
+    ) -> None:
+        """Stream bounded UTF-8 bytes into ``output`` and retain no content."""
+
+    def terminate_turn(self, correlation_id: str) -> None:
+        """Force termination of the brokered process for one correlation id."""
 
 
 MonitorEventSink = Callable[[MonitorTurnEvent], None]
@@ -196,10 +262,13 @@ class MonitorEphemeralSession:
         "_current_cancel",
         "_event_sink",
         "_max_input_bytes",
+        "_max_output_chunk_bytes",
         "_max_output_bytes",
         "_provider",
         "_state_lock",
+        "_terminate_grace_seconds",
         "_turn_gate",
+        "_turn_timeout_seconds",
         "_turns_completed",
         "runtime_id",
     )
@@ -212,8 +281,11 @@ class MonitorEphemeralSession:
         egress: MonitorEgressAttestation,
         *,
         event_sink: MonitorEventSink | None = None,
-        max_input_bytes: int = 64 * 1024,
-        max_output_bytes: int = 1024 * 1024,
+        max_input_bytes: int = MAX_MONITOR_INPUT_BYTES,
+        max_output_bytes: int = MAX_MONITOR_OUTPUT_BYTES,
+        max_output_chunk_bytes: int = MAX_MONITOR_OUTPUT_CHUNK_BYTES,
+        turn_timeout_seconds: float = 30.0,
+        terminate_grace_seconds: float = 1.0,
     ) -> None:
         if not options.monitor_mode or (
             options.approval_profile != ConversationOptions.MONITOR_APPROVAL_PROFILE
@@ -224,6 +296,8 @@ class MonitorEphemeralSession:
             != EPHEMERAL_CONTRACT_VERSION
             or getattr(provider, "persists_content", None) is not False
             or getattr(provider, "supports_resume", None) is not False
+            or not callable(getattr(provider, "run_turn", None))
+            or not callable(getattr(provider, "terminate_turn", None))
         ):
             raise MonitorEphemeralError("monitor_provider_contract_rejected")
         if not isolation_attested(isolation):
@@ -242,14 +316,27 @@ class MonitorEphemeralSession:
             != egress.manifest_digest
         ):
             raise MonitorEphemeralError("monitor_egress_required")
-        if max_input_bytes <= 0 or max_output_bytes <= 0:
-            raise ValueError("Monitor byte limits must be positive.")
+        if not 0 < max_input_bytes <= MAX_MONITOR_INPUT_BYTES:
+            raise ValueError("Monitor input limit exceeds the hard ceiling.")
+        if not 0 < max_output_bytes <= MAX_MONITOR_OUTPUT_BYTES:
+            raise ValueError("Monitor output limit exceeds the hard ceiling.")
+        if not 0 < max_output_chunk_bytes <= min(
+            MAX_MONITOR_OUTPUT_CHUNK_BYTES, max_output_bytes
+        ):
+            raise ValueError("Monitor output chunk limit exceeds the hard ceiling.")
+        if not 0 < turn_timeout_seconds <= MAX_MONITOR_TURN_SECONDS:
+            raise ValueError("Monitor turn timeout exceeds the hard ceiling.")
+        if not 0 < terminate_grace_seconds <= MAX_MONITOR_CANCEL_GRACE_SECONDS:
+            raise ValueError("Monitor termination grace exceeds the hard ceiling.")
 
         self.runtime_id = secrets.token_hex(16)
         self._provider = provider
         self._event_sink = event_sink
         self._max_input_bytes = max_input_bytes
         self._max_output_bytes = max_output_bytes
+        self._max_output_chunk_bytes = max_output_chunk_bytes
+        self._turn_timeout_seconds = turn_timeout_seconds
+        self._terminate_grace_seconds = terminate_grace_seconds
         self._turn_gate = threading.Lock()
         self._state_lock = threading.Lock()
         self._current_cancel: threading.Event | None = None
@@ -266,9 +353,14 @@ class MonitorEphemeralSession:
             raise MonitorEphemeralError("monitor_busy")
 
         request: MonitorTurnRequest | None = None
-        raw_output: bytes | bytearray | None = None
+        raw_output: bytearray | None = None
         output: _SecretBuffer | None = None
         cancel_event = threading.Event()
+        output_sink = MonitorOutputSink(
+            limit=self._max_output_bytes,
+            chunk_limit=self._max_output_chunk_bytes,
+            cancel_event=cancel_event,
+        )
         correlation_id = secrets.token_hex(16)
         try:
             with self._state_lock:
@@ -294,14 +386,8 @@ class MonitorEphemeralSession:
                 )
             ):
                 raise MonitorEphemeralError("monitor_event_sink_failed")
-            provider_output = self._call_provider(request, cancel_event)
-            if provider_output is _PROVIDER_FAILED:
-                raise MonitorEphemeralError("monitor_unavailable")
-            if not isinstance(provider_output, (bytes, bytearray)):
-                raise MonitorEphemeralError("monitor_output_rejected")
-            raw_output = provider_output
-            if cancel_event.is_set():
-                raise MonitorEphemeralError("monitor_cancelled")
+            self._call_provider(request, output_sink, cancel_event)
+            raw_output = output_sink.take()
             output = _SecretBuffer(
                 raw_output,
                 limit=self._max_output_bytes,
@@ -348,8 +434,9 @@ class MonitorEphemeralSession:
         finally:
             if request is not None:
                 request.close()
-            if isinstance(raw_output, bytearray):
+            if raw_output is not None:
                 raw_output[:] = b"\x00" * len(raw_output)
+            output_sink.close()
             if output is not None:
                 output.close()
             with self._state_lock:
@@ -370,12 +457,55 @@ class MonitorEphemeralSession:
     def _call_provider(
         self,
         request: MonitorTurnRequest,
+        output: MonitorOutputSink,
         cancel_event: threading.Event,
-    ) -> bytes | bytearray | object:
+    ) -> None:
+        completed = threading.Event()
+        failure: list[str] = []
+
+        def invoke() -> None:
+            try:
+                result = self._provider.run_turn(request, output, cancel_event)
+                if result is not None:
+                    failure.append("monitor_output_rejected")
+            except MonitorEphemeralError as exc:
+                failure.append(
+                    exc.code
+                    if exc.code == "monitor_output_rejected"
+                    else "monitor_unavailable"
+                )
+            except Exception:
+                failure.append("monitor_unavailable")
+            finally:
+                completed.set()
+
+        worker = threading.Thread(target=invoke, daemon=True, name="monitor-provider-turn")
+        worker.start()
+        deadline = time.monotonic() + self._turn_timeout_seconds
+        stop_code = ""
+        while not completed.wait(0.01):
+            if cancel_event.is_set():
+                stop_code = "monitor_cancelled"
+                break
+            if time.monotonic() >= deadline:
+                cancel_event.set()
+                stop_code = "monitor_timeout"
+                break
+
+        if stop_code:
+            self._terminate_provider(request.correlation_id)
+            completed.wait(self._terminate_grace_seconds)
+            raise MonitorEphemeralError(stop_code)
+        if failure:
+            raise MonitorEphemeralError(failure[0])
+        if cancel_event.is_set():
+            raise MonitorEphemeralError("monitor_cancelled")
+
+    def _terminate_provider(self, correlation_id: str) -> None:
         try:
-            return self._provider.run_turn(request, cancel_event)
+            self._provider.terminate_turn(correlation_id)
         except Exception:
-            return _PROVIDER_FAILED
+            pass
 
     def _emit(self, event: MonitorTurnEvent) -> bool:
         if self._event_sink is None:

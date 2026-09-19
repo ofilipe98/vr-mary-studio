@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ import pytest
 from vrsoft_extractor.mary.models import ConversationOptions
 from vrsoft_extractor.mary.monitor_ephemeral import (
     EPHEMERAL_CONTRACT_VERSION,
+    MAX_MONITOR_INPUT_BYTES,
+    MAX_MONITOR_OUTPUT_BYTES,
     MonitorEphemeralError,
     MonitorEphemeralSession,
     MonitorTurnRequest,
@@ -157,12 +160,16 @@ class EchoProvider:
     def run_turn(
         self,
         request: MonitorTurnRequest,
+        output,
         cancel_event: threading.Event,
-    ) -> bytearray:
+    ) -> None:
         assert request.read_payload()
         assert not cancel_event.is_set()
         self.retained_request = request
-        return bytearray(self._response.encode())
+        output.write(bytearray(self._response.encode()))
+
+    def terminate_turn(self, correlation_id: str) -> None:
+        pass
 
 
 def test_success_keeps_content_out_of_disk_events_and_session_state(tmp_path: Path) -> None:
@@ -209,9 +216,12 @@ def test_provider_error_is_replaced_without_payload_or_provider_details(tmp_path
         persists_content = False
         supports_resume = False
 
-        def run_turn(self, request, cancel_event):
+        def run_turn(self, request, output, cancel_event):
             assert request.read_payload() == input_canary
             raise RuntimeError(error_canary)
+
+        def terminate_turn(self, correlation_id):
+            pass
 
     isolation = isolation_attestation(tmp_path)
     session = isolated_session(
@@ -247,12 +257,15 @@ def test_cancel_discards_provider_output_and_clears_request(tmp_path: Path) -> N
         persists_content = False
         supports_resume = False
 
-        def run_turn(self, request, cancel_event):
+        def run_turn(self, request, output, cancel_event):
             assert request.read_payload() == input_canary
             retained_requests.append(request)
             entered.set()
             assert cancel_event.wait(5)
-            return bytearray(output_canary.encode())
+            output.write(bytearray(output_canary.encode()))
+
+        def terminate_turn(self, correlation_id):
+            pass
 
     session = isolated_session(
         BlockingProvider(),
@@ -281,6 +294,182 @@ def test_cancel_discards_provider_output_and_clears_request(tmp_path: Path) -> N
     with pytest.raises(MonitorEphemeralError, match="monitor_payload_closed"):
         retained_requests[0].read_payload()
     assert_canaries_absent(tmp_path, input_canary, output_canary)
+
+
+def test_limits_reject_oversized_input_and_configuration(tmp_path: Path) -> None:
+    isolation = isolation_attestation(tmp_path)
+    provider = EchoProvider("unused")
+    session = isolated_session(provider, isolation, max_input_bytes=8)
+
+    with pytest.raises(MonitorEphemeralError, match="monitor_input_rejected"):
+        session.run_turn("123456789")
+    assert provider.retained_request is None
+
+    with pytest.raises(ValueError, match="input limit"):
+        isolated_session(
+            EchoProvider("unused"),
+            isolation,
+            max_input_bytes=MAX_MONITOR_INPUT_BYTES + 1,
+        )
+    with pytest.raises(ValueError, match="output limit"):
+        isolated_session(
+            EchoProvider("unused"),
+            isolation,
+            max_output_bytes=MAX_MONITOR_OUTPUT_BYTES + 1,
+        )
+
+
+def test_continuous_output_is_rejected_before_capture_exceeds_limit(
+    tmp_path: Path,
+) -> None:
+    chunks_written = 0
+    events = []
+
+    class StreamingProvider:
+        ephemeral_contract_version = EPHEMERAL_CONTRACT_VERSION
+        persists_content = False
+        supports_resume = False
+
+        def run_turn(self, request, output, cancel_event):
+            nonlocal chunks_written
+            while True:
+                output.write(b"12345678")
+                chunks_written += 1
+
+        def terminate_turn(self, correlation_id):
+            pass
+
+    session = isolated_session(
+        StreamingProvider(),
+        isolation_attestation(tmp_path),
+        event_sink=events.append,
+        max_output_bytes=32,
+        max_output_chunk_bytes=8,
+    )
+
+    with pytest.raises(MonitorEphemeralError, match="monitor_output_rejected"):
+        session.run_turn("bounded")
+
+    assert chunks_written == 4
+    assert events[-1].code == "monitor_output_rejected"
+    assert events[-1].output_bytes == 0
+
+
+def test_timeout_forces_termination_when_provider_ignores_cancellation(
+    tmp_path: Path,
+) -> None:
+    entered = threading.Event()
+    released = threading.Event()
+    terminated = []
+
+    class IgnoringProvider:
+        ephemeral_contract_version = EPHEMERAL_CONTRACT_VERSION
+        persists_content = False
+        supports_resume = False
+
+        def run_turn(self, request, output, cancel_event):
+            entered.set()
+            released.wait(5)
+
+        def terminate_turn(self, correlation_id):
+            terminated.append(correlation_id)
+            released.set()
+
+    session = isolated_session(
+        IgnoringProvider(),
+        isolation_attestation(tmp_path),
+        turn_timeout_seconds=0.03,
+        terminate_grace_seconds=0.2,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(MonitorEphemeralError, match="monitor_timeout"):
+        session.run_turn("timeout")
+
+    assert entered.is_set()
+    assert len(terminated) == 1
+    assert time.monotonic() - started < 1
+
+
+def test_close_cancels_active_turn_and_forces_termination(tmp_path: Path) -> None:
+    entered = threading.Event()
+    released = threading.Event()
+    terminated = []
+    failures = []
+
+    class DisconnectedProvider:
+        ephemeral_contract_version = EPHEMERAL_CONTRACT_VERSION
+        persists_content = False
+        supports_resume = False
+
+        def run_turn(self, request, output, cancel_event):
+            entered.set()
+            released.wait(5)
+
+        def terminate_turn(self, correlation_id):
+            terminated.append(correlation_id)
+            released.set()
+
+    session = isolated_session(
+        DisconnectedProvider(),
+        isolation_attestation(tmp_path),
+        terminate_grace_seconds=0.2,
+    )
+
+    def run() -> None:
+        try:
+            session.run_turn("disconnect")
+        except Exception as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert entered.wait(2)
+    session.close()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert len(terminated) == 1
+    assert len(failures) == 1
+    assert str(failures[0]) == "monitor_cancelled"
+
+
+def test_concurrent_turn_is_rejected_without_queue(tmp_path: Path) -> None:
+    entered = threading.Event()
+    released = threading.Event()
+    failures = []
+
+    class BusyProvider:
+        ephemeral_contract_version = EPHEMERAL_CONTRACT_VERSION
+        persists_content = False
+        supports_resume = False
+
+        def run_turn(self, request, output, cancel_event):
+            entered.set()
+            released.wait(5)
+
+        def terminate_turn(self, correlation_id):
+            released.set()
+
+    session = isolated_session(BusyProvider(), isolation_attestation(tmp_path))
+
+    def run() -> None:
+        try:
+            session.run_turn("first")
+        except Exception as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert entered.wait(2)
+    with pytest.raises(MonitorEphemeralError, match="monitor_busy"):
+        session.run_turn("second")
+    session.cancel()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert len(failures) == 1
+    assert str(failures[0]) == "monitor_cancelled"
 
 
 def test_restart_has_new_identity_and_no_resume_or_history_surface(tmp_path: Path) -> None:
@@ -395,13 +584,16 @@ from vrsoft_extractor.mary.monitor_isolation import (
 )
 
 class CrashProvider:
-    ephemeral_contract_version = 1
+    ephemeral_contract_version = 2
     persists_content = False
     supports_resume = False
 
-    def run_turn(self, request, cancel_event):
+    def run_turn(self, request, output, cancel_event):
         request.read_payload()
         os._exit(23)
+
+    def terminate_turn(self, correlation_id):
+        pass
 
 options = ConversationOptions(approval_profile="monitor_restricted", monitor_mode=True)
 root = Path.cwd()
