@@ -13,6 +13,7 @@ Column {
 
     // Single visual budget for the collapsed state (density-consistent).
     property int collapsedMaxHeight: Theme.scaledGeometry(240)
+    property bool collapseEnabled: true
     // Inner spacing between message blocks. Hosts set it to preserve their
     // pre-collapse rhythm (assistant Markdown used spacing 12).
     property real contentSpacing: 0
@@ -34,12 +35,17 @@ Column {
     signal anchorRequested()
     signal transitionFinished()
 
-    readonly property bool effectiveExpanded: expanded || streaming
+    readonly property bool effectiveExpanded: !collapseEnabled || expanded || streaming
     // Hosts declare their blocks as direct children; they land in contentColumn.
     default property alias content: contentColumn.data
 
     spacing: 2
 
+    onCollapseEnabledChanged: {
+        if (!collapseEnabled)
+            expanded = false
+        Qt.callLater(root.updateOverflow)
+    }
     onMessageKeyChanged: {
         root.expanded = false
         Qt.callLater(root.updateOverflow)
@@ -50,7 +56,7 @@ Column {
     // returns to collapsed once streaming ends.
     onStreamingChanged: {
         root.updateOverflow()
-        if (!root.streaming && !root.expanded && root.overflows) {
+        if (root.collapseEnabled && !root.streaming && !root.expanded && root.overflows) {
             var fullH = contentColumn ? contentColumn.implicitHeight : 0
             var collapsedH = Math.min(fullH, root.collapsedMaxHeight)
             if (Math.abs(viewport.height - collapsedH) > 1 && !frontend.reduceMotion)
@@ -80,8 +86,8 @@ Column {
     }
 
     function toggle() {
-        // The button is hidden while streaming; guard keyboard paths too.
-        if (root.streaming)
+        // The button is hidden while streaming or when collapse is disabled; guard keyboard paths too.
+        if (!root.collapseEnabled || root.streaming)
             return
         var full = contentColumn.implicitHeight
         var collapsedH = Math.min(full, root.collapsedMaxHeight)
@@ -157,7 +163,7 @@ Column {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 44
-            visible: root.overflows && !root.effectiveExpanded
+            visible: root.collapseEnabled && root.overflows && !root.effectiveExpanded
             gradient: Gradient {
                 orientation: Gradient.Vertical
                 GradientStop { position: 0.0; color: "transparent" }
@@ -177,7 +183,7 @@ Column {
         objectName: "messageExpandButton"
         // Hidden while streaming: full content is shown and there is no
         // collapsed state to toggle to, so no dead control is exposed.
-        visible: root.overflows && !root.streaming
+        visible: root.collapseEnabled && root.overflows && !root.streaming
         text: root.effectiveExpanded ? "Mostrar menos" : "Mostrar mais"
         focusPolicy: Qt.StrongFocus
         leftPadding: 8

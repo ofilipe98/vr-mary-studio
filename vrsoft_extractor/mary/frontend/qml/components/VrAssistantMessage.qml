@@ -44,6 +44,7 @@ Column {
     VrCollapsibleMessageContent {
         id: collapsible
         width: root.width
+        collapseEnabled: false
         // Preserve the pre-collapse Markdown block rhythm (spacing 12).
         contentSpacing: 12
         messageKey: root.messageKey

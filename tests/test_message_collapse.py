@@ -40,6 +40,9 @@ MIXED_MARKDOWN = (
 TARGET_LONG = "# Alvo\n\n" + ("Paragrafo alvo.\n\n" * 60)
 FILLER_LONG = "## Contexto\n\n" + ("Paragrafo de contexto.\n\n" * 30)
 
+USER_TARGET_LONG = "Linha de mensagem de usuario alvo para teste de rolagem.\n" * 60
+USER_FILLER_LONG = "Linha de preenchimento do usuario para contexto.\n" * 30
+
 
 def find_items(item, name):
     result = [item] if item.objectName() == name else []
@@ -65,6 +68,46 @@ def open_chat(tmp_path, messages, reduce_motion=True):
     chat = ChatBridge(settings, db, prefs)
     studio = StudioBridge(settings, db, prefs)
     return app, settings, frontend, chat, studio
+
+
+def open_scrolling_chat(tmp_path, reduce_motion=True):
+    """Target long user message first, then tall trailing user fillers."""
+    return open_chat(
+        tmp_path,
+        [
+            ("user", USER_TARGET_LONG),
+            ("user", USER_FILLER_LONG),
+            ("user", USER_FILLER_LONG),
+        ],
+        reduce_motion=reduce_motion,
+    )
+
+
+def get_message_item(window, index):
+    column = window.findChild(QObject, "messageColumn")
+    if not column:
+        return None
+    for child in column.childItems():
+        if hasattr(child, "property") and child.property("index") == index:
+            return child
+    return None
+
+
+def target_parts(window):
+    """Return (collapsible, toggle) of the first (target) message, in order."""
+    collapsibles = [
+        item
+        for item in find_items(window.contentItem(), "collapsibleMessageContent")
+        if bool(item.property("overflows"))
+    ]
+    toggles = [
+        item
+        for item in find_items(window.contentItem(), "messageExpandButton")
+        if bool(item.property("visible"))
+    ]
+    assert len(collapsibles) == 3, "fixture needs three overflowing messages"
+    assert len(toggles) == 3
+    return collapsibles[0], toggles[0]
 
 
 def test_short_message_shows_no_toggle(tmp_path):
@@ -98,7 +141,7 @@ def test_short_message_shows_no_toggle(tmp_path):
         chat.close()
 
 
-def test_long_message_collapses_expands_and_preserves_state(tmp_path):
+def test_long_assistant_message_is_always_expanded_without_toggle(tmp_path):
     _app, _settings, frontend, chat, studio = open_chat(
         tmp_path, [("assistant", LONG_PARAGRAPHS)]
     )
@@ -111,53 +154,30 @@ def test_long_message_collapses_expands_and_preserves_state(tmp_path):
             window.setWidth(1366)
             window.setHeight(768)
             QTest.qWait(450)
-            timeline = window.findChild(QObject, "messageList")
-            timeline.setProperty("followTail", False)
-            timeline.setProperty("contentY", 0)
-            QTest.qWait(100)
 
-            collapsibles = [
-                item
-                for item in find_items(
-                    window.contentItem(), "collapsibleMessageContent"
-                )
-                if bool(item.property("overflows"))
-            ]
-            assert collapsibles, "long content must report real overflow"
+            collapsibles = find_items(
+                window.contentItem(), "collapsibleMessageContent"
+            )
+            assert collapsibles, "assistant message must use the collapsible wrapper"
             collapsible = collapsibles[0]
-            assert not bool(collapsible.property("expanded"))
-            collapsed_height = float(collapsible.property("implicitHeight"))
+            assert not bool(collapsible.property("collapseEnabled"))
+            assert bool(collapsible.property("overflows"))
+            assert bool(collapsible.property("effectiveExpanded"))
 
-            toggle = next(
+            asst_buttons = [
                 item
-                for item in find_items(window.contentItem(), "messageExpandButton")
+                for item in find_items(collapsible, "messageExpandButton")
                 if bool(item.property("visible"))
+            ]
+            assert not asst_buttons, "no visible messageExpandButton belongs to the assistant message"
+            assert not any(
+                bool(item.property("visible"))
+                for item in find_items(window.contentItem(), "messageExpandButton")
             )
-            assert toggle.property("text") == "Mostrar mais"
-            # Semantic action: keyboard-focusable button with visible focus state.
-            assert int(toggle.property("focusPolicy")) != 0
 
-            bodies_before = find_items(window.contentItem(), "messageBody")
-            assert bodies_before
-
-            toggle.click()
-            QTest.qWait(200)
-            assert bool(collapsible.property("expanded"))
-            assert toggle.property("text") == "Mostrar menos"
-            assert float(collapsible.property("implicitHeight")) > collapsed_height
-            # Expanding while reading old content must not yank the viewport.
-            assert abs(float(timeline.property("contentY"))) < 1
-            # Internal renderers are only clipped, never recreated.
-            assert find_items(window.contentItem(), "messageBody") == bodies_before
-
-            toggle.click()
-            QTest.qWait(200)
-            assert not bool(collapsible.property("expanded"))
-            assert toggle.property("text") == "Mostrar mais"
-            assert (
-                abs(float(collapsible.property("implicitHeight")) - collapsed_height)
-                < 2
-            )
+            displayed_height = float(collapsible.property("implicitHeight"))
+            collapsed_max = float(collapsible.property("collapsedMaxHeight"))
+            assert displayed_height > collapsed_max, "displayed height must not be limited to collapsedMaxHeight"
             assert not engine._qml_warnings, [
                 x.toString() for x in engine._qml_warnings
             ]
@@ -170,7 +190,7 @@ def test_long_message_collapses_expands_and_preserves_state(tmp_path):
 
 def test_overflow_updates_when_content_grows(tmp_path):
     _app, _settings, frontend, chat, studio = open_chat(
-        tmp_path, [("assistant", SHORT_TEXT)]
+        tmp_path, [("user", SHORT_TEXT)]
     )
     window = None
     try:
@@ -185,7 +205,7 @@ def test_overflow_updates_when_content_grows(tmp_path):
             )[0]
             assert not bool(collapsible.property("overflows"))
             chat.messages.update_last(
-                content=LONG_PARAGRAPHS, displayContent=LONG_PARAGRAPHS
+                content=USER_TARGET_LONG, displayContent=USER_TARGET_LONG
             )
             QTest.qWait(350)
             assert bool(collapsible.property("overflows"))
@@ -206,7 +226,7 @@ def test_overflow_updates_when_content_grows(tmp_path):
         chat.close()
 
 
-def test_code_block_survives_expand_collapse(tmp_path):
+def test_assistant_code_block_renders_without_collapse(tmp_path):
     _app, _settings, frontend, chat, studio = open_chat(
         tmp_path, [("assistant", LONG_CODE_MARKDOWN)]
     )
@@ -214,23 +234,23 @@ def test_code_block_survives_expand_collapse(tmp_path):
     try:
         with patch.object(chat, "refreshModels"):
             engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
             window = engine.rootObjects()[0]
             window.setWidth(1366)
             window.setHeight(768)
             QTest.qWait(450)
             code_before = find_items(window.contentItem(), "codeBlockCard")
             assert code_before, "fixture must render a code block"
-            toggle = next(
-                item
-                for item in find_items(window.contentItem(), "messageExpandButton")
-                if bool(item.property("visible"))
+            collapsibles = find_items(
+                window.contentItem(), "collapsibleMessageContent"
             )
-            toggle.click()
-            QTest.qWait(200)
-            assert find_items(window.contentItem(), "codeBlockCard")[0] is code_before[0]
-            toggle.click()
-            QTest.qWait(200)
-            assert find_items(window.contentItem(), "codeBlockCard")[0] is code_before[0]
+            assert collapsibles
+            collapsible = collapsibles[0]
+            assert not bool(collapsible.property("collapseEnabled"))
+            assert not any(
+                bool(item.property("visible"))
+                for item in find_items(window.contentItem(), "messageExpandButton")
+            )
             assert not engine._qml_warnings, [
                 x.toString() for x in engine._qml_warnings
             ]
@@ -272,6 +292,13 @@ def test_long_user_message_collapses(tmp_path):
             QTest.qWait(200)
             assert bool(collapsibles[0].property("expanded"))
             assert float(collapsibles[0].property("implicitHeight")) > collapsed_height
+            toggle.click()
+            QTest.qWait(200)
+            assert not bool(collapsibles[0].property("expanded"))
+            assert (
+                abs(float(collapsibles[0].property("implicitHeight")) - collapsed_height)
+                < 2
+            )
             assert not engine._qml_warnings, [
                 x.toString() for x in engine._qml_warnings
             ]
@@ -345,46 +372,6 @@ def test_user_content_column_has_no_block_spacing(tmp_path):
         chat.close()
 
 
-def open_scrolling_chat(tmp_path, reduce_motion=True):
-    """Target long message first, then tall trailing fillers."""
-    return open_chat(
-        tmp_path,
-        [
-            ("assistant", TARGET_LONG),
-            ("assistant", FILLER_LONG),
-            ("assistant", FILLER_LONG),
-        ],
-        reduce_motion=reduce_motion,
-    )
-
-
-def get_message_item(window, index):
-    column = window.findChild(QObject, "messageColumn")
-    if not column:
-        return None
-    for child in column.childItems():
-        if hasattr(child, "property") and child.property("index") == index:
-            return child
-    return None
-
-
-def target_parts(window):
-    """Return (collapsible, toggle) of the first (target) message, in order."""
-    collapsibles = [
-        item
-        for item in find_items(window.contentItem(), "collapsibleMessageContent")
-        if bool(item.property("overflows"))
-    ]
-    toggles = [
-        item
-        for item in find_items(window.contentItem(), "messageExpandButton")
-        if bool(item.property("visible"))
-    ]
-    assert len(collapsibles) == 3, "fixture needs three overflowing messages"
-    assert len(toggles) == 3
-    return collapsibles[0], toggles[0]
-
-
 def test_expand_message_above_viewport_preserves_reading_position(tmp_path):
     _app, _settings, frontend, chat, studio = open_scrolling_chat(tmp_path)
     window = None
@@ -408,7 +395,7 @@ def test_expand_message_above_viewport_preserves_reading_position(tmp_path):
             QTest.qWait(100)
             assert abs(float(timeline.property("contentY")) - anchor) < 1
 
-            # Test D: Explicit geometric validation that target message is completely above viewport
+            # Explicit geometric validation that target message is completely above viewport
             first_msg = get_message_item(window, 0)
             assert first_msg is not None
             assert float(first_msg.property("y") + first_msg.property("height")) <= float(timeline.property("contentY"))
@@ -513,33 +500,33 @@ def test_streaming_hides_toggle_and_keeps_manual_state(tmp_path):
                 )
                 if bool(item.property("overflows"))
             ][0]
-            collapsed_height = float(collapsible.property("implicitHeight"))
+            assert not bool(collapsible.property("collapseEnabled"))
+            assert bool(collapsible.property("effectiveExpanded"))
+            full_height = float(collapsible.property("implicitHeight"))
+            assert full_height > float(collapsible.property("collapsedMaxHeight"))
+
             chat.messages.update_last(isStreaming=True)
             QTest.qWait(250)
-            # Full content visible, manual state untouched, no dead control.
+            # Full content visible, streaming active, no toggle exposed.
+            assert bool(collapsible.property("streaming"))
             assert bool(collapsible.property("effectiveExpanded"))
-            assert not bool(collapsible.property("expanded"))
             assert not any(
                 bool(item.property("visible"))
                 for item in find_items(window.contentItem(), "messageExpandButton")
             )
-            assert float(collapsible.property("implicitHeight")) > collapsed_height
+            assert float(collapsible.property("implicitHeight")) == full_height
+
             chat.messages.update_last(isStreaming=False)
             QTest.qWait(250)
-            # A long message never expanded manually returns to collapsed.
-            assert not bool(collapsible.property("expanded"))
+            # Assistant content remains integral after streaming without toggle or clipping.
+            assert not bool(collapsible.property("streaming"))
+            assert bool(collapsible.property("effectiveExpanded"))
             assert bool(collapsible.property("overflows"))
-            toggles = [
-                item
+            assert not any(
+                bool(item.property("visible"))
                 for item in find_items(window.contentItem(), "messageExpandButton")
-                if bool(item.property("visible"))
-            ]
-            assert toggles
-            assert toggles[0].property("text") == "Mostrar mais"
-            assert (
-                abs(float(collapsible.property("implicitHeight")) - collapsed_height)
-                < 3.0
             )
+            assert float(collapsible.property("implicitHeight")) == full_height
             assert not engine._qml_warnings, [
                 x.toString() for x in engine._qml_warnings
             ]
@@ -552,7 +539,7 @@ def test_streaming_hides_toggle_and_keeps_manual_state(tmp_path):
 
 def test_toggle_keyboard_activation_and_state(tmp_path):
     _app, _settings, frontend, chat, studio = open_chat(
-        tmp_path, [("assistant", TARGET_LONG)]
+        tmp_path, [("user", USER_TARGET_LONG)]
     )
     window = None
     try:
@@ -818,7 +805,7 @@ def test_viewport_inside_message_maintains_reading_offset(tmp_path):
 def test_streaming_completion_anchors_reading_position(tmp_path):
     """Teste E: streaming termination while reading manually anchors position without big jumps."""
     _app, _settings, frontend, chat, studio = open_chat(
-        tmp_path, [("user", FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
+        tmp_path, [("user", USER_FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
     )
     window = None
     try:
@@ -846,22 +833,32 @@ def test_streaming_completion_anchors_reading_position(tmp_path):
             chat.messages.update_last(isStreaming=False)
             QTest.qWait(400)
 
-            collapsibles = [
-                item for item in find_items(window.contentItem(), "collapsibleMessageContent")
-                if bool(item.property("overflows"))
-            ]
-            assert collapsibles
-            collapsible = collapsibles[0]
-            assert not bool(collapsible.property("expanded"))
-            assert not bool(collapsible.property("streaming"))
+            user_item = get_message_item(window, 0)
+            asst_item = get_message_item(window, 1)
+            assert user_item is not None
+            assert asst_item is not None
 
-            toggles = [
-                item
-                for item in find_items(window.contentItem(), "messageExpandButton")
-                if bool(item.property("visible"))
+            # Assistant message has collapse disabled, stays fully expanded, and has no visible button
+            asst_collapsible = find_items(asst_item, "collapsibleMessageContent")[0]
+            assert not bool(asst_collapsible.property("collapseEnabled"))
+            assert bool(asst_collapsible.property("overflows"))
+            assert bool(asst_collapsible.property("effectiveExpanded"))
+            assert not any(
+                bool(btn.property("visible"))
+                for btn in find_items(asst_item, "messageExpandButton")
+            )
+
+            # User message has collapse enabled and button visible
+            user_collapsible = find_items(user_item, "collapsibleMessageContent")[0]
+            assert bool(user_collapsible.property("collapseEnabled"))
+            assert bool(user_collapsible.property("overflows"))
+            user_buttons = [
+                btn
+                for btn in find_items(user_item, "messageExpandButton")
+                if bool(btn.property("visible"))
             ]
-            assert toggles
-            assert toggles[0].property("text") == "Mostrar mais"
+            assert user_buttons
+            assert user_buttons[0].property("text") == "Mostrar mais"
 
             # Reading position remains anchored without a big jump
             reading_y = float(timeline.property("contentY"))
@@ -877,7 +874,7 @@ def test_streaming_completion_anchors_reading_position(tmp_path):
 def test_streaming_completion_with_follow_tail_stays_at_end(tmp_path):
     """Teste F: streaming completion with followTail active keeps viewport at the end."""
     _app, _settings, frontend, chat, studio = open_chat(
-        tmp_path, [("user", FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
+        tmp_path, [("user", USER_FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
     )
     window = None
     try:

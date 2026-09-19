@@ -25,6 +25,7 @@ Item {
         VrCollapsibleMessageContent {
             id: collapsible
             x: 14; y: 12; width: parent.width - 28
+            collapseEnabled: true
             messageKey: root.messageKey
             fadeColor: Theme.palette.messageSurface
             onLayoutChanging: root.layoutChanging()
