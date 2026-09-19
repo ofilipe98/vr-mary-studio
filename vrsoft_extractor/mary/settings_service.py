@@ -21,14 +21,22 @@ def is_setup_needed(
 
     Setup is required if:
     1. setup/completed is not set to true in QSettings
-    2. The configured root folder does not exist or is invalid
-    3. Essential configuration cannot be loaded
+    2. The stored setup schema version is older than SETUP_VERSION
+    3. The configured root folder does not exist or is invalid
+    4. Essential configuration cannot be loaded
     """
     if preferences is None:
         return True
 
     completed = str(preferences.value(SETUP_KEY_COMPLETED, "false")).lower() == "true"
     if not completed:
+        return True
+
+    try:
+        stored_version = int(preferences.value(SETUP_KEY_VERSION, 0) or 0)
+    except (TypeError, ValueError):
+        stored_version = 0
+    if stored_version < SETUP_VERSION:
         return True
 
     if settings is None:
@@ -128,10 +136,18 @@ def save_settings(
         "VR_DEFAULT_EFFORT": settings.default_effort,
     }
 
-    env_path = settings.app_dir / ".env"
-    save_vr_env(env_path, values)
+    # save_vr_env expects the application directory and updates <app_dir>/.env.
+    save_vr_env(settings.app_dir, values)
 
+    # Align the process runtime explicitly: reading the .env back does not
+    # override variables already present, so stale values would linger.
+    # Passwords keep the existing DPAPI policy (save_vr_env moves them to the
+    # protected store on Windows); only mirror them here when a secret exists.
     os.environ["VR_ROOT"] = str(target_root)
+    os.environ["MOVIDESK_EMAIL"] = movidesk_email.strip()
+    os.environ["ENDOO_EMAIL"] = endoo_email.strip()
+    os.environ["VR_SYNC_INTERVAL_MINUTES"] = clean_interval
+    os.environ["VR_DEFAULT_EFFORT"] = str(settings.default_effort)
     if movidesk_secret:
         os.environ["MOVIDESK_PASSWORD"] = movidesk_secret
     if endoo_secret:

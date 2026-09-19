@@ -1036,7 +1036,10 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    visible: (!chat.applicationsCatalogLoading || chat.applicationsCatalogLoaded) && chat.applicationsCatalog.length === 0
+                    // Empty and error are mutually exclusive: the empty hint
+                    // only shows when there is no catalog error. While the
+                    // first load is still running it reads as loading state.
+                    visible: (chat.applicationsCatalogLoading || chat.applicationsCatalogLoaded) && chat.applicationsCatalog.length === 0 && chat.applicationsCatalogError.length === 0
                     text: chat.applicationsCatalogLoading
                         ? "Carregando catálogo de aplicativos…"
                         : "Nenhum aplicativo catalogado ainda. Importe um pacote VR ou JAR avulso acima."

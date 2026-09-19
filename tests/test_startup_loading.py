@@ -48,6 +48,78 @@ def test_bootstrap_lifecycle_transitions(dummy_settings):
     assert "Abrindo VRStudio" in bridge.detailMessage
 
 
+def test_reviewing_settings_after_error_restarts_bootstrap(tmp_path, monkeypatch):
+    """Catalog error -> openSetup -> save -> backend/bootstrap restart -> ready."""
+    import os
+
+    for key in (
+        "VR_ROOT",
+        "MOVIDESK_EMAIL",
+        "MOVIDESK_PASSWORD",
+        "ENDOO_EMAIL",
+        "ENDOO_PASSWORD",
+        "VR_SYNC_INTERVAL_MINUTES",
+        "VR_DEFAULT_EFFORT",
+    ):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)
+
+    root_dir = tmp_path / "vr_root"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    app_dir = tmp_path / "app_dir"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    settings = load_vr_settings(str(app_dir), str(root_dir))
+
+    mock_chat = MagicMock()
+    attached = []
+
+    def on_setup_completed(new_settings):
+        assert new_settings.root == settings.root
+        attached.append(new_settings)
+        mock_bridge.attach_chat_bridge(mock_chat)
+        mock_bridge.start_bootstrap()
+        return True
+
+    mock_bridge = BootstrapBridge(
+        settings,
+        None,
+        initial_state="loading_apps",
+        on_setup_completed=on_setup_completed,
+    )
+    mock_bridge.attach_chat_bridge(mock_chat)
+
+    # Catalog fails during normal startup.
+    mock_bridge._on_catalog_phase("error", 0, 0)
+    assert mock_bridge.state == "error"
+
+    # "Revisar configurações" must offer a functional way out in every scenario.
+    mock_bridge.openSetup()
+    assert mock_bridge.state == "setup"
+    assert mock_bridge.isSetupActive is True
+
+    mock_bridge.saveSetup(
+        str(root_dir),
+        "admin@vr.com.br",
+        "",
+        "admin@vr.com.br",
+        "",
+        "120",
+    )
+
+    # Saving leaves setup, restarts the catalog load and can reach ready.
+    assert mock_bridge.isSetupActive is False
+    assert len(attached) == 1
+    assert mock_chat.refreshApplicationsCatalog.called
+    mock_bridge._on_catalog_phase("loading_versions", 2, 7)
+    assert mock_bridge.state == "loading_versions"
+    assert mock_bridge.versionsCount == 7
+    mock_bridge._on_catalog_phase("ready", 2, 7)
+    assert mock_bridge.state == "ready"
+    assert mock_bridge.isReady is True
+
+
 def test_bootstrap_error_and_retry(dummy_settings):
     """Test error handling during bootstrap and retry behavior."""
     bridge = BootstrapBridge(dummy_settings, initial_state="loading_apps")

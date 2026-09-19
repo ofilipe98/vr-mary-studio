@@ -1742,8 +1742,13 @@ class StudioBridge(QObject):
 
     @Slot(str, str, str, str, str, str)
     def saveSettings(self, root: str, movidesk_email: str, movidesk_password: str, endoo_email: str, endoo_password: str, interval: str) -> None:  # noqa: N802
+        # Strategy A (restart-only for root): the running process keeps every
+        # bridge/database on the previous root so two roots are never live at
+        # once. Emails/interval apply immediately via the runtime env; a new
+        # root is persisted to .env and takes effect after restart.
+        previous_settings = self._settings
         try:
-            new_settings, safe_values = save_settings(
+            new_settings, _safe_values = save_settings(
                 self._settings,
                 root,
                 movidesk_email,
@@ -1755,11 +1760,21 @@ class StudioBridge(QObject):
         except Exception as exc:
             self.toastRequested.emit(str(exc), "error")
             return
+        if new_settings.root != previous_settings.root:
+            os.environ["VR_ROOT"] = str(previous_settings.root)
+            self._settings_values = get_settings_values(previous_settings)
+            self.settingsChanged.emit()
+            self.toastRequested.emit(
+                "Novo caminho salvo. Reinicie o VRStudio para usá-lo; "
+                "credenciais e intervalo já estão ativos.",
+                "warning",
+            )
+            return
         self._settings = new_settings
-        self._settings_values.update(safe_values)
+        self._settings_values.update(get_settings_values(new_settings))
         self.settingsChanged.emit()
         self.toastRequested.emit(
-            "Configurações salvas. Credenciais e intervalo já estão ativos; reinicie apenas para aplicar mudanças de caminho.",
+            "Configurações salvas. Credenciais e intervalo já estão ativos.",
             "success",
         )
 

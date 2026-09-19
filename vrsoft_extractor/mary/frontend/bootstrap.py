@@ -32,12 +32,14 @@ class BootstrapBridge(QObject):
         preferences: QSettings | None = None,
         *,
         initial_state: str = "ready",
-        on_setup_completed: Callable[[MarySettings], None] | None = None,
+        on_setup_completed: Callable[[MarySettings], Any] | None = None,
+        on_bootstrap_retry: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
         self._preferences = preferences
         self._on_setup_completed = on_setup_completed
+        self._on_bootstrap_retry = on_bootstrap_retry
         self._state = initial_state  # boot, check_setup, setup, initializing, loading_apps, loading_versions, ready, error
         self._phase = "idle"
         self._status_message = "Preparando seu ambiente" if initial_state != "setup" else "Configuração Inicial"
@@ -81,6 +83,7 @@ class BootstrapBridge(QObject):
 
     @Property(int, notify=progressChanged)
     def versionsCount(self) -> int:  # noqa: N802
+        """Real total of catalog versions across applications (never a placeholder)."""
         return self._versions_count
 
     @Property(bool, notify=stateChanged)
@@ -149,12 +152,38 @@ class BootstrapBridge(QObject):
         self._error_message = ""
         self.errorMessageChanged.emit()
 
-        mark_setup_completed(self._preferences)
-        self.toastRequested.emit("Configuração inicial salva com sucesso.", "success")
+        # Move to the loading state synchronously so StartupLoadingPage
+        # renders its first frame before any deferred backend work runs.
+        self._state = "initializing"
+        self._is_ready = False
+        self._status_message = "Preparando seu ambiente"
+        self._detail_message = "Inicializando…"
+        self.stateChanged.emit()
+        self.statusMessageChanged.emit()
+        self.detailMessageChanged.emit()
         self.setupCompleted.emit(new_settings)
 
+        # The completion callback runs the minimal backend probe
+        # synchronously (workspace dirs + database open, no catalog sync).
+        # setup/completed is persisted only when it accepts the new config,
+        # so a failed initialization keeps the setup gate open for retry.
         if self._on_setup_completed is not None:
-            self._on_setup_completed(new_settings)
+            try:
+                accepted = self._on_setup_completed(new_settings)
+            except Exception as exc:
+                self._enter_setup_error(
+                    f"Não foi possível inicializar o ambiente: {exc}"
+                )
+                return
+            if accepted is False:
+                self._enter_setup_error(
+                    "Não foi possível inicializar o ambiente com essa configuração."
+                )
+                return
+
+        if self._preferences is not None:
+            mark_setup_completed(self._preferences)
+        self.toastRequested.emit("Configuração inicial salva com sucesso.", "success")
 
     @Slot()
     def openSetup(self) -> None:  # noqa: N802
@@ -168,22 +197,75 @@ class BootstrapBridge(QObject):
         self.statusMessageChanged.emit()
         self.detailMessageChanged.emit()
 
+    def _enter_setup_error(self, message: str) -> None:
+        """Return to the setup form with an error instead of marking it done."""
+        self._state = "setup"
+        self._is_ready = False
+        self._status_message = "Configuração Inicial"
+        self._detail_message = "Ajuste os parâmetros necessários para continuar."
+        self._error_message = message
+        self.stateChanged.emit()
+        self.statusMessageChanged.emit()
+        self.detailMessageChanged.emit()
+        self.errorMessageChanged.emit()
+        self.toastRequested.emit(message, "error")
+
+    def set_error(self, message: str) -> None:
+        """Expose a bootstrap failure (e.g. backend creation) as error state."""
+        self._state = "error"
+        self._is_ready = False
+        self._error_message = message or "Falha ao preparar o ambiente."
+        self._status_message = "Erro de inicialização"
+        self._detail_message = "Não foi possível preparar o ambiente."
+        self.stateChanged.emit()
+        self.statusMessageChanged.emit()
+        self.detailMessageChanged.emit()
+        self.errorMessageChanged.emit()
+
     # -------------------------------------------------------------------------
     # Catalog Bootstrap Lifecycle
     # -------------------------------------------------------------------------
 
+    def detach_chat_bridge(self) -> None:
+        """Drop a previous backend so rebuilds never duplicate signal paths."""
+        previous = self._chat_bridge
+        self._chat_bridge = None
+        if previous is None:
+            return
+        for signal_name, handler in (
+            ("applicationsCatalogPhase", self._on_catalog_phase),
+            ("_applicationsLoaded", self._on_catalog_loaded_payload),
+        ):
+            try:
+                signal = getattr(previous, signal_name, None)
+                if signal is not None:
+                    signal.disconnect(handler)
+            except (RuntimeError, TypeError):
+                pass
+
     def attach_chat_bridge(self, chat_bridge: Any) -> None:
+        if chat_bridge is None or self._chat_bridge is chat_bridge:
+            return
+        self.detach_chat_bridge()
         self._chat_bridge = chat_bridge
         if hasattr(chat_bridge, "applicationsCatalogPhase"):
-            chat_bridge.applicationsCatalogPhase.connect(
-                self._on_catalog_phase,
-                Qt.ConnectionType.QueuedConnection,
-            )
+            try:
+                # Duplicates are impossible here: same-bridge re-entry returns
+                # early and a different bridge is detached first.
+                chat_bridge.applicationsCatalogPhase.connect(
+                    self._on_catalog_phase,
+                    Qt.ConnectionType.QueuedConnection,
+                )
+            except RuntimeError:
+                pass
         if hasattr(chat_bridge, "_applicationsLoaded"):
-            chat_bridge._applicationsLoaded.connect(
-                self._on_catalog_loaded_payload,
-                Qt.ConnectionType.QueuedConnection,
-            )
+            try:
+                chat_bridge._applicationsLoaded.connect(
+                    self._on_catalog_loaded_payload,
+                    Qt.ConnectionType.QueuedConnection,
+                )
+            except RuntimeError:
+                pass
 
     def start_bootstrap(self) -> None:
         self._state = "loading_apps"
@@ -216,7 +298,12 @@ class BootstrapBridge(QObject):
     def retryBootstrap(self) -> None:  # noqa: N802
         self._error_message = ""
         self.errorMessageChanged.emit()
-        self.start_bootstrap()
+        # When the app wires a retry handler it rebuilds the backend when
+        # needed (missing/failed backend); otherwise just refresh the catalog.
+        if self._on_bootstrap_retry is not None:
+            self._on_bootstrap_retry()
+        else:
+            self.start_bootstrap()
 
     def _on_catalog_phase(self, phase: str, apps_count: int, versions_count: int) -> None:
         # Ignore updates if we are already in ready state (e.g. in-app refreshes from Main UI)
@@ -237,6 +324,7 @@ class BootstrapBridge(QObject):
         elif phase == "loading_versions":
             self._state = "loading_versions"
             self._apps_count = apps_count
+            self._versions_count = versions_count
             self._status_message = "Preparando seu ambiente"
             self._detail_message = (
                 f"{apps_count} aplicativos encontrados. Carregando versões e metadados…"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,6 +41,24 @@ def temp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "prefs": prefs,
         "ini_path": ini_path,
     }
+
+
+@pytest.fixture
+def isolated_runtime_env(monkeypatch: pytest.MonkeyPatch):
+    """Snapshot process env keys touched by save_settings (auto-restored)."""
+    for key in (
+        "VR_ROOT",
+        "MOVIDESK_EMAIL",
+        "MOVIDESK_PASSWORD",
+        "ENDOO_EMAIL",
+        "ENDOO_PASSWORD",
+        "VR_SYNC_INTERVAL_MINUTES",
+        "VR_DEFAULT_EFFORT",
+    ):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)
 
 
 def test_first_run_requires_setup(temp_env):
@@ -146,6 +165,133 @@ def test_passwords_never_exposed_in_settings_values_or_qsettings(temp_env, monke
         val = str(prefs.value(key))
         assert "super_secret" not in val
         assert "password" not in key.lower()
+
+
+def test_outdated_setup_version_requires_setup(temp_env):
+    """A completed flag with an old schema version must reopen the setup."""
+    settings = temp_env["settings"]
+    prefs = temp_env["prefs"]
+
+    mark_setup_completed(prefs)
+    prefs.setValue(SETUP_KEY_VERSION, 0)
+    prefs.sync()
+    assert is_setup_needed(settings, prefs) is True
+
+    prefs.setValue(SETUP_KEY_VERSION, SETUP_VERSION)
+    prefs.sync()
+    assert is_setup_needed(settings, prefs) is False
+
+
+def test_save_settings_aligns_runtime_env(temp_env, monkeypatch: pytest.MonkeyPatch, isolated_runtime_env):
+    """Persisted emails/interval must take effect in the running process."""
+    settings = temp_env["settings"]
+    monkeypatch.setenv("MOVIDESK_EMAIL", "old@vr.com.br")
+    monkeypatch.setenv("ENDOO_EMAIL", "old@vr.com.br")
+    monkeypatch.setenv("VR_SYNC_INTERVAL_MINUTES", "15")
+    monkeypatch.setenv("VR_ROOT", str(temp_env["root"]))
+
+    with patch("vrsoft_extractor.mary.settings_service.save_vr_env"):
+        new_settings, _safe_values = save_settings(
+            settings,
+            root=str(temp_env["root"]),
+            movidesk_email="new@vr.com.br",
+            movidesk_password="",
+            endoo_email="endoo@vr.com.br",
+            endoo_password="",
+            interval="240",
+        )
+
+    assert os.environ["MOVIDESK_EMAIL"] == "new@vr.com.br"
+    assert os.environ["ENDOO_EMAIL"] == "endoo@vr.com.br"
+    assert os.environ["VR_SYNC_INTERVAL_MINUTES"] == "240"
+    assert os.environ["VR_ROOT"] == str(temp_env["root"])
+    assert new_settings.sync_interval_minutes == 240
+
+
+def test_bootstrap_save_setup_rejected_when_backend_probe_fails(temp_env, isolated_runtime_env):
+    """A refused/failed backend probe must not mark setup as completed."""
+    settings = temp_env["settings"]
+    prefs = temp_env["prefs"]
+
+    def _boom(_new_settings):
+        raise RuntimeError("db offline")
+
+    for callback in (lambda _new_settings: False, _boom):
+        prefs.remove(SETUP_KEY_COMPLETED)
+        prefs.remove(SETUP_KEY_VERSION)
+        prefs.sync()
+        bridge = BootstrapBridge(
+            settings,
+            prefs,
+            initial_state="setup",
+            on_setup_completed=callback,
+        )
+        bridge.saveSetup(
+            str(temp_env["root"]),
+            "admin@vr.com.br",
+            "",
+            "admin@vr.com.br",
+            "",
+            "120",
+        )
+        assert bridge.state == "setup"
+        assert bridge.isSetupActive is True
+        assert bridge.errorMessage != ""
+        assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
+
+
+def test_bootstrap_save_setup_marks_completed_only_after_probe(temp_env, isolated_runtime_env):
+    """Accepted probe -> initializing state and setup/completed persisted."""
+    settings = temp_env["settings"]
+    prefs = temp_env["prefs"]
+
+    seen = []
+
+    def accept(new_settings):
+        seen.append(new_settings)
+        return True
+
+    bridge = BootstrapBridge(
+        settings,
+        prefs,
+        initial_state="setup",
+        on_setup_completed=accept,
+    )
+    bridge.saveSetup(
+        str(temp_env["root"]),
+        "admin@vr.com.br",
+        "",
+        "admin@vr.com.br",
+        "",
+        "120",
+    )
+    assert len(seen) == 1
+    assert bridge.state == "initializing"
+    assert bridge.isSetupActive is False
+    assert str(prefs.value(SETUP_KEY_COMPLETED)).lower() == "true"
+    assert int(prefs.value(SETUP_KEY_VERSION, 0)) == SETUP_VERSION
+
+
+def test_frontend_bridge_update_settings_after_setup(temp_env):
+    """FrontendBridge must stop showing the pre-setup root after setup."""
+    from vrsoft_extractor.mary.frontend.bridge import FrontendBridge
+
+    settings = temp_env["settings"]
+    prefs = temp_env["prefs"]
+    frontend = FrontendBridge(settings, prefs)
+    assert frontend.projectPath == str(settings.root)
+
+    new_root = temp_env["root"] / "novo_root"
+    new_root.mkdir(parents=True, exist_ok=True)
+    new_settings = load_vr_settings(str(temp_env["app_dir"]), str(new_root))
+
+    notified = []
+    frontend.projectChanged.connect(lambda: notified.append(True))
+    frontend.update_settings(new_settings)
+
+    assert frontend.projectPath == str(new_root)
+    assert frontend.projectName == new_root.name
+    assert len(notified) == 1
 
 
 def test_bootstrap_bridge_save_setup_flow(temp_env):

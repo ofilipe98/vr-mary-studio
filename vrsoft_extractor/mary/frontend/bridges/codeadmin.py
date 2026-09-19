@@ -2054,10 +2054,13 @@ class CodeAdminDomain:
                 catalog.ensure_apps_catalog_synced()
                 data = catalog.apps_store.load_catalog()
                 apps_count = len(data.get("applications", {}))
-                packages_count = len(data.get("packages", {}))
+                versions_count = sum(
+                    len(app.get("versions", {}))
+                    for app in data.get("applications", {}).values()
+                )
                 if phase_signal is not None and not stop.is_set():
                     try:
-                        phase_signal.emit("loading_versions", apps_count, packages_count)
+                        phase_signal.emit("loading_versions", apps_count, versions_count)
                     except RuntimeError:
                         pass
                 index = JavaCodeIndex(workspace)
@@ -2097,6 +2100,8 @@ class CodeAdminDomain:
                           "applications": catalog.apps_store.list_applications(),
                           "packages": catalog.apps_store.list_packages(),
                           "versions": {key: catalog.apps_store.list_versions(key) for key in data["applications"]}}
+                # Real version total across applications for honest progress state.
+                result["versions_count"] = sum(len(items) for items in result["versions"].values())
             except Exception as exc:
                 result = {"root": workspace, "error": str(exc)}
             if not stop.is_set():
@@ -2107,6 +2112,9 @@ class CodeAdminDomain:
 
         self._apps_catalog_thread = threading.Thread(target=load, daemon=True)
         self._apps_catalog_thread.start()
+        # Notify immediately so QML flips to "Atualizando…" on this same tick;
+        # without this the loading property only changes when the worker ends.
+        self.stateChanged.emit()
 
     def _on_applications_loaded(self, result: object) -> None:
         self._apps_catalog_thread = None
@@ -2125,7 +2133,12 @@ class CodeAdminDomain:
             self.selectApplication(self._selected_app_id)
             if phase_signal is not None:
                 try:
-                    phase_signal.emit("ready", len(self._applications_catalog), len(result.get("versions", {})))
+                    versions_count = result.get("versions_count")
+                    if versions_count is None:
+                        versions_count = sum(
+                            len(items) for items in result.get("versions", {}).values()
+                        )
+                    phase_signal.emit("ready", len(self._applications_catalog), int(versions_count))
                 except RuntimeError:
                     pass
         else:
