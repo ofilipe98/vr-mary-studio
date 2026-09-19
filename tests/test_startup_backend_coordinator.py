@@ -602,3 +602,187 @@ def test_setup_request_uses_single_signal_contract(env_root):
     )
     assert bridge.state == "initializing"
     assert len(requested) == 1
+
+
+def test_stale_ready_completion_never_clobbers_newer_worker(env_root):
+    """A finishes with completion pending -> B starts -> stale A runs.
+
+    B must stay recognised as active, an extra retry must not create C,
+    and only B may publish the backend.
+    """
+    entered_a = threading.Event()
+    release_a = threading.Event()
+    entered_b = threading.Event()
+    release_b = threading.Event()
+    calls: list[int] = []
+
+    def counting_init(settings, refresh_conversations=False):
+        calls.append(1)
+        if len(calls) == 1:
+            entered_a.set()
+            assert release_a.wait(10), "worker A was never released"
+            return object()
+        entered_b.set()
+        assert release_b.wait(10), "worker B was never released"
+        return object()
+
+    coordinator, bootstrap = make_coordinator(
+        env_root, initialize_workspace_fn=counting_init
+    )
+    coordinator.bootstrap_or_retry()
+    assert entered_a.wait(5)
+    thread_a = coordinator._prepare_thread
+    assert thread_a is not None
+    assert coordinator.is_preparing() is True
+
+    # Let A terminate but keep its queued completion undelivered.
+    release_a.set()
+    deadline = time.monotonic() + 5.0
+    while thread_a.is_alive():
+        assert time.monotonic() < deadline, "worker A did not terminate"
+        time.sleep(0.005)
+
+    # B starts before A's stale completion is processed.
+    coordinator.bootstrap_or_retry()
+    assert entered_b.wait(5)
+    thread_b = coordinator._prepare_thread
+    assert thread_b is not None and thread_b is not thread_a
+    assert coordinator.is_preparing() is True
+
+    # Deliver the stale A completion: B stays the active worker.
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert coordinator._prepare_thread is thread_b
+    assert coordinator.is_preparing() is True
+    assert coordinator.is_backend_ready() is False
+
+    # An extra retry while B is in flight must not spawn worker C.
+    coordinator.bootstrap_or_retry()
+    QApplication.processEvents()
+    assert len(calls) == 2
+    assert coordinator._prepare_thread is thread_b
+    assert coordinator.is_preparing() is True
+
+    # Only B publishes the backend.
+    release_b.set()
+    wait_until(lambda: coordinator.is_backend_ready() is True)
+    wait_until(lambda: bootstrap.state == "ready")
+    assert len(calls) == 2
+
+
+def test_stale_failed_completion_never_clobbers_newer_worker(env_root):
+    """A stale failure must not clear a newer in-flight worker."""
+
+    class _AliveThread:
+        def is_alive(self) -> bool:
+            return True
+
+    coordinator, bootstrap = make_coordinator(env_root)
+    newer = _AliveThread()
+    coordinator._prepare_thread = newer  # type: ignore[assignment]
+    coordinator._prepare_generation = 7
+    coordinator._prepare_is_setup = False
+
+    # Stale generation 6 arrives while generation 7 is active.
+    coordinator._on_prepare_failed(6, RuntimeError("stale"))
+    assert coordinator._prepare_thread is newer
+    assert coordinator.is_preparing() is True
+    assert bootstrap.state == "initializing"
+
+    # The current generation still reports its own failure normally.
+    coordinator._on_prepare_failed(7, RuntimeError("current"))
+    assert coordinator._prepare_thread is None
+    assert bootstrap.state == "error"
+
+
+def test_prepare_preserves_gc_when_enabled(env_root):
+    """Worker leaves the cyclic GC enabled when it started enabled."""
+    import gc as gc_module
+
+    previous = gc_module.isenabled()
+    try:
+        gc_module.enable()
+        assert gc_module.isenabled() is True
+        coordinator, bootstrap = make_coordinator(env_root)
+        coordinator.bootstrap_or_retry()
+        wait_until(lambda: coordinator.is_backend_ready() is True)
+        wait_until(lambda: bootstrap.state == "ready")
+        assert gc_module.isenabled() is True
+    finally:
+        if not previous:
+            gc_module.disable()
+        else:
+            gc_module.enable()
+
+
+def test_prepare_preserves_gc_when_disabled(env_root):
+    """Worker never re-enables a GC that was already disabled."""
+    import gc as gc_module
+
+    previous = gc_module.isenabled()
+    try:
+        gc_module.disable()
+        assert gc_module.isenabled() is False
+        coordinator, bootstrap = make_coordinator(env_root)
+        coordinator.bootstrap_or_retry()
+        wait_until(lambda: coordinator.is_backend_ready() is True)
+        wait_until(lambda: bootstrap.state == "ready")
+        assert gc_module.isenabled() is False
+    finally:
+        if previous:
+            gc_module.enable()
+        else:
+            gc_module.disable()
+
+
+def test_shutdown_during_worker_touches_nothing(env_root):
+    """Shutdown during prepare: no publish, no context props, no restore."""
+    entered = threading.Event()
+    release = threading.Event()
+    restores: list[Any] = []
+    context_calls: list[tuple[str, Any]] = []
+
+    def blocked_init(settings, refresh_conversations=False):
+        entered.set()
+        assert release.wait(10), "worker was never released"
+        return object()
+
+    class _FakeContext:
+        def setContextProperty(self, name: str, value: Any) -> None:
+            context_calls.append((name, value))
+
+    class _FakeEngine:
+        def __init__(self) -> None:
+            self._ctx = _FakeContext()
+
+        def rootContext(self) -> _FakeContext:
+            return self._ctx
+
+    bootstrap = BootstrapBridge(
+        env_root["settings"], env_root["prefs"], initial_state="initializing"
+    )
+    coordinator = StartupBackendCoordinator(
+        settings=env_root["settings"],
+        bootstrap_bridge=bootstrap,
+        preferences=env_root["prefs"],
+        initialize_workspace_fn=blocked_init,
+        chat_factory=lambda settings, db, prefs: FakeChat(),
+        studio_factory=lambda settings, db, prefs, orchestrator: FakeStudio(),
+        on_backend_started=restores.append,
+    )
+    engine = _FakeEngine()
+    coordinator.set_engine(engine)  # type: ignore[arg-type]
+    coordinator.bootstrap_or_retry()
+    assert entered.wait(5)
+    coordinator.shutdown()
+    release.set()
+    wait_until(lambda: coordinator.is_preparing() is False)
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert coordinator.is_backend_ready() is False
+    assert coordinator.chat_bridge is None
+    assert coordinator.studio_bridge is None
+    assert bootstrap.state == "initializing"
+    assert bootstrap._chat_bridge is None
+    assert restores == []
+    assert context_calls == []

@@ -55,6 +55,7 @@ class FakeWindow:
         self._screen = screen
         self.show_normal_calls = 0
         self.show_maximized_calls = 0
+        self.show_fullscreen_calls = 0
 
     def property(self, name: str):
         return self._props.get(name)
@@ -73,6 +74,10 @@ class FakeWindow:
     def showMaximized(self) -> None:
         self.show_maximized_calls += 1
         self._props["visibility"] = 4
+
+    def showFullScreen(self) -> None:
+        self.show_fullscreen_calls += 1
+        self._props["visibility"] = 5
 
 
 class FakeBootstrap(QObject):
@@ -171,6 +176,71 @@ def test_maximized_normal_geometry_is_restored(qapp) -> None:
     QApplication.processEvents()
     assert controller.compact_active is False
     assert window.show_maximized_calls == 1
+    assert window.show_fullscreen_calls == 0
+
+
+def test_fullscreen_normal_geometry_is_restored_as_fullscreen(qapp) -> None:
+    """Window.FullScreen (5) must return via showFullScreen, not maximized."""
+    window = FakeWindow(
+        width=1920,
+        height=1080,
+        visibility=5,
+        screen=FakeScreen(QRect(0, 0, 1920, 1080)),
+    )
+    bootstrap = FakeBootstrap("initializing")
+    controller = BootstrapGeometryController(window, bootstrap)
+    assert controller.compact_active is True
+    assert window.show_normal_calls == 1
+
+    bootstrap.set_state("ready")
+    QApplication.processEvents()
+    assert controller.compact_active is False
+    assert window.show_fullscreen_calls == 1
+    assert window.show_maximized_calls == 0
+
+
+def test_compute_bootstrap_rect_never_exceeds_tiny_area() -> None:
+    """Areas smaller than the logical minimum still fully contain the window."""
+    for avail_w, avail_h in ((200, 150), (240, 200), (100, 100), (33, 33)):
+        x, y, width, height = compute_bootstrap_rect(0, 0, avail_w, avail_h)
+        assert width <= avail_w, (avail_w, avail_h, width)
+        assert height <= avail_h, (avail_w, avail_h, height)
+        assert x >= 0 and y >= 0
+        assert x + width <= avail_w
+        assert y + height <= avail_h
+
+
+def test_normal_window_stays_resizable_after_ready(qapp) -> None:
+    """Explicit Python geometry keeps the normal window contract after ready.
+
+    Main.qml declares its initial size as screen-proportional bindings; the
+    controller intentionally takes explicit ownership during bootstrap (as a
+    manual resize would). After ready the window must stay resizable,
+    movable across monitors and free from recompaction.
+    """
+    window = FakeWindow(
+        width=1480, height=900, x=100, y=80, screen=FakeScreen(QRect(0, 0, 1920, 1080))
+    )
+    bootstrap = FakeBootstrap("loading_versions")
+    controller = BootstrapGeometryController(window, bootstrap)
+    assert controller.compact_active is True
+
+    bootstrap.set_state("ready")
+    QApplication.processEvents()
+    assert controller.compact_active is False
+    assert window.property("width") == 1480
+    assert window.property("height") == 900
+
+    # Manual resize after ready keeps working and never recompacts.
+    window.setProperty("width", 1200)
+    window.setProperty("height", 800)
+    assert window.property("width") == 1200
+    assert window.property("height") == 800
+    bootstrap.set_state("ready")
+    QApplication.processEvents()
+    assert controller.compact_active is False
+    assert window.property("width") == 1200
+    assert window.property("height") == 800
 
 
 def test_ready_without_bootstrap_never_recompacts(qapp) -> None:

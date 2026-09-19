@@ -296,8 +296,11 @@ class StartupBackendCoordinator(QObject):
             # them alive past refcount zero) from the wrong thread, which
             # corrupts the heap. Collection resumes on the UI thread, where
             # teardown is safe. The flag is process-wide but the prepare is
-            # short-lived, so the pause is harmless.
-            gc.disable()
+            # short-lived, so the pause is harmless. Preserve the previous
+            # state: when GC was already disabled, leave it disabled.
+            gc_was_enabled = gc.isenabled()
+            if gc_was_enabled:
+                gc.disable()
             try:
                 try:
                     database = self._prepare_workspace(target_settings)
@@ -312,7 +315,8 @@ class StartupBackendCoordinator(QObject):
                 except RuntimeError:
                     pass
             finally:
-                gc.enable()
+                if gc_was_enabled:
+                    gc.enable()
 
         thread = threading.Thread(target=_load, daemon=True)
         self._prepare_thread = thread
@@ -327,6 +331,16 @@ class StartupBackendCoordinator(QObject):
 
     @Slot(int, object)
     def _on_prepare_ready(self, generation: int, database: object) -> None:
+        # Stale completions must never clear the current worker reference.
+        # Lifecycle: each _start_prepare bumps _prepare_generation and stores
+        # its thread in _prepare_thread. Worker A can finish and queue its
+        # QueuedConnection signal just before worker B starts (A is dead so
+        # is_preparing() is False, B takes over _prepare_thread). When A's
+        # stale signal is then delivered, clearing unconditionally would lose
+        # B, make is_preparing() lie and allow a concurrent worker C. Only
+        # the currently registered generation may clear the reference.
+        if generation != self._prepare_generation:
+            return
         self._prepare_thread = None
         if self._drop_stale_prepare(generation):
             return
@@ -361,6 +375,10 @@ class StartupBackendCoordinator(QObject):
 
     @Slot(int, object)
     def _on_prepare_failed(self, generation: int, error: object) -> None:
+        # Same generation guard as _on_prepare_ready: a stale failure must
+        # never clear a newer worker started after this one finished.
+        if generation != self._prepare_generation:
+            return
         self._prepare_thread = None
         if self._drop_stale_prepare(generation):
             return

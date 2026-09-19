@@ -16,6 +16,15 @@ Rules:
   the window is never placed outside the visible area.
 * Small screens shrink the envelope instead of overflowing it.
 * Setup, loading and error states share the same envelope.
+* Normal-size contract: ``Main.qml`` declares its initial ``width``/``height``
+  as bindings proportional to the screen. Setting an explicit size from
+  Python (``setProperty``) intentionally replaces those one-time initial
+  bindings — the same happens on any manual user resize. This controller
+  therefore owns the normal geometry explicitly: it captures the pre-
+  bootstrap size/position/visibility, applies the compact envelope, and
+  restores the captured values on ``ready``. After ``ready`` the window
+  keeps an explicit size (fully resizable by the user, movable across
+  monitors) instead of re-evaluating the startup-proportional expression.
 """
 
 from __future__ import annotations
@@ -50,7 +59,10 @@ def compute_bootstrap_rect(
     """Center the bootstrap envelope inside the available screen area.
 
     Returns ``(x, y, width, height)`` as integer logical pixels, clamped so
-    the window always stays fully visible, even on small screens.
+    the window always stays fully visible, even on small screens. The
+    result never exceeds the available area, including areas smaller than
+    the logical 320px minimum (the envelope shrinks below the minimum
+    instead of overflowing).
     """
     try:
         avail_w = max(0.0, float(available_width))
@@ -60,10 +72,26 @@ def compute_bootstrap_rect(
         avail_h = max(0.0, float(available_height))
     except (TypeError, ValueError):
         avail_h = 0.0
-    target_w = min(float(width), max(320.0, avail_w - 32.0)) if avail_w else float(width)
-    target_h = min(float(height), max(320.0, avail_h - 32.0)) if avail_h else float(height)
-    target_w = max(320, int(target_w))
-    target_h = max(320, int(target_h))
+    if avail_w:
+        # Leave 32px breathing room when the screen allows it, but never
+        # exceed the available width — tiny screens use the full area.
+        room_w = avail_w - 32.0
+        if room_w < 1.0:
+            room_w = avail_w
+        target_w = min(float(width), room_w, avail_w)
+        target_w = max(1, int(target_w))
+        target_w = min(target_w, int(avail_w))
+    else:
+        target_w = max(1, int(float(width)))
+    if avail_h:
+        room_h = avail_h - 32.0
+        if room_h < 1.0:
+            room_h = avail_h
+        target_h = min(float(height), room_h, avail_h)
+        target_h = max(1, int(target_h))
+        target_h = min(target_h, int(avail_h))
+    else:
+        target_h = max(1, int(float(height)))
     if avail_w:
         pos_x = int(available_x + max(0.0, (avail_w - target_w) / 2.0))
         pos_x = max(int(available_x), min(pos_x, int(available_x + avail_w - target_w)))
@@ -178,8 +206,11 @@ class BootstrapGeometryController(QObject):
             return
         self._capture_normal()
         visibility = _window_visibility(window)
-        was_maximized = visibility in (4, 5)
-        if was_maximized:
+        # 4 == Window.Maximized, 5 == Window.FullScreen: both must leave the
+        # special state via showNormal() before the compact envelope applies.
+        # Restore distinguishes them (showMaximized vs showFullScreen).
+        was_special = visibility in (4, 5)
+        if was_special:
             try:
                 show_normal = getattr(window, "showNormal", None)
                 if callable(show_normal):
@@ -227,13 +258,25 @@ class BootstrapGeometryController(QObject):
                 window.setProperty("y", normal["y"])
         except (RuntimeError, AttributeError):
             return
-        if normal.get("visibility") in (4, 5):
+        # QWindow visibility: 4 == Maximized, 5 == FullScreen. A fullscreen
+        # window must return via showFullScreen(), never showMaximized().
+        visibility = normal.get("visibility")
+        if visibility == 5:
+            try:
+                show_fullscreen = getattr(window, "showFullScreen", None)
+                if callable(show_fullscreen):
+                    show_fullscreen()
+                    return
+                window.setProperty("visibility", visibility)
+            except (RuntimeError, AttributeError):
+                pass
+        elif visibility == 4:
             try:
                 show_maximized = getattr(window, "showMaximized", None)
                 if callable(show_maximized):
                     show_maximized()
                     return
-                window.setProperty("visibility", normal["visibility"])
+                window.setProperty("visibility", visibility)
             except (RuntimeError, AttributeError):
                 pass
 
