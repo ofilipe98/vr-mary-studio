@@ -170,6 +170,15 @@ class ProviderError(RuntimeError):
     pass
 
 
+def require_standard_provider(options: ConversationOptions, provider: str) -> None:
+    """Keep Monitor sessions out of providers until their dedicated adapter is active."""
+
+    if options.monitor_mode:
+        raise ProviderError(
+            f"O perfil Monitor exige o adapter dedicado; {provider} direto foi recusado."
+        )
+
+
 class ProviderRateLimited(ProviderError):
     """The configured provider explicitly rejected requests due to its quota."""
 

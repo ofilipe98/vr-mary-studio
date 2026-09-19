@@ -344,7 +344,7 @@ class ChatOrchestrator:
         model: str = "",
         effort: str = "medium",
         service_tier: str = "",
-        approval_profile: str = "full_access",
+        approval_profile: str = "supervised",
         collaboration_mode: str = "default",
         dynamic_tool_ids: list[str] | None = None,
         mcp_tools: list[dict[str, str]] | None = None,
@@ -2789,7 +2789,7 @@ class ChatOrchestrator:
             native_id_vr="",
             status="idle",
             service_tier="",
-            approval_profile="full_access",
+            approval_profile="supervised",
             collaboration_mode="default",
         )
         return conversation_id

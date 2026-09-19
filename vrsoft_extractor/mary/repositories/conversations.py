@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..models import RuntimeEvent, utc_now
+from ..models import ConversationOptions, RuntimeEvent, utc_now
 from ..paths import to_portable_path
 from ..chat_tools import validate_tool_definition
 from .common import _last_insert_id
@@ -24,11 +24,14 @@ class ConversationsRepositoryMixin:
         cloned_from: str = "",
         effort: str = "medium",
         service_tier: str = "",
-        approval_profile: str = "full_access",
+        approval_profile: str = "supervised",
         collaboration_mode: str = "default",
         vr_enabled: bool = False,
         vr_mode: str = "",
     ) -> str:
+        approval_profile = ConversationOptions(
+            approval_profile=approval_profile
+        ).approval_profile
         conversation_id = uuid.uuid4().hex
         now = utc_now()
         resolved_mode = str(vr_mode or "").strip().casefold()
@@ -100,6 +103,10 @@ class ConversationsRepositoryMixin:
             "context_used_tokens", "context_window_tokens", "total_processed_tokens",
         }
         values = {key: value for key, value in fields.items() if key in allowed}
+        if "approval_profile" in values:
+            values["approval_profile"] = ConversationOptions(
+                approval_profile=str(values["approval_profile"] or "")
+            ).approval_profile
         if self.root:
             for key in ("workspace", "original_workspace"):
                 if key in values:

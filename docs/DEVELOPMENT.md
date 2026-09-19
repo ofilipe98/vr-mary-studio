@@ -80,6 +80,10 @@ Os transportes concretos ficam em `mary/provider_adapters/`; `mary/providers.py`
 preserva imports existentes. O fan-out e seus checkpoints ficam em
 `mary/execution/`; busca e ranking ficam em `mary/retrieval/`.
 
+O perfil interno `monitor_restricted` é reservado ao futuro adapter VRMonitor e
+deve continuar recusado pelos providers genéricos. Regras e gates pendentes estão
+em [MONITOR_SECURITY_PROFILE.md](MONITOR_SECURITY_PROFILE.md).
+
 O output do chat usa `frontend/text_rendering.py` para reconhecer cercas de
 código, tabelas e fontes; a normalização em `bridges/presentation.py` compartilha
 as mesmas cercas para preservar o conteúdo do código durante streaming.

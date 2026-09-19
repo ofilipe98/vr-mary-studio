@@ -20,7 +20,7 @@ from ..antigravity_acp import (
     spawn_acp_client,
 )
 from ..models import ConversationOptions, RuntimeEvent
-from .base import AgentProvider, ProviderError
+from .base import AgentProvider, ProviderError, require_standard_provider
 
 NATIVE_PREFIX = "acp:"
 
@@ -139,15 +139,21 @@ class AntigravityProvider(AgentProvider):
             client.close()
 
     def start_conversation(self, conversation_id, model, effort, workspace, options=None):
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Antigravity")
         return ""
 
     def resume_conversation(self, conversation_id, native_id, model, effort, workspace, options=None):
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Antigravity")
         if native_id and not native_id.startswith(NATIVE_PREFIX):
             raise ProviderError("Esta conversa pertence ao CLI anterior. O histórico foi preservado; inicie uma nova conversa para usar a conta conectada pelo navegador.")
         return native_id
 
     def send_message(self, conversation_id, native_id, model, effort, workspace,
                      message, callback, options=None, skills=None, image_paths=None):
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Antigravity")
         if not has_saved_account():
             raise ProviderError("Entre com Google em Configurações → Provedores → Antigravity.")
         # Single shared resolution per spawn: resolve once, then spawn with
@@ -162,7 +168,6 @@ class AntigravityProvider(AgentProvider):
         if runtime_info is None:
             raise ProviderError(f"{RUNTIME_NOT_FOUND_MESSAGE}. Atualize o Antigravity CLI.")
         self.resume_conversation(conversation_id, native_id, model, effort, workspace, options)
-        options = options or ConversationOptions(model=model, effort=effort)
         state = {"client": None, "session": "", "cancelled": False, "text": False, "options": options}
         client = spawn_acp_client(
             runtime_info=runtime_info,

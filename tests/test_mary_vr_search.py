@@ -179,7 +179,11 @@ def test_dynamic_tool_event_runs_in_process_search(tmp_path: Path) -> None:
     _seed(database)
     orchestrator = ChatOrchestrator(settings, database)
     conversation_id = orchestrator.new_conversation(
-        "codex", "sol", defer_provider_start=True, vr_enabled=True
+        "codex",
+        "sol",
+        approval_profile="full_access",
+        defer_provider_start=True,
+        vr_enabled=True,
     )
 
     recording = _RecordingCodex()

@@ -76,7 +76,7 @@ class MaryDatabase(KnowledgeRepositoryMixin, ConversationsRepositoryMixin):
             )
             for column, definition in (
                 ("service_tier", "TEXT NOT NULL DEFAULT ''"),
-                ("approval_profile", "TEXT NOT NULL DEFAULT 'full_access'"),
+                ("approval_profile", "TEXT NOT NULL DEFAULT 'supervised'"),
                 ("collaboration_mode", "TEXT NOT NULL DEFAULT 'default'"),
                 ("vr_enabled", "INTEGER NOT NULL DEFAULT 0"),
                 ("vr_mode", "TEXT NOT NULL DEFAULT ''"),
