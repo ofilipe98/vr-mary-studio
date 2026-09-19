@@ -19,12 +19,11 @@ from PySide6.QtWidgets import QApplication
 from ...settings import ConfigError
 from ..brand import APP_ICON_PATH, APP_TITLE, ORGANIZATION_NAME, SETTINGS_APP_NAME
 from ..config import MarySettings, load_vr_settings
-from ..db import MaryDatabase
-from ..workspace import initialize_workspace
 from .bridge import FrontendBridge, _stored_bool
 from .chat import ChatBridge
 from .studio import StudioBridge
 from .bootstrap import BootstrapBridge
+from .startup import StartupBackendCoordinator
 from ..settings_service import is_setup_needed
 
 
@@ -194,19 +193,6 @@ def schedule_antigravity_restore(studio_bridge: StudioBridge | None) -> None:
     QTimer.singleShot(0, studio_bridge.restoreAntigravityAccount)
 
 
-def probe_backend_settings(target_settings: MarySettings) -> bool:
-    """Minimal backend proof used before marking setup as completed.
-
-    Success means: workspace directories + portable project + database open.
-    Catalog synchronization is explicitly NOT part of this probe.
-    """
-    try:
-        initialize_workspace(target_settings, refresh_conversations=False)
-    except Exception:
-        return False
-    return True
-
-
 def _apply_application_font(app: QApplication) -> None:
     """Match the current Studio typography and stabilize headless rendering."""
 
@@ -321,10 +307,39 @@ def main(argv: list[str] | None = None) -> int:
         navigation_override=False if args.screenshot else None,
     )
     needs_setup = not args.screenshot and is_setup_needed(settings, preferences)
-    database: MaryDatabase | None = None
-    chat_bridge: ChatBridge | None = None
-    studio_bridge: StudioBridge | None = None
     engine: QQmlApplicationEngine | None = None
+
+    # Backend lifecycle (database + ChatBridge + StudioBridge) is owned by a
+    # testable coordinator: atomic publishes, explicit readiness, and a real
+    # first-frame gate before any heavy initialize_workspace() work runs.
+    coordinator_holder: dict[str, StartupBackendCoordinator] = {}
+
+    def schedule_restore(studio_bridge: StudioBridge | None) -> None:
+        if not args.screenshot:
+            schedule_antigravity_restore(studio_bridge)
+
+    def handle_setup_request(new_settings: MarySettings) -> None:
+        # Async handshake: only arm the deferred backend run. Returning to
+        # the event loop lets the loading page paint its first frame before
+        # the coordinator builds the backend; setup/completed is persisted
+        # by setupInitializationSucceeded, never here.
+        coordinator_holder["coordinator"].request_setup_backend(new_settings)
+
+    bootstrap_bridge = BootstrapBridge(
+        settings,
+        preferences,
+        initial_state="setup" if needs_setup else "initializing",
+        on_setup_completed=handle_setup_request,
+        on_bootstrap_retry=lambda: coordinator_holder["coordinator"].bootstrap_or_retry(),
+    )
+    coordinator = StartupBackendCoordinator(
+        settings=settings,
+        bootstrap_bridge=bootstrap_bridge,
+        frontend_bridge=bridge,
+        preferences=preferences,
+        on_backend_started=schedule_restore,
+    )
+    coordinator_holder["coordinator"] = coordinator
 
     shutdown_complete = False
 
@@ -333,88 +348,14 @@ def main(argv: list[str] | None = None) -> int:
         if shutdown_complete:
             return
         shutdown_complete = True
-        if studio_bridge is not None:
-            studio_bridge.close()
-        if chat_bridge is not None:
-            chat_bridge.close()
+        if coordinator.studio_bridge is not None:
+            coordinator.studio_bridge.close()
+        if coordinator.chat_bridge is not None:
+            coordinator.chat_bridge.close()
 
     app.aboutToQuit.connect(shutdown)
-
-    def setup_backend(target_settings: MarySettings) -> None:
-        """Create (or atomically rebuild) database + bridges on the UI thread."""
-        nonlocal database, chat_bridge, studio_bridge, settings, engine
-        bootstrap_bridge.detach_chat_bridge()
-        if studio_bridge is not None:
-            studio_bridge.close()
-        if chat_bridge is not None:
-            chat_bridge.close()
-        database = initialize_workspace(target_settings, refresh_conversations=False)
-        chat_bridge = ChatBridge(target_settings, database, preferences, open_new_chat=True)
-        if args.screenshot_vr_mode:
-            chat_bridge._vr_mode = args.screenshot_vr_mode
-        studio_bridge = StudioBridge(
-            target_settings,
-            database,
-            preferences,
-            chat_orchestrator=chat_bridge._orchestrator,
-        )
-        studio_bridge.conversationRestored.connect(chat_bridge.refresh)
-        chat_bridge.conversationArchived.connect(
-            lambda _conversation_id: studio_bridge.refreshArchived("")
-        )
-        settings = target_settings
-        bridge.update_settings(target_settings)
-        if engine is not None:
-            engine.rootContext().setContextProperty("chat", chat_bridge)
-            engine.rootContext().setContextProperty("studio", studio_bridge)
-            engine._chat_bridge = chat_bridge  # type: ignore[attr-defined]
-            engine._studio_bridge = studio_bridge  # type: ignore[attr-defined]
-        bootstrap_bridge.attach_chat_bridge(chat_bridge)
-
-    def bootstrap_or_retry() -> None:
-        """Deferred normal startup and retry path: backend first, then catalog."""
-        if chat_bridge is None:
-            try:
-                setup_backend(settings)
-            except Exception as exc:
-                bootstrap_bridge.set_error(
-                    f"Não foi possível inicializar o ambiente: {exc}"
-                )
-                return
-        bootstrap_bridge.start_bootstrap()
-        if not args.screenshot:
-            schedule_antigravity_restore(studio_bridge)
-
-    def finish_setup_backend(new_settings: MarySettings) -> None:
-        """Deferred full backend creation after the setup form was accepted."""
-        try:
-            setup_backend(new_settings)
-        except Exception as exc:
-            bootstrap_bridge.set_error(
-                f"Não foi possível inicializar o ambiente: {exc}"
-            )
-            return
-        bootstrap_bridge.start_bootstrap()
-        if not args.screenshot:
-            schedule_antigravity_restore(studio_bridge)
-
-    def handle_setup_completed(new_settings: MarySettings) -> bool:
-        # Synchronous minimal probe (workspace + database, no catalog sync).
-        # Only then does BootstrapBridge persist setup/completed; the heavy
-        # backend creation runs deferred so the loading frame renders first.
-        if not probe_backend_settings(new_settings):
-            return False
-        QTimer.singleShot(0, lambda: finish_setup_backend(new_settings))
-        return True
-
-    bootstrap_bridge = BootstrapBridge(
-        settings,
-        preferences,
-        initial_state="setup" if needs_setup else "initializing",
-        on_setup_completed=handle_setup_completed,
-        on_bootstrap_retry=bootstrap_or_retry,
-    )
     engine = create_engine(bridge, None, None, bootstrap_bridge)
+    coordinator.set_engine(engine)
 
     if not engine.rootObjects():
         for warning in getattr(engine, "_qml_warnings", []):
@@ -424,9 +365,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     window = engine.rootObjects()[0]
+    coordinator.set_window(window)
     if args.screenshot:
         # Deterministic capture path: backend synchronously, then ready.
-        setup_backend(settings)
+        coordinator.setup_backend(settings)
+        if args.screenshot_vr_mode:
+            coordinator.chat_bridge._vr_mode = args.screenshot_vr_mode
         bootstrap_bridge.set_ready()
         window.setProperty("width", max(1120, args.screenshot_width))
         window.setProperty("height", max(700, args.screenshot_height))
@@ -463,7 +407,9 @@ def main(argv: list[str] | None = None) -> int:
                 project_index = next(
                     (
                         index
-                        for index, item in enumerate(chat_bridge.projectItems)
+                        for index, item in enumerate(
+                            coordinator.chat_bridge.projectItems
+                        )
                         if item.get("path")
                     ),
                     -1,
@@ -500,15 +446,17 @@ def main(argv: list[str] | None = None) -> int:
     elif args.smoke_test:
         QTimer.singleShot(600, app.quit)
     elif not needs_setup:
-        # Normal startup: engine/loading page already visible; run the heavy
-        # backend initialization deferred so the first frame renders first.
-        QTimer.singleShot(0, bootstrap_or_retry)
+        # Normal startup: the engine/loading shell is already visible; the
+        # heavy backend starts only after the first real frameSwapped frame,
+        # so the loading page paints (and keeps animating) first.
+        coordinator.request_normal_startup()
     # First run stays on the Setup page until the user saves the configuration.
 
     # Keep Python-owned QObjects alive for the entire QML engine lifetime.
     engine._frontend_bridge = bridge  # type: ignore[attr-defined]
-    engine._chat_bridge = chat_bridge  # type: ignore[attr-defined]
-    engine._studio_bridge = studio_bridge  # type: ignore[attr-defined]
+    engine._coordinator = coordinator  # type: ignore[attr-defined]
+    engine._chat_bridge = coordinator.chat_bridge  # type: ignore[attr-defined]
+    engine._studio_bridge = coordinator.studio_bridge  # type: ignore[attr-defined]
     try:
         return app.exec()
     finally:

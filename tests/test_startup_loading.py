@@ -73,14 +73,11 @@ def test_reviewing_settings_after_error_restarts_bootstrap(tmp_path, monkeypatch
     settings = load_vr_settings(str(app_dir), str(root_dir))
 
     mock_chat = MagicMock()
-    attached = []
+    requested = []
 
     def on_setup_completed(new_settings):
         assert new_settings.root == settings.root
-        attached.append(new_settings)
-        mock_bridge.attach_chat_bridge(mock_chat)
-        mock_bridge.start_bootstrap()
-        return True
+        requested.append(new_settings)
 
     mock_bridge = BootstrapBridge(
         settings,
@@ -108,9 +105,14 @@ def test_reviewing_settings_after_error_restarts_bootstrap(tmp_path, monkeypatch
         "120",
     )
 
-    # Saving leaves setup, restarts the catalog load and can reach ready.
+    # Saving leaves setup and requests the backend; completed waits for it.
     assert mock_bridge.isSetupActive is False
-    assert len(attached) == 1
+    assert mock_bridge.state == "initializing"
+    assert len(requested) == 1
+
+    # The coordinator finishes the backend, marks setup done, restarts catalog.
+    mock_bridge.setupInitializationSucceeded(requested[0])
+    mock_bridge.start_bootstrap()
     assert mock_chat.refreshApplicationsCatalog.called
     mock_bridge._on_catalog_phase("loading_versions", 2, 7)
     assert mock_bridge.state == "loading_versions"

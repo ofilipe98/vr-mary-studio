@@ -301,6 +301,7 @@ class StudioBridge(QObject):
         self._sync_log_model = BoundedTextListModel(MAX_SYNC_LOG_LINES, self)
         self._schema_path = self._default_schema_path()
         self._settings_values: dict[str, Any] = {}
+        self._pending_restart_root: str | None = None
         self._providers: list[dict[str, Any]] = []
         self._provider_installs: dict[str, tuple[_Task, threading.Event]] = {}
         self._provider_install_status: dict[str, dict[str, str]] = {}
@@ -566,6 +567,11 @@ class StudioBridge(QObject):
     @Property("QVariantMap", notify=settingsChanged)
     def settingsValues(self) -> dict[str, Any]:  # noqa: N802
         return dict(self._settings_values)
+
+    @Property(bool, notify=settingsChanged)
+    def restartRequiredForRoot(self) -> bool:  # noqa: N802
+        """True after saving a new root until the app restarts on it."""
+        return self._pending_restart_root is not None
 
     @Property("QVariantList", notify=providersChanged)
     def providerItems(self) -> list[dict[str, Any]]:  # noqa: N802
@@ -1729,6 +1735,10 @@ class StudioBridge(QObject):
         return self._settings.root / "schema" / "schema.md"
 
     def _refresh_settings(self) -> None:
+        if self._pending_restart_root is not None:
+            # A new root is persisted but inactive until restart: keep
+            # showing the persisted values instead of the live root.
+            return
         self._settings_values = get_settings_values(self._settings)
         self.settingsChanged.emit()
 
@@ -1761,8 +1771,12 @@ class StudioBridge(QObject):
             self.toastRequested.emit(str(exc), "error")
             return
         if new_settings.root != previous_settings.root:
+            # Restart-only for root: the live backend keeps the previous
+            # root, but the UI must show the persisted values (new root in
+            # .env, new emails/interval already in the runtime env).
             os.environ["VR_ROOT"] = str(previous_settings.root)
-            self._settings_values = get_settings_values(previous_settings)
+            self._settings_values = get_settings_values(new_settings)
+            self._pending_restart_root = str(new_settings.root)
             self.settingsChanged.emit()
             self.toastRequested.emit(
                 "Novo caminho salvo. Reinicie o VRStudio para usá-lo; "
@@ -1771,6 +1785,7 @@ class StudioBridge(QObject):
             )
             return
         self._settings = new_settings
+        self._pending_restart_root = None
         self._settings_values.update(get_settings_values(new_settings))
         self.settingsChanged.emit()
         self.toastRequested.emit(

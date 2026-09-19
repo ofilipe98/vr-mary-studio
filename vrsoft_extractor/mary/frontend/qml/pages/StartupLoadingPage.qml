@@ -11,14 +11,16 @@ Rectangle {
     color: Theme.palette.background
 
     Item {
+        // Same compact central envelope as the setup page: concentrated
+        // content with generous outer margins on wide windows.
         anchors.centerIn: parent
-        width: Math.min(480, parent.width - 48)
+        width: Math.min(440, parent.width - 64)
         height: contentCol.implicitHeight
 
         ColumnLayout {
             id: contentCol
             anchors.fill: parent
-            spacing: 20
+            spacing: 16
 
             // Brand Header
             ColumnLayout {
@@ -172,74 +174,81 @@ Rectangle {
             }
 
             // Error Card
+            // NOTE: children use anchor/binding geometry only (no nested
+            // layouts). A nested ColumnLayout sized by anchors does not run
+            // its arrangement pass for a card driven by a `visible` binding,
+            // leaving children at implicit widths overflowing the card.
             Rectangle {
                 visible: typeof bootstrap !== "undefined" && bootstrap && bootstrap.state === "error"
                 Layout.fillWidth: true
-                implicitHeight: errCol.implicitHeight + 24
+                implicitHeight: errRetryButton.y + errRetryButton.height + 12
                 radius: 12
                 color: Qt.alpha(Theme.palette.danger, 0.08)
                 border.width: 1
                 border.color: Theme.palette.danger
 
-                ColumnLayout {
-                    id: errCol
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                VrLineIcon {
+                    id: errIcon
+                    x: 12
+                    y: 12
+                    width: 18
+                    height: 18
+                    kind: "warning"
+                    foreground: Theme.palette.danger
+                }
 
-                    RowLayout {
-                        spacing: 8
-                        Layout.fillWidth: true
+                Text {
+                    id: errTitle
+                    x: errIcon.x + errIcon.width + 8
+                    y: 12
+                    width: parent.width - x - 12
+                    text: "Não foi possível preparar o ambiente"
+                    color: Theme.palette.danger
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(13)
+                    font.weight: Font.Bold
+                    wrapMode: Text.WordWrap
+                    renderType: Theme.textRenderType
+                }
 
-                        VrLineIcon {
-                            Layout.preferredWidth: 18
-                            Layout.preferredHeight: 18
-                            kind: "warning"
-                            foreground: Theme.palette.danger
-                        }
+                Text {
+                    id: errMessage
+                    x: 12
+                    y: errTitle.y + errTitle.height + 12
+                    width: parent.width - 24
+                    text: typeof bootstrap !== "undefined" && bootstrap ? bootstrap.errorMessage : ""
+                    color: Theme.palette.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12)
+                    wrapMode: Text.WordWrap
+                    renderType: Theme.textRenderType
+                }
 
-                        Text {
-                            text: "Não foi possível preparar o ambiente"
-                            color: Theme.palette.danger
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: Font.Bold
+                VrButton {
+                    id: errRetryButton
+                    x: 12
+                    y: errMessage.y + errMessage.height + 12
+                    width: (parent.width - 24 - 8) / 2
+                    implicitHeight: 32
+                    text: "Tentar novamente"
+                    variant: "primary"
+                    onClicked: {
+                        if (typeof bootstrap !== "undefined" && bootstrap) {
+                            bootstrap.retryBootstrap();
                         }
                     }
+                }
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: typeof bootstrap !== "undefined" && bootstrap ? bootstrap.errorMessage : ""
-                        color: Theme.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        wrapMode: Text.WordWrap
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        VrButton {
-                            text: "Tentar novamente"
-                            variant: "primary"
-                            implicitHeight: 32
-                            onClicked: {
-                                if (typeof bootstrap !== "undefined" && bootstrap) {
-                                    bootstrap.retryBootstrap();
-                                }
-                            }
-                        }
-
-                        VrButton {
-                            text: "Revisar configurações"
-                            variant: "secondary"
-                            implicitHeight: 32
-                            onClicked: {
-                                if (typeof bootstrap !== "undefined" && bootstrap) {
-                                    bootstrap.openSetup();
-                                }
-                            }
+                VrButton {
+                    x: errRetryButton.x + errRetryButton.width + 8
+                    y: errRetryButton.y
+                    width: errRetryButton.width
+                    implicitHeight: 32
+                    text: "Revisar configurações"
+                    variant: "secondary"
+                    onClicked: {
+                        if (typeof bootstrap !== "undefined" && bootstrap) {
+                            bootstrap.openSetup();
                         }
                     }
                 }

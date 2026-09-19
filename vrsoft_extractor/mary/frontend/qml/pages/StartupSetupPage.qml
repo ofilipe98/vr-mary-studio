@@ -17,11 +17,13 @@ Rectangle {
         clip: true
 
         ColumnLayout {
-            width: Math.min(640, scroller.width - 48)
+            // Compact central envelope: same contained card principle as the
+            // loading page, with generous outer margins on wide windows.
+            width: Math.min(520, scroller.width - 64)
             anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 20
+            spacing: 16
 
-            Item { Layout.preferredHeight: 16 }
+            Item { Layout.preferredHeight: 12 }
 
             // Header
             RowLayout {
@@ -349,7 +351,7 @@ Rectangle {
             // Footer Action
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: 8
                 spacing: 12
 
                 Item { Layout.fillWidth: true }
@@ -378,7 +380,7 @@ Rectangle {
                 }
             }
 
-            Item { Layout.preferredHeight: 32 }
+            Item { Layout.preferredHeight: 20 }
         }
     }
 }

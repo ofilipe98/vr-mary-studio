@@ -193,6 +193,17 @@ Item {
                                             }
                                         }
                                     }
+
+                                    Text {
+                                        visible: typeof studio !== "undefined" && studio && studio.restartRequiredForRoot
+                                        Layout.fillWidth: true
+                                        text: "Novo caminho salvo. Reinicie o VRStudio para usá-lo."
+                                        color: Theme.palette.warning
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSize(12)
+                                        font.weight: Font.Medium
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
                             }
                         }

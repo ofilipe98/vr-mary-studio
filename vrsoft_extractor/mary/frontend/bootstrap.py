@@ -25,6 +25,12 @@ class BootstrapBridge(QObject):
     progressChanged = Signal()
     toastRequested = Signal(str, str)
     setupCompleted = Signal(object)
+    # Async setup handshake: saveSetup persists fields, shows loading and only
+    # *requests* backend creation. The app answers with
+    # setupInitializationSucceeded (persist setup/completed, emit
+    # setupCompleted, start catalog) or setupInitializationFailed (back to the
+    # setup form, completed stays false).
+    setupInitializationRequested = Signal(object)
 
     def __init__(
         self,
@@ -49,6 +55,7 @@ class BootstrapBridge(QObject):
         self._versions_count = 0
         self._is_ready = initial_state == "ready"
         self._chat_bridge: Any = None
+        self._pending_setup_settings: MarySettings | None = None
         self._settings_values: dict[str, Any] = (
             get_settings_values(settings) if settings is not None else {}
         )
@@ -149,11 +156,15 @@ class BootstrapBridge(QObject):
 
         self._settings = new_settings
         self._settings_values = safe_values
+        self._pending_setup_settings = new_settings
         self._error_message = ""
         self.errorMessageChanged.emit()
 
         # Move to the loading state synchronously so StartupLoadingPage
         # renders its first frame before any deferred backend work runs.
+        # Field validation/persistence above is light (mkdir + .env + reload);
+        # the heavy initialize_workspace() runs exactly once, later, owned by
+        # the startup coordinator after the loading frame has been presented.
         self._state = "initializing"
         self._is_ready = False
         self._status_message = "Preparando seu ambiente"
@@ -161,32 +172,53 @@ class BootstrapBridge(QObject):
         self.stateChanged.emit()
         self.statusMessageChanged.emit()
         self.detailMessageChanged.emit()
-        self.setupCompleted.emit(new_settings)
+        self.setupInitializationRequested.emit(new_settings)
 
-        # The completion callback runs the minimal backend probe
-        # synchronously (workspace dirs + database open, no catalog sync).
-        # setup/completed is persisted only when it accepts the new config,
-        # so a failed initialization keeps the setup gate open for retry.
+        # Fire-and-forget backend request: the callback must only schedule
+        # the real initialization (after the first loading frame) and return
+        # to the event loop. Completion arrives via
+        # setupInitializationSucceeded / setupInitializationFailed, which is
+        # the only path that persists setup/completed. The synchronous return
+        # value is intentionally ignored so no heavy probe can run here.
         if self._on_setup_completed is not None:
             try:
-                accepted = self._on_setup_completed(new_settings)
+                self._on_setup_completed(new_settings)
             except Exception as exc:
-                self._enter_setup_error(
+                self.setupInitializationFailed(
                     f"Não foi possível inicializar o ambiente: {exc}"
                 )
                 return
-            if accepted is False:
-                self._enter_setup_error(
-                    "Não foi possível inicializar o ambiente com essa configuração."
-                )
-                return
 
+    @Slot(object)
+    def setupInitializationSucceeded(self, new_settings: object = None) -> None:  # noqa: N802
+        """Persist setup/completed after the minimal backend proved valid.
+
+        Called by the startup coordinator once database + ChatBridge +
+        StudioBridge are built and attached. Only here is setup/completed
+        persisted and setupCompleted emitted; the catalog start that follows
+        drives the loading_apps/loading_versions phases.
+        """
+        resolved = new_settings if isinstance(new_settings, MarySettings) else None
+        self._pending_setup_settings = None
+        if resolved is not None:
+            self._settings = resolved
+            self._settings_values = get_settings_values(resolved)
         if self._preferences is not None:
             mark_setup_completed(self._preferences)
+        self.setupCompleted.emit(self._settings)
         self.toastRequested.emit("Configuração inicial salva com sucesso.", "success")
+
+    @Slot(str)
+    def setupInitializationFailed(self, message: str = "") -> None:  # noqa: N802
+        """Return to the setup form; setup/completed stays false for retry."""
+        self._pending_setup_settings = None
+        self._enter_setup_error(
+            message or "Não foi possível inicializar o ambiente com essa configuração."
+        )
 
     @Slot()
     def openSetup(self) -> None:  # noqa: N802
+        self._pending_setup_settings = None
         self._state = "setup"
         self._is_ready = False
         self._status_message = "Configuração Inicial"
@@ -267,6 +299,10 @@ class BootstrapBridge(QObject):
             except RuntimeError:
                 pass
 
+    def isAttachedTo(self, chat_bridge: Any) -> bool:  # noqa: N802
+        """True only when the bootstrap listens to this exact ChatBridge."""
+        return self._chat_bridge is not None and self._chat_bridge is chat_bridge
+
     def start_bootstrap(self) -> None:
         self._state = "loading_apps"
         self._is_ready = False
@@ -278,10 +314,16 @@ class BootstrapBridge(QObject):
         self.detailMessageChanged.emit()
         self.errorMessageChanged.emit()
 
-        if self._chat_bridge is not None:
-            self._chat_bridge.refreshApplicationsCatalog()
-        else:
-            self.set_ready()
+        # Fail closed: READY must mean (valid backend + finished catalog).
+        # Without an attached ChatBridge there is no catalog to wait for, so
+        # this is an error, never a shortcut to ready. Explicit set_ready()
+        # remains available for screenshots/tests that skip the bootstrap.
+        if self._chat_bridge is None:
+            self.set_error(
+                "Backend indisponível: nenhum ChatBridge anexado ao bootstrap."
+            )
+            return
+        self._chat_bridge.refreshApplicationsCatalog()
 
     def set_ready(self) -> None:
         self._state = "ready"

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary.config import load_vr_settings
 from vrsoft_extractor.mary.frontend.app import (
     create_engine,
-    probe_backend_settings,
     schedule_antigravity_restore,
 )
 from vrsoft_extractor.mary.frontend.bootstrap import BootstrapBridge
@@ -91,13 +90,12 @@ class StartupQmlTest(unittest.TestCase):
             prefs = QSettings(str(root / "preferences.ini"), QSettings.Format.IniFormat)
             frontend_bridge = FrontendBridge(settings, prefs)
 
-            completions = []
+            requested = []
 
             def on_setup_completed(new_settings):
-                # Minimal probe like app.main: workspace + database, no catalog.
-                assert probe_backend_settings(new_settings) is True
-                completions.append(new_settings)
-                return True
+                # Async handshake like app.main: only request the backend.
+                # No initialize_workspace() runs inside saveSetup anymore.
+                requested.append(new_settings)
 
             bootstrap_bridge = BootstrapBridge(
                 settings,
@@ -128,7 +126,8 @@ class StartupQmlTest(unittest.TestCase):
 
             new_root = root / "VRProject"
             new_root.mkdir(parents=True, exist_ok=True)
-            # Real save path: validate, persist, probe, then initializing.
+            # Real save path: validate, persist, then initializing; the
+            # backend itself is requested async and completes later.
             bootstrap_bridge.saveSetup(
                 str(new_root),
                 "admin@vr.com.br",
@@ -137,7 +136,7 @@ class StartupQmlTest(unittest.TestCase):
                 "",
                 "120",
             )
-            self.assertEqual(len(completions), 1)
+            self.assertEqual(len(requested), 1)
             self.assertEqual(bootstrap_bridge.state, "initializing")
             self.assertFalse(bootstrap_bridge.isSetupActive)
 

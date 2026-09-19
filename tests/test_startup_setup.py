@@ -208,54 +208,62 @@ def test_save_settings_aligns_runtime_env(temp_env, monkeypatch: pytest.MonkeyPa
     assert new_settings.sync_interval_minutes == 240
 
 
-def test_bootstrap_save_setup_rejected_when_backend_probe_fails(temp_env, isolated_runtime_env):
-    """A refused/failed backend probe must not mark setup as completed."""
+def test_bootstrap_save_setup_requests_backend_without_marking_completed(
+    temp_env, isolated_runtime_env
+):
+    """saveSetup persists fields and shows loading; completed waits for async success."""
+    settings = temp_env["settings"]
+    prefs = temp_env["prefs"]
+
+    requested = []
+    completed = []
+    bridge = BootstrapBridge(
+        settings,
+        prefs,
+        initial_state="setup",
+        on_setup_completed=requested.append,
+    )
+    bridge.setupCompleted.connect(completed.append)
+    bridge.setupInitializationRequested.connect(lambda _s: requested.append("signal"))
+
+    bridge.saveSetup(
+        str(temp_env["root"]),
+        "admin@vr.com.br",
+        "",
+        "admin@vr.com.br",
+        "",
+        "120",
+    )
+
+    # Backend request was issued but nothing completed yet.
+    assert len(requested) == 2  # callback + signal
+    assert bridge.state == "initializing"
+    assert bridge.isSetupActive is False
+    assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
+    assert completed == []
+
+    # Only the explicit async success persists setup/completed.
+    bridge.setupInitializationSucceeded()
+    assert str(prefs.value(SETUP_KEY_COMPLETED)).lower() == "true"
+    assert int(prefs.value(SETUP_KEY_VERSION, 0)) == SETUP_VERSION
+    assert len(completed) == 1
+
+
+def test_bootstrap_save_setup_backend_failure_returns_to_setup(
+    temp_env, isolated_runtime_env
+):
+    """A failed backend request or failed initialization keeps setup open."""
     settings = temp_env["settings"]
     prefs = temp_env["prefs"]
 
     def _boom(_new_settings):
         raise RuntimeError("db offline")
 
-    for callback in (lambda _new_settings: False, _boom):
-        prefs.remove(SETUP_KEY_COMPLETED)
-        prefs.remove(SETUP_KEY_VERSION)
-        prefs.sync()
-        bridge = BootstrapBridge(
-            settings,
-            prefs,
-            initial_state="setup",
-            on_setup_completed=callback,
-        )
-        bridge.saveSetup(
-            str(temp_env["root"]),
-            "admin@vr.com.br",
-            "",
-            "admin@vr.com.br",
-            "",
-            "120",
-        )
-        assert bridge.state == "setup"
-        assert bridge.isSetupActive is True
-        assert bridge.errorMessage != ""
-        assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
-
-
-def test_bootstrap_save_setup_marks_completed_only_after_probe(temp_env, isolated_runtime_env):
-    """Accepted probe -> initializing state and setup/completed persisted."""
-    settings = temp_env["settings"]
-    prefs = temp_env["prefs"]
-
-    seen = []
-
-    def accept(new_settings):
-        seen.append(new_settings)
-        return True
-
     bridge = BootstrapBridge(
         settings,
         prefs,
         initial_state="setup",
-        on_setup_completed=accept,
+        on_setup_completed=_boom,
     )
     bridge.saveSetup(
         str(temp_env["root"]),
@@ -265,11 +273,35 @@ def test_bootstrap_save_setup_marks_completed_only_after_probe(temp_env, isolate
         "",
         "120",
     )
-    assert len(seen) == 1
-    assert bridge.state == "initializing"
-    assert bridge.isSetupActive is False
-    assert str(prefs.value(SETUP_KEY_COMPLETED)).lower() == "true"
-    assert int(prefs.value(SETUP_KEY_VERSION, 0)) == SETUP_VERSION
+    assert bridge.state == "setup"
+    assert bridge.isSetupActive is True
+    assert bridge.errorMessage != ""
+    assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
+
+    # Async failure after a successful request behaves the same way.
+    prefs.remove(SETUP_KEY_COMPLETED)
+    prefs.remove(SETUP_KEY_VERSION)
+    prefs.sync()
+    bridge2 = BootstrapBridge(
+        settings,
+        prefs,
+        initial_state="setup",
+        on_setup_completed=lambda _new_settings: None,
+    )
+    bridge2.saveSetup(
+        str(temp_env["root"]),
+        "admin@vr.com.br",
+        "",
+        "admin@vr.com.br",
+        "",
+        "120",
+    )
+    assert bridge2.state == "initializing"
+    bridge2.setupInitializationFailed("db offline")
+    assert bridge2.state == "setup"
+    assert bridge2.isSetupActive is True
+    assert bridge2.errorMessage != ""
+    assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
 
 
 def test_frontend_bridge_update_settings_after_setup(temp_env):
@@ -299,13 +331,15 @@ def test_bootstrap_bridge_save_setup_flow(temp_env):
     settings = temp_env["settings"]
     prefs = temp_env["prefs"]
 
+    requested_settings = []
     completed_settings = []
     bridge = BootstrapBridge(
         settings,
         prefs,
         initial_state="setup",
-        on_setup_completed=lambda s: completed_settings.append(s),
+        on_setup_completed=lambda s: requested_settings.append(s),
     )
+    bridge.setupCompleted.connect(lambda s: completed_settings.append(s))
 
     assert bridge.state == "setup"
     assert bridge.isSetupActive is True
@@ -314,7 +348,7 @@ def test_bootstrap_bridge_save_setup_flow(temp_env):
     toasts = []
     bridge.toastRequested.connect(lambda msg, kind: toasts.append((msg, kind)))
 
-    # Save with valid root
+    # Save with valid root: request only, completion still pending.
     bridge.saveSetup(
         str(temp_env["root"]),
         "admin@vr.com.br",
@@ -324,6 +358,13 @@ def test_bootstrap_bridge_save_setup_flow(temp_env):
         "120",
     )
 
+    assert len(requested_settings) == 1
+    assert completed_settings == []
+    assert bridge.state == "initializing"
+    assert str(prefs.value(SETUP_KEY_COMPLETED, "false")).lower() != "true"
+
+    # Async backend success completes the setup.
+    bridge.setupInitializationSucceeded(requested_settings[0])
     assert len(completed_settings) == 1
     assert str(prefs.value(SETUP_KEY_COMPLETED)).lower() == "true"
     assert any(kind == "success" for _, kind in toasts)
