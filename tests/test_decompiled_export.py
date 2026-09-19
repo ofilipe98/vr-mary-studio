@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -153,7 +153,7 @@ def test_export_missing_indexed_file_without_valid_body_is_controlled_and_atomic
     _prepare(workspace, [{}, {"source_key": "second", "source_relative_path": "Missing.kt",
                              "body": "", "source_sha256": "0" * 64}])
     (workspace / "sources/master/br").mkdir(parents=True)
-    (workspace / "sources/master/br/Venda.java").write_text("x", encoding="utf-8")
+    (workspace / "sources/master/br/Venda.java").write_text("class Venda {}", encoding="utf-8")
 
     with pytest.raises(ValueError, match="alterada|inconsistente"):
         _export(workspace, destination)
