@@ -1985,7 +1985,7 @@ def test_native_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> No
     orchestrator = ChatOrchestrator(settings, database)
     orchestrator.providers = {"codex": ToolCallingProvider()}
     conversation_id = orchestrator.new_conversation(
-        "codex", "sol", defer_provider_start=True
+        "codex", "sol", approval_profile="full_access", defer_provider_start=True
     )
     events: list[RuntimeEvent] = []
     completed = threading.Event()

@@ -227,10 +227,10 @@ class ChatBridge(QObject):
             self._preferences.value("chat/last_service_tier", "") or ""
         )
         self._approval_profile = str(
-            self._preferences.value("chat/last_approval_profile", "full_access") or "full_access"
+            self._preferences.value("chat/last_approval_profile", "supervised") or "supervised"
         )
-        if self._approval_profile in ("auto", "auto_edits", ""):
-            self._approval_profile = "full_access"
+        if self._approval_profile not in {"supervised", "auto_edits", "auto", "full_access"}:
+            self._approval_profile = "supervised"
         self._vr_mode = "vr"
         self._research_model_keys: list[str] = []
         self._research_max_parallel = 3
@@ -1146,7 +1146,7 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def approvalIndex(self) -> int:  # noqa: N802
         values = [item["value"] for item in self.approvalItems]
-        default_index = values.index("full_access") if "full_access" in values else 3
+        default_index = values.index("supervised") if "supervised" in values else 0
         return values.index(self._approval_profile) if self._approval_profile in values else default_index
 
     @Property("QVariantList", notify=stateChanged)
@@ -2079,10 +2079,10 @@ class ChatBridge(QObject):
             self._preferences.value("chat/last_service_tier", "") or ""
         )
         self._approval_profile = str(
-            self._preferences.value("chat/last_approval_profile", "full_access") or "full_access"
+            self._preferences.value("chat/last_approval_profile", "supervised") or "supervised"
         )
-        if self._approval_profile in ("auto", "auto_edits", ""):
-            self._approval_profile = "full_access"
+        if self._approval_profile not in {"supervised", "auto_edits", "auto", "full_access"}:
+            self._approval_profile = "supervised"
         self._vr_mode = self._normalize_vr_mode(
             self._preferences.value("chat/vr_mode", "")
         ) or (

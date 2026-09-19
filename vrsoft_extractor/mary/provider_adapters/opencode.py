@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from ..models import ConversationOptions, RuntimeEvent
 
-from .base import (AgentProvider, EventCallback, ProviderError, ProviderRateLimited, _opencode_environment, _opencode_error_message, _opencode_token_usage, _parse_opencode_models, _resolve_opencode_command, normalize_effort)
+from .base import (AgentProvider, EventCallback, ProviderError, ProviderRateLimited, _opencode_environment, _opencode_error_message, _opencode_token_usage, _parse_opencode_models, _resolve_opencode_command, normalize_effort, require_standard_provider)
 
 class OpenCodeProvider(AgentProvider):
     """Headless OpenCode CLI adapter with provider-qualified model IDs."""
@@ -75,6 +75,8 @@ class OpenCodeProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "OpenCode")
         token = f"new:{uuid.uuid4()}"
         with self._state_lock:
             self._sessions[token] = ""
@@ -89,6 +91,8 @@ class OpenCodeProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "OpenCode")
         return native_id
 
     def send_message(
@@ -104,9 +108,10 @@ class OpenCodeProvider(AgentProvider):
         skills: list[dict[str, Any]] | None = None,
         image_paths: list[str] | None = None,
     ) -> None:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "OpenCode")
         if not self.command:
             raise ProviderError("OpenCode não foi encontrado no PATH.")
-        options = options or ConversationOptions(model=model, effort=effort)
         with self._state_lock:
             if time.monotonic() < self._rate_limited_until:
                 raise ProviderRateLimited("Limite de requisições do OpenCode atingido. Aguarde antes de tentar novamente.")

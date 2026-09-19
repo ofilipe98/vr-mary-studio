@@ -405,7 +405,7 @@ class ConversationOptions:
     model: str = ""
     effort: str = "medium"
     service_tier: str = ""
-    approval_profile: str = "full_access"
+    approval_profile: str = "supervised"
     collaboration_mode: str = "default"
     dynamic_tools: tuple[dict[str, Any], ...] = ()
     mcp_tools: tuple[dict[str, str], ...] = ()
@@ -413,10 +413,22 @@ class ConversationOptions:
     vr_enabled: bool = False
     vr_mode: str = ""
     tools_enabled: bool = True
+    monitor_mode: bool = False
 
     VALID_VR_MODES = ("off", "vr", "ultra")
+    STANDARD_APPROVAL_PROFILES = ("supervised", "auto_edits", "auto", "full_access", "research_readonly")
+    MONITOR_APPROVAL_PROFILE = "monitor_restricted"
 
     def __post_init__(self) -> None:
+        profile = str(self.approval_profile or "").strip()
+        if self.monitor_mode:
+            if profile != self.MONITOR_APPROVAL_PROFILE:
+                raise ValueError("Monitor mode requires the monitor_restricted approval profile.")
+        elif profile == self.MONITOR_APPROVAL_PROFILE:
+            raise ValueError("The monitor_restricted profile requires monitor mode.")
+        elif profile not in self.STANDARD_APPROVAL_PROFILES:
+            profile = "supervised"
+        object.__setattr__(self, "approval_profile", profile)
         mode = str(self.vr_mode or "").strip().casefold()
         if mode not in self.VALID_VR_MODES:
             mode = "vr" if self.vr_enabled else "off"
@@ -438,7 +450,7 @@ class ConversationOptions:
             model=field_value("model"),
             effort=field_value("effort", "medium") or "medium",
             service_tier=field_value("service_tier"),
-            approval_profile=field_value("approval_profile", "full_access") or "full_access",
+            approval_profile=field_value("approval_profile", "supervised") or "supervised",
             collaboration_mode=field_value("collaboration_mode", "default") or "default",
             vr_mode=field_value("vr_mode"),
             vr_enabled=(
@@ -502,4 +514,10 @@ def approval_preset(profile: str) -> ApprovalPreset:
     if profile == "research_readonly":
         return ApprovalPreset("research_readonly", "Pesquisa somente leitura", "Pesquisa recuperável sem alterações externas.",
                               "read-only", "readOnly", "never")
-    return APPROVAL_PRESETS.get(str(profile), APPROVAL_PRESETS["full_access"])
+    normalized = str(profile or "").strip()
+    if normalized == ConversationOptions.MONITOR_APPROVAL_PROFILE:
+        raise ValueError("The monitor_restricted profile requires the dedicated Monitor adapter.")
+    try:
+        return APPROVAL_PRESETS[normalized]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported approval profile: {normalized or '<empty>'}") from exc

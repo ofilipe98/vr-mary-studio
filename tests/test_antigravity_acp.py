@@ -212,14 +212,14 @@ def test_supervised_request_reaches_ui_and_approval_returns_selected_option():
     client.respond.assert_called_once_with(7, {"outcome": {"outcome": "selected", "optionId": "approve"}})
 
 
-def test_full_access_is_the_default_for_all_chats(tmp_path):
+def test_supervised_is_the_default_for_all_chats(tmp_path):
     from vrsoft_extractor.mary.config import MarySettings
     from vrsoft_extractor.mary.db import MaryDatabase
     from vrsoft_extractor.mary.frontend.chat import ChatBridge
     from PySide6.QtCore import QSettings
 
     opts = ConversationOptions()
-    assert opts.approval_profile == "full_access"
+    assert opts.approval_profile == "supervised"
 
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "old")
     prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
@@ -227,11 +227,11 @@ def test_full_access_is_the_default_for_all_chats(tmp_path):
 
     cid = db.create_conversation("Default test", "antigravity", "model", settings.work_dir)
     row = db.get_conversation(cid)
-    assert row["approval_profile"] == "full_access"
+    assert row["approval_profile"] == "supervised"
 
     bridge = ChatBridge(settings, db, prefs)
-    assert bridge._approval_profile == "full_access"
-    assert bridge.approvalItems[bridge.approvalIndex]["value"] == "full_access"
+    assert bridge._approval_profile == "supervised"
+    assert bridge.approvalItems[bridge.approvalIndex]["value"] == "supervised"
 
 
 def test_full_access_auto_approves_tools_without_ui_prompt():
@@ -643,7 +643,7 @@ def _configure_calls(session, model, effort=""):
 def test_model_selection_uses_negotiated_config_option():
     calls = _configure_calls(CONFIG_SESSION, "m-b")
     assert ("session/set_config_option", {"sessionId": "s", "configId": "model", "value": "m-b"}) in calls
-    assert ("session/set_mode", {"sessionId": "s", "modeId": "yolo"}) in calls
+    assert ("session/set_mode", {"sessionId": "s", "modeId": "default"}) in calls
     assert not [m for m, _ in calls if m == "session/configure"]
 
 
@@ -678,7 +678,7 @@ def test_unsupported_set_model_is_tolerated():
     provider = AntigravityProvider()
     client = RecordingClient(set_model_error=AcpError("session/set_model", -32601))
     provider._configure(client, "s", SESSION, "gemini-test", "", ConversationOptions())
-    assert ("session/set_mode", {"sessionId": "s", "modeId": "yolo"}) in client.calls
+    assert ("session/set_mode", {"sessionId": "s", "modeId": "default"}) in client.calls
 
 
 def test_effort_only_through_negotiated_option():

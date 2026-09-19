@@ -346,7 +346,7 @@ class MaryCoreTest(unittest.TestCase):
         )
         row = database.get_conversation(conversation_id)
         self.assertEqual(row["effort"], "high")
-        self.assertEqual(row["approval_profile"], "full_access")
+        self.assertEqual(row["approval_profile"], "supervised")
         self.assertEqual(row["collaboration_mode"], "default")
         self.assertEqual(row["service_tier"], "")
         self.assertEqual(row["trashed_at"], "")
@@ -1582,7 +1582,7 @@ class MaryCoreTest(unittest.TestCase):
             )
         params = rpc.call_args.args[1]
         self.assertEqual(params["effort"], "xhigh")
-        self.assertEqual(params["approvalPolicy"], "never")
+        self.assertEqual(params["approvalPolicy"], "on-request")
 
     def test_codex_turn_includes_native_local_image_input(self):
         image = self.root / "captura.png"
@@ -1914,8 +1914,8 @@ class MaryCoreTest(unittest.TestCase):
                 self.root,
             )
         params = rpc.call_args.args[1]
-        self.assertEqual(params["approvalPolicy"], "never")
-        self.assertEqual(params["sandbox"], "danger-full-access")
+        self.assertEqual(params["approvalPolicy"], "on-request")
+        self.assertEqual(params["sandbox"], "read-only")
 
     def test_all_approval_profiles_serialize_exact_thread_and_turn_contracts(self):
         expected = {

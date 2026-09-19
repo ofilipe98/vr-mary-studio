@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     status TEXT NOT NULL DEFAULT 'idle',
     archived INTEGER NOT NULL DEFAULT 0,
     service_tier TEXT NOT NULL DEFAULT '',
-    approval_profile TEXT NOT NULL DEFAULT 'full_access',
+    approval_profile TEXT NOT NULL DEFAULT 'supervised',
     collaboration_mode TEXT NOT NULL DEFAULT 'default',
     vr_enabled INTEGER NOT NULL DEFAULT 0,
     vr_mode TEXT NOT NULL DEFAULT 'off',

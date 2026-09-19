@@ -11,7 +11,7 @@ from typing import Any
 from ..provider_cli import resolve_cli
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 
-from .base import (AgentProvider, EventCallback, ProviderError, UUID4_PATTERN, _claude_token_usage, normalize_effort)
+from .base import (AgentProvider, EventCallback, ProviderError, UUID4_PATTERN, _claude_token_usage, normalize_effort, require_standard_provider)
 
 class ClaudeProvider(AgentProvider):
     name = "claude"
@@ -50,6 +50,8 @@ class ClaudeProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Claude")
         session_id = str(uuid.uuid4())
         with self._state_lock:
             self._new_sessions.add(session_id)
@@ -64,6 +66,8 @@ class ClaudeProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Claude")
         return native_id
 
     def send_message(
@@ -79,9 +83,10 @@ class ClaudeProvider(AgentProvider):
         skills: list[dict[str, Any]] | None = None,
         image_paths: list[str] | None = None,
     ) -> None:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Claude")
         if not self.available():
             raise ProviderError("Claude não foi encontrado no PATH.")
-        options = options or ConversationOptions(model=model, effort=effort)
         with self._state_lock:
             self._workspaces[conversation_id] = Path(workspace).resolve()
         preset = approval_preset(options.approval_profile)

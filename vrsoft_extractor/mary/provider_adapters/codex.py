@@ -12,7 +12,7 @@ from ..chat_tools import mcp_thread_config
 from ..provider_cli import resolve_cli
 from ..models import ConversationOptions, RuntimeEvent, approval_preset
 
-from .base import (AgentProvider, EventCallback, ProviderError, _item_summary, _seconds_from_env, normalize_effort)
+from .base import (AgentProvider, EventCallback, ProviderError, _item_summary, _seconds_from_env, normalize_effort, require_standard_provider)
 
 class CodexProvider(AgentProvider):
     name = "codex"
@@ -662,9 +662,10 @@ class CodexProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Codex")
         self._ensure_started()
         self._load_mcp_server_configs()
-        options = options or ConversationOptions(model=model, effort=effort)
         preset = approval_preset(options.approval_profile)
         params: dict[str, Any] = {
             "model": options.model or model or None,
@@ -704,9 +705,10 @@ class CodexProvider(AgentProvider):
         workspace: Path,
         options: ConversationOptions | None = None,
     ) -> str:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Codex")
         self._ensure_started()
         self._load_mcp_server_configs()
-        options = options or ConversationOptions(model=model, effort=effort)
         preset = approval_preset(options.approval_profile)
         params: dict[str, Any] = {
             "threadId": native_id,
@@ -780,6 +782,8 @@ class CodexProvider(AgentProvider):
         skills: list[dict[str, Any]] | None = None,
         image_paths: list[str] | None = None,
     ) -> None:
+        options = options or ConversationOptions(model=model, effort=effort)
+        require_standard_provider(options, "Codex")
         process = self.process
         reconnecting = bool(
             self._has_started_once
@@ -804,7 +808,6 @@ class CodexProvider(AgentProvider):
                     {"provider": "codex"},
                 )
             )
-        options = options or ConversationOptions(model=model, effort=effort)
         with self._state_lock:
             native_known = native_id in self._native_to_local
         if not native_known:

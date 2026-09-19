@@ -597,7 +597,12 @@ class ConversationsDomain:
             self._model = str(row["model"] or "")
             self._effort = str(row["effort"] or "medium")
             self._service_tier = str(row["service_tier"] or "")
-            self._approval_profile = str(row["approval_profile"] or "full_access")
+            stored_profile = str(row["approval_profile"] or "supervised")
+            self._approval_profile = (
+                stored_profile
+                if stored_profile in {"supervised", "auto_edits", "auto", "full_access"}
+                else "supervised"
+            )
             self._vr_mode = self._normalize_vr_mode(row["vr_mode"]) or (
                 "vr" if bool(row["vr_enabled"]) else "off"
             )
