@@ -3795,7 +3795,13 @@ class ChatBridge(QObject):
             self._ui_execution_ids[cid] = max(eid, self._ui_execution_ids.get(cid, 0))
             kind = record["kind"]
             key = str(payload.get("message_key") or "")
-            if kind in {"turn_completed", "orchestration_cancelled", "error", "turn_recovered"}:
+            if kind in {
+                "turn_completed",
+                "orchestration_completed",
+                "orchestration_cancelled",
+                "error",
+                "turn_recovered",
+            }:
                 terminal_ids.add(eid)
                 # First-terminal-wins (replay): the first recognized terminal
                 # for each execution_id is canonical; later ones never replace it.
@@ -3877,7 +3883,11 @@ class ChatBridge(QObject):
                     terminal_status = ToolStatus.CANCELLED
                 elif terminal_kind == "error":
                     terminal_status = ToolStatus.FAILURE
-                elif terminal_kind in {"turn_completed", "turn_recovered"}:
+                elif terminal_kind in {
+                    "turn_completed",
+                    "orchestration_completed",
+                    "turn_recovered",
+                }:
                     terminal_status = ToolStatus.INTERRUPTED
                 else:
                     cstatus = str((conversation["status"] if conversation else "") or "")

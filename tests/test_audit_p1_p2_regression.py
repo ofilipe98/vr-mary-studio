@@ -1026,5 +1026,94 @@ class AuditRegressionTest(unittest.TestCase):
         self.assertEqual(self._bridge._selected_conversation_id(), chat_fg)
 
 
+    # CORR-TC-TERM-04: orchestration_completed canonical terminal in replay and live.
+    def test_corr_tc_term_04_orchestration_completed_then_error_keeps_interrupted(self):
+        chat_id = self._database.create_conversation("C_TERM04_1", "codex", "m", self._settings.root)
+        tool_events = [{"toolCallId": "t1", "step_type": "commandExecution", "status": "running"}]
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "orchestration_completed", "error",
+        )
+        self.assertEqual(first["t1"]["state"], "interrupted")
+        self.assertEqual(second["t1"]["state"], "interrupted")
+        reloaded = self._reload_two_terminals(
+            tool_events, ["orchestration_completed", "error"],
+        )
+        self.assertEqual(reloaded["t1"]["state"], "interrupted")
+
+    def test_corr_tc_term_04_orchestration_completed_then_cancelled_keeps_interrupted(self):
+        chat_id = self._database.create_conversation("C_TERM04_2", "codex", "m", self._settings.root)
+        tool_events = [{"toolCallId": "t2", "step_type": "commandExecution", "status": "running"}]
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "orchestration_completed", "orchestration_cancelled",
+        )
+        self.assertEqual(first["t2"]["state"], "interrupted")
+        self.assertEqual(second["t2"]["state"], "interrupted")
+        reloaded = self._reload_two_terminals(
+            tool_events, ["orchestration_completed", "orchestration_cancelled"],
+        )
+        self.assertEqual(reloaded["t2"]["state"], "interrupted")
+
+    def test_corr_tc_term_04_error_then_orchestration_completed_keeps_failure(self):
+        chat_id = self._database.create_conversation("C_TERM04_3", "codex", "m", self._settings.root)
+        tool_events = [{"toolCallId": "t3", "step_type": "commandExecution", "status": "running"}]
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "error", "orchestration_completed",
+        )
+        self.assertEqual(first["t3"]["state"], "error")
+        self.assertEqual(second["t3"]["state"], "error")
+        reloaded = self._reload_two_terminals(
+            tool_events, ["error", "orchestration_completed"],
+        )
+        self.assertEqual(reloaded["t3"]["state"], "error")
+
+    def test_corr_tc_term_04_cancelled_then_orchestration_completed_keeps_cancelled(self):
+        chat_id = self._database.create_conversation("C_TERM04_4", "codex", "m", self._settings.root)
+        tool_events = [{"toolCallId": "t4", "step_type": "commandExecution", "status": "running"}]
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "orchestration_cancelled", "orchestration_completed",
+        )
+        self.assertEqual(first["t4"]["state"], "cancelled")
+        self.assertEqual(second["t4"]["state"], "cancelled")
+        reloaded = self._reload_two_terminals(
+            tool_events, ["orchestration_cancelled", "orchestration_completed"],
+        )
+        self.assertEqual(reloaded["t4"]["state"], "cancelled")
+
+    def test_corr_tc_term_04_single_orchestration_completed_reloads_interrupted_and_registers_terminal(self):
+        cid = self._database.create_conversation("C_TERM04_5", "codex", "modelo", self._settings.root)
+        eid = 42
+        tool_payload = {"toolCallId": "t5", "step_type": "commandExecution", "status": "running", "execution_id": eid}
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", tool_payload))
+        self._database.add_event(RuntimeEvent(cid, "orchestration_completed", "", {"execution_id": eid}))
+        self._database.begin_user_turn(cid, "hi")
+        rows = self._database.messages(cid)
+        bridge2_prefs = QSettings(str(Path(self._tmp.name) / f"{cid}_term04.ini"), QSettings.IniFormat)
+        bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
+        self.addCleanup(bridge2.close)
+        bridge2._selected = {"conversationId": cid}
+        ok = bridge2._reload_execution_timeline(cid, rows)
+        self.assertTrue(ok)
+        cards = {}
+        for m in bridge2._messages._items:
+            for t in m.get("activityData", []):
+                cards[t["id"]] = t
+        self.assertEqual(cards["t5"]["state"], "interrupted")
+        self.assertIn((cid, eid), bridge2._ui_terminal_executions)
+
+    def test_corr_tc_term_04_explicit_success_survives_orchestration_completed_and_late_error(self):
+        tool_events = [
+            {"toolCallId": "t6", "step_type": "commandExecution", "status": "running"},
+            {"toolCallId": "t6", "step_type": "commandExecution", "status": "success", "output": "ok"},
+        ]
+        chat_id = self._database.create_conversation("C_TERM04_6", "codex", "m", self._settings.root)
+        first, second, _, _ = self._run_live_two_terminals(
+            chat_id, tool_events, "orchestration_completed", "error",
+        )
+        self.assertEqual(first["t6"]["state"], "completed")
+        self.assertEqual(second["t6"]["state"], "completed")
+        reloaded = self._reload_two_terminals(tool_events, ["orchestration_completed", "error"])
+        self.assertEqual(reloaded["t6"]["state"], "completed")
+
+
 if __name__ == "__main__":
     unittest.main()
