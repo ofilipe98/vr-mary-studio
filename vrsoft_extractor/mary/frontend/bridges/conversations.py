@@ -839,11 +839,11 @@ class ConversationsDomain:
             self.refresh()
             return
         persisted_status = str(row["status"] or "idle")
+        if persisted_status == "running":
+            self._status_text = "Esta conversa ainda está em execução."
+            self.stateChanged.emit()
+            return
         if cid in self._active_turns:
-            if persisted_status == "running":
-                self._status_text = "Esta conversa ainda está em execução."
-                self.stateChanged.emit()
-                return
             # Residual frontend state: the turn already reached a terminal
             # status in the database but the id was never removed locally.
             # Reconcile instead of blocking an unrelated-or-finished delete.

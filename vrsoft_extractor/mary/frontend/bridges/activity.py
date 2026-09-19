@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from ...models import RuntimeEvent
 from ...tool_presentation import DEFAULT_PRESENTATION_REGISTRY
+from ...tool_activity import ToolActivity, ToolLifecycleReducer, ToolStatus, ToolEventKind, sanitize_error_summary
+from ...provider_adapters.tool_normalizer import normalize_generic_event
 from ...task_plan import TaskPlan
 
 from .presentation import (markdown_for_display, short_event_text, segments_for_display)
@@ -72,7 +74,11 @@ class ActivityDomain:
             self._messages.replace([row for row in self._messages._items if row.get("role") != "activity" or row.get("messageKey")])
         self._record_execution_event(event)
         if event.kind == "tool_event" and execution_id:
-            tool_entry = self._extract_tool_entry(event)
+            reducer_key = (event.conversation_id, execution_id)
+            if not hasattr(self, "_tool_reducers"):
+                self._tool_reducers = {}
+            reducer = self._tool_reducers.setdefault(reducer_key, ToolLifecycleReducer())
+            tool_entry = self._extract_tool_entry(event, reducer=reducer)
             if tool_entry is not None:
                 assistant_count = sum(
                     1 for r in self._messages._items
@@ -95,11 +101,9 @@ class ActivityDomain:
                     found = False
                     for idx, entry in enumerate(activity_data):
                         if entry.get("id") == tool_entry["id"]:
-                            updated = dict(entry)
-                            updated.update(tool_entry)
                             if not tool_entry.get("detail") and entry.get("detail"):
-                                updated["detail"] = entry["detail"]
-                            activity_data[idx] = updated
+                                tool_entry["detail"] = entry["detail"]
+                            activity_data[idx] = tool_entry
                             found = True
                             break
                     if not found:
@@ -238,6 +242,15 @@ class ActivityDomain:
             self.stateChanged.emit()
         elif event.kind in {"turn_completed", "orchestration_completed", "error", "orchestration_cancelled"}:
             self._discard_conversation_approvals(event.conversation_id)
+            reducer_key = (event.conversation_id, execution_id)
+            reducer = getattr(self, "_tool_reducers", {}).get(reducer_key)
+            if reducer:
+                terminal_status = (
+                    ToolStatus.FAILURE if event.kind == "error"
+                    else ToolStatus.CANCELLED if event.kind == "orchestration_cancelled"
+                    else ToolStatus.INTERRUPTED
+                )
+                reducer.finalize_turn(terminal_status)
             for row in self._messages._items:
                 if row.get("role") == "activity":
                     activities = [dict(act) for act in row.get("activityData", [])]
@@ -954,33 +967,44 @@ class ActivityDomain:
 
 
     @staticmethod
-    def _extract_tool_entry(event: RuntimeEvent) -> dict[str, Any] | None:
-        payload = dict(event.payload or {})
-        raw_item = payload.get("item") or payload.get("part") or {}
-        if not raw_item and any(key in payload for key in ("name", "tool", "input", "command", "step_type")):
-            raw_item = payload
-        item = raw_item if isinstance(raw_item, dict) else {}
-        item_type = str(item.get("type") or item.get("step_type") or payload.get("step_type") or "tool")
-        if item_type in {"agentMessage", "userMessage", "reasoning", "thinking"}:
+    def _extract_tool_entry(event: RuntimeEvent, reducer: ToolLifecycleReducer | None = None) -> dict[str, Any] | None:
+        norm = normalize_generic_event(event)
+        if norm is None:
             return None
 
-        # Delegate to canonical presentation registry
-        presentation = DEFAULT_PRESENTATION_REGISTRY.format_from_event(event)
+        if reducer is not None:
+            activity = reducer.reduce(norm)
+        else:
+            clean_summary, clean_details = sanitize_error_summary(norm.error or "")
+            activity = ToolActivity(
+                id=norm.tool_id,
+                conversation_id=event.conversation_id,
+                provider=norm.provider,
+                type=norm.type,
+                name=norm.name,
+                title=norm.title,
+                command=norm.command,
+                cwd=norm.cwd,
+                files=list(norm.files),
+                input=norm.input,
+                output=norm.output,
+                error=clean_summary,
+                error_details=clean_details,
+                exit_code=norm.exit_code,
+                status=norm.status or (
+                    ToolStatus.FAILURE if norm.kind == ToolEventKind.FAILED
+                    else (ToolStatus.SUCCESS if norm.kind == ToolEventKind.COMPLETED
+                    else ToolStatus.RUNNING)
+                ),
+                started_at=event.created_at,
+                metadata=dict(event.payload),
+            )
+        presentation = DEFAULT_PRESENTATION_REGISTRY.format(activity)
         entry = presentation.to_dict()
-
-        identity = str(
-            item.get("id")
-            or payload.get("itemId")
-            or payload.get("toolCallId")
-            or payload.get("callId")
-            or payload.get("runtime_event_id")
-            or payload.get("request_id")
-            or entry.get("id")
-            or "tool"
-        )
-        entry["id"] = identity
-        if not entry.get("text"):
-            entry["text"] = short_event_text(event.text or item.get("name") or item.get("tool") or item_type)
+        entry["id"] = activity.id
+        if activity.output is not None:
+            entry["output"] = activity.output
+        entry["state"] = presentation.state
         return entry
 
     @staticmethod

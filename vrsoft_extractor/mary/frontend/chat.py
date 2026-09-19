@@ -32,6 +32,7 @@ from ..db import MaryDatabase
 from ..models import RuntimeEvent
 from ..task_plan import TaskPlan, derive_task_progress
 from ..orchestrator import ChatOrchestrator
+from ..tool_activity import ToolLifecycleReducer
 from ..workspace import is_managed_conversation_workspace
 
 LOGGER = logging.getLogger(__name__)
@@ -2839,11 +2840,14 @@ class ChatBridge(QObject):
             if item["path"] in reference_paths
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
-        # The user confirmed the send: the text is no longer an unsent draft,
-        # even if the provider fails afterwards. Clearing here (instead of
-        # after a successful send) keeps a failed conversation out of the
-        # draft/editing state so it stays deletable via trash. A genuinely
-        # unsent draft (never confirmed) is untouched.
+        # Store draft snapshot in case send fails before persistence
+        draft_snapshot = self._draft_records.get(conversation_id) or {
+            "text": content,
+            "attachments": [dict(item) for item in self._attachments],
+            "savedAt": datetime.now().astimezone().isoformat(),
+            "vr_mode": self._vr_mode,
+        }
+        # Iniciar handoff: temporarily remove draft while turn is being initiated
         if conversation_id in self._draft_records:
             self._draft_records.pop(conversation_id, None)
             self._persist_draft_records()
@@ -2908,6 +2912,8 @@ class ChatBridge(QObject):
                 ),
                 **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
             )
+            self._draft_records.pop(conversation_id, None)
+            self._persist_draft_records()
             self._attachments = []
             self._selected_extension_keys = set()
             self.refresh()
@@ -2916,6 +2922,33 @@ class ChatBridge(QObject):
             self._active_turns.discard(conversation_id)
             self._active_turn_started_epochs.pop(conversation_id, None)
             self._sync_selected_turn_state()
+
+            persisted = False
+            if conversation_id:
+                try:
+                    db_messages = self._database.messages(conversation_id)
+                    persisted = any(
+                        dict(m).get("role") == "user" and dict(m).get("content") == content
+                        for m in db_messages
+                    )
+                except Exception:
+                    persisted = False
+
+            if not persisted:
+                # Falha antes de persistir a mensagem: restaurar draft e composer
+                self._draft_records[conversation_id] = draft_snapshot
+                self._persist_draft_records()
+                if conversation_id == self._selected_conversation_id():
+                    self.draftRestored.emit(content)
+            else:
+                # Falha após persistência: manter remoção do draft.
+                # Conversa fica com status terminal 'error' e deletável via trash.
+                self._draft_records.pop(conversation_id, None)
+                self._persist_draft_records()
+                row = self._database.get_conversation(conversation_id)
+                if row and str(row["status"] or "") == "running":
+                    self._database.update_conversation(conversation_id, status="error")
+
             self._status_text = f"Falha: {exc}"
             self.refresh()
             self.stateChanged.emit()
@@ -3719,7 +3752,13 @@ class ChatBridge(QObject):
                 terminal_ids.add(eid)
             if kind == "tool_event":
                 payload["runtime_event_id"] = record["id"]
-                tool_entry = ActivityDomain._extract_tool_entry(RuntimeEvent(cid, kind, record["text"], payload, record["created_at"]))
+                if not hasattr(self, "_timeline_reducers"):
+                    self._timeline_reducers = {}
+                tool_reducer = self._timeline_reducers.setdefault((cid, eid), ToolLifecycleReducer())
+                tool_entry = ActivityDomain._extract_tool_entry(
+                    RuntimeEvent(cid, kind, record["text"], payload, record["created_at"]),
+                    reducer=tool_reducer,
+                )
                 if tool_entry:
                     count = assistant_counts.get(eid, 0)
                     act_key = f"activity:{eid}:{count}"
@@ -3743,18 +3782,10 @@ class ChatBridge(QObject):
                         group[act_key] = activity
                     existing_tool = next((t for t in activity["activityData"] if t.get("id") == tool_entry["id"]), None)
                     if existing_tool is not None:
-                        old_state = existing_tool.get("state")
-                        if old_state in {"completed", "error", "failed", "cancelled", "interrupted"}:
-                            if tool_entry.get("state") in {"running", "pending", "waiting_approval"}:
-                                tool_entry["state"] = old_state
-                                if "badgeText" in existing_tool:
-                                    tool_entry["badgeText"] = existing_tool["badgeText"]
-                                if "badgeVariant" in existing_tool:
-                                    tool_entry["badgeVariant"] = existing_tool["badgeVariant"]
-                        detail = existing_tool.get("detail", "")
-                        existing_tool.update(tool_entry)
-                        if not tool_entry.get("detail"):
-                            existing_tool["detail"] = detail
+                        idx = activity["activityData"].index(existing_tool)
+                        if not tool_entry.get("detail") and existing_tool.get("detail"):
+                            tool_entry["detail"] = existing_tool["detail"]
+                        activity["activityData"][idx] = tool_entry
                     else:
                         activity["activityData"].append(tool_entry)
             elif kind in {"assistant_started", "assistant_delta", "assistant_completed"} and key:

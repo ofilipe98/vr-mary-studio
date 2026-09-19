@@ -448,12 +448,18 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
         or bool(item.get("error"))
     )
 
+    delta = item.get("delta") or payload.get("delta")
+    has_delta = bool(delta)
+
     if is_failed:
         kind = ToolEventKind.FAILED
         status = ToolStatus.FAILURE
     elif is_complete:
         kind = ToolEventKind.COMPLETED
         status = ToolStatus.SUCCESS
+    elif has_delta or lifecycle.endswith("updated") or status_raw == "updated":
+        kind = ToolEventKind.UPDATED
+        status = ToolStatus.RUNNING
     else:
         kind = ToolEventKind.STARTED
         status = ToolStatus.RUNNING
@@ -482,6 +488,7 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
         exit_code=exit_code,
         input=input_data,
         output=output,
+        delta=delta,
         error=error,
         metadata=payload,
     )

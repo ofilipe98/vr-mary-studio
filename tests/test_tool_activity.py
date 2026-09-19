@@ -418,3 +418,30 @@ def test_sanitize_title_fallbacks():
     assert sanitize_title("[]", "", ToolType.COMMAND_EXECUTION, ToolStatus.FAILURE) == "Comando falhou"
     assert sanitize_title("", "", ToolType.UNKNOWN, ToolStatus.FAILURE) == "Ferramenta falhou"
     assert sanitize_title("Valid Title", "", ToolType.COMMAND_EXECUTION, ToolStatus.RUNNING) == "Valid Title"
+
+
+def test_reducer_serialization_roundtrip_preserves_processed_digests():
+    """Roundtrip serialization test:
+    Process delta event without event_id, serialize via to_dict(),
+    deserialize via from_dict(), replay the exact same event without event_id,
+    and assert output is not duplicated."""
+    reducer = ToolLifecycleReducer()
+    reducer.reduce(NormalizedToolEvent(
+        tool_id="call_roundtrip",
+        kind=ToolEventKind.STARTED,
+    ))
+    delta_event = NormalizedToolEvent(
+        tool_id="call_roundtrip",
+        kind=ToolEventKind.UPDATED,
+        delta="processing data... ",
+    )
+    reducer.reduce(delta_event)
+    assert reducer.get_tool("call_roundtrip").output == "processing data... "
+
+    serialized = reducer.to_dict()
+    assert "processed_digests" in serialized
+    assert len(serialized["processed_digests"]) > 0
+
+    restored = ToolLifecycleReducer.from_dict(serialized)
+    restored.reduce(delta_event)
+    assert restored.get_tool("call_roundtrip").output == "processing data... "

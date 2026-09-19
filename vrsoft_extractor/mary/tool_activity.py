@@ -161,6 +161,18 @@ def sanitize_title(
         }
         return fallback_errors.get(tool_type, "Ferramenta falhou")
 
+    if status == ToolStatus.WAITING_APPROVAL:
+        fallback_approvals = {
+            ToolType.COMMAND_EXECUTION: "Aprovação pendente: comando",
+            ToolType.FILE_READ: "Aprovação pendente: ler arquivo",
+            ToolType.FILE_CHANGE: "Aprovação pendente: alterar arquivo",
+            ToolType.WEB_SEARCH: "Aprovação pendente: pesquisa web",
+            ToolType.MCP_TOOL_CALL: "Aprovação pendente: ferramenta MCP",
+            ToolType.BROWSER: "Aprovação pendente: navegação",
+            ToolType.SUBAGENT: "Aprovação pendente: subagente",
+        }
+        return fallback_approvals.get(tool_type, "Aprovação pendente")
+
     fallback_names = {
         ToolType.COMMAND_EXECUTION: "Executar comando",
         ToolType.FILE_READ: "Ler arquivo",
@@ -221,6 +233,51 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
             return candidate[:120], text
 
     return first_line[:120], text
+
+
+def coalesce_output(curr_output: Any, new_output: Any = None, delta: Any = None) -> Any:
+    """Coalesce incoming output chunk or snapshot with current output.
+
+    Guarantees strict parity with T3Code streaming & coalescing:
+    - Delta stream ("A", "B", "C") -> "ABC"
+    - Snapshot stream ("A", "AB", "ABC") -> "ABC"
+    - Duplicate snapshots ("A", "A", "AB") -> "AB"
+    - Erroneous cumulative snapshot in delta field -> does not repeat ("ABC", never "AABABC")
+    - Never generates interleaved duplicates
+    - Handles string, dict/list (MCP/JSON payloads), and None seamlessly
+    """
+    if delta is not None and delta != "":
+        delta_str = str(delta)
+        if curr_output is None or curr_output == "":
+            return delta_str
+        curr_str = str(curr_output)
+        if delta_str == curr_str:
+            return curr_str
+        if delta_str.startswith(curr_str):
+            # Cumulative buffer sent via delta field
+            return delta_str
+        if curr_str.startswith(delta_str) and len(curr_str) >= len(delta_str):
+            # Stale or duplicate delta chunk
+            return curr_str
+        return curr_str + delta_str
+
+    if new_output is not None:
+        if curr_output is None or curr_output == "":
+            return new_output
+        if curr_output == new_output:
+            return curr_output
+        if isinstance(curr_output, str) and isinstance(new_output, str):
+            if new_output.startswith(curr_output):
+                # Progressive cumulative snapshot
+                return new_output
+            if curr_output.startswith(new_output):
+                # Out-of-order older snapshot
+                return curr_output
+            # Disjoint chunk sent via output field instead of delta
+            return curr_output + new_output
+        return new_output
+
+    return curr_output
 
 
 @dataclass
@@ -395,18 +452,26 @@ class ToolLifecycleReducer:
                 )
                 return tool
 
-            # 4. Terminal State Invariant
-            # Once in a terminal status, tool cannot revert to non-terminal
+            # 4. Monotonic Terminal State Invariant
+            # Once in a terminal status, tool cannot regress or have its terminal status mutated
             if tool.is_terminal():
-                if event.kind in {ToolEventKind.STARTED, ToolEventKind.UPDATED} or (
-                    event.status is not None and not event.status.is_terminal
-                ):
-                    logger.warning(
-                        "Ignoring non-terminal transition for tool %s in terminal status %s",
-                        tool.id,
-                        tool.status,
-                    )
-                    return tool
+                # Enrich metadata, error details, output or exit code if missing, but NEVER mutate terminal status
+                if event.error_details and not tool.error_details:
+                    tool.error_details = event.error_details
+                if event.output is not None and not tool.output:
+                    tool.output = event.output
+                if event.exit_code is not None and tool.exit_code is None:
+                    tool.exit_code = event.exit_code
+                if event.event_id:
+                    self._processed_event_ids.add(event.event_id)
+                self._processed_digests.add(digest)
+                logger.info(
+                    "Ignored event %s for tool %s already in terminal status %s",
+                    event.kind,
+                    tool.id,
+                    tool.status,
+                )
+                return tool
 
         # 5. Metadata and identity enrichment
         if event.provider and not tool.provider:
@@ -438,33 +503,8 @@ class ToolLifecycleReducer:
         if event.input_preview and not tool.input_preview:
             tool.input_preview = event.input_preview
 
-        # 7. Output merging: Handle snapshot vs delta vs repeated
-        if event.delta:
-            delta_str = str(event.delta)
-            if tool.output is None:
-                tool.output = delta_str
-            else:
-                tool.output = str(tool.output) + delta_str
-        elif event.output is not None:
-            new_output = event.output
-            curr_output = tool.output
-            if curr_output is None or curr_output == "":
-                tool.output = new_output
-            elif curr_output == new_output:
-                # Repeated payload / snapshot identical: do nothing
-                pass
-            elif isinstance(curr_output, str) and isinstance(new_output, str):
-                if new_output.startswith(curr_output):
-                    # Cumulative snapshot! Replace with full cumulative output
-                    tool.output = new_output
-                elif curr_output.startswith(new_output):
-                    # Older partial snapshot received late: keep longer curr_output
-                    pass
-                else:
-                    # Disjoint chunks streamed via output property: append
-                    tool.output = curr_output + new_output
-            else:
-                tool.output = new_output
+        # 7. Output merging: Handle snapshot vs delta vs repeated via coalesce_output
+        tool.output = coalesce_output(tool.output, new_output=event.output, delta=event.delta)
 
         if event.output_preview:
             tool.output_preview = event.output_preview
@@ -495,16 +535,20 @@ class ToolLifecycleReducer:
                         tool.started_at = event.timestamp or utc_now()
                 elif event.approved is False:
                     new_status = ToolStatus.CANCELLED
+                    tool.metadata["denied"] = True
                     tool.finished_at = event.timestamp or utc_now()
         elif event.kind == ToolEventKind.COMPLETED:
-            new_status = ToolStatus.SUCCESS
-            tool.finished_at = event.timestamp or utc_now()
+            if not tool.is_terminal():
+                new_status = ToolStatus.SUCCESS
+                tool.finished_at = event.timestamp or utc_now()
         elif event.kind == ToolEventKind.FAILED:
-            new_status = ToolStatus.FAILURE
-            tool.finished_at = event.timestamp or utc_now()
+            if not tool.is_terminal():
+                new_status = ToolStatus.FAILURE
+                tool.finished_at = event.timestamp or utc_now()
         elif event.kind == ToolEventKind.CANCELLED:
-            new_status = ToolStatus.CANCELLED
-            tool.finished_at = event.timestamp or utc_now()
+            if not tool.is_terminal():
+                new_status = ToolStatus.CANCELLED
+                tool.finished_at = event.timestamp or utc_now()
         elif event.kind == ToolEventKind.UPDATED:
             if event.status is not None and not tool.is_terminal():
                 new_status = event.status
@@ -517,7 +561,7 @@ class ToolLifecycleReducer:
         tool.status = new_status
         tool.updated_at = event.timestamp or utc_now()
 
-        # 10. Error handling and sanitization (Section 11 & 41)
+        # 10. Error handling and sanitization (Section 14 & 15)
         raw_error = event.error or tool.error
         raw_error_details = event.error_details or tool.error_details
         if raw_error:
@@ -582,7 +626,7 @@ class ToolLifecycleReducer:
     ) -> list[ToolActivity]:
         """Ensure no tool remains in 'running' or 'pending' when a turn finishes without explicit tool event.
         
-        Prevents blindly marking running tools as success (Section 29).
+        Prevents blindly marking running tools as success (Section 5 & 29).
         """
         finalized: list[ToolActivity] = []
         end_time = finished_at or utc_now()
@@ -591,9 +635,16 @@ class ToolLifecycleReducer:
                 tool.status = turn_terminal_status
                 tool.finished_at = end_time
                 tool.updated_at = end_time
+                if turn_terminal_status == ToolStatus.INTERRUPTED and not tool.error:
+                    tool.error = "Interrompido antes da conclusão"
+                elif turn_terminal_status == ToolStatus.CANCELLED and not tool.error:
+                    tool.error = "Cancelado pelo usuário"
+                tool.title = sanitize_title(
+                    tool.title, tool.name, tool.type, tool.status, error=tool.error
+                )
                 finalized.append(tool)
                 logger.warning(
-                    "Tool %s was still running at turn completion; marked as %s",
+                    "Tool %s was still active at turn completion; marked as %s",
                     tool.id,
                     turn_terminal_status.value,
                 )
@@ -603,6 +654,7 @@ class ToolLifecycleReducer:
         return {
             "tools": [self._tools[tid].to_dict() for tid in self._tool_order if tid in self._tools],
             "processed_event_ids": list(self._processed_event_ids),
+            "processed_digests": list(self._processed_digests),
         }
 
     @classmethod
@@ -613,4 +665,5 @@ class ToolLifecycleReducer:
             reducer._tools[tool.id] = tool
             reducer._tool_order.append(tool.id)
         reducer._processed_event_ids = set(data.get("processed_event_ids", []))
+        reducer._processed_digests = set(data.get("processed_digests", []))
         return reducer

@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass, field
 import json
 import re
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from .models import RuntimeEvent
 from .provider_adapters.tool_normalizer import normalize_generic_event
@@ -166,7 +167,7 @@ class ToolFormatter(ABC):
 
 
 def _map_state(status: ToolStatus) -> str:
-    if status == ToolStatus.FAILURE or status == ToolStatus.TIMED_OUT:
+    if status in (ToolStatus.FAILURE, ToolStatus.TIMED_OUT):
         return "error"
     if status == ToolStatus.SUCCESS:
         return "completed"
@@ -206,14 +207,25 @@ class CommandExecutionFormatter(ToolFormatter):
                 title = f"Executado: {cmd[:40]}"
             elif activity.status == ToolStatus.RUNNING:
                 title = f"Executando: {cmd[:40]}"
+            elif activity.status == ToolStatus.WAITING_APPROVAL:
+                title = f"Aprovação pendente: {cmd[:40]}"
 
-        # Subtitle is full command or cwd
+        if state == "waiting_approval":
+            title = f"Aprovação pendente: {cmd[:40]}" if cmd else "Aprovação pendente: comando"
+        elif activity.metadata.get("denied"):
+            title = f"Comando negado: {cmd[:40]}" if cmd else "Comando negado"
+
+        # Subtitle is full command, cwd, or error summary if failed
         subtitle = cmd if len(cmd) > 40 else (activity.cwd or "")
-        if activity.exit_code is not None and activity.exit_code != 0:
+        if state == "error" and error_summary:
+            subtitle = error_summary
+        elif activity.exit_code is not None and activity.exit_code != 0:
             if not error_summary or error_summary == "Erro":
                 error_summary = f"Código de saída: {activity.exit_code}"
+            if state == "error":
+                subtitle = error_summary
 
-        # Combine output and error for detail pane
+        # Combine output and error for detail pane (preserve full content)
         detail_lines: list[str] = []
         if cmd:
             detail_lines.append(f"$ {cmd}")
@@ -226,7 +238,7 @@ class CommandExecutionFormatter(ToolFormatter):
         elif error_summary and error_summary not in detail_lines:
             detail_lines.append(error_summary)
 
-        detail = "\n".join(detail_lines)[:12000]
+        detail = "\n".join(detail_lines)
 
         icon = "terminalPrompt"
         if state == "error":
@@ -240,7 +252,11 @@ class CommandExecutionFormatter(ToolFormatter):
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
-            badge_text = "cancelado"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "executando"
@@ -304,11 +320,15 @@ class FileChangeFormatter(ToolFormatter):
             diff_text = str(activity.output)
 
         title = sanitize_title(activity.title, activity.name, ToolType.FILE_CHANGE, activity.status, error=activity.error)
-        if title in {"Alterar arquivo", "Erro ao alterar arquivo"}:
-            if file_count == 1:
-                title = f"Alterar {files[0]}"
-            elif file_count > 1:
-                title = f"{file_count} arquivos alterados"
+        if title in {"Alterar arquivo", "Erro ao alterar arquivo"} or not activity.title:
+            if state == "waiting_approval":
+                title = f"Aprovação pendente: {file_count} arquivos" if file_count > 1 else (f"Aprovar alteração: {files[0]}" if file_count == 1 else "Aprovação pendente: alterar arquivo")
+            elif state == "completed":
+                title = f"Alterou {files[0]}" if file_count == 1 else (f"Alterou {file_count} arquivos" if file_count > 1 else "Alterou arquivo")
+            elif state == "error":
+                title = f"Erro ao alterar {files[0]}" if file_count == 1 else (f"Erro ao alterar {file_count} arquivos" if file_count > 1 else "Erro ao alterar arquivo")
+            else:
+                title = f"Alterando {files[0]}" if file_count == 1 else (f"Alterando {file_count} arquivos" if file_count > 1 else "Alterando arquivo")
 
         error_summary, error_details = _extract_errors(activity)
 
@@ -320,7 +340,7 @@ class FileChangeFormatter(ToolFormatter):
         if error_details:
             detail_lines.append("\n" + error_details)
 
-        detail = "\n".join(detail_lines)[:12000]
+        detail = "\n".join(detail_lines)
 
         icon = "fileDiff"
         if state == "error":
@@ -330,6 +350,14 @@ class FileChangeFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = f"+{additions} -{deletions}" if (additions or deletions) else "modificado"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "alterando"
@@ -343,7 +371,7 @@ class FileChangeFormatter(ToolFormatter):
             item_type="fileChange",
             state=state,
             text=title,
-            subtitle=folder_summary,
+            subtitle=error_summary if (state == "error" and error_summary) else folder_summary,
             detail=detail,
             files=files,
             file_count=file_count,
@@ -372,13 +400,23 @@ class FileReadFormatter(ToolFormatter):
         state = _map_state(activity.status)
         files = list(activity.files)
         path = files[0] if files else (activity.name or "")
-        if path:
-            title = f"Erro ao ler {path}" if activity.status == ToolStatus.FAILURE else f"Ler {path}"
+        file_count = len(files)
+
+        if state == "waiting_approval":
+            title = f"Aprovação pendente: ler {path}" if path else "Aprovação pendente: ler arquivo"
+        elif state == "error":
+            title = f"Erro ao ler {path}" if path else "Erro ao ler arquivo"
+        elif file_count > 1:
+            title = f"Leu {file_count} arquivos"
+        elif path:
+            title = f"Ler {path}"
         else:
-            title = sanitize_title(activity.title, activity.name, ToolType.FILE_READ, activity.status, error=activity.error)
+            title = "Ler arquivo"
+
+        title = sanitize_title(title, activity.name, ToolType.FILE_READ, activity.status, error=activity.error)
 
         error_summary, error_details = _extract_errors(activity)
-        detail = str(activity.output or activity.error or "")[:8000]
+        detail = str(activity.output or activity.error or "")
 
         icon = "document"
         if state == "error":
@@ -388,6 +426,14 @@ class FileReadFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "lido"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "lendo"
@@ -401,10 +447,10 @@ class FileReadFormatter(ToolFormatter):
             item_type="fileRead",
             state=state,
             text=title,
-            subtitle=path,
+            subtitle=error_summary if (state == "error" and error_summary) else path,
             detail=detail,
             files=files,
-            file_count=len(files),
+            file_count=file_count,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
             error_details=error_details,
@@ -429,11 +475,18 @@ class WebSearchFormatter(ToolFormatter):
         elif isinstance(activity.input, str):
             query = activity.input
 
-        title = sanitize_title(activity.title, activity.name, ToolType.WEB_SEARCH, activity.status, error=activity.error)
-        if title in {"Pesquisa na web", "Pesquisa na web falhou"} and query:
-            title = f"Pesquisa: {query[:40]}"
+        if state == "waiting_approval":
+            title = f'Aprovação pendente: "{query[:40]}"' if query else "Aprovação pendente: pesquisa web"
+        elif state == "completed":
+            title = f'Pesquisou "{query[:40]}"' if query else "Pesquisou na web"
+        elif state == "error":
+            title = f'Erro ao pesquisar "{query[:40]}"' if query else "Pesquisa na web falhou"
+        else:
+            title = f'Pesquisando "{query[:40]}"' if query else "Pesquisando na web"
+
+        title = sanitize_title(title, activity.name, ToolType.WEB_SEARCH, activity.status, error=activity.error)
         error_summary, error_details = _extract_errors(activity)
-        detail = str(activity.output or activity.error or "")[:8000]
+        detail = str(activity.output or activity.error or "")
 
         icon = "search"
         if state == "error":
@@ -443,6 +496,14 @@ class WebSearchFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "encontrado"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "pesquisando"
@@ -456,7 +517,7 @@ class WebSearchFormatter(ToolFormatter):
             item_type="webSearch",
             state=state,
             text=title,
-            subtitle=query,
+            subtitle=error_summary if (state == "error" and error_summary) else query,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
@@ -480,12 +541,23 @@ class McpToolCallFormatter(ToolFormatter):
         tool_name = str(activity.name or activity.metadata.get("tool") or "")
         server_tool = f"{server}/{tool_name}" if server else tool_name
 
-        title = sanitize_title(activity.title, activity.name, ToolType.MCP_TOOL_CALL, activity.status, error=activity.error)
-        if title in {"Ferramenta MCP", "Chamada MCP falhou"} and server_tool:
-            title = f"MCP: {server_tool}"
+        if state == "waiting_approval":
+            title = f"Aprovação pendente: {server_tool}" if server_tool else "Aprovação pendente: ferramenta MCP"
+        elif state == "completed":
+            title = f"Executou {server_tool}" if server_tool else "Executou ferramenta MCP"
+        elif state == "error":
+            title = f"Erro em {server_tool}" if server_tool else "Chamada MCP falhou"
+        else:
+            title = f"Executando {server_tool}" if server_tool else "Chamando ferramenta MCP"
+
+        title = sanitize_title(title, activity.name, ToolType.MCP_TOOL_CALL, activity.status, error=activity.error)
         error_summary, error_details = _extract_errors(activity)
 
         detail_lines: list[str] = []
+        if server:
+            detail_lines.append(f"Servidor: {server}")
+        if tool_name:
+            detail_lines.append(f"Ferramenta: {tool_name}")
         if activity.input:
             try:
                 args_str = (
@@ -501,7 +573,7 @@ class McpToolCallFormatter(ToolFormatter):
         if error_details:
             detail_lines.append(f"\nErro:\n{error_details}")
 
-        detail = "\n".join(detail_lines)[:10000]
+        detail = "\n".join(detail_lines)
 
         icon = "plug"
         if state == "error":
@@ -511,6 +583,14 @@ class McpToolCallFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "concluído"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "chamando"
@@ -524,7 +604,7 @@ class McpToolCallFormatter(ToolFormatter):
             item_type="mcpToolCall",
             state=state,
             text=title,
-            subtitle=server_tool,
+            subtitle=error_summary if (state == "error" and error_summary) else server_tool,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
@@ -544,10 +624,34 @@ class BrowserFormatter(ToolFormatter):
 
     def format(self, activity: ToolActivity) -> ToolPresentation:
         state = _map_state(activity.status)
-        action = str(activity.name or "browser")
-        title = f"Navegador: {action}"
+        raw_action = str(activity.name or "browser")
+
+        # Sanitize long URL in title by extracting host/domain
+        clean_action = raw_action
+        url = str(activity.metadata.get("url") or (activity.input if isinstance(activity.input, str) else ""))
+        if not url and raw_action.startswith(("http://", "https://")):
+            url = raw_action
+        if url:
+            try:
+                parsed = urlparse(url)
+                host = parsed.netloc or parsed.path
+                if host:
+                    clean_action = host
+            except Exception:
+                clean_action = url[:40]
+
+        if state == "waiting_approval":
+            title = f"Aprovação pendente: {clean_action}"
+        elif state == "completed":
+            title = f"Navegou para {clean_action}" if clean_action != "browser" else "Navegação concluída"
+        elif state == "error":
+            title = f"Erro ao navegar: {clean_action}"
+        else:
+            title = f"Navegando: {clean_action}"
+
+        title = sanitize_title(title, activity.name, ToolType.BROWSER, activity.status, error=activity.error)
         error_summary, error_details = _extract_errors(activity)
-        detail = str(activity.output or activity.input or "")[:8000]
+        detail = str(activity.output or activity.input or "")
 
         icon = "globe"
         if state == "error":
@@ -557,6 +661,14 @@ class BrowserFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "pronto"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "navegando"
@@ -570,7 +682,7 @@ class BrowserFormatter(ToolFormatter):
             item_type="browser",
             state=state,
             text=title,
-            subtitle=action,
+            subtitle=error_summary if (state == "error" and error_summary) else clean_action,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
@@ -591,9 +703,19 @@ class SubagentFormatter(ToolFormatter):
     def format(self, activity: ToolActivity) -> ToolPresentation:
         state = _map_state(activity.status)
         agent_name = str(activity.name or "subagente")
-        title = f"Subagente: {agent_name}"
+
+        if state == "waiting_approval":
+            title = f"Aprovação pendente: subagente {agent_name}"
+        elif state == "completed":
+            title = f"Subagente finalizado: {agent_name}"
+        elif state == "error":
+            title = f"Subagente falhou: {agent_name}"
+        else:
+            title = f"Subagente: {agent_name}"
+
+        title = sanitize_title(title, activity.name, ToolType.SUBAGENT, activity.status, error=activity.error)
         error_summary, error_details = _extract_errors(activity)
-        detail = str(activity.output or activity.input or "")[:8000]
+        detail = str(activity.output or activity.input or "")
 
         icon = "robot"
         if state == "error":
@@ -603,6 +725,14 @@ class SubagentFormatter(ToolFormatter):
         elif state == "completed":
             badge_variant = "success"
             badge_text = "concluído"
+        elif state == "cancelled":
+            icon = "close"
+            badge_variant = "warning"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "executando"
@@ -616,7 +746,7 @@ class SubagentFormatter(ToolFormatter):
             item_type="subagent",
             state=state,
             text=title,
-            subtitle=agent_name,
+            subtitle=error_summary if (state == "error" and error_summary) else agent_name,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
@@ -645,7 +775,7 @@ class GenericFormatter(ToolFormatter):
             or activity.input
             or activity.error
             or ""
-        )[:8000]
+        )
 
         icon = "hammer"
         if state == "error":
@@ -658,7 +788,11 @@ class GenericFormatter(ToolFormatter):
         elif state == "cancelled":
             icon = "close"
             badge_variant = "warning"
-            badge_text = "cancelado"
+            badge_text = "negado" if activity.metadata.get("denied") else "cancelado"
+        elif state == "waiting_approval":
+            icon = "alert"
+            badge_variant = "warning"
+            badge_text = "aguardando aprovação"
         else:
             badge_variant = "info"
             badge_text = "executando"
@@ -672,7 +806,7 @@ class GenericFormatter(ToolFormatter):
             item_type=activity.type.value,
             state=state,
             text=title,
-            subtitle=name,
+            subtitle=error_summary if (state == "error" and error_summary) else name,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
@@ -787,6 +921,7 @@ class ToolPresentationRegistry:
         running_count = sum(1 for item in items if item.state == "running")
         failed_count = sum(1 for item in items if item.state == "error")
         cancelled_count = sum(1 for item in items if item.state == "cancelled")
+        waiting_count = sum(1 for item in items if item.state == "waiting_approval")
 
         # Group status resolution
         if failed_count > 0:
@@ -799,6 +934,11 @@ class ToolPresentationRegistry:
             group_state = "running"
             badge_text = f"{running_count} rodando"
             badge_variant = "info"
+        elif waiting_count > 0:
+            group_status = ToolStatus.WAITING_APPROVAL
+            group_state = "waiting_approval"
+            badge_text = f"{waiting_count} aprovações" if waiting_count > 1 else "aguardando aprovação"
+            badge_variant = "warning"
         elif cancelled_count > 0:
             group_status = ToolStatus.CANCELLED
             group_state = "cancelled"
@@ -842,6 +982,60 @@ class ToolPresentationRegistry:
             failed_count=failed_count,
             items=items,
         )
+
+    def group_consecutive_tools(
+        self,
+        activities: list[ToolActivity],
+        threshold: int = 3,
+    ) -> list[ToolPresentation | ToolGroupPresentation]:
+        """Intelligently group consecutive completed repetitive actions.
+        
+        Guarantees:
+        - NEVER hides running, failure, or waiting_approval inside a group.
+        - Long-running tools (duration >= 10s) are never collapsed into a group.
+        - Preserves temporal order of distinct tool sequences.
+        """
+        if not activities:
+            return []
+
+        results: list[ToolPresentation | ToolGroupPresentation] = []
+        cluster: list[ToolActivity] = []
+        cluster_type: ToolType | None = None
+
+        def flush_cluster():
+            nonlocal cluster, cluster_type
+            if not cluster:
+                return
+            if len(cluster) >= threshold:
+                gid = f"grp_{cluster[0].id}"
+                results.append(self.group_activities(cluster, group_id=gid))
+            else:
+                for a in cluster:
+                    results.append(self.format(a))
+            cluster = []
+            cluster_type = None
+
+        for act in activities:
+            is_groupable = (
+                act.status == ToolStatus.SUCCESS
+                and (act.duration_ms() or 0) < 10000
+                and act.type in {ToolType.FILE_READ, ToolType.COMMAND_EXECUTION, ToolType.WEB_SEARCH}
+            )
+
+            if is_groupable:
+                if cluster_type is None or cluster_type == act.type:
+                    cluster.append(act)
+                    cluster_type = act.type
+                else:
+                    flush_cluster()
+                    cluster.append(act)
+                    cluster_type = act.type
+            else:
+                flush_cluster()
+                results.append(self.format(act))
+
+        flush_cluster()
+        return results
 
 
 DEFAULT_PRESENTATION_REGISTRY = ToolPresentationRegistry()

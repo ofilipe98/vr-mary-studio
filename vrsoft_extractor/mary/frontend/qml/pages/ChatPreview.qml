@@ -2998,7 +2998,6 @@ Item {
 
     function openConversationMenu(conversationId, positionX, positionY) {
         root.conversationMenuConversationId = String(conversationId || "")
-        root.activateConversation(conversationId)
         conversationContextMenu.x = Math.max(4,
             Math.min(root.width - conversationContextMenu.width - 4, positionX))
         conversationContextMenu.y = Math.max(4,
@@ -3123,6 +3122,7 @@ Item {
                     onClicked: conversationDeleteDialog.close()
                 }
                 VrButton {
+                    objectName: "confirmDeleteButton"
                     text: root.chatBridge.conversationDeleteRunning ? "Excluindo…" : "Excluir"
                     variant: "danger"
                     enabled: !root.chatBridge.conversationDeleteRunning
