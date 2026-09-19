@@ -48,7 +48,7 @@ def find_items(item, name):
     return result
 
 
-def open_chat(tmp_path, messages):
+def open_chat(tmp_path, messages, reduce_motion=True):
     app = QApplication.instance() or QApplication([])
     settings = MarySettings(
         app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy"
@@ -61,7 +61,7 @@ def open_chat(tmp_path, messages):
     for role, content in messages:
         db.add_message(cid, role, content)
     frontend = FrontendBridge(settings, prefs, initial_page="Chat VR")
-    frontend.setReduceMotion(True)
+    frontend.setReduceMotion(reduce_motion)
     chat = ChatBridge(settings, db, prefs)
     studio = StudioBridge(settings, db, prefs)
     return app, settings, frontend, chat, studio
@@ -345,7 +345,7 @@ def test_user_content_column_has_no_block_spacing(tmp_path):
         chat.close()
 
 
-def open_scrolling_chat(tmp_path):
+def open_scrolling_chat(tmp_path, reduce_motion=True):
     """Target long message first, then tall trailing fillers."""
     return open_chat(
         tmp_path,
@@ -354,7 +354,18 @@ def open_scrolling_chat(tmp_path):
             ("assistant", FILLER_LONG),
             ("assistant", FILLER_LONG),
         ],
+        reduce_motion=reduce_motion,
     )
+
+
+def get_message_item(window, index):
+    column = window.findChild(QObject, "messageColumn")
+    if not column:
+        return None
+    for child in column.childItems():
+        if hasattr(child, "property") and child.property("index") == index:
+            return child
+    return None
 
 
 def target_parts(window):
@@ -396,6 +407,12 @@ def test_expand_message_above_viewport_preserves_reading_position(tmp_path):
             timeline.setProperty("contentY", anchor)
             QTest.qWait(100)
             assert abs(float(timeline.property("contentY")) - anchor) < 1
+
+            # Test D: Explicit geometric validation that target message is completely above viewport
+            first_msg = get_message_item(window, 0)
+            assert first_msg is not None
+            assert float(first_msg.property("y") + first_msg.property("height")) <= float(timeline.property("contentY"))
+
             toggle.click()
             QTest.qWait(200)
             assert bool(collapsible.property("expanded"))
@@ -456,6 +473,9 @@ def test_collapse_message_above_viewport_compensates_height(tmp_path):
             # Precondition: the expanded target sits fully above the viewport
             # (tall trailing fillers + spacer fill more than one screen).
             assert end_y > expanded_height + 100.0
+            first_msg = get_message_item(window, 0)
+            assert first_msg is not None
+            assert float(first_msg.property("y") + first_msg.property("height")) <= end_y
             toggle.click()
             QTest.qWait(200)
             assert not bool(collapsible.property("expanded"))
@@ -572,6 +592,373 @@ def test_toggle_keyboard_activation_and_state(tmp_path):
             assert not engine._qml_warnings, [
                 x.toString() for x in engine._qml_warnings
             ]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_expand_with_animation_preserves_reading_position_without_jumps(tmp_path):
+    """Teste A: expand with animation preserves reading position smoothly without jumps or snaps."""
+    _app, _settings, frontend, chat, studio = open_scrolling_chat(
+        tmp_path, reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(500)
+            timeline = window.findChild(QObject, "messageList")
+            timeline.setProperty("followTail", False)
+            collapsible, toggle = target_parts(window)
+            collapsed_height = float(collapsible.property("implicitHeight"))
+
+            anchor = collapsed_height + 80.0
+            timeline.setProperty("contentY", anchor)
+            QTest.qWait(100)
+
+            # Precondition: message completely above viewport
+            first_msg = get_message_item(window, 0)
+            assert first_msg is not None
+            assert float(first_msg.property("y") + first_msg.property("height")) <= float(timeline.property("contentY"))
+
+            second_msg = get_message_item(window, 1)
+            assert second_msg is not None
+            second_screen_y_before = float(second_msg.property("y")) - float(timeline.property("contentY"))
+
+            samples = []
+            timeline.contentYChanged.connect(
+                lambda: samples.append(float(timeline.property("contentY")))
+            )
+
+            toggle.click()
+
+            for _ in range(12):
+                QTest.qWait(25)
+                samples.append(float(timeline.property("contentY")))
+
+            # Confirm animation occurred progressively
+            assert len(set(samples)) >= 3
+            # Monotonically non-decreasing (allowing subpixel alignment jitter <= 1px)
+            assert all(b >= a - 1.0 for a, b in zip(samples, samples[1:]))
+
+            QTest.qWait(100)
+            growth = float(collapsible.property("implicitHeight")) - collapsed_height
+            assert growth > 200
+
+            # No huge jump on first frame
+            first_step = samples[0] - anchor
+            assert first_step < growth * 0.5
+
+            final_y = float(timeline.property("contentY"))
+            assert abs(final_y - (anchor + growth)) < 4.0
+
+            # No snap afterwards
+            QTest.qWait(250)
+            assert abs(float(timeline.property("contentY")) - (anchor + growth)) < 4.0
+
+            # Reading position of downstream message remained invariant
+            second_screen_y_after = float(second_msg.property("y")) - float(timeline.property("contentY"))
+            assert abs(second_screen_y_after - second_screen_y_before) < 2.0
+
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_collapse_with_animation_compensates_smoothly(tmp_path):
+    """Teste B: collapse with animation compensates smoothly across frames without snaps."""
+    _app, _settings, frontend, chat, studio = open_scrolling_chat(
+        tmp_path, reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(500)
+            timeline = window.findChild(QObject, "messageList")
+            collapsible, toggle = target_parts(window)
+            collapsed_height = float(collapsible.property("implicitHeight"))
+
+            # Expand target first
+            toggle.click()
+            QTest.qWait(300)
+            assert bool(collapsible.property("expanded"))
+            expanded_height = float(collapsible.property("implicitHeight"))
+            shrink = expanded_height - collapsed_height
+            assert shrink > 200
+
+            timeline.setProperty("followTail", True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(200)
+            timeline.setProperty("followTail", False)
+            start_y = float(timeline.property("contentY"))
+
+            # Precondition: expanded message completely above viewport
+            first_msg = get_message_item(window, 0)
+            assert first_msg is not None
+            assert float(first_msg.property("y") + first_msg.property("height")) <= start_y
+
+            second_msg = get_message_item(window, 1)
+            assert second_msg is not None
+            second_screen_y_before = float(second_msg.property("y")) - start_y
+
+            samples = []
+            timeline.contentYChanged.connect(
+                lambda: samples.append(float(timeline.property("contentY")))
+            )
+
+            toggle.click()  # Collapse
+
+            for _ in range(12):
+                QTest.qWait(25)
+                samples.append(float(timeline.property("contentY")))
+
+            # Progressive decrease across frames (allowing subpixel alignment jitter <= 1px)
+            assert len(set(samples)) >= 3
+            assert all(b <= a + 1.0 for a, b in zip(samples, samples[1:]))
+
+            # No sudden initial jump
+            first_drop = start_y - samples[0]
+            assert first_drop < shrink * 0.5
+
+            final_y = float(timeline.property("contentY"))
+            assert abs(final_y - (start_y - shrink)) < 3.0
+
+            # No snap afterwards
+            QTest.qWait(250)
+            assert abs(float(timeline.property("contentY")) - (start_y - shrink)) < 3.0
+
+            # Downstream message visual position preserved
+            second_screen_y_after = float(second_msg.property("y")) - float(timeline.property("contentY"))
+            assert abs(second_screen_y_after - second_screen_y_before) < 2.0
+
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_viewport_inside_message_maintains_reading_offset(tmp_path):
+    """Teste C: viewport inside message maintains relative reading position on collapse and expand."""
+    _app, _settings, frontend, chat, studio = open_scrolling_chat(
+        tmp_path, reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(500)
+            timeline = window.findChild(QObject, "messageList")
+            timeline.setProperty("followTail", False)
+            collapsible, toggle = target_parts(window)
+
+            # Expand message first
+            toggle.click()
+            QTest.qWait(300)
+            assert bool(collapsible.property("expanded"))
+
+            first_msg = get_message_item(window, 0)
+            assert first_msg is not None
+            m_top = float(first_msg.property("y"))
+            m_bottom = float(first_msg.property("y") + first_msg.property("height"))
+
+            # Position viewport inside the message (ensure followTail remains false)
+            timeline.setProperty("followTail", False)
+            target_reading_y = 120.0
+            timeline.setProperty("contentY", target_reading_y)
+            QTest.qWait(100)
+            v_top = float(timeline.property("contentY"))
+            assert m_top < v_top < m_bottom
+
+            # Action 1: Collapse while reading inside message
+            toggle.click()
+            QTest.qWait(350)
+            assert not bool(collapsible.property("expanded"))
+
+            # Reading position inside message must not jump arbitrarily
+            after_collapse_y = float(timeline.property("contentY"))
+            assert abs(after_collapse_y - target_reading_y) < 2.0
+
+            # Action 2: Expand again while reading inside message
+            assert m_top < after_collapse_y < float(first_msg.property("y") + first_msg.property("height"))
+            toggle.click()
+            QTest.qWait(350)
+            assert bool(collapsible.property("expanded"))
+
+            after_expand_y = float(timeline.property("contentY"))
+            assert abs(after_expand_y - target_reading_y) < 2.0
+
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_streaming_completion_anchors_reading_position(tmp_path):
+    """Teste E: streaming termination while reading manually anchors position without big jumps."""
+    _app, _settings, frontend, chat, studio = open_chat(
+        tmp_path, [("user", FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(500)
+            QTest.qWait(500)
+
+            # Start streaming
+            chat.messages.update_last(isStreaming=True)
+            QTest.qWait(300)
+
+            timeline = window.findChild(QObject, "messageList")
+            # User scrolls manually to read mid-message, detaching followTail
+            timeline.setProperty("followTail", False)
+            target_reading_y = 350.0
+            timeline.setProperty("contentY", target_reading_y)
+            QTest.qWait(100)
+            assert abs(float(timeline.property("contentY")) - target_reading_y) < 1.0
+
+            # Streaming ends
+            chat.messages.update_last(isStreaming=False)
+            QTest.qWait(400)
+
+            collapsibles = [
+                item for item in find_items(window.contentItem(), "collapsibleMessageContent")
+                if bool(item.property("overflows"))
+            ]
+            assert collapsibles
+            collapsible = collapsibles[0]
+            assert not bool(collapsible.property("expanded"))
+            assert not bool(collapsible.property("streaming"))
+
+            toggles = [
+                item
+                for item in find_items(window.contentItem(), "messageExpandButton")
+                if bool(item.property("visible"))
+            ]
+            assert toggles
+            assert toggles[0].property("text") == "Mostrar mais"
+
+            # Reading position remains anchored without a big jump
+            reading_y = float(timeline.property("contentY"))
+            assert abs(reading_y - target_reading_y) < 3.0
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_streaming_completion_with_follow_tail_stays_at_end(tmp_path):
+    """Teste F: streaming completion with followTail active keeps viewport at the end."""
+    _app, _settings, frontend, chat, studio = open_chat(
+        tmp_path, [("user", FILLER_LONG), ("assistant", TARGET_LONG)], reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(500)
+            QTest.qWait(500)
+
+            chat.messages.update_last(isStreaming=True)
+            QTest.qWait(300)
+
+            timeline = window.findChild(QObject, "messageList")
+            timeline.setProperty("followTail", True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(100)
+            assert bool(timeline.property("followTail"))
+
+            # Finish streaming
+            chat.messages.update_last(isStreaming=False)
+            QTest.qWait(400)
+
+            # Follow tail remains active and viewport remains at bottom
+            assert bool(timeline.property("followTail"))
+            max_y = max(0, float(timeline.property("contentHeight")) - float(timeline.height()))
+            assert abs(float(timeline.property("contentY")) - max_y) < 4.0
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_rapid_toggles_maintain_coherent_state_and_delta(tmp_path):
+    """Teste G: rapid toggles maintain coherent final state, delta and no pending residual."""
+    _app, _settings, frontend, chat, studio = open_scrolling_chat(
+        tmp_path, reduce_motion=False
+    )
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(500)
+            timeline = window.findChild(QObject, "messageList")
+            timeline.setProperty("followTail", False)
+            collapsible, toggle = target_parts(window)
+            collapsed_h = float(collapsible.property("implicitHeight"))
+
+            anchor = collapsed_h + 80.0
+            timeline.setProperty("contentY", anchor)
+            QTest.qWait(100)
+
+            # Rapid toggle sequence with interval less than full animation (140ms)
+            toggle.click()  # expand
+            QTest.qWait(40)
+            toggle.click()  # collapse
+            QTest.qWait(40)
+            toggle.click()  # expand
+
+            # Wait for full stabilization
+            QTest.qWait(500)
+
+            assert bool(collapsible.property("expanded"))
+            assert toggle.property("text") == "Mostrar menos"
+
+            growth = float(collapsible.property("implicitHeight")) - collapsed_h
+            expected_y = anchor + growth
+            assert abs(float(timeline.property("contentY")) - expected_y) < 5.0
+
+            # Anchor state must be completely cleared after stabilization
+            assert int(timeline.property("anchorMode")) == 0
+            assert timeline.property("anchorItem") is None
+
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:
             window.close()

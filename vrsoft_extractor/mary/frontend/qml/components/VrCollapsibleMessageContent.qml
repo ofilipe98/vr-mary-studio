@@ -24,12 +24,15 @@ Column {
     property string messageKey: ""
     property color fadeColor: Theme.palette.chatBackground
     property bool overflows: false
+    property bool animating: false
     signal layoutChanging()
     // heightDelta is old viewport height minus new viewport height
-    // (positive when collapsing). The host applies a single scroll
-    // compensation once the height change reaches contentHeight; this
+    // (positive when collapsing). The host applies scroll
+    // compensation as height changes flush to contentHeight; this
     // signal never arms preserveReader().
     signal toggled(bool expanded, real heightDelta)
+    signal anchorRequested()
+    signal transitionFinished()
 
     readonly property bool effectiveExpanded: expanded || streaming
     // Hosts declare their blocks as direct children; they land in contentColumn.
@@ -45,7 +48,24 @@ Column {
     // Recalculate overflow when streaming starts/ends, but never rewrite
     // the manual `expanded` state: a long message the user never expanded
     // returns to collapsed once streaming ends.
-    onStreamingChanged: Qt.callLater(root.updateOverflow)
+    onStreamingChanged: {
+        root.updateOverflow()
+        if (!root.streaming && !root.expanded && root.overflows) {
+            var fullH = contentColumn ? contentColumn.implicitHeight : 0
+            var collapsedH = Math.min(fullH, root.collapsedMaxHeight)
+            if (Math.abs(viewport.height - collapsedH) > 1 && !frontend.reduceMotion)
+                root.animating = true
+            root.anchorRequested()
+            if (root.animating) {
+                Qt.callLater(function() {
+                    if (root.animating && !heightAnim.running) {
+                        root.animating = false
+                        root.transitionFinished()
+                    }
+                })
+            }
+        }
+    }
     Component.onCompleted: Qt.callLater(root.updateOverflow)
 
     function updateOverflow() {
@@ -63,18 +83,24 @@ Column {
         // The button is hidden while streaming; guard keyboard paths too.
         if (root.streaming)
             return
-        // Deterministic targets from the full content height: independent of
-        // the running height animation, so the host can compensate scroll
-        // with a single adjustment once the height change flushes to
-        // contentHeight. Deliberately no layoutChanging()/preserveReader()
-        // here: that would arm holdingReader + readerTimer and fight the
-        // compensation.
         var full = contentColumn.implicitHeight
         var collapsedH = Math.min(full, root.collapsedMaxHeight)
+        var targetH = root.expanded ? collapsedH : full
+        if (Math.abs(viewport.height - targetH) > 1 && !frontend.reduceMotion && !root.streaming)
+            root.animating = true
+        root.anchorRequested()
         var oldH = root.expanded ? full : collapsedH
         root.expanded = !root.expanded
         var newH = root.expanded ? full : collapsedH
         root.toggled(root.expanded, oldH - newH)
+        if (root.animating) {
+            Qt.callLater(function() {
+                if (root.animating && !heightAnim.running) {
+                    root.animating = false
+                    root.transitionFinished()
+                }
+            })
+        }
     }
 
     Item {
@@ -87,8 +113,19 @@ Column {
         clip: true
 
         Behavior on height {
+            id: heightBehavior
             enabled: !frontend.reduceMotion && !root.streaming
-            NumberAnimation { duration: Theme.fastDuration; easing.type: Easing.OutCubic }
+            NumberAnimation {
+                id: heightAnim
+                duration: Theme.fastDuration
+                easing.type: Easing.OutCubic
+                onRunningChanged: {
+                    if (!running) {
+                        root.animating = false
+                        root.transitionFinished()
+                    }
+                }
+            }
         }
 
         Column {

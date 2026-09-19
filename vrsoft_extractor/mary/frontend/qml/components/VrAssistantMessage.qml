@@ -10,9 +10,12 @@ Column {
     property bool streaming: false
     property var sources: []
     property bool copied: false
+    readonly property bool animating: collapsible.animating
     signal copyRequested()
     signal layoutChanging()
     signal toggled(bool expanded, real heightDelta)
+    signal anchorRequested()
+    signal transitionFinished()
     spacing: 12
     // Update existing rows in place: completed blocks keep selection and code wrap.
     function syncBlocks() {
@@ -48,6 +51,8 @@ Column {
         fadeColor: Theme.palette.chatBackground
         onLayoutChanging: root.layoutChanging()
         onToggled: (expanded, heightDelta) => root.toggled(expanded, heightDelta)
+        onAnchorRequested: root.anchorRequested()
+        onTransitionFinished: root.transitionFinished()
         Repeater {
             model: blocks
             delegate: Loader {

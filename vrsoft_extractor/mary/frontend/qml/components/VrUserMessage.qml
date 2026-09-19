@@ -7,9 +7,12 @@ Item {
     property string content: ""
     property string messageKey: ""
     property bool copied: false
+    readonly property bool animating: collapsible.animating
     signal copyRequested()
     signal layoutChanging()
     signal toggled(bool expanded, real heightDelta)
+    signal anchorRequested()
+    signal transitionFinished()
     implicitHeight: bubble.height + 18
     TextMetrics { id: measure; font: body.font; text: root.content }
     Rectangle {
@@ -26,6 +29,8 @@ Item {
             fadeColor: Theme.palette.messageSurface
             onLayoutChanging: root.layoutChanging()
             onToggled: (expanded, heightDelta) => root.toggled(expanded, heightDelta)
+            onAnchorRequested: root.anchorRequested()
+            onTransitionFinished: root.transitionFinished()
             TextEdit {
                 id: body
                 objectName: "messageBody"

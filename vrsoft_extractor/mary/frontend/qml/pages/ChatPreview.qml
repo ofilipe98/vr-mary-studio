@@ -829,58 +829,111 @@ Item {
                 property bool followTail: true
                 property bool holdingReader: false
                 property real readerY: 0
-                // Pending Mostrar mais/menos compensation, applied once the
-                // height change reaches contentHeight (see compensateToggle).
-                property real pendingFromY: 0
-                property real pendingDelta: 0
-                property bool hasPendingToggle: false
+                // Active scroll anchor for collapsible message transitions
+                // (Mostrar mais, Mostrar menos, streaming termination).
+                // 0: none, 1: message completely above, 2: viewport inside message
+                property int anchorMode: 0
+                property Item anchorItem: null
+                property real anchorOffset: 0
+                property real lastAnchorContentHeight: 0
+                readonly property bool hasAnchor: anchorMode !== 0
                 function beginManualScroll() {
                     wheelAnimation.stop()
                     followTail = false
                     holdingReader = false
                     readerTimer.stop()
                     tailTimer.stop()
+                    clearAnchor()
+                }
+                function clearAnchor() {
+                    anchorMode = 0
+                    anchorItem = null
+                    anchorOffset = 0
                 }
                 function preserveReader() {
-                    if (followTail || moving || dragging || wheelAnimation.running || messageScrollBar.pressed) return
+                    if (hasAnchor || followTail || moving || dragging || wheelAnimation.running || messageScrollBar.pressed) return
                     if (!holdingReader) readerY = contentY
                     holdingReader = true
                     readerTimer.restart()
                     Qt.callLater(restoreReader)
                 }
                 function restoreReader() {
+                    if (hasAnchor)
+                        return
                     if (holdingReader && !followTail && !moving && !wheelAnimation.running && !messageScrollBar.pressed)
                         contentY = readerY
                 }
-                // Single predictable scroll adjustment for Mostrar mais/menos.
-                // heightDelta is old minus new message height (positive on
-                // collapse). Only the message's own height changed, so content
-                // above it is untouched: if the message starts above the
-                // viewport, shift contentY by the delta to keep the content
-                // under the reader visually stable; otherwise the message top
-                // is anchored and contentY needs no change. The toggle path
-                // never calls preserveReader(), so nothing reverts this.
-                // The adjustment is applied in onContentHeightChanged, when the
-                // new bounds are live: setting contentY synchronously inside
-                // toggled() would clamp against the stale contentHeight (and
-                // fake atYEnd with it, flipping followTail and yanking to the
-                // end via tailTimer). Rapid double toggles accumulate into one
-                // pending adjustment. followTail owns the pinned-to-bottom
-                // case (tailTimer).
+                function anchorMessage(item) {
+                    if (followTail || !item)
+                        return
+                    // If this item is already actively anchored, keep the existing
+                    // geometric anchor across rapid toggles so transient heights
+                    // do not cause drift or incorrect re-classification.
+                    if (anchorItem === item && hasAnchor)
+                        return
+
+                    holdingReader = false
+                    readerTimer.stop()
+
+                    var itemTop = item.y
+                    var itemBottom = itemTop + item.height
+                    var vTop = contentY
+
+                    if (itemBottom <= vTop) {
+                        // Caso A: Mensagem totalmente acima do viewport
+                        // anchorOffset is the distance from message bottom to viewport top
+                        anchorMode = 1
+                        anchorItem = item
+                        anchorOffset = vTop - itemBottom
+                    } else if (itemTop < vTop && itemBottom > vTop) {
+                        // Caso B: Viewport comeca dentro da mensagem
+                        // anchorOffset is relative position inside message
+                        anchorMode = 2
+                        anchorItem = item
+                        anchorOffset = vTop - itemTop
+                    } else {
+                        // Caso C: Mensagem comeca dentro ou abaixo do viewport
+                        anchorMode = 0
+                        anchorItem = null
+                        anchorOffset = 0
+                    }
+                }
+                function isAnchorAnimating() {
+                    try {
+                        return Boolean(anchorItem && anchorItem.isCollapsibleAnimating)
+                    } catch (e) {
+                        return false
+                    }
+                }
+                function applyAnchorAdjustment() {
+                    if (!hasAnchor || !anchorItem)
+                        return
+                    var maxY = Math.max(0, contentHeight - height)
+                    var targetY = contentY
+                    if (anchorMode === 1) {
+                        targetY = anchorItem.y + anchorItem.height + anchorOffset
+                    } else if (anchorMode === 2) {
+                        var maxOffset = Math.max(0, anchorItem.height - 20)
+                        var targetOffset = Math.min(anchorOffset, maxOffset)
+                        targetY = anchorItem.y + targetOffset
+                    }
+                    contentY = Math.max(0, Math.min(maxY, targetY))
+                    if (!isAnchorAnimating()) {
+                        clearAnchor()
+                    }
+                }
+                function finishAnchor(item) {
+                    if (anchorItem === item || !item) {
+                        if (hasAnchor)
+                            applyAnchorAdjustment()
+                        clearAnchor()
+                    }
+                }
                 function compensateToggle(item, heightDelta) {
                     if (heightDelta === 0 || followTail)
                         return
-                    if (hasPendingToggle) {
-                        pendingDelta += heightDelta
-                        return
-                    }
-                    var top = item.y
-                    var fromY = contentY
-                    if (top >= fromY)
-                        return
-                    pendingFromY = fromY
-                    pendingDelta = heightDelta
-                    hasPendingToggle = true
+                    if (!hasAnchor && item)
+                        anchorMessage(item)
                 }
                 Timer {
                     id: readerTimer
@@ -902,13 +955,16 @@ Item {
                 // changes the scroll range drastically for long chat responses.
                 Column {
                     id: messageColumn
+                    objectName: "messageColumn"
                     width: messageList.width
                     spacing: Theme.messageGap
                     Repeater {
                         id: messageRepeater
+                        objectName: "messageRepeater"
                         model: root.chatBridge.messages
                         delegate: Item {
                             id: messageItem
+                            objectName: "messageItem"
                             required property int index
                             required property string role
                             required property string content
@@ -919,6 +975,7 @@ Item {
                             required property var activityData
                             width: messageList.width
                             height: presentation.item ? presentation.item.implicitHeight : 0
+                            readonly property bool isCollapsibleAnimating: presentation.item && presentation.item.animating ? true : false
                             Loader {
                                 id: presentation
                                 width: Math.min(parent.width, Theme.contentWidth)
@@ -945,8 +1002,13 @@ Item {
                                 VrUserMessage {
                                     content: messageItem.displayContent
                                     messageKey: messageItem.messageKey
-                                    onLayoutChanging: messageList.preserveReader()
+                                    onLayoutChanging: {
+                                        if (!messageList.hasAnchor)
+                                            messageList.preserveReader()
+                                    }
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
+                                    onAnchorRequested: messageList.anchorMessage(messageItem)
+                                    onTransitionFinished: messageList.finishAnchor(messageItem)
                                     onToggled: (expanded, heightDelta) => {
                                         messageList.compensateToggle(messageItem, heightDelta)
                                     }
@@ -955,11 +1017,16 @@ Item {
                             Component {
                                 id: assistantComponent
                                 VrAssistantMessage {
-                                    onLayoutChanging: messageList.preserveReader()
+                                    onLayoutChanging: {
+                                        if (!messageList.hasAnchor)
+                                            messageList.preserveReader()
+                                    }
                                     markdown: messageItem.displayContent
                                     messageKey: messageItem.messageKey
                                     streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
                                     onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
+                                    onAnchorRequested: messageList.anchorMessage(messageItem)
+                                    onTransitionFinished: messageList.finishAnchor(messageItem)
                                     onToggled: (expanded, heightDelta) => {
                                         messageList.compensateToggle(messageItem, heightDelta)
                                     }
@@ -984,18 +1051,14 @@ Item {
                 onContentYChanged: {
                     if (holdingReader && !followTail && contentY !== readerY)
                         Qt.callLater(restoreReader)
-                    if (!followTail && (atYEnd || (contentHeight - height - contentY) <= 4)) {
+                    if (!hasAnchor && !followTail && (atYEnd || (contentHeight - height - contentY) <= 4)) {
                         followTail = true
                     }
                 }
                 onContentHeightChanged: {
                     if (followTail && !moving) tailTimer.restart()
+                    else if (hasAnchor) applyAnchorAdjustment()
                     else if (holdingReader) Qt.callLater(restoreReader)
-                    if (hasPendingToggle) {
-                        hasPendingToggle = false
-                        var maxY = Math.max(0, contentHeight - height)
-                        contentY = Math.max(0, Math.min(maxY, pendingFromY - pendingDelta))
-                    }
                 }
                 onCountChanged: { if (followTail) tailTimer.restart() }
                 Timer { id: tailTimer; interval: 0; onTriggered: { if (messageList.followTail) messageList.positionViewAtEnd() } }
