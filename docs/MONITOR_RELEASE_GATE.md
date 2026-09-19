@@ -38,12 +38,15 @@ contrato; em seguida negam individualmente cada uma das 29 declarações operaci
 revisão, validade, hashes, limites, versão do contrato e mistura de bundles. O módulo não
 importa rede, subprocesso, installer ou adapters genéricos.
 
-O commit VRMonitor `6192d7a` instalou o serviço `VRMonitorBroker` sob SID próprio. O
+Os commits VRMonitor `6192d7a` e `95f88fe` instalaram o serviço `VRMonitorBroker` sob
+SID próprio e protegeram a cópia das evidências contra escrita pelo serviço. O
 self-test real comprovou DACL, environment mínimo, término do Job Object, memória e um
 processo ativo sem iniciar o provider. O relatório tem SHA-256
-`6e1e91508c9ea92ead0af248a4c1e8e653b504f1648945568e2e0311d7c208e3`; o manifesto
+`d3cb6631877807aaa2f49c652ff5b65ad1b77f1100f6c245689a2d5bfa6b14a2`; o manifesto
 local do bundle tem SHA-256
-`1a25838e6269c2be6e1184c839dcf94971a7f0882e6ba5b8bb9ef33963dee0bc` e decisão de
+`a2bda51a735f0be3dc0009afac7d2d1b077960316d4839e227cbd2c2785ab5cc`; o índice
+imutável tem SHA-256
+`19a96ef9e7b2be17e8420f111d40d621005e36f956d0dd3ae496435c1df45078` e decisão de
 egress `blocked_pending_zdr`.
 
 Esses arquivos ainda não formam uma aprovação do gate: não há atestação H05 real,
