@@ -931,3 +931,126 @@ def test_terminal_isolation_between_different_conversations(tmp_path):
     finally:
         bridge.close()
         app.processEvents()
+
+
+def test_pending_terminal_finalized_before_next_execution_promotion(tmp_path):
+    """Pending terminal 100 must finalize via _on_runtime_event(turn_started 101).
+
+    Covers the real flow _on_runtime_event -> _finalize_pending_terminal_before_new_turn
+    -> _finalize_terminal_state -> promotion of the new execution, without sendMessage().
+    """
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid = db.create_conversation("PendingOrder", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid)
+
+        def emit(kind, text="", payload=None, at="2026-09-13T12:00:00Z"):
+            bridge._on_runtime_event(RuntimeEvent(cid, kind, text, payload or {}, at))
+
+        # Execution 100 starts with plan and streaming.
+        emit("turn_started", payload={"execution_id": 100})
+        emit(
+            "task_plan_updated",
+            payload={
+                "execution_id": 100,
+                "steps": [{"text": "Step A1", "state": "running"}],
+            },
+        )
+        emit("assistant_delta", "Delta from turn A", payload={"execution_id": 100})
+
+        # Terminal of 100 arrives while stream backlog is still draining -> pending.
+        bridge._stream_pending_text = "Draining text backlog from turn A"
+        bridge._message_pending_texts["100:0"] = "pending message text"
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+
+        # Pre-conditions before the new turn.
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["execution_id"] == 100
+        assert bridge._ui_execution_ids[cid] == 100
+
+        # New turn arrives WITHOUT sendMessage(), through the real event path.
+        bridge._on_runtime_event(
+            RuntimeEvent(cid, "turn_started", "", {"execution_id": 101})
+        )
+
+        # Pending terminal was finalized before promoting the new execution.
+        assert bridge._pending_terminal is None
+        assert (cid, 100) in bridge._ui_finalized_executions
+        assert bridge._ui_execution_ids[cid] == 101
+        assert cid in bridge._active_turns
+        assert bridge.turnRunning is True
+
+        # Old execution leaves no residual state behind.
+        assert bridge.taskProgress == {}
+        assert bridge._stream_pending_text == ""
+        assert dict(bridge._message_pending_texts) == {}
+        assert bridge._pending_terminal is None
+        assert bridge._stream_terminal_kind == ""
+        assert bridge._status_text != "Finalizando resposta…"
+
+        # Late terminal of 100 cannot alter the running turn 101.
+        status_before = bridge.statusText
+        progress_before = dict(bridge.taskProgress)
+        emit("turn_completed", payload={"execution_id": 100})
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        bridge._finalize_terminal_state("turn_completed", conversation_id=cid, execution_id=100)
+        assert bridge.turnRunning is True
+        assert cid in bridge._active_turns
+        assert bridge._ui_execution_ids[cid] == 101
+        assert bridge.statusText == status_before
+        assert dict(bridge.taskProgress) == progress_before
+
+        # Terminal of the current execution 101 finalizes normally.
+        db.update_conversation(cid, status="idle")
+        emit("turn_completed", payload={"execution_id": 101})
+        assert bridge.turnRunning is False
+        assert cid not in bridge._active_turns
+        assert (cid, 101) in bridge._ui_finalized_executions
+        assert (cid, 100) in bridge._ui_finalized_executions
+    finally:
+        bridge.close()
+        app.processEvents()
+
+
+def test_pending_terminal_isolated_by_conversation_on_new_turn(tmp_path):
+    """turn_started of conversation B must not finalize pending terminal of A."""
+    app, _settings, db, bridge = _make_bridge(tmp_path)
+    try:
+        cid_a = db.create_conversation("ConvA", "codex", "test", bridge._settings.root)
+        cid_b = db.create_conversation("ConvB", "codex", "test", bridge._settings.root)
+        bridge.refresh()
+        bridge.selectConversationId(cid_a)
+
+        bridge._on_runtime_event(RuntimeEvent(cid_a, "turn_started", "", {"execution_id": 100}))
+        bridge._on_runtime_event(
+            RuntimeEvent(
+                cid_a,
+                "task_plan_updated",
+                "",
+                {"execution_id": 100, "steps": [{"text": "Step A", "state": "running"}]},
+            )
+        )
+        bridge._stream_pending_text = "Backlog from A"
+        bridge._queue_terminal_state("turn_completed", conversation_id=cid_a, execution_id=100)
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["execution_id"] == 100
+
+        # New turn of a different conversation arrives: pending of A is preserved.
+        bridge._on_runtime_event(RuntimeEvent(cid_b, "turn_started", "", {"execution_id": 200}))
+        assert bridge._pending_terminal is not None
+        assert bridge._pending_terminal["execution_id"] == 100
+        assert str(bridge._pending_terminal.get("conversation_id")) == cid_a
+        assert (cid_a, 100) not in bridge._ui_finalized_executions
+        assert bridge._ui_execution_ids[cid_b] == 200
+        assert cid_b in bridge._active_turns
+
+        # New turn of A finalizes its own pending and promotes.
+        bridge._on_runtime_event(RuntimeEvent(cid_a, "turn_started", "", {"execution_id": 101}))
+        assert bridge._pending_terminal is None
+        assert (cid_a, 100) in bridge._ui_finalized_executions
+        assert bridge._ui_execution_ids[cid_a] == 101
+        assert cid_a in bridge._active_turns
+    finally:
+        bridge.close()
+        app.processEvents()

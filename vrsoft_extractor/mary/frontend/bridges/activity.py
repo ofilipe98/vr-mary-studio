@@ -30,7 +30,26 @@ class ActivityDomain:
             "orchestration_cancelled",
             "error",
         }
-        if execution_id:
+        if event.kind == "turn_started":
+            # A pending terminal of the previous execution must be finalized
+            # BEFORE promoting the new execution_id. Promoting first would make
+            # _finalize_terminal_state(previous) look stale (previous < current)
+            # and the pending terminal would be dropped without ever being
+            # marked in _ui_finalized_executions.
+            # Stale/duplicate rejection is preserved: a stale turn_started never
+            # touches the pending terminal of the current execution.
+            if execution_id:
+                previous = self._ui_execution_ids.get(event.conversation_id, 0)
+                if execution_id < previous:
+                    return
+                if (event.conversation_id, execution_id) in self._ui_terminal_executions:
+                    return
+                self._finalize_pending_terminal_before_new_turn(event.conversation_id)
+                self._ui_execution_ids[event.conversation_id] = max(previous, execution_id)
+            else:
+                self._finalize_pending_terminal_before_new_turn(event.conversation_id)
+            self._active_turns.add(event.conversation_id)
+        elif execution_id:
             previous = self._ui_execution_ids.get(event.conversation_id, 0)
             if execution_id < previous:
                 return
@@ -41,9 +60,6 @@ class ActivityDomain:
             self._ui_execution_ids[event.conversation_id] = max(previous, execution_id)
             if is_terminal:
                 self._ui_terminal_executions.add((event.conversation_id, execution_id))
-        if event.kind == "turn_started":
-            self._finalize_pending_terminal_before_new_turn(event.conversation_id)
-            self._active_turns.add(event.conversation_id)
         selected_id = self._selected_conversation_id()
         if event.conversation_id != selected_id:
             self._on_background_runtime_event(event)

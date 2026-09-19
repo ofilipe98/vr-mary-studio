@@ -3016,18 +3016,65 @@ class ChatBridge(QObject):
         )
         if conversation_id and pending_cid and pending_cid != str(conversation_id):
             return
+        pending_kind = pending.get("kind", "turn_completed")
+        try:
+            pending_execution_id = int(pending.get("execution_id", 0) or 0)
+        except (TypeError, ValueError):
+            pending_execution_id = 0
+        if pending_execution_id:
+            current_execution = self._ui_execution_ids.get(pending_cid, 0)
+            if current_execution and pending_execution_id != current_execution:
+                # Post-promotion residual: the current execution was already
+                # promoted past the pending terminal, so _finalize_terminal_state
+                # would reject it as stale/future and the terminal would be lost.
+                # Mark the previous execution as finalized without disturbing
+                # the active turn / task progress / stream backlog of the new
+                # execution. The normal _on_runtime_event ordering (finalize
+                # before promote) prevents reaching this branch; it exists only
+                # as a safety net so a pending terminal is never silently dropped.
+                self._ui_terminal_executions.add((pending_cid, pending_execution_id))
+                self._ui_finalized_executions.add((pending_cid, pending_execution_id))
+                self._pending_terminal = None
+                # Drop the stale terminal marker so a later _flush_stream_step
+                # cannot re-apply the old kind with execution_id 0 and discard
+                # the new execution's active turn. The backlog below belongs to
+                # the superseded execution (new turn has not streamed yet at
+                # promotion time), so clearing it cannot harm the new turn.
+                if hasattr(self, "_stream_timer"):
+                    self._stream_timer.stop()
+                self._stream_terminal_kind = ""
+                self._stream_pending_text = ""
+                if hasattr(self, "_message_pending_texts"):
+                    self._message_pending_texts.clear()
+                return
         if hasattr(self, "_stream_timer"):
             self._stream_timer.stop()
+        snapshot_pending_text = self._stream_pending_text
+        snapshot_terminal_kind = self._stream_terminal_kind
+        snapshot_message_pending = (
+            dict(self._message_pending_texts)
+            if hasattr(self, "_message_pending_texts")
+            else {}
+        )
         self._pending_terminal = None
         self._stream_terminal_kind = ""
         self._stream_pending_text = ""
         if hasattr(self, "_message_pending_texts"):
             self._message_pending_texts.clear()
         self._finalize_terminal_state(
-            pending.get("kind", "turn_completed"),
+            pending_kind,
             conversation_id=pending_cid,
-            execution_id=pending.get("execution_id", 0),
+            execution_id=pending_execution_id,
         )
+        if pending_execution_id and (pending_cid, pending_execution_id) not in self._ui_finalized_executions:
+            # Finalization was rejected (stale/future/duplicate guard). Restore
+            # the pending marker and stream residual so the terminal is not lost.
+            self._pending_terminal = pending
+            self._stream_pending_text = snapshot_pending_text
+            self._stream_terminal_kind = snapshot_terminal_kind
+            if hasattr(self, "_message_pending_texts"):
+                self._message_pending_texts.clear()
+                self._message_pending_texts.update(snapshot_message_pending)
 
     def _queue_terminal_state(
         self,
