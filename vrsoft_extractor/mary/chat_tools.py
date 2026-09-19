@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .monitor_adapter import MONITOR_TOOL_NAMES
+
 
 MAX_TOOL_OUTPUT_BYTES = 64 * 1024
 TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
@@ -18,6 +20,7 @@ RESERVED_TOOL_NAMES = {
     "update_plan",
     "view_image",
     "web_search",
+    *MONITOR_TOOL_NAMES,
 }
 
 

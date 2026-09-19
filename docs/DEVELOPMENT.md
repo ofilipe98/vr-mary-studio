@@ -132,6 +132,16 @@ Os scripts visuais usam dados isolados. `benchmark_v2_retrieval.py` mantém o co
 congelado em `tests/fixtures/` e exige os modelos e dependências semânticas indicados
 no script. Essas verificações manuais complementam a suíte automatizada.
 
+## VRMonitor
+
+O adapter opcional do VRMonitor reutiliza os providers e o orquestrador existentes. A
+configuração local, a allowlist e os limites estão em
+[VRMONITOR_INTEGRATION.md](VRMONITOR_INTEGRATION.md). Os testes focados são:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_monitor_adapter.py tests/test_antigravity_acp.py -q
+```
+
 ## Arquivos gerados
 
 `build/`, `dist/`, `releases/`, `reports/`, `.test-tmp/`, caches Python/pytest/ruff

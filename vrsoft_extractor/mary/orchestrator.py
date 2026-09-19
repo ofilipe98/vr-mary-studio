@@ -28,6 +28,13 @@ from .chat_tools import (
     run_vr_sources,
     run_vr_read,
 )
+from .monitor_adapter import (
+    MONITOR_TOOL_NAMES,
+    MonitorAdapter,
+    MonitorConfigurationError,
+    MonitorToolError,
+    monitor_tool_specs,
+)
 from .task_plan import claude_task_result, provider_plan
 from .models import (
     ConversationOptions,
@@ -201,6 +208,13 @@ class ChatOrchestrator:
     def __init__(self, settings: MarySettings, database: MaryDatabase):
         self.settings = settings
         self.database = database
+        try:
+            self._monitor_adapter = MonitorAdapter.from_path(
+                settings.state_dir / "vrmonitor.json"
+            )
+        except MonitorConfigurationError as exc:
+            LOGGER.warning("Integração VRMonitor desabilitada: %s", exc)
+            self._monitor_adapter = None
         self.database.recover_interrupted_conversations()
         self.providers = provider_registry(settings.root)
         self.knowledge_router = KnowledgeRouter(
@@ -2737,6 +2751,8 @@ class ChatOrchestrator:
             tool_name = str(tool.get("name"))
             if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
                 self._execute_vr_native_tool(event, tool_name)
+            elif tool_name in MONITOR_TOOL_NAMES:
+                self._execute_monitor_tool(event, tool_name)
             else:
                 self._execute_dynamic_tool(event, tool)
         else:
@@ -3120,6 +3136,11 @@ class ChatOrchestrator:
             for spec in all_vr_tools_specs():
                 if not any(d.get("name") == spec.get("name") for d in dynamic):
                     dynamic = (*dynamic, spec)
+        if self._monitor_adapter is not None:
+            dynamic = tuple(
+                spec for spec in dynamic if spec.get("name") not in MONITOR_TOOL_NAMES
+            )
+            dynamic = (*dynamic, *monitor_tool_specs())
         base = ConversationOptions.from_mapping(row)
         row_mode = str(row["vr_mode"] or "").strip().casefold()
         if row_mode not in ConversationOptions.VALID_VR_MODES:
@@ -3331,6 +3352,9 @@ class ChatOrchestrator:
         if name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
             self._handle_vr_native_tool(event, name)
             return
+        if name in MONITOR_TOOL_NAMES:
+            self._handle_monitor_tool(event, name)
+            return
         selected = self.database.conversation_tools(event.conversation_id)["dynamic"]
         tools = {
             str(tool["name"]): tool
@@ -3362,6 +3386,74 @@ class ChatOrchestrator:
                 )
             return
         self._execute_dynamic_tool(event, tool)
+
+    def _handle_monitor_tool(self, event: RuntimeEvent, tool_name: str) -> None:
+        if self._monitor_adapter is None:
+            self._respond_dynamic_tool(event, "Integração VRMonitor não configurada.", False)
+            return
+        row = self._conversation(event.conversation_id)
+        request_id = str(event.payload.get("request_id") or "")
+        profile = str(row["approval_profile"])
+        needs_approval = profile == "supervised" or (
+            tool_name == "run_readonly_query" and profile != "full_access"
+        )
+        if needs_approval:
+            self.database.save_approval(request_id, event.conversation_id, event.payload)
+            self._pending_dynamic_tools[request_id] = (event, {"name": tool_name})
+            callback = self._external_callbacks.get(event.conversation_id)
+            if callback:
+                callback(
+                    RuntimeEvent(
+                        event.conversation_id,
+                        "dynamic_tool_approval_requested",
+                        f"Executar operação VRMonitor {tool_name}?",
+                        event.payload,
+                    )
+                )
+            return
+        self._execute_monitor_tool(event, tool_name)
+
+    def _execute_monitor_tool(self, event: RuntimeEvent, tool_name: str) -> None:
+        adapter = self._monitor_adapter
+        cid = event.conversation_id
+        owner = self._pending_user_messages.get(cid)
+
+        def owns_turn() -> bool:
+            return (
+                adapter is not None
+                and self._pending_user_messages.get(cid) == owner
+                and cid not in self._cancelled_conversations
+            )
+
+        def run() -> None:
+            try:
+                if not owns_turn():
+                    return
+                with self._agent_run_lock:
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if calls >= 24 or chars >= 96000:
+                        raise ValueError("Limite de consultas deste turno atingido.")
+                    self._turn_tool_usage[cid] = (calls + 1, chars)
+                raw_arguments = event.payload.get("arguments") or {}
+                if isinstance(raw_arguments, str):
+                    raw_arguments = json.loads(raw_arguments)
+                result = adapter.execute(tool_name, raw_arguments, cid)
+                with self._agent_run_lock:
+                    if not owns_turn():
+                        return
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if chars + len(result.text) > 96000:
+                        raise ValueError("Limite de resultados atingido; reduza limit.")
+                    self._turn_tool_usage[cid] = (calls, chars + len(result.text))
+                    self._respond_dynamic_tool(
+                        event, result.text, True, result.content_items()
+                    )
+            except (MonitorToolError, ValueError, json.JSONDecodeError) as exc:
+                with self._agent_run_lock:
+                    if owns_turn():
+                        self._respond_dynamic_tool(event, str(exc), False)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _handle_vr_native_tool(self, event: RuntimeEvent, tool_name: str) -> None:
         row = self._conversation(event.conversation_id)

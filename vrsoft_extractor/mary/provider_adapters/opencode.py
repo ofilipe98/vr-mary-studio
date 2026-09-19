@@ -163,6 +163,7 @@ class OpenCodeProvider(AgentProvider):
                     options.approval_profile,
                     self.knowledge_root if self.knowledge_root else None,
                     options.knowledge_context_path,
+                    conversation_id,
                 ),
                 **startup_info,
             )
