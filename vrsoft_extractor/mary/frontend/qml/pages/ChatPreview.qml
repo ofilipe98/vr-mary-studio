@@ -194,8 +194,12 @@ Item {
         target: root.chatBridge
         function onApprovalRequested(payload) {
             root.approvalPayload = payload
-            if (payload.request_id !== undefined) approvalDialog.open()
-            else approvalDialog.close()
+            if (payload.request_id !== undefined) {
+                // Approvals take precedence over the task drawer: keep only
+                // the compact summary so the blocking surface stays visible.
+                root.taskBarExpanded = false
+                approvalDialog.open()
+            } else approvalDialog.close()
         }
         function onStateChanged() {
             if (root.chatBridge.turnRunning && !root.previousTurnRunning) {
@@ -533,6 +537,9 @@ Item {
                         required property real startedAtEpoch
                         required property string vrMode
                         required property bool vrEnabled
+                        required property string taskStep
+                        required property int taskCompleted
+                        required property int taskTotal
                         width: conversationList.width
                         height: 78
                         radius: 8
@@ -691,13 +698,20 @@ Item {
                                 spacing: 5
                                 Text {
                                     Layout.fillWidth: true
-                                    text: conversationItem.modelName
+                                    text: (conversationItem.running && conversationItem.taskTotal > 0 && conversationItem.taskStep.length > 0)
+                                        ? conversationItem.taskCompleted + "/" + conversationItem.taskTotal + " · " + conversationItem.taskStep
+                                        : conversationItem.modelName
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize(12)
                                     font.weight: Font.Medium
                                     renderType: Theme.textRenderType
                                     elide: Text.ElideRight
+                                    maximumLineCount: 1
+                                    ToolTip.visible: taskHover.hovered && (conversationItem.running && conversationItem.taskTotal > 0 && conversationItem.taskStep.length > 0)
+                                    ToolTip.delay: 500
+                                    ToolTip.text: conversationItem.taskCompleted + "/" + conversationItem.taskTotal + " · " + conversationItem.taskStep
+                                    HoverHandler { id: taskHover }
                                 }
                                 Rectangle {
                                     visible: !conversationItem.editing
@@ -885,6 +899,7 @@ Item {
                                     reasoningText: messageItem.messageKey ? "" : root.chatBridge.reasoningText
                                     statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : root.chatBridge.statusText
                                     elapsedLabel: root.chatBridge.activityElapsedLabel
+                                    taskStep: messageItem.messageKey ? "" : String(root.chatBridge.taskProgress.step || "")
                                     running: messageItem.messageKey ? messageItem.isStreaming : root.chatBridge.turnRunning
                                     expanded: cardExpanded || (running && root.activityExpanded)
                                     onToggleRequested: cardExpanded = !cardExpanded
@@ -1160,11 +1175,16 @@ Item {
                 anchors.bottomMargin: -1
                 width: Math.max(0, composerCard.width - 44)
                 maximumListHeight: Math.min(384, root.height * 0.4)
-                z: 20
+                z: approvalDialog.opened ? 10 : 20
                 steps: root.chatBridge.taskSteps
+                progress: root.chatBridge.taskProgress
                 running: root.chatBridge.turnRunning
-                expanded: root.taskBarExpanded
-                onToggleRequested: root.taskBarExpanded = !root.taskBarExpanded
+                expanded: root.taskBarExpanded && !approvalDialog.opened
+                onToggleRequested: {
+                    if (approvalDialog.opened)
+                        return
+                    root.taskBarExpanded = !root.taskBarExpanded
+                }
             }
 
             Rectangle {

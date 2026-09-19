@@ -557,7 +557,13 @@ class ConversationsDomain:
         if changing_conversation:
             self._reset_stream_state()
             self._activity_steps = []
-            self._task_plan.steps = []
+            # Detach the selected view; per-conversation plans in
+            # _task_plans survive so background turns keep their state.
+            # The following restore repopulates the new selection from DB.
+            from ...task_plan import TaskPlan as _TaskPlan
+
+            self._task_plan = _TaskPlan()
+            self._task_plan_current = False
             self._activity_items = []
             self._reset_trace_state()
             self._turn_segments = []

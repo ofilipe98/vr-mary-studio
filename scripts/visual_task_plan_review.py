@@ -113,6 +113,48 @@ def main():
                                 / f"tasks-{theme}-{width}-{'expanded' if expanded else 'collapsed'}.png"
                             )
                         )
+            for count in (1, 3, 10):
+                sampled = []
+                for index in range(count):
+                    state = (
+                        "completed"
+                        if index == 0 and count > 1
+                        else "running" if index == min(1, count - 1) else "pending"
+                    )
+                    sampled.append(
+                        {"text": f"Etapa {index + 1} de {count}", "state": state}
+                    )
+                chat._record_execution_event(
+                    RuntimeEvent(cid, "task_plan_updated", payload={"steps": sampled})
+                )
+                QTest.qWait(120)
+                window.grabWindow().save(
+                    str(output / f"tasks-count-{count}-expanded.png")
+                )
+            long_label = (
+                "Validar a integração completa do plano com rótulos muito longos "
+                "que precisam de elide sem estourar a largura em janelas estreitas" * 2
+            )
+            chat._record_execution_event(
+                RuntimeEvent(
+                    cid,
+                    "task_plan_updated",
+                    payload={
+                        "steps": [
+                            {"text": "Etapa anterior", "state": "completed"},
+                            {"text": long_label, "state": "running"},
+                            {"text": "Etapa seguinte", "state": "pending"},
+                        ]
+                    },
+                )
+            )
+            window.setWidth(390)
+            window.setHeight(844)
+            QTest.qWait(150)
+            window.grabWindow().save(str(output / "tasks-long-label-narrow.png"))
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(150)
             many = [
                 {
                     "text": f"Etapa {index + 1}: validar o comportamento e a integração com os componentes da aplicação",
@@ -132,11 +174,12 @@ def main():
             )
             QTest.qWait(100)
             window.grabWindow().save(str(output / "tasks-long-list-scrolled.png"))
-            frontend.setUiScale("150")
-            window.setWidth(1366)
-            window.setHeight(900)
-            QTest.qWait(200)
-            window.grabWindow().save(str(output / "tasks-scale-150.png"))
+            for scale in ("100", "125", "150"):
+                frontend.setUiScale(scale)
+                window.setWidth(1366)
+                window.setHeight(900)
+                QTest.qWait(200)
+                window.grabWindow().save(str(output / f"tasks-scale-{scale}.png"))
             header.forceActiveFocus()
             QTest.keyClick(window, Qt.Key_Space)
             QTest.qWait(80)

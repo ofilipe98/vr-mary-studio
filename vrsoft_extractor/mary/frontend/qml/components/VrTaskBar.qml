@@ -8,6 +8,7 @@ Rectangle {
     objectName: "chatTaskBar"
 
     property var steps: []
+    property var progress: ({})
     property bool running: false
     property bool expanded: true
     property real maximumListHeight: 384
@@ -68,16 +69,17 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: root.currentStepText()
+                    text: root.effectiveCurrentStep()
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.Medium
                     elide: Text.ElideRight
+                    maximumLineCount: 1
                 }
                 Text {
-                    text: root.completedCount() + "/" + root.steps.length + (root.width >= 400 ? " concluídas" : "")
-                    color: root.completedCount() === root.steps.length ? Theme.palette.success : Theme.palette.mutedText
+                    text: root.effectiveCompleted() + "/" + root.effectiveTotal() + (root.width >= 400 ? " concluídas" : "")
+                    color: root.effectiveCompleted() === root.effectiveTotal() ? Theme.palette.success : Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.Medium
@@ -108,7 +110,7 @@ Rectangle {
             TapHandler { onTapped: root.toggleRequested() }
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
-            Accessible.name: "Tarefas: " + root.completedCount() + " de " + root.steps.length
+            Accessible.name: "Tarefas: " + root.effectiveCompleted() + " de " + root.effectiveTotal()
             Accessible.onPressAction: root.toggleRequested()
             Keys.onSpacePressed: root.toggleRequested()
             Keys.onReturnPressed: root.toggleRequested()
@@ -210,6 +212,32 @@ Rectangle {
                 return String(root.steps[pendingIndex].text || "")
         return root.steps.length && root.completedCount() === root.steps.length
             ? "Tarefas concluídas" : ""
+    }
+
+    function hasBackendProgress() {
+        return root.progress !== undefined && root.progress !== null
+            && Number(root.progress.total || 0) > 0
+    }
+
+    function effectiveCompleted() {
+        if (root.hasBackendProgress())
+            return Number(root.progress.completed || 0)
+        return root.completedCount()
+    }
+
+    function effectiveTotal() {
+        if (root.hasBackendProgress())
+            return Number(root.progress.total || 0)
+        return root.steps.length
+    }
+
+    function effectiveCurrentStep() {
+        if (root.hasBackendProgress()) {
+            var backendStep = String(root.progress.step || "")
+            if (backendStep.length > 0)
+                return backendStep
+        }
+        return root.currentStepText()
     }
 
     function durationText(milliseconds) {

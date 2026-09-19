@@ -11,6 +11,7 @@ Rectangle {
     property string reasoningText: ""
     property string statusText: "Pronto"
     property string elapsedLabel: "0s"
+    property string taskStep: ""
     property bool running: false
     property bool expanded: false
     property int recentCount: 5
@@ -311,11 +312,15 @@ Rectangle {
 
     function headerText() {
         if (root.running) {
-            return "Working for " + root.elapsedLabel
+            var base = "Working for " + root.elapsedLabel
+            if (root.taskStep.length > 0)
+                return base + " · " + root.taskStep
+            return base
         }
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
+        // Completed turns keep the last status; the drawer holds the full plan.
         return "Worked for " + root.elapsedLabel
     }
 

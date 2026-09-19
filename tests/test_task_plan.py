@@ -1,7 +1,12 @@
 import pytest
 
 from vrsoft_extractor.mary.models import RuntimeEvent
-from vrsoft_extractor.mary.task_plan import TaskPlan, claude_task_result, provider_plan
+from vrsoft_extractor.mary.task_plan import (
+    TaskPlan,
+    claude_task_result,
+    derive_task_progress,
+    provider_plan,
+)
 
 
 @pytest.mark.parametrize(
@@ -152,6 +157,121 @@ def test_claude_task_create_update_list_and_delete_use_successful_results():
             {"name": "TaskList", "result": {"tasks": []}}, updated["task_records"]
         )["plan"]
         == []
+    )
+
+
+def test_codex_status_mapping_is_canonical():
+    event = RuntimeEvent(
+        "c",
+        "runtime_event",
+        "turn/plan/updated",
+        {
+            "plan": [
+                {"step": "A", "status": "pending"},
+                {"step": "B", "status": "inProgress"},
+                {"step": "C", "status": "completed"},
+                {"step": "D", "status": "weird_future_state"},
+            ]
+        },
+    )
+    assert provider_plan(event) == [
+        {"text": "A", "state": "pending"},
+        {"text": "B", "state": "running"},
+        {"text": "C", "state": "completed"},
+        {"text": "D", "state": "pending"},
+    ]
+
+
+def test_todowrite_fallback_shapes_normalize_to_same_contract():
+    variants = [
+        {"name": "TodoWrite", "input": {"todos": [{"content": "X", "status": "in_progress"}]}},
+        {"tool": "todo_write", "input": {"todos": [{"content": "X", "status": "in_progress"}]}},
+        {
+            "part": {
+                "tool": "TodoWrite",
+                "state": {"input": {"todos": [{"title": "X", "status": "in_progress"}]}},
+            }
+        },
+    ]
+    for payload in variants:
+        assert provider_plan(RuntimeEvent("c", "tool_event", payload=payload)) == [
+            {"text": "X", "state": "running"}
+        ]
+
+
+def test_opencode_tool_use_shape_normalizes():
+    payload = {
+        "type": "tool_use",
+        "part": {
+            "tool": "TodoWrite",
+            "state": {"input": {"todos": [{"content": "Y", "status": "pending"}]}},
+        },
+    }
+    assert provider_plan(RuntimeEvent("c", "tool_event", payload=payload)) == [
+        {"text": "Y", "state": "pending"}
+    ]
+
+
+def test_derive_task_progress_single_source():
+    assert derive_task_progress([]) is None
+    assert derive_task_progress(None) is None
+    assert (
+        derive_task_progress([{"text": "A", "state": "completed"}]) is None
+    )
+    assert derive_task_progress(
+        [
+            {"text": "A", "state": "completed"},
+            {"text": "B", "state": "running"},
+            {"text": "C", "state": "pending"},
+        ]
+    ) == {"step": "B", "completed": 1, "total": 3}
+    # No running: first pending wins.
+    assert derive_task_progress(
+        [
+            {"text": "A", "state": "completed"},
+            {"text": "B", "state": "pending"},
+        ]
+    ) == {"step": "B", "completed": 1, "total": 2}
+    # Duplicate labels do not collide: occurrence order decides.
+    assert derive_task_progress(
+        [
+            {"text": "Same", "state": "completed"},
+            {"text": "Same", "state": "pending"},
+        ]
+    ) == {"step": "Same", "completed": 1, "total": 2}
+
+
+def test_claude_blocked_by_preserved_and_list_replaces_registry():
+    created = claude_task_result(
+        {
+            "name": "TaskCreate",
+            "input": {"subject": "A", "blockedBy": ["9"]},
+            "result": {"task": {"id": "1", "subject": "A", "blockedBy": ["9"]}},
+        },
+        {},
+    )
+    assert created["plan"][0]["step"] == "A (bloqueada por #9)"
+    replaced = claude_task_result(
+        {
+            "name": "TaskList",
+            "input": {},
+            "result": {"tasks": [{"id": "2", "subject": "B", "status": "pending"}]},
+        },
+        created["task_records"],
+    )
+    assert replaced["plan"] == [{"step": "B", "status": "pending"}]
+    assert set(replaced["task_records"]) == {"2"}
+    # Unknown id and failed result never corrupt state.
+    assert (
+        claude_task_result(
+            {
+                "name": "TaskUpdate",
+                "input": {"taskId": "missing", "status": "completed"},
+                "result": {"success": True},
+            },
+            replaced["task_records"],
+        )
+        is None
     )
 
 

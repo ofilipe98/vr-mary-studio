@@ -30,7 +30,7 @@ from ..code_processing_audit import CodeProcessingAudit
 from ..config import MarySettings
 from ..db import MaryDatabase
 from ..models import RuntimeEvent
-from ..task_plan import TaskPlan
+from ..task_plan import TaskPlan, derive_task_progress
 from ..orchestrator import ChatOrchestrator
 from ..workspace import is_managed_conversation_workspace
 
@@ -185,6 +185,9 @@ class ChatBridge(QObject):
         self._activity_steps: list[dict[str, str]] = []
         self._task_plan = TaskPlan()
         self._task_plan_current = False
+        self._task_plans: dict[str, TaskPlan] = {}
+        self._task_plan_current_by_id: dict[str, bool] = {}
+        self._task_progress_by_id: dict[str, dict[str, Any]] = {}
         self._activity_items: list[dict[str, str]] = []
         self._trace_items: list[dict[str, Any]] = []
         self._trace_sequence = 0
@@ -523,6 +526,22 @@ class ChatBridge(QObject):
 
     @Property(str, notify=stateChanged)
     def statusText(self) -> str:  # noqa: N802
+        progress = self._selected_task_progress()
+        if progress and self.turnRunning and self._status_text not in {
+            "Aguardando aprovação…",
+            "Erro",
+            "Interrompido",
+            "Parando…",
+            "Finalizando resposta…",
+            "Aprovado",
+            "Negado",
+        }:
+            step = str(progress.get("step") or "").strip()
+            if step:
+                short = " ".join(step.split())
+                if len(short) > 90:
+                    short = short[:89].rstrip() + "…"
+                return f"Trabalhando · {short}"
         return self._status_text
 
     @Property(bool, notify=stateChanged)
@@ -1217,6 +1236,158 @@ class ChatBridge(QObject):
             step["state"] != "completed" for step in self._task_plan.steps
         )
 
+    @Property("QVariantMap", notify=stateChanged)
+    def taskProgress(self) -> dict[str, Any]:  # noqa: N802
+        progress = self._selected_task_progress()
+        return dict(progress) if progress else {}
+
+    def _task_plan_for(self, conversation_id: str) -> TaskPlan:
+        """Return the per-conversation TaskPlan, creating it on demand."""
+        key = str(conversation_id or "")
+        plan = self._task_plans.get(key)
+        if plan is None:
+            plan = TaskPlan()
+            self._task_plans[key] = plan
+        return plan
+
+    def _is_task_plan_current(self, conversation_id: str) -> bool:
+        return bool(self._task_plan_current_by_id.get(str(conversation_id or "")))
+
+    def _selected_task_progress(self) -> dict[str, Any] | None:
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id:
+            return None
+        return self._active_task_progress_for(conversation_id)
+
+    def _active_task_progress_for(
+        self, conversation_id: str
+    ) -> dict[str, Any] | None:
+        """Compact active progress for a conversation.
+
+        Only exists while the conversation is really running a turn and
+        there is unfinished work. The persisted full plan is untouched.
+        """
+        key = str(conversation_id or "")
+        if not key or key not in self._active_turns:
+            return None
+        if not self._task_plan_current_by_id.get(key):
+            return None
+        plan = self._task_plans.get(key)
+        steps = plan.steps if plan is not None else []
+        # When the selected view is the only source (legacy direct writes),
+        # fall back to it for the selected conversation.
+        if not steps and key == self._selected_conversation_id():
+            steps = self._task_plan.steps
+        return derive_task_progress(steps)
+
+    def _sync_selected_task_view(self, conversation_id: str) -> None:
+        """Point the selected TaskPlan view at the per-conversation store."""
+        key = str(conversation_id or "")
+        stored = self._task_plans.get(key)
+        if stored is None:
+            stored = TaskPlan()
+            # Preserve any steps already staged on the legacy selected view
+            # when the store is still empty (tests drive events directly).
+            if key == self._selected_conversation_id() and self._task_plan.steps:
+                stored.steps = [dict(step) for step in self._task_plan.steps]
+            self._task_plans[key] = stored
+            if key not in self._task_plan_current_by_id:
+                self._task_plan_current_by_id[key] = bool(
+                    self._task_plan_current
+                    and key == self._selected_conversation_id()
+                )
+        self._task_plan = stored
+        self._task_plan_current = bool(self._task_plan_current_by_id.get(key))
+
+    def _apply_task_snapshot(
+        self,
+        conversation_id: str,
+        steps: list[dict[str, Any]],
+        created_at: str,
+        turn_id: str = "",
+    ) -> bool:
+        """Update the per-conversation plan; return True when UI state changed."""
+        key = str(conversation_id or "")
+        plan = self._task_plan_for(key)
+        before_steps = [dict(step) for step in plan.steps]
+        before_current = bool(self._task_plan_current_by_id.get(key))
+        before_progress = self._task_progress_by_id.get(key)
+        plan.update(steps, created_at, turn_id)
+        self._task_plan_current_by_id[key] = True
+        after_progress = derive_task_progress(plan.steps)
+        if after_progress is None:
+            self._task_progress_by_id.pop(key, None)
+        else:
+            self._task_progress_by_id[key] = dict(after_progress)
+        if key == self._selected_conversation_id():
+            self._task_plan = plan
+            self._task_plan_current = True
+        changed = (
+            before_steps != [dict(step) for step in plan.steps]
+            or before_current is not True
+            or before_progress != after_progress
+        )
+        self._update_conversation_task_item(key)
+        return changed
+
+    def _begin_task_turn(self, conversation_id: str) -> None:
+        """A new turn starts without active progress until a fresh plan arrives."""
+        key = str(conversation_id or "")
+        self._task_plan_for(key)
+        self._task_plan_current_by_id[key] = False
+        self._task_progress_by_id.pop(key, None)
+        if key == self._selected_conversation_id():
+            self._task_plan_current = False
+        self._update_conversation_task_item(key)
+
+    def _clear_task_progress_for(self, conversation_id: str) -> None:
+        """Terminal state: drop active progress, keep the persisted plan."""
+        key = str(conversation_id or "")
+        self._task_progress_by_id.pop(key, None)
+        # Keep _task_plan_current_by_id untouched so the full plan survives
+        # restoration; active progress is gated on _active_turns anyway.
+        self._update_conversation_task_item(key)
+
+    def _update_conversation_task_item(self, conversation_id: str) -> None:
+        """Refresh only the affected conversation row with task progress."""
+        key = str(conversation_id or "")
+        if not key or not self._all_conversations:
+            return
+        progress = self._active_task_progress_for(key)
+        step = str((progress or {}).get("step") or "")
+        completed = int((progress or {}).get("completed") or 0)
+        total = int((progress or {}).get("total") or 0)
+        if progress is None:
+            step, completed, total = "", 0, 0
+        updated = False
+        for entry in self._all_conversations:
+            if str(entry.get("conversationId") or "") != key:
+                continue
+            if (
+                entry.get("taskStep") != step
+                or int(entry.get("taskCompleted") or 0) != completed
+                or int(entry.get("taskTotal") or 0) != total
+            ):
+                entry["taskStep"] = step
+                entry["taskCompleted"] = completed
+                entry["taskTotal"] = total
+                updated = True
+            break
+        if not updated:
+            return
+        # Patch the filtered model in place to avoid rebuilding the list
+        # during streaming.
+        try:
+            self._conversations.update_by_key(
+                "conversationId",
+                key,
+                taskStep=step,
+                taskCompleted=completed,
+                taskTotal=total,
+            )
+        except Exception:
+            pass
+
     @Property("QVariantList", notify=stateChanged)
     def activityItems(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_items]
@@ -1739,6 +1910,9 @@ class ChatBridge(QObject):
             ):
                 vr_mode = self._vr_mode
             vr_enabled = vr_mode != "off"
+            # Active task progress is in-memory only (no SQLite per frame);
+            # the persisted full plan stays in runtime_events.
+            task_progress = self._active_task_progress_for(conversation_id)
             conversations.append(
                 {
                     "conversationId": conversation_id,
@@ -1760,6 +1934,9 @@ class ChatBridge(QObject):
                     ),
                     "vrMode": vr_mode,
                     "vrEnabled": vr_enabled,
+                    "taskStep": str((task_progress or {}).get("step") or ""),
+                    "taskCompleted": int((task_progress or {}).get("completed") or 0),
+                    "taskTotal": int((task_progress or {}).get("total") or 0),
                 }
             )
         conversations.sort(
@@ -2639,7 +2816,7 @@ class ChatBridge(QObject):
         self._sync_selected_turn_state()
         self._status_text = "Executando…"
         self._activity_steps = self._default_activity_steps()
-        self._task_plan_current = False
+        self._begin_task_turn(conversation_id)
         self._activity_items = []
         self._reset_trace_state()
         self._reasoning_text = ""
@@ -2796,8 +2973,10 @@ class ChatBridge(QObject):
         return self._Activity_domain._on_background_runtime_event(event)
 
     def _finish_background_turn(self, conversation_id: str) -> None:
-        self._active_turns.discard(str(conversation_id or ""))
-        self._active_turn_started_epochs.pop(str(conversation_id or ""), None)
+        key = str(conversation_id or "")
+        self._active_turns.discard(key)
+        self._active_turn_started_epochs.pop(key, None)
+        self._clear_task_progress_for(key)
         self._sync_selected_turn_state()
         self.stateChanged.emit()
         self.refresh()
@@ -2854,6 +3033,11 @@ class ChatBridge(QObject):
         for item in self._trace_items:
             if item.get("state") == "running":
                 item["state"] = terminal_state
+        selected_id = self._selected_conversation_id()
+        if selected_id:
+            # Active progress must vanish immediately on terminal state;
+            # the persisted full plan stays untouched.
+            self._clear_task_progress_for(selected_id)
         if self._stream_pending_text:
             self._status_text = "Finalizando resposta…"
             if not self._stream_timer.isActive():
@@ -2868,6 +3052,8 @@ class ChatBridge(QObject):
         conversation_id = self._selected_conversation_id()
         self._active_turns.discard(conversation_id)
         self._active_turn_started_epochs.pop(conversation_id, None)
+        if conversation_id:
+            self._clear_task_progress_for(conversation_id)
         self._sync_selected_turn_state()
         self._status_text = (
             "Erro"
@@ -2950,13 +3136,26 @@ class ChatBridge(QObject):
     ) -> None:
         """Adapt orchestration events into compact, QML-safe presentation state."""
         if event.kind == "turn_started":
-            self._task_plan_current = False
+            self._begin_task_turn(event.conversation_id)
+            if emit_state:
+                self.stateChanged.emit()
         if event.kind == "task_plan_updated":
             steps = event.payload.get("steps")
             if isinstance(steps, list):
-                self._task_plan.update(steps, event.created_at, str(event.payload.get("turnId") or event.payload.get("execution_id") or ""))
-                self._task_plan_current = True
-                if emit_state:
+                changed = self._apply_task_snapshot(
+                    event.conversation_id,
+                    steps,
+                    event.created_at,
+                    str(
+                        event.payload.get("turnId")
+                        or event.payload.get("execution_id")
+                        or ""
+                    ),
+                )
+                if emit_state and (
+                    changed
+                    or event.conversation_id == self._selected_conversation_id()
+                ):
                     self.stateChanged.emit()
             return
         execution_kinds = {

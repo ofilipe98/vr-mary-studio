@@ -226,6 +226,26 @@ class ActivityDomain:
         if event.kind in {"approval_requested", "dynamic_tool_approval_requested"}:
             self._enqueue_approval(event)
             return
+        if event.kind == "turn_started":
+            self._active_turns.add(event.conversation_id)
+            self._begin_task_turn(event.conversation_id)
+            self.stateChanged.emit()
+            return
+        if event.kind == "task_plan_updated":
+            steps = event.payload.get("steps")
+            if isinstance(steps, list):
+                self._apply_task_snapshot(
+                    event.conversation_id,
+                    steps,
+                    event.created_at,
+                    str(
+                        event.payload.get("turnId")
+                        or event.payload.get("execution_id")
+                        or ""
+                    ),
+                )
+                self.stateChanged.emit()
+            return
         if event.kind in {
             "turn_completed",
             "orchestration_completed",
@@ -387,16 +407,24 @@ class ActivityDomain:
 
 
     def _restore_activity_from_history(self, conversation_id: str) -> None:
-        self._task_plan = TaskPlan()
-        self._task_plan_current = False
+        key = str(conversation_id or "")
+        restored = TaskPlan()
         for row in self._database.task_plan_events(conversation_id):
             try:
                 payload = json.loads(row["payload_json"])
                 steps = payload.get("steps")
                 if isinstance(steps, list):
-                    self._task_plan.update(steps, row["created_at"], str(payload.get("turnId") or payload.get("execution_id") or ""))
+                    restored.update(steps, row["created_at"], str(payload.get("turnId") or payload.get("execution_id") or ""))
             except (TypeError, ValueError, KeyError, AttributeError):
                 continue
+        self._task_plans[key] = restored
+        self._task_plan_current_by_id[key] = False
+        self._task_progress_by_id.pop(key, None)
+        # Keep legacy behavior: the selected view mirrors the restored
+        # conversation (production restores the selection; tests restore
+        # explicitly to inspect persistence).
+        self._task_plan = restored
+        self._task_plan_current = False
         self._activity_steps = []
         self._activity_items = []
         self._reset_trace_state()
@@ -462,7 +490,21 @@ class ActivityDomain:
                     terminal = True
         finally:
             self._restoring_turn_history = False
-        self._task_plan_current = any(str(row["kind"]) == "task_plan_updated" for row in rows)
+        current_in_latest = any(
+            str(row["kind"]) == "task_plan_updated" for row in rows
+        )
+        self._task_plan_current_by_id[key] = current_in_latest
+        self._task_plan_current = current_in_latest
+        # Recompute cached active progress (only visible while running).
+        from ...task_plan import derive_task_progress as _derive_progress
+
+        plan = self._task_plans.get(key)
+        progress = _derive_progress(plan.steps if plan is not None else [])
+        if progress is None or not current_in_latest:
+            self._task_progress_by_id.pop(key, None)
+        else:
+            self._task_progress_by_id[key] = dict(progress)
+        self._update_conversation_task_item(key)
         if not self._activity_steps and any(
             str(row["kind"] or "") in {"turn_started", "assistant_delta"}
             for row in rows

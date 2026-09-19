@@ -162,7 +162,14 @@ class _MappingListModel(QAbstractListModel):
         if role_name is None:
             return None
         name = role_name.decode("utf-8")
-        return self._items[index.row()].get(name, [] if name == "activityData" else False if name in ("isStreaming", "vrEnabled") else "" if name in ("messageKey", "vrMode") else None)
+        return self._items[index.row()].get(
+            name,
+            [] if name == "activityData"
+            else False if name in ("isStreaming", "vrEnabled")
+            else "" if name in ("messageKey", "vrMode", "taskStep")
+            else 0 if name in ("taskCompleted", "taskTotal")
+            else None,
+        )
 
     def roleNames(self) -> dict[int, bytes]:  # noqa: N802
         return self._roles
@@ -221,6 +228,9 @@ class ConversationListModel(_MappingListModel):
         "startedAtEpoch",
         "vrMode",
         "vrEnabled",
+        "taskStep",
+        "taskCompleted",
+        "taskTotal",
     )
 
 
