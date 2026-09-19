@@ -506,20 +506,20 @@ def approval_preset(profile: str) -> ApprovalPreset:
 
 
 from vrsoft_extractor.mary.tool_activity import (
-    NormalizedToolEvent,
-    ToolActivity,
-    ToolEventKind,
-    ToolLifecycleReducer,
-    ToolStatus,
-    ToolType,
-    sanitize_error_summary,
-    sanitize_title,
+    NormalizedToolEvent as NormalizedToolEvent,
+    ToolActivity as ToolActivity,
+    ToolEventKind as ToolEventKind,
+    ToolLifecycleReducer as ToolLifecycleReducer,
+    ToolStatus as ToolStatus,
+    ToolType as ToolType,
+    sanitize_error_summary as sanitize_error_summary,
+    sanitize_title as sanitize_title,
 )
 from vrsoft_extractor.mary.tool_presentation import (
-    DEFAULT_PRESENTATION_REGISTRY,
-    ToolFormatter,
-    ToolGroupPresentation,
-    ToolPresentation,
-    ToolPresentationRegistry,
-    format_duration,
+    DEFAULT_PRESENTATION_REGISTRY as DEFAULT_PRESENTATION_REGISTRY,
+    ToolFormatter as ToolFormatter,
+    ToolGroupPresentation as ToolGroupPresentation,
+    ToolPresentation as ToolPresentation,
+    ToolPresentationRegistry as ToolPresentationRegistry,
+    format_duration as format_duration,
 )

@@ -8,19 +8,15 @@ Verifies:
 from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings, QUrl
-from PySide6.QtQuick import QQuickItem, QQuickView
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQml import QQmlComponent
 from PySide6.QtWidgets import QApplication
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.frontend.app import create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge
-from vrsoft_extractor.mary.frontend.bridges.activity import ActivityDomain
 from vrsoft_extractor.mary.frontend.chat import ChatBridge
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
-from vrsoft_extractor.mary.models import RuntimeEvent
-from vrsoft_extractor.mary.tool_presentation import DEFAULT_PRESENTATION_REGISTRY
 
 pytestmark = pytest.mark.qml
 

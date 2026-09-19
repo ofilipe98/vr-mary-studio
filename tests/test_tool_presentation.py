@@ -7,13 +7,10 @@ Covers:
 - Sanitization of titles and clean separation of concise error summaries vs full stack traces.
 - ToolPresentationRegistry dispatching and format_from_event.
 """
-from dataclasses import asdict
-import pytest
 
 from vrsoft_extractor.mary.models import RuntimeEvent
 from vrsoft_extractor.mary.tool_activity import (
     ToolActivity,
-    ToolEventKind,
     ToolStatus,
     ToolType,
 )
@@ -22,10 +19,7 @@ from vrsoft_extractor.mary.tool_presentation import (
     CommandExecutionFormatter,
     FileChangeFormatter,
     FileReadFormatter,
-    GenericFormatter,
     McpToolCallFormatter,
-    ToolGroupPresentation,
-    ToolPresentation,
     ToolPresentationRegistry,
     WebSearchFormatter,
     format_duration,

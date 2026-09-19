@@ -121,8 +121,13 @@ Column {
                 easing.type: Easing.OutCubic
                 onRunningChanged: {
                     if (!running) {
-                        root.animating = false
-                        root.transitionFinished()
+                        Qt.callLater(function() {
+                            if (heightAnim.running)
+                                return
+                            root.forceLayout()
+                            root.animating = false
+                            root.transitionFinished()
+                        })
                     }
                 }
             }

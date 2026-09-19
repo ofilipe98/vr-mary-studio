@@ -18,15 +18,11 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 import json
-import re
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from .models import RuntimeEvent
 from .tool_activity import (
     ToolActivity,
     ToolEventKind,

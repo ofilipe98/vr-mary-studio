@@ -8,7 +8,6 @@ Validates:
 - Preservation of rich presentation fields (command, durationLabel, badgeText, cwd, diffs)
   across reload.
 """
-from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication

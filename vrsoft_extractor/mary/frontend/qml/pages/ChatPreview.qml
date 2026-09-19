@@ -920,14 +920,20 @@ Item {
                     }
                     contentY = Math.max(0, Math.min(maxY, targetY))
                     if (!isAnchorAnimating()) {
-                        clearAnchor()
+                        Qt.callLater(settleAnchor)
                     }
+                }
+                function settleAnchor() {
+                    if (!hasAnchor || isAnchorAnimating())
+                        return
+                    // Nested positioners update after the animation stops.
+                    // Keep the anchor until their final geometry is available.
+                    applyAnchorAdjustment()
+                    clearAnchor()
                 }
                 function finishAnchor(item) {
                     if (anchorItem === item || !item) {
-                        if (hasAnchor)
-                            applyAnchorAdjustment()
-                        clearAnchor()
+                        Qt.callLater(settleAnchor)
                     }
                 }
                 function compensateToggle(item, heightDelta) {

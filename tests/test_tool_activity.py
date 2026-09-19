@@ -11,11 +11,9 @@ Covers:
 - Replay and serialization roundtrips
 - Error and title sanitization, including the mandatory 'null' stack trace case
 """
-import pytest
 
 from vrsoft_extractor.mary.tool_activity import (
     NormalizedToolEvent,
-    ToolActivity,
     ToolEventKind,
     ToolLifecycleReducer,
     ToolStatus,

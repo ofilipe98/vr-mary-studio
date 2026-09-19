@@ -4,8 +4,6 @@ Verifies that Codex, Antigravity, OpenCode, and Claude events are cleanly
 transformed into canonical NormalizedToolEvents at the adapter boundary,
 and feed correctly into ToolLifecycleReducer.
 """
-from dataclasses import asdict
-import pytest
 
 from vrsoft_extractor.mary.models import RuntimeEvent
 from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
