@@ -2053,18 +2053,15 @@ class ChatBridge(QObject):
     def discardDraft(self, conversation_id: str = "") -> bool:  # noqa: N802
         return self._Conversations_domain.discardDraft(conversation_id)
 
+    @Slot(str)
+    def togglePinnedConversation(self, conversation_id: str) -> None:  # noqa: N802
+        return self._Conversations_domain.togglePinnedConversation(conversation_id)
+
     @Slot()
     def togglePinnedCurrent(self) -> None:  # noqa: N802
-        conversation_id = self._selected_conversation_id()
-        if not conversation_id:
-            return
-        if conversation_id in self._pinned_conversation_ids:
-            self._pinned_conversation_ids.remove(conversation_id)
-        else:
-            self._pinned_conversation_ids.add(conversation_id)
-        self._persist_pinned_conversation_ids()
-        self.refresh()
-        self.selectionChanged.emit()
+        return self._Conversations_domain.togglePinnedConversation(
+            self._selected_conversation_id()
+        )
 
     @Slot()
     def startNewChat(self) -> None:  # noqa: N802
@@ -2840,13 +2837,29 @@ class ChatBridge(QObject):
             if item["path"] in reference_paths
         )
         provider_text = " ".join(value for value in (file_references, content) if value)
-        # Store draft snapshot in case send fails before persistence
-        draft_snapshot = self._draft_records.get(conversation_id) or {
+        # Store draft snapshot in case send fails before persistence.
+        # Snapshot must reflect the current attempt (text/attachments);
+        # only auxiliary keys from a previous record are preserved.
+        previous_draft = dict(self._draft_records.get(conversation_id) or {})
+        draft_snapshot = {
+            **previous_draft,
             "text": content,
             "attachments": [dict(item) for item in self._attachments],
             "savedAt": datetime.now().astimezone().isoformat(),
             "vr_mode": self._vr_mode,
         }
+        # Identity-based persistence detection (never content equality):
+        # capture user message ids before send to detect a NEW persisted row.
+        try:
+            _before_rows = self._database.messages(conversation_id)
+            before_user_message_ids = {
+                int(dict(m).get("id"))
+                for m in _before_rows
+                if dict(m).get("role") == "user"
+                and dict(m).get("id") is not None
+            }
+        except Exception:
+            before_user_message_ids = set()
         # Iniciar handoff: temporarily remove draft while turn is being initiated
         if conversation_id in self._draft_records:
             self._draft_records.pop(conversation_id, None)
@@ -2928,7 +2941,10 @@ class ChatBridge(QObject):
                 try:
                     db_messages = self._database.messages(conversation_id)
                     persisted = any(
-                        dict(m).get("role") == "user" and dict(m).get("content") == content
+                        dict(m).get("role") == "user"
+                        and dict(m).get("id") is not None
+                        and int(dict(m).get("id"))
+                        not in before_user_message_ids
                         for m in db_messages
                     )
                 except Exception:
@@ -2968,6 +2984,10 @@ class ChatBridge(QObject):
                 self._runtimeEvent.emit(RuntimeEvent(target, "error", str(exc)))
 
         threading.Thread(target=interrupt, daemon=True).start()
+
+    @Slot(str)
+    def archiveConversation(self, conversation_id: str) -> None:  # noqa: N802
+        return self._Conversations_domain.archiveConversation(conversation_id)
 
     @Slot()
     def archiveCurrentConversation(self) -> None:  # noqa: N802

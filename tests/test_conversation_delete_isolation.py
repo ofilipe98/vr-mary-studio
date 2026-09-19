@@ -372,7 +372,7 @@ class ConversationDeleteIsolationTest(DeleteIsolationTestMixin, unittest.TestCas
         )
         self.application.processEvents()
 
-        # 2. updated
+        # 2. updated (explicit event identity for idempotency)
         self._bridge._on_runtime_event(
             RuntimeEvent(chat1, "tool_event", "Executando", {
                 "execution_id": 1,
@@ -380,11 +380,13 @@ class ConversationDeleteIsolationTest(DeleteIsolationTestMixin, unittest.TestCas
                 "step_type": "commandExecution",
                 "status": "running",
                 "delta": "test_1 passed\n",
+                "event_id": "evt-delta-1",
+                "sequence": 1,
             })
         )
         self.application.processEvents()
 
-        # 3. updated duplicate
+        # 3. updated duplicate retry (same event_id -> deduped, no double append)
         self._bridge._on_runtime_event(
             RuntimeEvent(chat1, "tool_event", "Executando", {
                 "execution_id": 1,
@@ -392,6 +394,8 @@ class ConversationDeleteIsolationTest(DeleteIsolationTestMixin, unittest.TestCas
                 "step_type": "commandExecution",
                 "status": "running",
                 "delta": "test_1 passed\n",
+                "event_id": "evt-delta-1",
+                "sequence": 1,
             })
         )
         self.application.processEvents()

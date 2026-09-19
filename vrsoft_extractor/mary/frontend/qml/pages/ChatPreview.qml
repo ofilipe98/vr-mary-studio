@@ -2870,10 +2870,15 @@ Item {
                     HoverHandler { id: menuHover }
                     TapHandler {
                         onTapped: {
+                            var targetId = String(root.conversationMenuConversationId || "")
                             conversationContextMenu.close()
-                            if (conversationAction.modelData.action === "pin") root.chatBridge.togglePinnedCurrent()
-                            else if (conversationAction.modelData.action === "archive") root.chatBridge.archiveCurrentConversation()
-                            else conversationDeleteDialog.open()
+                            if (conversationAction.modelData.action === "pin") {
+                                if (targetId) root.chatBridge.togglePinnedConversation(targetId)
+                                else root.chatBridge.togglePinnedCurrent()
+                            } else if (conversationAction.modelData.action === "archive") {
+                                if (targetId) root.chatBridge.archiveConversation(targetId)
+                                else root.chatBridge.archiveCurrentConversation()
+                            } else conversationDeleteDialog.open()
                         }
                     }
                 }

@@ -795,30 +795,59 @@ class ConversationsDomain:
         self._preferences.sync()
 
 
-    def archiveCurrentConversation(self) -> None:  # noqa: N802
-        conversation_id = self._selected_conversation_id()
-        if not conversation_id:
+    def togglePinnedConversation(self, conversation_id: str) -> None:  # noqa: N802
+        """Toggle pin for the explicitly targeted conversation (no reselection)."""
+        cid = str(conversation_id or "").strip()
+        if not cid:
             return
-        if conversation_id in self._active_turns:
-            row = self._database.get_conversation(conversation_id)
+        if self._database.get_conversation(cid) is None:
+            return
+        if cid in self._pinned_conversation_ids:
+            self._pinned_conversation_ids.remove(cid)
+        else:
+            self._pinned_conversation_ids.add(cid)
+        self._persist_pinned_conversation_ids()
+        self.refresh()
+        self.selectionChanged.emit()
+
+    def archiveConversation(self, conversation_id: str) -> None:  # noqa: N802
+        """Archive the explicitly targeted conversation (no reselection).
+
+        Running state is evaluated per target: a persisted ``running``
+        status blocks only that same conversation.
+        """
+        cid = str(conversation_id or "").strip()
+        if not cid:
+            return
+        if cid in self._active_turns:
+            row = self._database.get_conversation(cid)
             if row is not None and str(row["status"] or "idle") == "running":
                 return
             # Residual frontend state; reconcile instead of blocking.
-            self._active_turns.discard(conversation_id)
-            self._active_turn_started_epochs.pop(conversation_id, None)
+            self._active_turns.discard(cid)
+            self._active_turn_started_epochs.pop(cid, None)
+        else:
+            row = self._database.get_conversation(cid)
+            if row is not None and str(row["status"] or "idle") == "running":
+                return
         try:
-            self._orchestrator.archive(conversation_id)
+            self._orchestrator.archive(cid)
         except Exception as exc:
             self._status_text = f"Falha: {exc}"
             self.stateChanged.emit()
             return
-        self._draft_records.pop(conversation_id, None)
-        self._pinned_conversation_ids.discard(conversation_id)
+        self._draft_records.pop(cid, None)
+        self._pinned_conversation_ids.discard(cid)
         self._persist_draft_records()
         self._persist_pinned_conversation_ids()
+        was_selected = cid == self._selected_conversation_id()
         self.refresh()
-        self.conversationArchived.emit(conversation_id)
-        self.startNewChat()
+        self.conversationArchived.emit(cid)
+        if was_selected:
+            self.startNewChat()
+
+    def archiveCurrentConversation(self) -> None:  # noqa: N802
+        return self.archiveConversation(self._selected_conversation_id())
 
 
     def trashConversation(self, conversation_id: str) -> None:  # noqa: N802

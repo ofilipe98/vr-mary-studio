@@ -235,17 +235,59 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
     return first_line[:120], text
 
 
-def coalesce_output(curr_output: Any, new_output: Any = None, delta: Any = None) -> Any:
+MAX_TOOL_OUTPUT_CHARS = 200_000
+
+
+def _truncate_tool_output(value: Any) -> Any:
+    """Bound in-memory/UI retention for very large tool outputs."""
+    if not isinstance(value, str):
+        return value
+    if len(value) <= MAX_TOOL_OUTPUT_CHARS:
+        return value
+    return "[...truncado...]\n" + value[-MAX_TOOL_OUTPUT_CHARS:]
+
+
+def coalesce_output(
+    curr_output: Any,
+    new_output: Any = None,
+    delta: Any = None,
+    *,
+    output_mode: str = "",
+) -> Any:
     """Coalesce incoming output chunk or snapshot with current output.
 
-    Guarantees strict parity with T3Code streaming & coalescing:
-    - Delta stream ("A", "B", "C") -> "ABC"
-    - Snapshot stream ("A", "AB", "ABC") -> "ABC"
-    - Duplicate snapshots ("A", "A", "AB") -> "AB"
-    - Erroneous cumulative snapshot in delta field -> does not repeat ("ABC", never "AABABC")
-    - Never generates interleaved duplicates
-    - Handles string, dict/list (MCP/JSON payloads), and None seamlessly
+    Explicit ``output_mode`` avoids inferring provider semantics from text:
+    - ``"delta"``: incremental chunk, always appended literally
+      (``"A"`` + ``"A"`` -> ``"AA"``).
+    - ``"snapshot"``: cumulative buffer, coalesced without duplication
+      (``"A"``, ``"AB"``, ``"ABC"`` -> ``"ABC"``).
+    - ``""`` (legacy): heuristic parity with T3Code streaming & coalescing:
+      delta stream ("A", "B", "C") -> "ABC";
+      snapshot stream ("A", "AB", "ABC") -> "ABC";
+      duplicate snapshots ("A", "A", "AB") -> "AB";
+      cumulative snapshot in delta field does not repeat ("ABC", never "AABABC").
+    Handles string, dict/list (MCP/JSON payloads), and None seamlessly.
     """
+    mode = str(output_mode or "").strip().lower()
+    if mode == "delta" and delta is not None and delta != "":
+        delta_str = str(delta)
+        if curr_output is None or curr_output == "":
+            return delta_str
+        return str(curr_output) + delta_str
+
+    if mode == "snapshot" and new_output is not None:
+        if curr_output is None or curr_output == "":
+            return new_output
+        if curr_output == new_output:
+            return curr_output
+        if isinstance(curr_output, str) and isinstance(new_output, str):
+            if new_output.startswith(curr_output):
+                return new_output
+            if curr_output.startswith(new_output):
+                return curr_output
+            return curr_output + new_output
+        return new_output
+
     if delta is not None and delta != "":
         delta_str = str(delta)
         if curr_output is None or curr_output == "":
@@ -375,6 +417,7 @@ class NormalizedToolEvent:
     output: Any = None
     output_preview: str = ""
     delta: Any = None
+    output_mode: str = ""  # "delta" | "snapshot" | "" (legacy heuristic)
     error: str = ""
     error_details: str = ""
     command: str = ""
@@ -387,7 +430,10 @@ class NormalizedToolEvent:
 
     def payload_digest(self) -> str:
         """Deterministic fingerprint for deduplicating identical events missing event_id."""
-        raw = f"{self.kind.value}:{self.tool_id}:{self.status}:{self.sequence}:{self.output}:{self.delta}:{self.error}:{self.exit_code}"
+        raw = (
+            f"{self.kind.value}:{self.tool_id}:{self.status}:{self.sequence}:"
+            f"{self.output}:{self.delta}:{self.output_mode}:{self.error}:{self.exit_code}"
+        )
         return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
@@ -426,8 +472,11 @@ class ToolLifecycleReducer:
             return self._tools[event.tool_id]
 
         digest = event.payload_digest()
-        # If no explicit event_id but identical event digest has already been processed for this tool
-        if not event.event_id and digest in self._processed_digests:
+        # Deduplication prioritizes explicit identity (event_id/sequence).
+        # Explicit delta chunks must append literally even when textually equal
+        # ("A"+"A" -> "AA"); only snapshot/legacy payloads use digest heuristics.
+        is_explicit_delta = str(getattr(event, "output_mode", "") or "").lower() == "delta"
+        if not event.event_id and not is_explicit_delta and digest in self._processed_digests:
             logger.debug("Duplicate event digest ignored: %s (tool_id=%s)", digest, event.tool_id)
             if event.tool_id in self._tools:
                 return self._tools[event.tool_id]
@@ -514,8 +563,15 @@ class ToolLifecycleReducer:
         if event.input_preview and not tool.input_preview:
             tool.input_preview = event.input_preview
 
-        # 7. Output merging: Handle snapshot vs delta vs repeated via coalesce_output
-        tool.output = coalesce_output(tool.output, new_output=event.output, delta=event.delta)
+        # 7. Output merging: explicit delta vs snapshot semantics (no textual inference)
+        tool.output = _truncate_tool_output(
+            coalesce_output(
+                tool.output,
+                new_output=event.output,
+                delta=event.delta,
+                output_mode=getattr(event, "output_mode", "") or "",
+            )
+        )
 
         if event.output_preview:
             tool.output_preview = event.output_preview

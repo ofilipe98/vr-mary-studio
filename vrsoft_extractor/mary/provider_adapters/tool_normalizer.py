@@ -115,6 +115,7 @@ def normalize_codex_event(
             name=name,
             title=title,
             output=output,
+            output_mode="snapshot" if output is not None else "",
             error=error,
             exit_code=exit_code,
             metadata=dict(params),
@@ -149,6 +150,7 @@ def normalize_codex_event(
             conversation_id=conversation_id,
             type=ToolType.COMMAND_EXECUTION if "commandExecution" in method else ToolType.UNKNOWN,
             delta=delta,
+            output_mode="delta" if delta is not None else "",
             metadata=dict(params),
         )
 
@@ -161,6 +163,12 @@ def normalize_codex_event(
         delta = params.get("delta") or item.get("delta")
         exit_code = item.get("exitCode") or item.get("exit_code")
         error = str(item.get("error") or "")
+        if delta is not None and output is None:
+            output_mode = "delta"
+        elif output is not None:
+            output_mode = "snapshot"
+        else:
+            output_mode = ""
         return NormalizedToolEvent(
             tool_id=item_id,
             kind=ToolEventKind.UPDATED,
@@ -169,6 +177,7 @@ def normalize_codex_event(
             type=tool_type,
             output=output,
             delta=delta,
+            output_mode=output_mode,
             exit_code=exit_code,
             error=error,
             metadata=dict(params),
@@ -285,6 +294,7 @@ def normalize_antigravity_event(
             name=raw_name,
             title=title,
             output=output,
+            output_mode="snapshot" if output is not None else "",
             error=error,
             metadata=dict(params),
         )
@@ -369,6 +379,7 @@ def normalize_opencode_event(
             command=command_str,
             input=input_data,
             output=output_data,
+            output_mode="snapshot" if output_data is not None else "",
             error=error_data,
             metadata=dict(payload),
         )
@@ -421,6 +432,7 @@ def normalize_claude_event(
             provider="claude",
             conversation_id=conversation_id,
             output=output,
+            output_mode="snapshot" if output else "",
             error=error,
             title=title,
             status=tool_status,
@@ -510,10 +522,43 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
     cwd = str(item.get("cwd") or payload.get("cwd") or "")
     exit_code_raw = item.get("exit_code") or payload.get("exit_code")
     exit_code = int(exit_code_raw) if exit_code_raw is not None else None
+    # Explicit provider event identity prioritized over content heuristics.
+    event_id = str(
+        payload.get("event_id")
+        or payload.get("eventId")
+        or item.get("event_id")
+        or item.get("eventId")
+        or payload.get("update_id")
+        or payload.get("updateId")
+        or ""
+    )
+    sequence = 0
+    for seq_key in ("sequence", "seq", "output_index", "index"):
+        raw_seq = payload.get(seq_key, item.get(seq_key, None)) if isinstance(item, dict) else payload.get(seq_key)
+        if raw_seq is None or raw_seq == "":
+            continue
+        try:
+            sequence = int(raw_seq)
+            break
+        except (TypeError, ValueError):
+            continue
+    # Explicit output semantics: incremental delta vs cumulative snapshot.
+    # Only providers that declare cumulative snapshots use snapshot coalescing;
+    # true deltas always append literally (even when textually equal).
+    explicit_mode = str(payload.get("output_mode") or item.get("output_mode") or "")
+    if explicit_mode.lower() in {"delta", "snapshot"}:
+        output_mode = explicit_mode.lower()
+    elif delta is not None and output is None:
+        output_mode = "delta"
+    elif output is not None:
+        output_mode = "snapshot"
+    else:
+        output_mode = ""
 
     return NormalizedToolEvent(
         tool_id=identity,
         kind=kind,
+        event_id=event_id,
         provider=str(payload.get("provider") or ""),
         conversation_id=event.conversation_id,
         type=tool_type,
@@ -522,9 +567,11 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
         command=command,
         cwd=cwd,
         exit_code=exit_code,
+        sequence=sequence,
         input=input_data,
         output=output,
         delta=delta,
+        output_mode=output_mode,
         error=error,
         metadata=payload,
     )

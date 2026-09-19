@@ -244,32 +244,64 @@ class ActivityDomain:
             self._discard_conversation_approvals(event.conversation_id)
             reducer_key = (event.conversation_id, execution_id)
             reducer = getattr(self, "_tool_reducers", {}).get(reducer_key)
-            if reducer:
+            if reducer is not None:
                 terminal_status = (
                     ToolStatus.FAILURE if event.kind == "error"
                     else ToolStatus.CANCELLED if event.kind == "orchestration_cancelled"
                     else ToolStatus.INTERRUPTED
                 )
                 reducer.finalize_turn(terminal_status)
-            for row in self._messages._items:
-                if row.get("role") == "activity":
+                # Single source of truth: re-render cards from reducer activities
+                # via presentation registry (never running -> completed).
+                by_id = {tool.id: tool for tool in reducer.get_all_tools()}
+                for row in list(self._messages._items):
+                    if row.get("role") != "activity":
+                        continue
                     activities = [dict(act) for act in row.get("activityData", [])]
+                    if not activities:
+                        self._messages.update_by_key(
+                            "messageKey", row.get("messageKey"), isStreaming=False
+                        )
+                        continue
+                    updated: list[dict] = []
+                    matched = False
                     for act in activities:
-                        if act.get("state") in {"running", "waiting_approval", "pending"}:
-                            if event.kind == "error":
-                                act["state"] = "error"
-                                act["badgeText"] = "falhou"
-                                act["badgeVariant"] = "error"
-                            elif event.kind == "orchestration_cancelled":
-                                act["state"] = "cancelled"
-                                act["badgeText"] = "cancelado"
-                                act["badgeVariant"] = "warning"
-                            else:
-                                act["state"] = "interrupted"
-                                act["badgeText"] = "interrompido"
-                                act["badgeVariant"] = "warning"
-                    self._messages.update_by_key("messageKey", row.get("messageKey"),
-                                                 isStreaming=False, activityData=activities)
+                        tool = by_id.get(str(act.get("id") or ""))
+                        if tool is None:
+                            updated.append(act)
+                            continue
+                        presentation = DEFAULT_PRESENTATION_REGISTRY.format(tool)
+                        entry = presentation.to_dict()
+                        entry["id"] = tool.id
+                        if tool.output is not None:
+                            entry["output"] = tool.output
+                        entry["state"] = presentation.state
+                        # Distinguish interrupted (turn ended without tool.completed)
+                        # from explicit user cancellation; both are non-success.
+                        if tool.status == ToolStatus.INTERRUPTED:
+                            entry["state"] = "interrupted"
+                            entry["badgeText"] = "interrompido"
+                            entry["badgeVariant"] = "warning"
+                        matched = True
+                        updated.append(entry)
+                    if matched:
+                        self._messages.update_by_key(
+                            "messageKey", row.get("messageKey"),
+                            isStreaming=False, activityData=updated,
+                        )
+                    else:
+                        self._messages.update_by_key(
+                            "messageKey", row.get("messageKey"), isStreaming=False
+                        )
+                # Live reducer no longer needed after terminal render; late
+                # events for this execution are guarded by _ui_terminal_executions.
+                self._tool_reducers.pop(reducer_key, None)
+            else:
+                for row in self._messages._items:
+                    if row.get("role") == "activity":
+                        self._messages.update_by_key(
+                            "messageKey", row.get("messageKey"), isStreaming=False
+                        )
             self._queue_terminal_state(event.kind, conversation_id=event.conversation_id, execution_id=execution_id)
 
 
