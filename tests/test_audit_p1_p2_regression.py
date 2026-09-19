@@ -1091,6 +1091,8 @@ class AuditRegressionTest(unittest.TestCase):
         bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
         self.addCleanup(bridge2.close)
         bridge2._selected = {"conversationId": cid}
+        # Conversation status is "running" but eid=42 has a persisted terminal event
+        self._database.update_conversation(cid, status="running")
         ok = bridge2._reload_execution_timeline(cid, rows)
         self.assertTrue(ok)
         cards = {}
@@ -1099,6 +1101,84 @@ class AuditRegressionTest(unittest.TestCase):
                 cards[t["id"]] = t
         self.assertEqual(cards["t5"]["state"], "interrupted")
         self.assertIn((cid, eid), bridge2._ui_terminal_executions)
+        self.assertIn((cid, eid), bridge2._ui_finalized_executions)
+
+    # CORR-TC-TERM-05: rebuild terminals per execution_id regardless of global conversation status.
+    def test_corr_tc_term_05_historical_terminal_retained_when_newer_execution_running(self):
+        cid = self._database.create_conversation("C_TERM05_1", "codex", "modelo", self._settings.root)
+        # Execution 10: has tool_event + orchestration_completed
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+            "toolCallId": "t10", "step_type": "commandExecution", "status": "running", "execution_id": 10,
+        }))
+        self._database.add_event(RuntimeEvent(cid, "orchestration_completed", "", {"execution_id": 10}))
+        # Execution 11: current execution, still running (no terminal event)
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+            "toolCallId": "t11", "step_type": "commandExecution", "status": "running", "execution_id": 11,
+        }))
+        self._database.begin_user_turn(cid, "hi")
+        rows = self._database.messages(cid)
+        bridge2_prefs = QSettings(str(Path(self._tmp.name) / f"{cid}_term05_1.ini"), QSettings.IniFormat)
+        bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
+        self.addCleanup(bridge2.close)
+        bridge2._selected = {"conversationId": cid}
+        self._database.update_conversation(cid, status="running")
+        ok = bridge2._reload_execution_timeline(cid, rows)
+        self.assertTrue(ok)
+        self.assertIn((cid, 10), bridge2._ui_terminal_executions)
+        self.assertIn((cid, 10), bridge2._ui_finalized_executions)
+        self.assertNotIn((cid, 11), bridge2._ui_terminal_executions)
+        self.assertNotIn((cid, 11), bridge2._ui_finalized_executions)
+        self.assertNotIn((cid, 10), getattr(bridge2, "_tool_reducers", {}))
+        self.assertIn((cid, 11), getattr(bridge2, "_tool_reducers", {}))
+        self.assertEqual(bridge2._ui_execution_ids.get(cid), 11)
+        cards = {}
+        for m in bridge2._messages._items:
+            for t in m.get("activityData", []):
+                cards[t["id"]] = t
+        self.assertEqual(cards["t10"]["state"], "interrupted")
+        self.assertEqual(cards["t11"]["state"], "running")
+
+    def test_corr_tc_term_05_mixed_historical_terminals_with_active_execution(self):
+        cid = self._database.create_conversation("C_TERM05_2", "codex", "modelo", self._settings.root)
+        # Execution 20: error
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+            "toolCallId": "t20", "step_type": "commandExecution", "status": "running", "execution_id": 20,
+        }))
+        self._database.add_event(RuntimeEvent(cid, "error", "", {"execution_id": 20}))
+        # Execution 21: orchestration_cancelled
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+            "toolCallId": "t21", "step_type": "commandExecution", "status": "running", "execution_id": 21,
+        }))
+        self._database.add_event(RuntimeEvent(cid, "orchestration_cancelled", "", {"execution_id": 21}))
+        # Execution 22: running currently
+        self._database.add_event(RuntimeEvent(cid, "tool_event", "", {
+            "toolCallId": "t22", "step_type": "commandExecution", "status": "running", "execution_id": 22,
+        }))
+        self._database.begin_user_turn(cid, "hi")
+        rows = self._database.messages(cid)
+        bridge2_prefs = QSettings(str(Path(self._tmp.name) / f"{cid}_term05_2.ini"), QSettings.IniFormat)
+        bridge2 = ChatBridge(self._settings, self._database, bridge2_prefs)
+        self.addCleanup(bridge2.close)
+        bridge2._selected = {"conversationId": cid}
+        self._database.update_conversation(cid, status="running")
+        ok = bridge2._reload_execution_timeline(cid, rows)
+        self.assertTrue(ok)
+        self.assertIn((cid, 20), bridge2._ui_terminal_executions)
+        self.assertIn((cid, 20), bridge2._ui_finalized_executions)
+        self.assertIn((cid, 21), bridge2._ui_terminal_executions)
+        self.assertIn((cid, 21), bridge2._ui_finalized_executions)
+        self.assertNotIn((cid, 22), bridge2._ui_terminal_executions)
+        self.assertNotIn((cid, 22), bridge2._ui_finalized_executions)
+        self.assertNotIn((cid, 20), getattr(bridge2, "_tool_reducers", {}))
+        self.assertNotIn((cid, 21), getattr(bridge2, "_tool_reducers", {}))
+        self.assertIn((cid, 22), getattr(bridge2, "_tool_reducers", {}))
+        cards = {}
+        for m in bridge2._messages._items:
+            for t in m.get("activityData", []):
+                cards[t["id"]] = t
+        self.assertEqual(cards["t20"]["state"], "error")
+        self.assertEqual(cards["t21"]["state"], "cancelled")
+        self.assertEqual(cards["t22"]["state"], "running")
 
     def test_corr_tc_term_04_explicit_success_survives_orchestration_completed_and_late_error(self):
         tool_events = [

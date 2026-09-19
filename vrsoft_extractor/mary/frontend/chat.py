@@ -3868,9 +3868,8 @@ class ChatBridge(QObject):
         result = []
         conversation = self._database.get_conversation(cid)
         running = conversation is not None and conversation["status"] == "running"
-        if not running:
-            self._ui_terminal_executions.update((cid, eid) for eid in terminal_ids)
-            self._ui_finalized_executions.update((cid, eid) for eid in terminal_ids)
+        self._ui_terminal_executions.update((cid, eid) for eid in terminal_ids)
+        self._ui_finalized_executions.update((cid, eid) for eid in terminal_ids)
         # TC-01: replay single source of truth — runtime events -> reducer ->
         # finalize_turn -> presentation registry -> activityData final.
         # Never patch already-serialized cards manually.
