@@ -118,6 +118,15 @@ distribuições. Nenhum manifesto operacional foi incluído. A documentação of
 `openai/codex` como repositório do CLI e App Server; atualização integrada não é permitida
 em uma sessão Monitor.
 
+## Gate dinâmico
+
+Após H07, `monitor_release_gate` exige uma matriz operacional completa e três registros
+de aprovação antes do futuro adapter. Ele vincula revisão Git e atestações de processo,
+egress e cadeia; valida validade, hashes dos relatórios/canários/captura, limites
+observados e 29 declarações obrigatórias. O resultado atual está **NEGADO** porque broker,
+provider/ZDR, captura, bundle e aprovações reais não existem. A matriz e as lacunas estão
+em [MONITOR_RELEASE_GATE.md](MONITOR_RELEASE_GATE.md).
+
 O padrão de conversas novas também passa a ser `supervised`. Conversas existentes que
 tenham um perfil válido preservam a escolha; trocar de provider volta para
 `supervised`. `full_access` continua disponível como escolha explícita para fluxos
@@ -147,6 +156,7 @@ Antes de habilitar uma sessão Monitor ainda são necessários:
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_isolation.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_egress.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_monitor_supply_chain.py -q -x
+.\.venv\Scripts\python.exe -m pytest tests/test_monitor_release_gate.py -q -x
 .\.venv\Scripts\python.exe -m pytest tests/test_antigravity_acp.py -q -x
 ```
 
