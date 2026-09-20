@@ -2,12 +2,14 @@ import hashlib
 import json
 import sqlite3
 import unittest
+import warnings
 import zipfile
 from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from test_decompiled_export import _portable_records, _prepare
+from test_decompiled_export import _prepare_registered_portable_workspace
 
 from vrsoft_extractor.mary.apps_catalog import AppsCatalogStore
 from vrsoft_extractor.mary.decompiled_detection import (
@@ -17,36 +19,6 @@ from vrsoft_extractor.mary.decompiled_detection import (
     import_decompiled_source,
 )
 from vrsoft_extractor.mary.decompiled_export import export_decompiled_package
-
-
-def _prepare_portable_workspace(workspace: Path) -> None:
-    """Build an indexed workspace with two applications and one dependency."""
-    workspace.mkdir(parents=True, exist_ok=True)
-    store = AppsCatalogStore(root=workspace)
-    store.register_package(
-        {
-            "release_id": "release-a",
-            "release_manifest_sha256": "e" * 64,
-            "analysis_scope": "package",
-            "indexed_at": "2026-01-01T00:00:00+00:00",
-            "artifacts": [
-                {"artifact_role": "application", "application": "VRMaster",
-                 "application_key": "vrmaster", "version_detected": "4.1.0",
-                 "sha256": "a" * 64, "relative_path": "VRMaster.jar",
-                 "size_bytes": 40, "class_count": 1},
-                {"artifact_role": "application", "application": "VRAdm",
-                 "application_key": "vradm", "version_detected": "3.2.15.0",
-                 "sha256": "c" * 64, "relative_path": "VRAdm.jar",
-                 "size_bytes": 40, "class_count": 1},
-                {"artifact_role": "library", "relative_path": "VRFramework.jar",
-                 "sha256": "d" * 64, "size_bytes": 25},
-            ],
-        },
-        package_id="release-a",
-        package_name="Pacote A",
-        source_path="indice/codigo/decompilation/release-a",
-    )
-    _prepare(workspace, _portable_records(), catalog=store.load_catalog())
 
 
 _PORTABLE_BODY = b"package br;\nclass App {}\n"
@@ -233,12 +205,35 @@ def _sources_snapshot(workspace: Path) -> list[tuple[str, str, str]]:
         )
 
 
+def _assert_portable_release_absent(test: unittest.TestCase, workspace: Path) -> None:
+    test.assertIsNone(AppsCatalogStore(root=workspace).get_package("release-a"))
+    database = workspace / "indice" / "codigo" / "processing.sqlite"
+    test.assertTrue(database.is_file())
+    with closing(sqlite3.connect(database)) as connection:
+        test.assertEqual(
+            connection.execute("SELECT count(*) FROM code_sources").fetchone()[0], 0
+        )
+        test.assertEqual(
+            connection.execute("SELECT count(*) FROM code_symbols").fetchone()[0], 0
+        )
+        test.assertEqual(
+            connection.execute("SELECT count(*) FROM code_relations").fetchone()[0], 0
+        )
+        test.assertEqual(
+            connection.execute("SELECT count(*) FROM decompilation_plans").fetchone()[0],
+            0,
+        )
+    decompilation = workspace / "indice" / "codigo" / "decompilation"
+    test.assertEqual(list(decompilation.glob("release-a")), [])
+    test.assertEqual(list(decompilation.glob(".release-a.tmp-*")), [])
+
+
 class TestPortableDecompiledPackage(unittest.TestCase):
     def test_detect_portable_decompiled_package_archive(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace = root / "workspace-a"
-            _prepare_portable_workspace(workspace)
+            _prepare_registered_portable_workspace(workspace)
             archive = root / "Pacote-decompiled.zip"
             export_decompiled_package(workspace, archive, package_id="release-a")
 
@@ -310,7 +305,7 @@ class TestPortableDecompiledPackage(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace_a = root / "workspace-a"
-            _prepare_portable_workspace(workspace_a)
+            _prepare_registered_portable_workspace(workspace_a)
             archive = root / "Pacote-decompiled.zip"
             export_decompiled_package(workspace_a, archive, package_id="release-a")
 
@@ -379,12 +374,12 @@ class TestPortableDecompiledPackage(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             workspace_a = root / "workspace-a"
-            _prepare_portable_workspace(workspace_a)
+            _prepare_registered_portable_workspace(workspace_a)
             archive = root / "Pacote-decompiled.zip"
             export_decompiled_package(workspace_a, archive, package_id="release-a")
 
             workspace_b = root / "workspace-b"
-            _prepare_portable_workspace(workspace_b)
+            _prepare_registered_portable_workspace(workspace_b)
             before_catalog = json.dumps(
                 AppsCatalogStore(root=workspace_b).load_catalog(), sort_keys=True
             )
@@ -414,6 +409,106 @@ class TestPortableDecompiledPackage(unittest.TestCase):
                 list(decompilation.glob(".release-a.tmp-*")) if decompilation.is_dir() else [],
                 [],
             )
+
+    def test_detect_portable_decompiled_package_rejects_structural_corruption(self):
+        for case in (
+            "duplicate_manifest", "duplicate_entry", "missing_source",
+            "foreign_archive_path", "bad_total_bytes", "duplicate_index",
+        ):
+            with self.subTest(case=case):
+                with TemporaryDirectory() as temp_dir:
+                    archive = Path(temp_dir) / f"{case}.zip"
+                    manifest = _minimal_manifest()
+                    entries = {"sources/0001/br/App.java": _PORTABLE_BODY}
+                    if case == "duplicate_entry":
+                        entries["sources\\0001\\br\\App.java"] = _PORTABLE_BODY
+                    elif case == "missing_source":
+                        manifest["artifacts"][0]["sources"][0]["archive_path"] = (
+                            "sources/0001/br/Missing.java"
+                        )
+                    elif case == "foreign_archive_path":
+                        manifest["artifacts"][0]["sources"][0]["archive_path"] = (
+                            "sources/0002/br/App.java"
+                        )
+                        entries = {"sources/0002/br/App.java": _PORTABLE_BODY}
+                    elif case == "bad_total_bytes":
+                        manifest["total_bytes"] = len(_PORTABLE_BODY) + 5
+                    elif case == "duplicate_index":
+                        manifest["artifacts"].append({
+                            "artifact_index": 1,
+                            "role": "dependency",
+                            "artifact_sha256": "b" * 64,
+                            "jar_relative_path": "VRDep.jar",
+                            "size_bytes": 1,
+                            "source_count": 0,
+                            "sources": [],
+                        })
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        if case == "duplicate_manifest":
+                            with zipfile.ZipFile(archive, "w") as package:
+                                package.writestr(
+                                    "vrstudio-package-export.json", json.dumps(manifest)
+                                )
+                                package.writestr(
+                                    "vrstudio-package-export.json", json.dumps(manifest)
+                                )
+                                package.writestr(
+                                    "sources/0001/br/App.java", _PORTABLE_BODY
+                                )
+                        else:
+                            _write_portable_zip(archive, manifest, entries)
+
+                    result = detect_decompiled_package_archive(archive)
+
+                    self.assertFalse(result["is_valid"], case)
+                    self.assertTrue(result["portable_package"], case)
+                    self.assertTrue(result["error"], case)
+                    self.assertEqual(result["applications"], [])
+                    self.assertEqual(result["total_java_files"], 0)
+
+    def test_portable_import_is_atomic_when_publication_fails(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace_a = root / "workspace-a"
+            _prepare_registered_portable_workspace(workspace_a)
+            archive = root / "Pacote-decompiled.zip"
+            export_decompiled_package(workspace_a, archive, package_id="release-a")
+
+            workspace_b = root / "workspace-b"
+            workspace_b.mkdir()
+            real_replace = Path.replace
+
+            def failing_replace(self, target):
+                if Path(target).name == "release-a":
+                    raise OSError("falha simulada na publicação")
+                return real_replace(self, target)
+
+            with patch.object(Path, "replace", failing_replace):
+                with self.assertRaises(OSError):
+                    import_decompiled_package_archive(workspace_b, archive)
+
+            _assert_portable_release_absent(self, workspace_b)
+
+    def test_portable_import_compensates_when_catalog_publication_fails(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace_a = root / "workspace-a"
+            _prepare_registered_portable_workspace(workspace_a)
+            archive = root / "Pacote-decompiled.zip"
+            export_decompiled_package(workspace_a, archive, package_id="release-a")
+
+            workspace_b = root / "workspace-b"
+            workspace_b.mkdir()
+            with patch.object(
+                AppsCatalogStore,
+                "register_package",
+                side_effect=RuntimeError("falha simulada no catálogo"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    import_decompiled_package_archive(workspace_b, archive)
+
+            _assert_portable_release_absent(self, workspace_b)
 
 
 if __name__ == "__main__":

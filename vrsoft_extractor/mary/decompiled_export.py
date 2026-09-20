@@ -314,16 +314,28 @@ def export_decompiled_package(
     if not database.is_file():
         raise ValueError("O índice de código não está disponível.")
 
-    composition_lookup = {
-        (str(item.get("sha256") or ""), str(item.get("jar_path") or "")): item
-        for item in package.get("composition", [])
-        if isinstance(item, dict)
-    }
-    dependency_lookup = {
-        (str(item.get("sha256") or ""), str(item.get("relative_path") or "")): item
-        for item in package.get("dependencies", [])
-        if isinstance(item, dict)
-    }
+    composition_items = [
+        item for item in package.get("composition", []) if isinstance(item, dict)
+    ]
+    dependency_items = [
+        item for item in package.get("dependencies", []) if isinstance(item, dict)
+    ]
+    composition_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in composition_items:
+        composition_lookup.setdefault(
+            (str(item.get("sha256") or ""), str(item.get("jar_path") or "")), item
+        )
+    dependency_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in dependency_items:
+        key = (str(item.get("sha256") or ""), str(item.get("relative_path") or ""))
+        if key not in composition_lookup:
+            dependency_lookup.setdefault(key, item)
+
+    def _artifact_sort(key: tuple[str, str]) -> tuple[str, str]:
+        return (key[1], key[0])
+
+    ordered_applications = sorted(composition_lookup, key=_artifact_sort)
+    ordered_dependencies = sorted(dependency_lookup, key=_artifact_sort)
 
     staging = parent / f".{destination.name}.tmp-{uuid4().hex}.zip"
     file_count = 0
@@ -333,6 +345,83 @@ def export_decompiled_package(
         with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as archive:
             with closing(sqlite3.connect(uri, uri=True)) as connection:
                 connection.row_factory = sqlite3.Row
+                index_keys = [
+                    (
+                        str(row["artifact_sha256"] or ""),
+                        str(row["jar_relative_path"] or ""),
+                    )
+                    for row in connection.execute(
+                        """SELECT DISTINCT jar_relative_path, artifact_sha256
+                             FROM code_sources
+                            WHERE release_id = ?
+                            ORDER BY jar_relative_path, artifact_sha256""",
+                        (selected_package,),
+                    )
+                ]
+                ordered_orphans = sorted(
+                    (
+                        key for key in index_keys
+                        if key not in composition_lookup and key not in dependency_lookup
+                    ),
+                    key=_artifact_sort,
+                )
+
+                artifacts: list[dict[str, Any]] = []
+                artifact_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
+                def _append_artifact(
+                    key: tuple[str, str], artifact: dict[str, Any]
+                ) -> None:
+                    artifact["artifact_index"] = len(artifacts) + 1
+                    artifacts.append(artifact)
+                    artifact_by_key[key] = artifact
+
+                for key in ordered_applications:
+                    item = composition_lookup[key]
+                    app_name, class_count, size_bytes = _portable_artifact_identity(
+                        catalog, item
+                    )
+                    _append_artifact(key, {
+                        "role": "application",
+                        "artifact_sha256": key[0],
+                        "jar_relative_path": key[1],
+                        "size_bytes": size_bytes,
+                        "source_count": 0,
+                        "sources": [],
+                        "application_id": str(item.get("app_id") or ""),
+                        "application_name": app_name,
+                        "version": str(item.get("version") or ""),
+                        "variant_id": str(item.get("variant_id") or ""),
+                        "distribution_id": str(item.get("distribution_id") or ""),
+                        "class_count": class_count,
+                        "_source_bytes": 0,
+                    })
+                for key in ordered_dependencies:
+                    _append_artifact(key, {
+                        "role": "dependency",
+                        "artifact_sha256": key[0],
+                        "jar_relative_path": key[1],
+                        "size_bytes": int(dependency_lookup[key].get("size_bytes") or 0),
+                        "source_count": 0,
+                        "sources": [],
+                        "_source_bytes": 0,
+                    })
+                for key in ordered_orphans:
+                    _append_artifact(key, {
+                        "role": "dependency",
+                        "artifact_sha256": key[0],
+                        "jar_relative_path": key[1],
+                        "size_bytes": 0,
+                        "source_count": 0,
+                        "sources": [],
+                        "_source_bytes": 0,
+                    })
+
+                current_key: tuple[str, str] | None = None
+                current_artifact: dict[str, Any] | None = None
+                exported_paths: dict[str, str] = {}
+                exported_spellings: dict[str, str] = {}
+
                 rows = connection.execute(
                     """SELECT id, jar_relative_path, artifact_sha256,
                               source_relative_path, source_sha256,
@@ -343,13 +432,6 @@ def export_decompiled_package(
                                  source_relative_path, id""",
                     (selected_package,),
                 )
-
-                artifacts: list[dict[str, Any]] = []
-                current_artifact: dict[str, Any] | None = None
-                current_key: tuple[str, str] | None = None
-                exported_paths: dict[str, str] = {}
-                exported_spellings: dict[str, str] = {}
-
                 for row in rows:
                     artifact_key = (
                         str(row["artifact_sha256"] or ""),
@@ -357,49 +439,13 @@ def export_decompiled_package(
                     )
                     if artifact_key != current_key:
                         current_key = artifact_key
-                        artifact_index = len(artifacts) + 1
-                        composition_item = composition_lookup.get(artifact_key)
-                        dependency_item = dependency_lookup.get(artifact_key)
-                        if composition_item is not None:
-                            role = "application"
-                            artifact = {
-                                "artifact_index": artifact_index,
-                                "role": role,
-                                "artifact_sha256": artifact_key[0],
-                                "jar_relative_path": artifact_key[1],
-                                "size_bytes": 0,
-                                "source_count": 0,
-                                "sources": [],
-                            }
-                            app_name, class_count, size_bytes = _portable_artifact_identity(
-                                catalog, composition_item
-                            )
-                            artifact.update({
-                                "application_id": str(composition_item.get("app_id") or ""),
-                                "application_name": app_name,
-                                "version": str(composition_item.get("version") or ""),
-                                "variant_id": str(composition_item.get("variant_id") or ""),
-                                "distribution_id": str(composition_item.get("distribution_id") or ""),
-                                "class_count": class_count,
-                                "size_bytes": size_bytes,
-                                "source_bytes": 0,
-                            })
-                        else:
-                            role = "dependency"
-                            artifact = {
-                                "artifact_index": artifact_index,
-                                "role": role,
-                                "artifact_sha256": artifact_key[0],
-                                "jar_relative_path": artifact_key[1],
-                                "size_bytes": int((dependency_item or {}).get("size_bytes") or 0),
-                                "source_bytes": 0,
-                                "source_count": 0,
-                                "sources": [],
-                            }
-                        artifacts.append(artifact)
-                        current_artifact = artifact
+                        current_artifact = artifact_by_key.get(artifact_key)
                         exported_paths = {}
                         exported_spellings = {}
+                    if current_artifact is None:
+                        raise ValueError(
+                            "O índice mudou durante a exportação; gere o pacote novamente."
+                        )
 
                     relative = _relative_source_path(row["source_relative_path"])
                     content = _resolve_indexed_content(workspace_root, row, relative)
@@ -429,19 +475,20 @@ def export_decompiled_package(
                         "archive_path": archive_path,
                     })
                     current_artifact["source_count"] += 1
-                    current_artifact["source_bytes"] += len(content)
+                    current_artifact["_source_bytes"] += len(content)
                     exported_paths[key] = content_hash
                     exported_spellings[key] = relative.as_posix()
                     file_count += 1
                     total_bytes += len(content)
 
-            if not artifacts:
+            if file_count == 0:
                 raise ValueError("Nenhum código decompilado disponível para este pacote.")
 
             for artifact in artifacts:
                 if not artifact["size_bytes"]:
-                    artifact["size_bytes"] = artifact["source_bytes"]
-                artifact.pop("source_bytes", None)
+                    artifact["size_bytes"] = artifact.pop("_source_bytes")
+                else:
+                    artifact.pop("_source_bytes", None)
 
             manifest = {
                 "format": PORTABLE_PACKAGE_FORMAT,

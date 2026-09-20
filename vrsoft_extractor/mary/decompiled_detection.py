@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import shutil
 import zipfile
@@ -32,13 +33,14 @@ from .decompiled_export import (
     _require_within,
 )
 from .erp_releases import parse_java_properties, _safe_component
-from .jvm_batches import PROCESSING_SCHEMA_VERSION
+from .jvm_batches import PROCESSING_SCHEMA_VERSION, DecompilationBatchStore
 
 
 _PROPERTIES_VERSION_KEYS = ("versao.major", "versao.minor", "versao.release")
 _JAVA_EXTENSIONS = {".java", ".kt"}
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 _SYMLINK_FILE_MODE = 0o120000
+LOGGER = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -499,13 +501,21 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
         return _portable_archive_error("O arquivo selecionado não é um ZIP válido.")
     try:
         with zipfile.ZipFile(resolved) as archive:
+            normalized_names: list[str] = []
             entries: dict[str, zipfile.ZipInfo] = {}
             for info in archive.infolist():
                 normalized = _validate_zip_entry_name(info.filename)
                 if _archive_entry_is_symlink(info):
                     raise ValueError("O pacote contém uma entrada simbólica não suportada.")
+                if normalized in entries:
+                    raise ValueError(
+                        f"O pacote contém entradas ZIP duplicadas: {normalized}"
+                    )
                 entries[normalized] = info
-            if sum(1 for name in entries if name == PORTABLE_PACKAGE_MANIFEST) != 1:
+                normalized_names.append(normalized)
+            if sum(
+                1 for name in normalized_names if name == PORTABLE_PACKAGE_MANIFEST
+            ) != 1:
                 raise ValueError("O pacote não contém o manifesto de exportação na raiz.")
             try:
                 manifest = json.loads(
@@ -528,7 +538,9 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
 
             applications: list[dict[str, Any]] = []
             verified_paths: dict[str, str] = {}
+            artifact_indexes: set[int] = set()
             total_sources = 0
+            total_source_bytes = 0
             for artifact in artifacts:
                 if not isinstance(artifact, dict):
                     raise ValueError("O manifesto do pacote contém um artefato inválido.")
@@ -545,6 +557,11 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
                     raise ValueError(
                         "O manifesto do pacote contém um índice de artefato inválido."
                     )
+                if artifact_index in artifact_indexes:
+                    raise ValueError(
+                        "O manifesto do pacote contém índices de artefato duplicados."
+                    )
+                artifact_indexes.add(artifact_index)
                 artifact_sha = str(artifact.get("artifact_sha256") or "")
                 if not artifact_sha:
                     raise ValueError("O manifesto do pacote contém um artefato sem SHA-256.")
@@ -570,6 +587,14 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
                     archive_entry = _validate_zip_entry_name(
                         str(source.get("archive_path") or ""), label="fonte"
                     )
+                    expected_archive_path = (
+                        f"sources/{artifact_index:04d}/{relative.as_posix()}"
+                    )
+                    if archive_entry != expected_archive_path:
+                        raise ValueError(
+                            "O manifesto do pacote contém um caminho de fonte "
+                            f"inconsistente: {archive_entry}"
+                        )
                     previous_hash = verified_paths.get(archive_entry)
                     if previous_hash is not None:
                         if previous_hash != expected_hash:
@@ -577,12 +602,11 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
                                 "O pacote referencia a mesma fonte com conteúdos conflitantes."
                             )
                     else:
-                        content = archive.read(entries[archive_entry].filename)
-                        if hashlib.sha256(content).hexdigest() != expected_hash:
-                            raise ValueError(
-                                f"A fonte do pacote está corrompida: {archive_entry}"
-                            )
+                        content = _read_validated_archive_source(
+                            archive, entries, archive_entry, expected_hash
+                        )
                         verified_paths[archive_entry] = expected_hash
+                        total_source_bytes += len(content)
                     source_count += 1
                 if int(artifact.get("source_count") or 0) != source_count:
                     raise ValueError(
@@ -606,6 +630,10 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
                 raise ValueError(
                     "O manifesto do pacote contém um total de arquivos inconsistente."
                 )
+            if int(manifest.get("total_bytes") or 0) != total_source_bytes:
+                raise ValueError(
+                    "O manifesto do pacote contém um total de bytes inconsistente."
+                )
     except ValueError as exc:
         return _portable_archive_error(str(exc))
     except (OSError, zipfile.BadZipFile) as exc:
@@ -624,7 +652,112 @@ def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, A
     }
 
 
+def _purge_portable_release_rows(
+    batch_store: DecompilationBatchStore,
+    release_id: str,
+) -> None:
+    """Remove the imported release rows explicitly, without relying on cascades."""
+    with batch_store.connect() as connection:
+        source_ids = [
+            int(row["id"])
+            for row in connection.execute(
+                "SELECT id FROM code_sources WHERE release_id = ?", (release_id,)
+            )
+        ]
+        for source_id in source_ids:
+            connection.execute(
+                "DELETE FROM code_relations WHERE source_id = ?", (source_id,)
+            )
+            connection.execute(
+                "DELETE FROM code_symbols WHERE source_id = ?", (source_id,)
+            )
+        connection.execute(
+            "DELETE FROM code_sources WHERE release_id = ?", (release_id,)
+        )
+        connection.execute(
+            "DELETE FROM decompilation_plans WHERE release_id = ?", (release_id,)
+        )
+        connection.commit()
+
+
+def _find_portable_variant(
+    catalog: dict[str, Any],
+    application_id: str,
+    sha256: str,
+) -> tuple[str, dict[str, Any]] | None:
+    app = catalog.get("applications", {}).get(application_id)
+    if not isinstance(app, dict):
+        return None
+    for version_key, version in app.get("versions", {}).items():
+        if not isinstance(version, dict):
+            continue
+        for variant in version.get("variants", {}).values():
+            if isinstance(variant, dict) and str(variant.get("sha256") or "") == sha256:
+                return str(version_key), variant
+    return None
+
+
 @_transaction
+def _publish_portable_package(
+    store: AppsCatalogStore,
+    release_id: str,
+    package_name: str,
+    source_path: str,
+    manifest: dict[str, Any],
+    catalog_artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Register the package and remap computed distribution IDs in one snapshot."""
+    registered = store.register_package(
+        manifest,
+        package_id=release_id,
+        package_name=package_name,
+        source_path=source_path,
+    )
+    catalog = store.load_catalog()
+    package = catalog.get("packages", {}).get(release_id, {})
+    for artifact in catalog_artifacts:
+        if str(artifact.get("artifact_role") or "") != "application":
+            continue
+        application_id = str(artifact.get("application_key") or "")
+        sha256 = str(artifact.get("sha256") or "")
+        jar_path = str(artifact.get("relative_path") or "")
+        portable_distribution = str(artifact.get("distribution_id") or "")
+        found = _find_portable_variant(catalog, application_id, sha256)
+        if found is None:
+            continue
+        version_key, variant = found
+        if portable_distribution:
+            computed = ""
+            for origin in variant.get("origin_packages", []):
+                if str(origin.get("package_id") or "") != release_id:
+                    continue
+                computed = str(origin.get("distribution_id") or "")
+                origin["distribution_id"] = portable_distribution
+            if computed and computed != portable_distribution:
+                contexts = variant.setdefault("distribution_contexts", {})
+                context = contexts.pop(computed, None)
+                if context is not None:
+                    context["distribution_id"] = portable_distribution
+                    contexts[portable_distribution] = context
+            for entry in package.get("composition", []):
+                if (str(entry.get("sha256") or "") == sha256
+                        and str(entry.get("jar_path") or "") == jar_path):
+                    entry["distribution_id"] = portable_distribution
+        source_total = int(artifact.get("decompiled_classes") or 0)
+        if source_total > 0:
+            store.update_variant_state(
+                application_id,
+                version_key,
+                sha256,
+                "ready",
+                decompilation_state="ready",
+                class_count=int(artifact.get("class_count") or 0) or source_total,
+                indexed_classes=source_total,
+                decompiled_classes=source_total,
+            )
+    return registered
+
+
 def _import_decompiled_package_archive(
     store: AppsCatalogStore,
     workspace: str | Path,
@@ -678,6 +811,7 @@ def _import_decompiled_package_archive(
     staging = decomp_root.parent / f".{selected_release_id}.tmp-{uuid4().hex}"
     total_indexed = 0
     catalog_artifacts: list[dict[str, Any]] = []
+    published = False
     try:
         with zipfile.ZipFile(detection["source_archive"]) as archive:
             entries = {
@@ -727,6 +861,7 @@ def _import_decompiled_package_archive(
                             "class_count": int(artifact.get("class_count") or 0)
                                 or int(artifact.get("source_count") or 0),
                             "decompiled_classes": int(artifact.get("source_count") or 0),
+                            "distribution_id": str(artifact.get("distribution_id") or ""),
                         })
                     else:
                         catalog_artifacts.append({
@@ -843,32 +978,42 @@ def _import_decompiled_package_archive(
                     "artifacts": catalog_artifacts,
                     "indexed_at": now,
                 }
-                registered_pkg = store.register_package(
-                    synthetic_manifest,
-                    package_id=selected_release_id,
-                    package_name=selected_pkg_name,
-                    source_path=relative_root,
-                )
-                for artifact in catalog_artifacts:
-                    if artifact.get("artifact_role") != "application":
-                        continue
-                    source_total = int(artifact.get("decompiled_classes") or 0)
-                    store.update_variant_state(
-                        str(artifact["application_key"]),
-                        str(artifact["version_detected"]),
-                        str(artifact["sha256"]),
-                        "ready",
-                        decompilation_state="ready",
-                        class_count=int(artifact.get("class_count") or 0) or source_total,
-                        indexed_classes=source_total,
-                        decompiled_classes=source_total,
-                    )
+                staging.replace(decomp_root)
+                published = True
                 conn.commit()
-        staging.replace(decomp_root)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
-        if decomp_root.is_dir():
+        if published and decomp_root.is_dir():
             shutil.rmtree(decomp_root, ignore_errors=True)
+            try:
+                _purge_portable_release_rows(batch_store, selected_release_id)
+            except Exception as cleanup_error:
+                LOGGER.error(
+                    "Falha ao limpar o índice importado de %s: %s",
+                    selected_release_id,
+                    cleanup_error,
+                )
+        raise
+
+    try:
+        registered_pkg = _publish_portable_package(
+            store,
+            selected_release_id,
+            selected_pkg_name,
+            relative_root,
+            synthetic_manifest,
+            catalog_artifacts,
+        )
+    except Exception:
+        shutil.rmtree(decomp_root, ignore_errors=True)
+        try:
+            _purge_portable_release_rows(batch_store, selected_release_id)
+        except Exception as cleanup_error:
+            LOGGER.error(
+                "Falha ao compensar a importação de %s: %s",
+                selected_release_id,
+                cleanup_error,
+            )
         raise
 
     return {

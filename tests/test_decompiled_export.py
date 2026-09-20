@@ -8,6 +8,7 @@ import pytest
 
 from vrsoft_extractor.mary.apps_catalog import AppsCatalogStore
 from vrsoft_extractor.mary.code_index import JavaCodeIndex
+from vrsoft_extractor.mary.decompiled_detection import import_decompiled_package_archive
 from vrsoft_extractor.mary.decompiled_export import (
     export_decompiled_package,
     export_decompiled_source,
@@ -435,9 +436,47 @@ def _portable_catalog() -> dict:
             ],
             "dependencies": [
                 {"relative_path": "VRFramework.jar", "sha256": "d" * 64, "size_bytes": 25},
+                {"relative_path": "VRMissing.jar", "sha256": "f" * 64, "size_bytes": 10},
             ],
         }},
     }
+
+
+def _portable_artifact_metadata() -> list[dict]:
+    return [
+        {"artifact_role": "application", "application": "VRMaster",
+         "application_key": "vrmaster", "version_detected": "4.1.0",
+         "sha256": "a" * 64, "relative_path": "VRMaster.jar",
+         "size_bytes": 40, "class_count": 1},
+        {"artifact_role": "application", "application": "VRAdm",
+         "application_key": "vradm", "version_detected": "3.2.15.0",
+         "sha256": "c" * 64, "relative_path": "VRAdm.jar",
+         "size_bytes": 40, "class_count": 1},
+        {"artifact_role": "library", "relative_path": "VRFramework.jar",
+         "sha256": "d" * 64, "size_bytes": 25},
+        {"artifact_role": "library", "relative_path": "VRMissing.jar",
+         "sha256": "f" * 64, "size_bytes": 10},
+    ]
+
+
+def _prepare_registered_portable_workspace(workspace: Path) -> AppsCatalogStore:
+    """Register a real catalog package and index its portable sources."""
+    workspace.mkdir(parents=True, exist_ok=True)
+    store = AppsCatalogStore(root=workspace)
+    store.register_package(
+        {
+            "release_id": "release-a",
+            "release_manifest_sha256": "e" * 64,
+            "analysis_scope": "package",
+            "indexed_at": "2026-01-01T00:00:00+00:00",
+            "artifacts": _portable_artifact_metadata(),
+        },
+        package_id="release-a",
+        package_name="Pacote A",
+        source_path="indice/codigo/decompilation/release-a",
+    )
+    _prepare(workspace, _portable_records(), catalog=store.load_catalog())
+    return store
 
 
 def _portable_records() -> list[dict]:
@@ -468,7 +507,7 @@ def test_export_decompiled_package_contains_all_release_sources_and_manifest(tmp
 
     exported = Path(result["destination"])
     assert exported.name == "Pacote-decompiled.zip"
-    assert result["artifact_count"] == 3
+    assert result["artifact_count"] == 4
     with zipfile.ZipFile(exported) as archive:
         names = archive.namelist()
         assert names.count("vrstudio-package-export.json") == 1
@@ -490,18 +529,25 @@ def test_export_decompiled_package_contains_all_release_sources_and_manifest(tmp
 
         artifacts = manifest["artifacts"]
         assert [item["role"] for item in artifacts].count("application") == 2
-        assert [item["role"] for item in artifacts].count("dependency") == 1
+        assert [item["role"] for item in artifacts].count("dependency") == 2
         applications = {item["application_id"]: item for item in artifacts
                         if item["role"] == "application"}
         assert set(applications) == {"vrmaster", "vradm"}
         assert applications["vrmaster"]["application_name"] == "VRMaster"
         assert applications["vrmaster"]["version"] == "4.1.0"
-        dependency = next(item for item in artifacts if item["role"] == "dependency")
-        assert dependency["jar_relative_path"] == "VRFramework.jar"
-        assert dependency["artifact_sha256"] == "d" * 64
+        dependencies = {item["jar_relative_path"]: item for item in artifacts
+                        if item["role"] == "dependency"}
+        assert set(dependencies) == {"VRFramework.jar", "VRMissing.jar"}
+        assert dependencies["VRFramework.jar"]["artifact_sha256"] == "d" * 64
+        assert dependencies["VRMissing.jar"]["artifact_sha256"] == "f" * 64
+        assert dependencies["VRMissing.jar"]["source_count"] == 0
+        assert dependencies["VRMissing.jar"]["sources"] == []
+        assert dependencies["VRMissing.jar"]["size_bytes"] == 10
 
         exported_paths = []
         for item in artifacts:
+            if item["jar_relative_path"] == "VRMissing.jar":
+                continue
             assert item["source_count"] == len(item["sources"]) >= 1
             for source in item["sources"]:
                 assert source["archive_path"] == (
@@ -583,4 +629,80 @@ def test_export_decompiled_package_rejects_conflicting_duplicate_source(tmp_path
         )
 
     assert list(destination.iterdir()) == []
+
+
+def test_export_decompiled_package_keeps_dependencies_without_sources_after_import(
+    tmp_path,
+):
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    destination = tmp_path / "exports"
+    destination.mkdir()
+    _prepare_registered_portable_workspace(workspace_a)
+
+    archive = destination / "Pacote-decompiled.zip"
+    export_decompiled_package(workspace_a, archive, package_id="release-a")
+    workspace_b.mkdir()
+    result = import_decompiled_package_archive(workspace_b, archive)
+
+    assert result["success"]
+    assert result["total_indexed_sources"] == 3
+    package_a = AppsCatalogStore(root=workspace_a).get_package("release-a")
+    package_b = AppsCatalogStore(root=workspace_b).get_package("release-a")
+    assert package_b is not None
+    dependencies_a = sorted(package_a["dependencies"], key=lambda item: item["relative_path"])
+    dependencies_b = sorted(package_b["dependencies"], key=lambda item: item["relative_path"])
+    assert [item["relative_path"] for item in dependencies_b] == [
+        "VRFramework.jar", "VRMissing.jar",
+    ]
+    assert dependencies_b == dependencies_a
+    assert sorted(package_b["composition"], key=lambda item: item["app_id"]) == sorted(
+        package_a["composition"], key=lambda item: item["app_id"]
+    )
+
+
+def test_export_decompiled_package_preserves_portable_distribution_id(tmp_path):
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    destination = tmp_path / "exports"
+    destination.mkdir()
+    store_a = _prepare_registered_portable_workspace(workspace_a)
+
+    catalog = store_a.load_catalog()
+    variant = catalog["applications"]["vrmaster"]["versions"]["4.1.0"]["variants"]["a" * 64]
+    computed = variant["origin_packages"][0]["distribution_id"]
+    portable = "dist-portable-manual"
+    assert computed != portable
+    variant["origin_packages"][0]["distribution_id"] = portable
+    context = variant["distribution_contexts"].pop(computed)
+    context["distribution_id"] = portable
+    variant["distribution_contexts"][portable] = context
+    for entry in catalog["packages"]["release-a"]["composition"]:
+        if entry["app_id"] == "vrmaster":
+            entry["distribution_id"] = portable
+    store_a.save_catalog(catalog)
+
+    archive = destination / "Pacote-decompiled.zip"
+    export_decompiled_package(workspace_a, archive, package_id="release-a")
+    with zipfile.ZipFile(archive) as bundle:
+        manifest = json.loads(bundle.read("vrstudio-package-export.json").decode("utf-8"))
+    exported = next(
+        item for item in manifest["artifacts"]
+        if item.get("application_id") == "vrmaster"
+    )
+    assert exported["distribution_id"] == portable
+
+    workspace_b.mkdir()
+    import_decompiled_package_archive(workspace_b, archive)
+
+    store_b = AppsCatalogStore(root=workspace_b)
+    variant_b = store_b.get_version("vrmaster", "4.1.0")["variants"]["a" * 64]
+    assert variant_b["origin_packages"][0]["distribution_id"] == portable
+    assert variant_b["distribution_contexts"][portable]["distribution_id"] == portable
+    assert computed not in variant_b["distribution_contexts"]
+    composed = next(
+        item for item in store_b.get_package("release-a")["composition"]
+        if item["app_id"] == "vrmaster"
+    )
+    assert composed["distribution_id"] == portable
 
