@@ -3316,6 +3316,30 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIsNotNone(scroll_bar)
                 self.assertTrue(scroll_bar.property("visible"))
                 self.assertLess(scroll_bar.property("size"), 1.0)
+                self.assertAlmostEqual(
+                    scroll_bar.property("x") + scroll_bar.property("width"),
+                    composer.property("width"),
+                    delta=0.5,
+                )
+                self.assertAlmostEqual(
+                    scroll_bar.property("height"),
+                    composer.property("height"),
+                    delta=0.5,
+                )
+
+                input_item = composer.property("contentItem")
+                before_y = input_item.property("contentY")
+                thumb_y = (scroll_bar.property("visualPosition")
+                           + scroll_bar.property("visualSize") / 2) * scroll_bar.property("height")
+                start = scroll_bar.mapToScene(
+                    QPointF(scroll_bar.property("width") / 2, thumb_y)).toPoint()
+                end = scroll_bar.mapToScene(
+                    QPointF(scroll_bar.property("width") / 2, thumb_y + scroll_bar.property("height") / 3)).toPoint()
+                QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, start)
+                QTest.mouseMove(window, end, 20)
+                QTest.qWait(50)
+                self.assertGreater(input_item.property("contentY"), before_y)
+                QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, end)
             finally:
                 if engine.rootObjects():
                     engine.rootObjects()[0].close()

@@ -368,6 +368,10 @@ Item {
             ScrollBar.vertical: VrScrollBar {
                 id: composerScrollBar
                 objectName: "chatComposerScrollBar"
+                parent: composerScroll
+                x: composerScroll.mirrored ? 0 : composerScroll.width - width
+                y: composerScroll.topPadding
+                height: composerScroll.availableHeight
             }
 
             VrTextArea {
