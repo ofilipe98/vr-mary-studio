@@ -18,6 +18,7 @@ from ..tool_activity import (
     ToolEventKind,
     ToolStatus,
     ToolType,
+    is_generic_tool_id,
     sanitize_title,
 )
 
@@ -33,6 +34,42 @@ def _extract_event_id(*containers: Any) -> str:
             val = c.get(key)
             if val is not None and str(val).strip():
                 return str(val).strip()
+    return ""
+
+
+def _first_present(*values: Any) -> Any:
+    """Return the first value that is not None, preserving falsy values."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+_TOOL_IDENTITY_KEYS = (
+    ("toolCallId", "tool_call_id", "callID", "callId"),
+    ("itemId", "item_id"),
+    ("id",),
+)
+
+
+def _recover_tool_identity(*containers: Any) -> str:
+    """Recover explicit tool identity from raw/nested payload fields only.
+
+    Never derives identity from title, tool, name, input, output, timestamps
+    or content hashes. Returns ``""`` when no explicit ID exists so the
+    reducer keeps minting isolated anonymous identities for parallel tools.
+    """
+    for keys in _TOOL_IDENTITY_KEYS:
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            for key in keys:
+                value = container.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text and not is_generic_tool_id(text):
+                    return text
     return ""
 
 
@@ -535,6 +572,9 @@ def normalize_opencode_event(
 
     Intermediate streaming updates (same callID, partial output) are routed
     to the same tool_event pipeline as started/completed — never dropped.
+    The current provider envelope nests status/input/output/title/metadata
+    inside ``part["state"]`` as an object; legacy string states remain
+    supported as fallback.
     """
     kind = str(payload.get("type") or "")
     part = payload.get("part") or {}
@@ -551,54 +591,78 @@ def normalize_opencode_event(
     if is_tool_payload:
         event_id = _extract_event_id(payload, part)
         sequence = _extract_sequence(payload, part, provider="opencode")
+        raw_state = part.get("state")
+        state_obj = raw_state if isinstance(raw_state, dict) else {}
+        # Stable provider identity only: callID/id from the part (or payload).
+        # Never derive identity from title/tool/name/input/output/timestamps.
         call_id = str(
             part.get("callID")
             or part.get("id")
             or payload.get("callID")
             or payload.get("id")
+            or state_obj.get("callID")
+            or state_obj.get("id")
             or ""
         )
         tool_name = str(
             part.get("tool")
             or part.get("name")
+            or state_obj.get("tool")
+            or state_obj.get("name")
             or payload.get("tool")
             or "ferramenta"
         )
         tool_type = ToolType.from_string(tool_name)
-        state = str(
-            part.get("state")
-            or part.get("status")
-            or payload.get("state")
-            or ""
-        ).lower()
-        input_data = (
-            part.get("args")
-            if part.get("args") is not None
-            else part.get("input")
-            if part.get("input") is not None
-            else payload.get("args")
+
+        # Status priority: nested state object, legacy string state, flat keys.
+        status_value = ""
+        if state_obj:
+            status_value = str(state_obj.get("status") or "")
+        if not status_value and isinstance(raw_state, str):
+            status_value = raw_state
+        if not status_value:
+            status_value = str(
+                part.get("status") or payload.get("state") or payload.get("status") or ""
+            )
+        state = status_value.strip().lower()
+
+        input_data = _first_present(
+            state_obj.get("input"),
+            part.get("args"),
+            part.get("input"),
+            payload.get("args"),
         )
-        output_data = (
-            part.get("output")
-            if part.get("output") is not None
-            else part.get("result")
-            if part.get("result") is not None
-            else part.get("content")
-            if part.get("content") is not None and isinstance(part.get("content"), str)
-            else payload.get("output")
-            if payload.get("output") is not None
-            else payload.get("result")
-            if payload.get("result") is not None
-            else None
+        output_data = _first_present(
+            state_obj.get("output"),
+            state_obj.get("result"),
+            part.get("output"),
+            part.get("result"),
+            part.get("content") if isinstance(part.get("content"), str) else None,
+            payload.get("output"),
+            payload.get("result"),
         )
-        delta_data = (
-            part.get("delta")
-            if part.get("delta") is not None
-            else payload.get("delta")
-            if payload.get("delta") is not None
-            else None
+        delta_data = _first_present(
+            state_obj.get("delta"),
+            part.get("delta"),
+            payload.get("delta"),
         )
-        error_data = str(part.get("error") or payload.get("error") or "")
+        error_data = str(
+            state_obj.get("error") or part.get("error") or payload.get("error") or ""
+        )
+        exit_code_raw = _first_present(
+            state_obj.get("exitCode"),
+            state_obj.get("exit_code"),
+            part.get("exitCode"),
+            part.get("exit_code"),
+            payload.get("exitCode"),
+            payload.get("exit_code"),
+        )
+        exit_code: int | None = None
+        if exit_code_raw is not None:
+            try:
+                exit_code = int(exit_code_raw)
+            except (TypeError, ValueError):
+                exit_code = None
 
         command_str = ""
         if tool_type == ToolType.COMMAND_EXECUTION:
@@ -618,7 +682,7 @@ def normalize_opencode_event(
             status = ToolStatus.RUNNING
 
         title = sanitize_title(
-            part.get("title") or payload.get("title"),
+            state_obj.get("title") or part.get("title") or payload.get("title"),
             tool_name,
             tool_type,
             status,
@@ -631,6 +695,9 @@ def normalize_opencode_event(
             output_mode = "snapshot"
         else:
             output_mode = ""
+        metadata = dict(payload)
+        if state_obj:
+            metadata.setdefault("state", dict(state_obj))
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=event_kind,
@@ -641,13 +708,15 @@ def normalize_opencode_event(
             type=tool_type,
             name=tool_name,
             title=title,
+            status=status,
             command=command_str,
             input=input_data,
             output=output_data,
             delta=delta_data,
             output_mode=output_mode,
             error=error_data,
-            metadata=dict(payload),
+            exit_code=exit_code,
+            metadata=metadata,
         )
 
     return None
@@ -735,14 +804,44 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
             ext_seq = _extract_sequence(payload, item, provider=provider_name)
             if ext_seq:
                 d["sequence"] = ext_seq
+        d.setdefault("tool_id", "")
+        if is_generic_tool_id(d.get("tool_id")):
+            # Identity may have been dropped before persistence/round-trip.
+            # Recover only explicit provider ID fields already present in the
+            # raw payload or its nested tool item; never infer from content.
+            recovered_id = _recover_tool_identity(
+                item,
+                payload.get("part"),
+                payload.get("toolCall"),
+                payload.get("toolResult"),
+                payload.get("update"),
+                payload,
+            )
+            if recovered_id:
+                d["tool_id"] = recovered_id
         if not d.get("conversation_id") and event.conversation_id:
             d["conversation_id"] = event.conversation_id
         if not d.get("execution_id") and payload.get("execution_id") is not None:
             d["execution_id"] = payload["execution_id"]
-        kind = ToolEventKind.from_string(d.pop("kind", None))
-        type_ = ToolType.from_string(d.pop("type", None))
-        status = ToolStatus(d["status"]) if "status" in d and d["status"] else None
-        d.pop("status", None)
+        kind_raw = d.pop("kind", None)
+        kind = (
+            kind_raw
+            if isinstance(kind_raw, ToolEventKind)
+            else ToolEventKind.from_string(kind_raw)
+        )
+        type_raw = d.pop("type", None)
+        type_ = (
+            type_raw
+            if isinstance(type_raw, ToolType)
+            else ToolType.from_string(type_raw)
+        )
+        status_raw = d.pop("status", None)
+        if isinstance(status_raw, ToolStatus):
+            status = status_raw
+        elif status_raw:
+            status = ToolStatus(status_raw)
+        else:
+            status = None
         return NormalizedToolEvent(
             kind=kind,
             type=type_,

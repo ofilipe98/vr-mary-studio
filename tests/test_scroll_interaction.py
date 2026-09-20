@@ -166,18 +166,18 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             assert not composer.property('isAtBottom')
             assert composer.property('isCompact')
             assert abs(composer.height() - compact_height) < 1
-            compact_surface_height = composer.property('compactSurfaceHeight')
             surface = window.findChild(QObject, 'chatComposerSurface')
             tray = window.findChild(QObject, 'chatComposerControlsBox')
-            assert compact_height > compact_surface_height
             assert surface is not None
             assert tray is not None
             assert tray.property('visible')
             assert tray.property('opacity') > 0.99
-            assert surface.height() < composer.height()
-            assert tray.y() < surface.height()
-            assert tray.y() + tray.height() <= composer.height() + 1
-            assert abs((tray.y() + tray.height()) - composer.height()) < 1
+            # Card único: a superfície preenche o composer e a linha de
+            # controles fica integrada à base dela.
+            assert abs(surface.height() - composer.height()) < 1
+            assert tray.y() > 0
+            assert tray.y() + tray.height() <= surface.height() + 1
+            assert abs((tray.y() + tray.height()) - surface.height()) < 10
             assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
             assert all(a >= b for a, b in zip(heights, heights[1:]))
             assert abs(timeline.property('contentY') - (max_y - 60)) < 1

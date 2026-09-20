@@ -79,10 +79,11 @@ Item {
 
     readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
-    // Altura total do conjunto: card principal (mesma altura visual anterior) + parte exposta da bandeja.
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22 + Theme.compactControlHeight - Theme.spaceXs
-    readonly property real compactSurfaceHeight: 46
-    readonly property real compactHeight: compactSurfaceHeight + Theme.compactControlHeight - Theme.spaceXs
+    // Expandido: card único com a linha de controles integrada na base.
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22
+    // Compacto: card do campo + bandeja de controles separada logo abaixo.
+    readonly property real compactInputBand: 46
+    readonly property real compactHeight: compactInputBand + Theme.spaceXs + Theme.compactControlHeight
 
     objectName: "chatComposerCard"
     z: 20
@@ -112,16 +113,15 @@ Item {
         }
     }
 
-    // Card principal de digitação: fundo, borda, raio e recorte do composer.
+    // Card principal: no modo compacto cobre só a faixa do campo; expandido,
+    // ocupa o composer inteiro e acomoda a linha de controles na base.
     Rectangle {
         id: composerSurface
         objectName: "chatComposerSurface"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: composerCard.isCompact
-            ? composerCard.compactSurfaceHeight
-            : composerCard.normalHeight - Theme.compactControlHeight + Theme.spaceXs
+        height: composerCard.isCompact ? composerCard.compactInputBand : composerCard.height
         radius: 16
         clip: true
         color: Theme.palette.chatComposer
@@ -138,11 +138,6 @@ Item {
         Behavior on border.color {
             enabled: !composerCard.page.frontendBridge.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
-        }
-
-        Behavior on height {
-            enabled: !composerCard.page.frontendBridge.reduceMotion
-            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
 
         DropArea {
@@ -442,124 +437,18 @@ Item {
             }
         }
 
-        VrIconButton {
-            id: attachButton
-            objectName: "chatAttachButton"
-            anchors.right: sendButton.left
-            anchors.rightMargin: 8
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            width: 32
-            height: 32
-            implicitWidth: 32
-            implicitHeight: 32
-            iconKind: "attachment"
-            iconSize: 18
-            foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
-            enabled: !composerCard.page.chatBridge.turnRunning
-            Accessible.name: "Anexar arquivos"
-            onClicked: composerCard.page.chatBridge.chooseAttachments()
-        }
-
-        VrIconButton {
-            id: sendButton
-            anchors.right: parent.right
-            anchors.rightMargin: 12
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            width: 32
-            height: 32
-            implicitWidth: 32
-            implicitHeight: 32
-            round: true
-            enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
-            Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
-            iconSource: Qt.resolvedUrl(composerCard.page.chatBridge.turnRunning
-                ? "../../../assets/chat-stop.svg"
-                : "../../../assets/chat-send.svg")
-            foreground: "#FFFFFF"
-            background: Rectangle {
-                radius: 16
-                color: composerCard.page.chatBridge.turnRunning
-                    ? (parent.down
-                        ? Qt.darker(Theme.palette.danger, 1.18)
-                        : parent.hovered
-                            ? Qt.darker(Theme.palette.danger, 1.08)
-                            : Theme.palette.danger)
-                    : (parent.down
-                        ? Theme.palette.brandOrange
-                        : parent.hovered
-                            ? Qt.lighter(Theme.palette.accessibleOrange, 1.12)
-                            : Theme.palette.accessibleOrange)
-                border.width: parent.activeFocus ? 2 : 0
-                border.color: Theme.palette.focus
-            }
-            onClicked: composerCard.page.chatBridge.turnRunning ? composerCard.page.chatBridge.stopTurn() : composerCard.page.submitMessage()
-        }
-
-        Button {
-            id: vrModeButton
-            objectName: "vrModeButton"
-            property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
-            implicitWidth: vrModeContent.implicitWidth + 14
-            implicitHeight: 28
-            leftPadding: 6
-            rightPadding: 6
-            hoverEnabled: true
-            focusPolicy: Qt.StrongFocus
-            anchors.right: attachButton.left
-            anchors.rightMargin: Theme.spaceSm
-            anchors.verticalCenter: attachButton.verticalCenter
-            contentItem: Row {
-                id: vrModeContent
-                spacing: 4
-                anchors.centerIn: parent
-                Text {
-                    text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-                    color: composerCard.page.chatBridge.vrMode !== "off"
-                        ? (Theme.palette.brandOrange || "#f59e0b")
-                        : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12.5)
-                    font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
-                    renderType: Theme.textRenderType
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
-            background: Rectangle {
-                radius: 6
-                color: vrModeButton.down || vrModeButton.hovered
-                    ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
-            }
-            onClicked: composerCard.page.chatBridge.cycleVrMode()
-        }
-    }
-
-    // Bandeja horizontal encaixada abaixo do card principal, mais estreita que ele.
-    Rectangle {
-        id: composerControlsBox
-        objectName: "chatComposerControlsBox"
-        anchors.top: composerSurface.bottom
-        anchors.topMargin: -Theme.spaceXs
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: Theme.spaceXl
-        anchors.rightMargin: Theme.spaceXl
-        height: Theme.compactControlHeight
-        radius: Theme.radiusControl
-        color: Theme.palette.chatComposer
-        border.width: 1
-        border.color: Theme.palette.appearance === "light"
-            ? Qt.alpha(Theme.palette.border, 0.6)
-            : Qt.rgba(255, 255, 255, 0.08)
-        z: 0
-        clip: true
-
+        // Linha de controles integrada à base do card: seletores à esquerda,
+        // uso de contexto e ações à direita (sem caixa separada abaixo do composer).
         Flickable {
             id: composerControls
-            anchors.fill: parent
-            anchors.leftMargin: Theme.spaceMd
-            anchors.rightMargin: Theme.spaceMd
+            objectName: "chatComposerControlsBox"
+            anchors.left: parent.left
+            anchors.right: composerCard.isCompact ? parent.right : vrModeButton.left
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 8
+            anchors.rightMargin: composerCard.isCompact ? 10 : Theme.spaceXs
+            anchors.bottomMargin: composerCard.isCompact ? Theme.spaceXs : 8
+            height: Theme.compactControlHeight
             contentWidth: controlsRow.width
             contentHeight: height
             clip: true
@@ -633,6 +522,102 @@ Item {
                     note: composerCard.page.chatBridge.contextUsageNote
                 }
             }
+        }
+
+        VrIconButton {
+            id: attachButton
+            objectName: "chatAttachButton"
+            anchors.right: sendButton.left
+            anchors.rightMargin: 8
+            // Compacto: centrado na faixa do campo; expandido: na linha de controles.
+            // (âncoras verticais condicionais conflitam; posicionar por y)
+            y: composerCard.isCompact
+                ? composerScroll.y + (composerScroll.height - height) / 2
+                : composerCard.height - height - 8
+            width: 32
+            height: 32
+            implicitWidth: 32
+            implicitHeight: 32
+            iconKind: "attachment"
+            iconSize: 18
+            foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            enabled: !composerCard.page.chatBridge.turnRunning
+            Accessible.name: "Anexar arquivos"
+            onClicked: composerCard.page.chatBridge.chooseAttachments()
+        }
+
+        VrIconButton {
+            id: sendButton
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            y: composerCard.isCompact
+                ? composerScroll.y + (composerScroll.height - height) / 2
+                : composerCard.height - height - 8
+            width: 32
+            height: 32
+            implicitWidth: 32
+            implicitHeight: 32
+            round: true
+            enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
+            Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
+            iconSource: Qt.resolvedUrl(composerCard.page.chatBridge.turnRunning
+                ? "../../../assets/chat-stop.svg"
+                : "../../../assets/chat-send.svg")
+            foreground: "#FFFFFF"
+            background: Rectangle {
+                radius: 16
+                color: composerCard.page.chatBridge.turnRunning
+                    ? (parent.down
+                        ? Qt.darker(Theme.palette.danger, 1.18)
+                        : parent.hovered
+                            ? Qt.darker(Theme.palette.danger, 1.08)
+                            : Theme.palette.danger)
+                    : (parent.down
+                        ? Theme.palette.brandOrange
+                        : parent.hovered
+                            ? Qt.lighter(Theme.palette.accessibleOrange, 1.12)
+                            : Theme.palette.accessibleOrange)
+                border.width: parent.activeFocus ? 2 : 0
+                border.color: Theme.palette.focus
+            }
+            onClicked: composerCard.page.chatBridge.turnRunning ? composerCard.page.chatBridge.stopTurn() : composerCard.page.submitMessage()
+        }
+
+        Button {
+            id: vrModeButton
+            objectName: "vrModeButton"
+            property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
+            implicitWidth: vrModeContent.implicitWidth + 14
+            implicitHeight: 28
+            leftPadding: 6
+            rightPadding: 6
+            hoverEnabled: true
+            focusPolicy: Qt.StrongFocus
+            anchors.right: attachButton.left
+            anchors.rightMargin: Theme.spaceSm
+            anchors.verticalCenter: attachButton.verticalCenter
+            contentItem: Row {
+                id: vrModeContent
+                spacing: 4
+                anchors.centerIn: parent
+                Text {
+                    text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
+                    color: composerCard.page.chatBridge.vrMode !== "off"
+                        ? (Theme.palette.brandOrange || "#f59e0b")
+                        : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12.5)
+                    font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
+                    renderType: Theme.textRenderType
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+            background: Rectangle {
+                radius: 6
+                color: vrModeButton.down || vrModeButton.hovered
+                    ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
+            }
+            onClicked: composerCard.page.chatBridge.cycleVrMode()
         }
     }
 }

@@ -1,4 +1,12 @@
 """Adversarial and parity test suite for Tool Calling lifecycle and UI presentation."""
+import logging
+from dataclasses import asdict
+
+from vrsoft_extractor.mary.models import RuntimeEvent
+from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
+    normalize_generic_event,
+    normalize_opencode_event,
+)
 from vrsoft_extractor.mary.tool_activity import (
     ToolActivity,
     ToolLifecycleReducer,
@@ -599,3 +607,143 @@ class TestIdempotencyPrecedenceCorrTcSeq01:
             output_mode="delta", sequence=10, provider="codex",
         ))
         assert tool.output == "A"
+
+
+class TestCorrToolLifecycle01IdentityAndFinalization:
+    """CORR-TOOL-LIFECYCLE-01: OpenCode dict-state envelopes keep stable
+    identity through ``canonical_event`` round-trip, terminal tools finalize
+    before ``turn_completed``, and real anonymous tools stay isolated."""
+
+    def test_opencode_completed_dict_state_survives_finalize_turn(self):
+        payload = {
+            "type": "tool_use",
+            "sessionID": "ses_e2e",
+            "part": {
+                "id": "prt_e2e_1",
+                "callID": "call_e2e_1",
+                "tool": "bash",
+                "state": {
+                    "status": "completed",
+                    "input": {"command": "pytest -q"},
+                    "output": "59 passed",
+                    "title": "pytest -q",
+                    "metadata": {"exit": 0},
+                    "time": {"start": 1, "end": 2},
+                },
+            },
+        }
+        norm = normalize_opencode_event(payload, "conv_e2e")
+        assert norm is not None
+        assert norm.tool_id == "call_e2e_1"
+        assert norm.kind == ToolEventKind.COMPLETED
+
+        runtime_event = RuntimeEvent(
+            conversation_id="conv_e2e",
+            kind="tool_event",
+            text=norm.title,
+            payload={"execution_id": 42, "canonical_event": asdict(norm)},
+        )
+        generic = normalize_generic_event(runtime_event)
+        assert generic is not None
+        assert generic.tool_id == "call_e2e_1"
+        assert generic.kind == ToolEventKind.COMPLETED
+        assert generic.status == ToolStatus.SUCCESS
+
+        reducer = ToolLifecycleReducer()
+        tool = reducer.reduce(generic)
+        assert tool.status == ToolStatus.SUCCESS
+
+        reducer.finalize_turn(ToolStatus.INTERRUPTED)
+
+        assert tool.status == ToolStatus.SUCCESS
+        assert reducer.get_active_tools() == []
+        assert all(":noid:" not in activity.id for activity in reducer.get_all_tools())
+        assert [activity.id for activity in reducer.get_all_tools()] == ["call_e2e_1"]
+
+    def test_canonical_event_recovers_explicit_identity_from_raw_payload(self):
+        for generic_id in ("", "tool", "unknown", "item", "none", "null", "undefined"):
+            canonical = asdict(NormalizedToolEvent(
+                tool_id=generic_id,
+                kind=ToolEventKind.STARTED,
+                provider="opencode",
+                type=ToolType.COMMAND_EXECUTION,
+            ))
+            payload = {
+                "canonical_event": canonical,
+                "part": {"id": "prt_rec", "callID": "call_recovered", "tool": "bash"},
+            }
+            event = normalize_generic_event(
+                RuntimeEvent("conv_rec", "tool_event", "", payload)
+            )
+            assert event is not None, generic_id
+            assert event.tool_id == "call_recovered", generic_id
+            assert event.type == ToolType.COMMAND_EXECUTION
+
+    def test_canonical_event_same_recovered_id_yields_single_terminal_activity(self):
+        reducer = ToolLifecycleReducer()
+        for kind in (
+            ToolEventKind.STARTED,
+            ToolEventKind.UPDATED,
+            ToolEventKind.COMPLETED,
+        ):
+            canonical = asdict(NormalizedToolEvent(
+                tool_id="",
+                kind=kind,
+                provider="opencode",
+                type=ToolType.COMMAND_EXECUTION,
+            ))
+            payload = {
+                "canonical_event": canonical,
+                "part": {"callID": "call_single", "tool": "bash"},
+            }
+            event = normalize_generic_event(
+                RuntimeEvent("conv_single", "tool_event", "", payload)
+            )
+            assert event is not None
+            assert event.tool_id == "call_single"
+            reducer.reduce(event)
+
+        tools = reducer.get_all_tools()
+        assert len(tools) == 1
+        assert tools[0].id == "call_single"
+        assert tools[0].status == ToolStatus.SUCCESS
+        assert reducer.get_active_tools() == []
+
+    def test_truly_anonymous_tools_stay_distinct_through_normalizer(self):
+        reducer = ToolLifecycleReducer()
+        for _ in range(2):
+            payload = {
+                "part": {
+                    "tool": "bash",
+                    "status": "completed",
+                    "title": "mesmo título",
+                    "command": "mesmo comando",
+                    "input": {"command": "mesmo comando"},
+                    "output": "mesma saída",
+                },
+            }
+            event = normalize_generic_event(
+                RuntimeEvent("conv_anon", "tool_event", "", payload)
+            )
+            assert event is not None
+            assert event.tool_id == ""
+            reducer.reduce(event)
+
+        tools = reducer.get_all_tools()
+        assert len(tools) == 2
+        assert len({tool.id for tool in tools}) == 2
+        assert all(":noid:" in tool.id for tool in tools)
+        assert all(tool.status == ToolStatus.SUCCESS for tool in tools)
+
+    def test_finalize_turn_warning_still_fires_for_genuinely_pending_tool(self, caplog):
+        reducer = ToolLifecycleReducer()
+        reducer.reduce(NormalizedToolEvent(
+            tool_id="pending-1",
+            kind=ToolEventKind.STARTED,
+        ))
+        with caplog.at_level(logging.WARNING, logger="mary.tool_activity"):
+            finalized = reducer.finalize_turn(ToolStatus.INTERRUPTED)
+
+        assert [tool.id for tool in finalized] == ["pending-1"]
+        assert finalized[0].status == ToolStatus.INTERRUPTED
+        assert "was still active at turn completion" in caplog.text

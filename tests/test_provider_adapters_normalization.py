@@ -14,6 +14,7 @@ from vrsoft_extractor.mary.provider_adapters.tool_normalizer import (
     normalize_opencode_event,
 )
 from vrsoft_extractor.mary.tool_activity import (
+    NormalizedToolEvent,
     ToolEventKind,
     ToolLifecycleReducer,
     ToolStatus,
@@ -304,6 +305,84 @@ def test_opencode_tool_use_lifecycle():
     assert event_done.tool_id == "oc_1"
     assert event_done.kind == ToolEventKind.COMPLETED
     assert event_done.output == "On branch dev\nnothing to commit"
+
+
+def test_opencode_dict_state_completed_preserves_identity_and_nested_payload():
+    payload = {
+        "type": "tool_use",
+        "sessionID": "ses_current",
+        "part": {
+            "id": "prt_current_1",
+            "callID": "call_current_1",
+            "tool": "bash",
+            "state": {
+                "status": "completed",
+                "input": {"command": "git status"},
+                "output": "On branch dev",
+                "title": "git status",
+                "metadata": {"exit": 0, "truncated": False},
+                "time": {"start": 100, "end": 250},
+            },
+        },
+    }
+    norm = normalize_opencode_event(payload, "conv_oc")
+    assert norm is not None
+    assert norm.tool_id == "call_current_1"
+    assert not norm.tool_id.startswith("anon:")
+    assert norm.kind == ToolEventKind.COMPLETED
+    assert norm.status == ToolStatus.SUCCESS
+    assert norm.input == {"command": "git status"}
+    assert norm.output == "On branch dev"
+    assert norm.title == "git status"
+    assert norm.command == "git status"
+
+    reducer = ToolLifecycleReducer()
+    tool = reducer.reduce(norm)
+    assert tool.id == "call_current_1"
+    assert tool.status == ToolStatus.SUCCESS
+    assert tool.output == "On branch dev"
+    assert tool.input == {"command": "git status"}
+    assert reducer.get_active_tools() == []
+
+
+def test_opencode_dict_state_terminal_error_is_failure_with_stable_id():
+    payload = {
+        "type": "tool_use",
+        "sessionID": "ses_current",
+        "part": {
+            "id": "prt_current_2",
+            "callID": "call_current_2",
+            "tool": "bash",
+            "state": {
+                "status": "error",
+                "input": {"command": "false"},
+                "output": "exit status 1",
+                "error": "exit status 1",
+                "title": "false",
+                "metadata": {},
+            },
+        },
+    }
+    norm = normalize_opencode_event(payload, "conv_oc")
+    assert norm is not None
+    assert norm.tool_id == "call_current_2"
+    assert not norm.tool_id.startswith("anon:")
+    assert norm.kind == ToolEventKind.FAILED
+    assert norm.status == ToolStatus.FAILURE
+    assert norm.error == "exit status 1"
+    assert norm.output == "exit status 1"
+
+    reducer = ToolLifecycleReducer()
+    reducer.reduce(NormalizedToolEvent(
+        tool_id=norm.tool_id,
+        kind=ToolEventKind.STARTED,
+        provider="opencode",
+        type=ToolType.COMMAND_EXECUTION,
+    ))
+    tool = reducer.reduce(norm)
+    assert tool.status == ToolStatus.FAILURE
+    assert tool.status != ToolStatus.RUNNING
+    assert tool.error == "exit status 1"
 
 
 def test_claude_tool_use_and_result_lifecycle():
