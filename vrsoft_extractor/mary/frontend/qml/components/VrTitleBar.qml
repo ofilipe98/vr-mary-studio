@@ -93,7 +93,7 @@ Item {
         VrIconButton {
             id: conversationSidebarToggle
             objectName: "conversationSidebarToggle"
-            visible: root.isChatPage
+            visible: root.isChatPage && root.chatPage !== null
             implicitWidth: 32
             implicitHeight: 32
             iconKind: "panelLeft"
@@ -345,7 +345,7 @@ Item {
         VrIconButton {
             id: surfaceExpandButton
             objectName: "surfaceToggleButton"
-            visible: root.isChatPage
+            visible: root.isChatPage && root.chatPage !== null
             implicitWidth: 32
             implicitHeight: 32
             iconSize: 16

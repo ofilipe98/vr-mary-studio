@@ -79,8 +79,9 @@ Item {
 
     readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
-    // Altura total do conjunto: card principal (mesma altura visual anterior) + parte exposta da bandeja.
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22 + Theme.compactControlHeight - Theme.spaceXs
+    // Expandido: card único com a linha de controles integrada na base.
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22
+    // Compacto: faixa do campo + bandeja de controles separada logo abaixo.
     readonly property real compactSurfaceHeight: 46
     readonly property real compactHeight: compactSurfaceHeight + Theme.compactControlHeight - Theme.spaceXs
 
@@ -121,7 +122,7 @@ Item {
         anchors.top: parent.top
         height: composerCard.isCompact
             ? composerCard.compactSurfaceHeight
-            : composerCard.normalHeight - Theme.compactControlHeight + Theme.spaceXs
+            : composerCard.normalHeight
         radius: 16
         clip: true
         color: Theme.palette.chatComposer
@@ -535,25 +536,32 @@ Item {
         }
     }
 
-    // Bandeja horizontal encaixada abaixo do card principal, mais estreita que ele.
+    // Linha de controles: integrada à base do card no modo expandido; no modo
+    // compacto vira uma bandeja própria, mais estreita, encaixada logo abaixo.
     Rectangle {
         id: composerControlsBox
         objectName: "chatComposerControlsBox"
-        anchors.top: composerSurface.bottom
-        anchors.topMargin: -Theme.spaceXs
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: Theme.spaceXl
-        anchors.rightMargin: Theme.spaceXl
+        x: composerCard.isCompact ? Theme.spaceXl : Theme.spaceXs
+        y: composerCard.isCompact
+            ? composerCard.compactSurfaceHeight - Theme.spaceXs
+            : composerCard.normalHeight - height - 8
+        width: composerCard.isCompact
+            ? composerCard.width - 2 * Theme.spaceXl
+            : Math.max(0, vrModeButton.x - 2 * Theme.spaceXs)
         height: Theme.compactControlHeight
-        radius: Theme.radiusControl
-        color: Theme.palette.chatComposer
-        border.width: 1
+        radius: composerCard.isCompact ? Theme.radiusControl : 0
+        color: composerCard.isCompact ? Theme.palette.chatComposer : "transparent"
+        border.width: composerCard.isCompact ? 1 : 0
         border.color: Theme.palette.appearance === "light"
             ? Qt.alpha(Theme.palette.border, 0.6)
             : Qt.rgba(255, 255, 255, 0.08)
-        z: 0
-        clip: true
+        z: composerCard.isCompact ? 0 : 2
+        clip: composerCard.isCompact
+
+        Behavior on y {
+            enabled: !composerCard.page.frontendBridge.reduceMotion
+            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        }
 
         Flickable {
             id: composerControls

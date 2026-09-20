@@ -185,6 +185,15 @@ class StartupQmlTest(unittest.TestCase):
             # Loading is visible while chat/studio backends are still absent.
             self.assertIsNotNone(window.findChild(QObject, "startupLoadingPage"))
 
+            # Panel toggles belong to the chat page only: they must not show
+            # over the startup screen before the chat page is instantiated.
+            sidebar_toggle = window.findChild(QObject, "conversationSidebarToggle")
+            surface_toggle = window.findChild(QObject, "surfaceToggleButton")
+            self.assertIsNotNone(sidebar_toggle)
+            self.assertIsNotNone(surface_toggle)
+            self.assertFalse(sidebar_toggle.property("visible"))
+            self.assertFalse(surface_toggle.property("visible"))
+
     def test_schedule_antigravity_restore_without_bridge_is_noop(self):
         # First-run starts with studio_bridge=None: scheduling restore must
         # never raise AttributeError.

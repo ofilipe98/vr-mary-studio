@@ -189,6 +189,13 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             assert composer.property('isAtBottom')
             assert not composer.property('isCompact')
             assert abs(composer.height() - normal_height) < 1
+            # Expandido: card único; a linha de controles fica integrada à
+            # base da superfície, sem bandeja separada abaixo do composer.
+            assert abs(surface.height() - composer.height()) < 1
+            assert 0 < tray.y()
+            assert abs((tray.y() + tray.height()) - (composer.height() - 8)) < 1
+            assert tray.x() >= 0
+            assert tray.x() + tray.width() <= surface.width() + 1
             assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)
             assert all(a <= b for a, b in zip(heights, heights[1:]))
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
