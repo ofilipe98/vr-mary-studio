@@ -3278,10 +3278,14 @@ Item {
     function submitMessage() {
         if ((!composerInput.text.trim().length && !root.chatBridge.attachments.length) || root.chatBridge.turnRunning) return
         var value = composerInput.text
-        messageList.followTail = true
-        composerInput.clear()
-        composerAssistPopup.close()
-        root.chatBridge.sendMessage(value)
+        composerCard.submissionError = ""
+        if (root.chatBridge.sendMessage(value)) {
+            messageList.followTail = true
+            composerInput.clear()
+            composerAssistPopup.close()
+        } else {
+            composerCard.submissionError = root.chatBridge.statusText
+        }
     }
 
     function handleComposerTab(event) {

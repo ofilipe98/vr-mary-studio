@@ -672,6 +672,11 @@ class ChatOrchestrator:
                             LOGGER.exception(
                                 "Falha ao rotear as fontes de conhecimento VR"
                             )
+                        with self._agent_run_lock:
+                            if (self._pending_user_messages.get(conversation_id) != message_id
+                                    or conversation_id in self._cancelled_conversations
+                                    or conversation_id in self._finalized_turns):
+                                return
                         evidence_degraded = (
                             evidence_bundle is None
                             or not evidence_bundle.candidates
@@ -826,6 +831,11 @@ class ChatOrchestrator:
                         )
                         else None
                     )
+                    with self._agent_run_lock:
+                        if (self._pending_user_messages.get(conversation_id) != message_id
+                                or conversation_id in self._cancelled_conversations
+                                or conversation_id in self._finalized_turns):
+                            return
                     if fanout_modules:
                         self._run_module_fanout(
                             conversation_id,
@@ -2701,6 +2711,8 @@ class ChatOrchestrator:
         conversation = self.database.get_conversation(conversation_id)
         if conversation:
             with self._agent_run_lock:
+                callback = self._guarded_turn_callback(conversation_id)
+                owner = self._pending_user_messages.get(conversation_id)
                 self._cancelled_conversations.add(conversation_id)
                 from .knowledge_access import invalidate_scope
                 invalidate_scope(self._turn_access_paths.get(conversation_id, ""))
@@ -2725,7 +2737,14 @@ class ChatOrchestrator:
                     provider.interrupt(local_id)
                 except Exception:
                     pass
-            self._provider(conversation["provider"]).interrupt(conversation_id)
+            try:
+                self._provider(conversation["provider"]).interrupt(conversation_id)
+            finally:
+                # Preparation may not have started a provider process yet.
+                # Complete locally instead of waiting for a nonexistent callback.
+                if owner is not None:
+                    callback(RuntimeEvent(conversation_id, "orchestration_cancelled", "Execução interrompida."))
+                    callback(RuntimeEvent(conversation_id, "turn_completed"))
 
     def approve(
         self,

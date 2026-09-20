@@ -171,14 +171,16 @@ def test_tool_error_disclosure_deduplicates_and_fits_narrow_layout(qml_env):
         app.processEvents()
 
 
-def test_mismatched_stack_does_not_start_a_turn(qml_env, monkeypatch):
+def test_mismatched_stack_still_sends_without_silently_switching_context(qml_env, monkeypatch):
     app, engine, frontend, chat, studio = qml_env
     chat._ultra_application_contexts = [{"app_id": "vrmaster", "version": "1.0"}]
     calls = []
+    chat._database.create_conversation("Teste", "opencode", "test", chat._settings.root)
+    chat.refresh()
+    chat.selectConversation(0)
     monkeypatch.setattr(chat._orchestrator, "send", lambda *a, **kw: calls.append(kw))
-    chat.sendMessage("vratacarejo.service.Nota.calcular(Nota.java:374)")
-    assert not calls
-    assert "VRAtacarejo" in chat._status_text
+    assert chat.sendMessage("vratacarejo.service.Nota.calcular(Nota.java:374)")
+    assert len(calls) == 1
     assert chat._ultra_application_contexts == [{"app_id": "vrmaster", "version": "1.0"}]
 
 

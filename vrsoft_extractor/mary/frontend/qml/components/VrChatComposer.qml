@@ -8,6 +8,19 @@ import "../theme"
 Item {
     id: composerCard
     required property var page
+    property string submissionError: ""
+    Text {
+        objectName: "chatSubmissionError"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.top
+        anchors.bottomMargin: 8
+        visible: composerCard.submissionError.length > 0
+        text: composerCard.submissionError
+        color: Theme.palette.danger
+        font.pixelSize: Theme.fontSize(12)
+        wrapMode: Text.Wrap
+    }
     property alias approvalSelectorItem: approvalSelector
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
@@ -464,6 +477,7 @@ Item {
 
         VrIconButton {
             id: sendButton
+            objectName: "chatSendButton"
             anchors.right: parent.right
             anchors.rightMargin: 12
             anchors.bottom: parent.bottom

@@ -2732,9 +2732,9 @@ class ChatBridge(QObject):
         self.refreshUsageLimits(force=True)
         self.showUsageLimitsRequested.emit()
 
-    @Slot(str)
-    def sendMessage(self, text: str) -> None:  # noqa: N802
-        self._send_message(text)
+    @Slot(str, result=bool)
+    def sendMessage(self, text: str) -> bool:  # noqa: N802
+        return self._send_message(text)
 
     @Property("QVariantMap", notify=stateChanged)
     def resumableResearch(self) -> dict:  # noqa: N802
@@ -2748,13 +2748,13 @@ class ChatBridge(QObject):
     def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
         return None
 
-    def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> None:
+    def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> bool:
         content = str(text or "").strip()
         if content.lower() == "/usage-limits" or content.lower().startswith("/usage-limits "):
             self.openUsageLimits()
-            return
+            return True
         if self.turnRunning or (not content and not self._attachments):
-            return
+            return False
         if not content:
             content = "Analise os anexos enviados."
         force_research = False
@@ -2763,19 +2763,13 @@ class ChatBridge(QObject):
             if self._vr_mode == "off":
                 self._status_text = "Ative o VR para pesquisar na base local."
                 self.stateChanged.emit()
-                return
+                return False
             if not argument:
                 self._status_text = "Use: /pesquisa <pergunta>"
                 self.stateChanged.emit()
-                return
+                return False
             content = argument
             force_research = True
-        from ..code_context import application_context_warning
-        context_warning = application_context_warning(content, self._ultra_application_contexts)
-        if context_warning and not resume_run_id:
-            self._status_text = context_warning
-            self.stateChanged.emit()
-            return
         selected_extensions = [
             item
             for item in self._extension_items
@@ -2820,7 +2814,7 @@ class ChatBridge(QObject):
             except Exception as exc:
                 self._status_text = f"Falha: {exc}"
                 self.stateChanged.emit()
-                return
+                return False
             self._draft = False
             self.refresh()
             selected_index = next(
@@ -2841,7 +2835,7 @@ class ChatBridge(QObject):
             except Exception as exc:
                 self._status_text = f"Falha: {exc}"
                 self.stateChanged.emit()
-                return
+                return False
             if configured_id != conversation_id:
                 conversation_id = configured_id
                 self.refresh()
@@ -2966,6 +2960,7 @@ class ChatBridge(QObject):
             self._selected_extension_keys = set()
             self.refresh()
             self.stateChanged.emit()
+            return True
         except Exception as exc:
             self._active_turns.discard(conversation_id)
             self._active_turn_started_epochs.pop(conversation_id, None)
@@ -3003,6 +2998,7 @@ class ChatBridge(QObject):
             self._status_text = f"Falha: {exc}"
             self.refresh()
             self.stateChanged.emit()
+            return persisted
 
     @Slot()
     def stopTurn(self) -> None:  # noqa: N802
