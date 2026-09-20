@@ -348,6 +348,8 @@ class AntigravityProvider(AgentProvider):
                 callback(RuntimeEvent(cid, "reasoning_delta", text))
         elif kind in ("tool_call", "tool_call_update"):
             norm = normalize_antigravity_event(params, method, cid)
+            if norm is None:
+                return
             tool_call = update.get("toolCall") or {}
             if not isinstance(tool_call, dict):
                 tool_call = {}
@@ -357,7 +359,7 @@ class AntigravityProvider(AgentProvider):
                 or tool_call.get("id")
                 or ""
             )
-            title = norm.title if norm else str(
+            title = norm.title or str(
                 update.get("title")
                 or tool_call.get("title")
                 or tool_call.get("name")
@@ -383,13 +385,12 @@ class AntigravityProvider(AgentProvider):
                     payload[key] = update[key]
             if tool_call:
                 payload["toolCall"] = tool_call
-            if norm:
-                canonical_event = asdict(norm)
-                canonical_event["metadata"] = {
-                    "sessionId": params.get("sessionId"),
-                    "sessionUpdate": kind,
-                }
-                payload["canonical_event"] = canonical_event
+            canonical_event = asdict(norm)
+            canonical_event["metadata"] = {
+                "sessionId": params.get("sessionId"),
+                "sessionUpdate": kind,
+            }
+            payload["canonical_event"] = canonical_event
             callback(RuntimeEvent(cid, "tool_event", title, payload))
         elif kind == "tool_result":
             norm = normalize_antigravity_event(params, method, cid)

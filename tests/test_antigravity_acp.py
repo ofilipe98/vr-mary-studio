@@ -723,6 +723,37 @@ def test_chat_updates_use_studio_event_contract():
     assert tool_events[-1].payload["canonical_event"]["status"] == "success"
 
 
+def test_antigravity_empty_tool_call_update_emits_no_tool_event():
+    provider = AntigravityProvider()
+    events = []
+    state = {"session": "native", "cancelled": False, "text": False}
+    provider._update(
+        "chat", state, events.append, "session/update",
+        {
+            "sessionId": "native",
+            "update": {"sessionUpdate": "tool_call_update", "toolCallId": "tool-empty-1"},
+        },
+    )
+    assert events == []
+
+    provider._update(
+        "chat", state, events.append, "session/update",
+        {
+            "sessionId": "native",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-empty-1",
+                "content": "saída real",
+            },
+        },
+    )
+    assert len(events) == 1
+    assert events[0].kind == "tool_event"
+    canonical = events[0].payload["canonical_event"]
+    assert canonical["tool_id"] == "tool-empty-1"
+    assert canonical["kind"] == "tool.updated"
+
+
 def test_acp_client_ignores_non_oauth_url_when_unattended():
     from vrsoft_extractor.mary.antigravity_acp import AcpClient
     from urllib.parse import urlencode

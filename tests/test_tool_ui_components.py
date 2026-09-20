@@ -25,7 +25,7 @@ QML_DIR = ROOT / "vrsoft_extractor/mary/frontend/qml"
 
 
 def _activity_cards(item) -> list:
-    names = {"toolCard", "commandCard", "toolGroupCard"}
+    names = {"toolCard", "commandCard", "toolGroupCard", "changedFilesCard"}
     cards = [item] if item.objectName() in names else []
     for child in item.childItems():
         cards.extend(_activity_cards(child))
@@ -250,6 +250,67 @@ def test_vr_chat_activity_settled_success_folds_tools_behind_worked_for(qml_env)
         app.processEvents()
 
         assert len(_activity_cards(item)) == len(completed_items)
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_vr_chat_activity_settled_file_changes_fold_behind_worked_for(qml_env) -> None:
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    completed_items = [
+        {
+            "id": "cmd-files-1",
+            "kind": "tool",
+            "itemType": "commandExecution",
+            "state": "completed",
+            "text": "Executou os testes",
+            "command": "python -m pytest -q",
+        },
+        {
+            "id": "files-1",
+            "kind": "file_changes",
+            "itemType": "fileChange",
+            "state": "completed",
+            "text": "2 arquivos alterados",
+            "files": [
+                {"path": "src/service.py", "name": "service.py"},
+                {"path": "tests/test_service.py", "name": "test_service.py"},
+            ],
+            "fileCount": 2,
+            "additions": 20,
+            "deletions": 5,
+            "folderSummary": "src, tests",
+        },
+        {
+            "id": "mcp-files-1",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "Leu o resultado",
+        },
+    ]
+    try:
+        item.setProperty("items", completed_items)
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        item.setProperty("expanded", False)
+        item.setProperty("elapsedLabel", "42s")
+        app.processEvents()
+
+        assert item.property("headerLabel") == "Worked for 42s"
+        cards = _activity_cards(item)
+        for name in ("toolCard", "commandCard", "toolGroupCard", "changedFilesCard"):
+            assert not any(card.objectName() == name for card in cards), name
+
+        item.setProperty("expanded", True)
+        app.processEvents()
+
+        cards = _activity_cards(item)
+        assert len(cards) == len(completed_items)
+        assert sum(1 for card in cards if card.objectName() == "changedFilesCard") == 1
         assert len(engine._qml_warnings) == warning_count
     finally:
         item.deleteLater()

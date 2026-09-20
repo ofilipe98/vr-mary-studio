@@ -2969,6 +2969,10 @@ class QmlFrontendTest(unittest.TestCase):
 
                 card = None
                 content_item = window.property("contentItem")
+                activity = find_qml_item(content_item, "chatActivity")
+                self.assertIsNotNone(activity)
+                activity.setProperty("cardExpanded", True)
+                self.application.processEvents()
                 for _attempt in range(20):
                     self.application.processEvents()
                     card = find_qml_item(content_item, "changedFilesCard")

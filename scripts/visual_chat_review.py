@@ -166,11 +166,24 @@ Fontes consultadas:
                 },
                 {
                     "id": "tool-call-normalizer",
-                    "kind": "tool",
+                    "kind": "file_changes",
                     "itemType": "fileChange",
                     "state": "completed",
                     "text": "Atualizou a normalização do toolCallId",
-                    "subtitle": "tool_normalizer.py",
+                    "files": [
+                        {
+                            "path": "vrsoft_extractor/mary/provider_adapters/tool_normalizer.py",
+                            "name": "tool_normalizer.py",
+                        },
+                        {
+                            "path": "tests/test_provider_adapters_normalization.py",
+                            "name": "test_provider_adapters_normalization.py",
+                        },
+                    ],
+                    "fileCount": 2,
+                    "additions": 24,
+                    "deletions": 6,
+                    "folderSummary": "vrsoft_extractor/mary · tests",
                 },
                 {
                     "id": "tool-call-lifecycle",

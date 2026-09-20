@@ -232,13 +232,6 @@ Rectangle {
         })
         if (failedItems.length > 0) return failedItems.slice(-1)
 
-        // Changed-file summaries stay visible after the turn settles, like the
-        // reference's turn diff summary attached to the assistant message.
-        var fileChanges = root.items.filter(function(i) {
-            return i.kind === "file_changes"
-        })
-        if (fileChanges.length > 0) return fileChanges
-
         // Successful settled work is disclosed by the Worked for ... header.
         return []
     }
