@@ -2496,6 +2496,19 @@ class ChatBridge(QObject):
     def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.exportDecompiledCode(destination_parent)
 
+    @Slot(str, result="QVariantMap")
+    def detectDecompiledPackageArchive(self, archive_path: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.detectDecompiledPackageArchive(archive_path)
+
+    @Slot(str, str, str, result="QVariantMap")
+    def importDecompiledPackageArchive(self, archive_path: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.importDecompiledPackageArchive(archive_path, release_id, package_name)
+
+    @Slot(str, result="QVariantMap")
+    @Slot(str, str, result="QVariantMap")
+    def exportDecompiledPackage(self, package_id: str, destination_file: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.exportDecompiledPackage(package_id, destination_file)
+
     @Slot(str, result=bool)
     @Slot(str, bool, result=bool)
     def unlinkPackage(self, package_id: str, delete_data: bool = False) -> bool:  # noqa: N802

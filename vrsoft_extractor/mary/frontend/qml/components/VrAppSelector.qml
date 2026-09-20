@@ -498,9 +498,10 @@ Item {
                     }
 
                     VrButton {
+                        objectName: "appSelectorPendingOnlyButton"
                         text: "Apenas pendentes"
                         variant: "ghost"
-                        implicitHeight: 24
+                        implicitHeight: Theme.controlHeightCompact
                         onClicked: control.selectPendingOnly()
                     }
 
@@ -516,10 +517,11 @@ Item {
                     }
 
                     VrButton {
+                        objectName: "appSelectorClearSelectionButton"
                         visible: control.selectedAppIds.length > 0
                         text: "Limpar"
                         variant: "ghost"
-                        implicitHeight: 24
+                        implicitHeight: Theme.controlHeightCompact
                         onClicked: control.clearSelection()
                     }
 

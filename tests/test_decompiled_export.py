@@ -1,17 +1,21 @@
 import hashlib
 import json
 import sqlite3
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from vrsoft_extractor.mary.apps_catalog import AppsCatalogStore
 from vrsoft_extractor.mary.code_index import JavaCodeIndex
-from vrsoft_extractor.mary.decompiled_export import export_decompiled_source
+from vrsoft_extractor.mary.decompiled_export import (
+    export_decompiled_package,
+    export_decompiled_source,
+)
 
 
 def _prepare(workspace: Path, records: list[dict], *, catalog=None) -> None:
-    workspace.mkdir()
+    workspace.mkdir(parents=True, exist_ok=True)
     default_catalog = {
         "schema_version": 1,
         "applications": {
@@ -43,7 +47,8 @@ def _prepare(workspace: Path, records: list[dict], *, catalog=None) -> None:
     AppsCatalogStore(workspace).save_catalog(catalog or default_catalog)
     index = JavaCodeIndex(workspace)
     index.initialize()
-    with sqlite3.connect(index.store.database_path) as connection:
+    connection = sqlite3.connect(index.store.database_path)
+    try:
         for number, record in enumerate(records):
             values = {
                 "source_key": f"key-{number}", "schema_version": 1,
@@ -69,6 +74,8 @@ def _prepare(workspace: Path, records: list[dict], *, catalog=None) -> None:
                 tuple(values.values()),
             )
         connection.commit()
+    finally:
+        connection.close()
 
 
 def _export(workspace: Path, destination: Path, **overrides):
@@ -374,6 +381,9 @@ def test_export_iterates_index_rows_without_fetchall(tmp_path, monkeypatch):
         def execute(self, *args, **kwargs):
             return CursorGuard(self._connection.execute(*args, **kwargs))
 
+        def close(self):
+            return self._connection.close()
+
     def guarded_connect(*args, **kwargs):
         return ConnectionGuard(real_connect(*args, **kwargs))
 
@@ -382,3 +392,195 @@ def test_export_iterates_index_rows_without_fetchall(tmp_path, monkeypatch):
 
     assert result["file_count"] == 128
     assert len(list(Path(result["destination"]).glob("bulk/*.java"))) == 128
+
+
+def _portable_catalog() -> dict:
+    return {
+        "schema_version": 1,
+        "applications": {
+            "vrmaster": {
+                "name": "VRMaster",
+                "versions": {"4.1.0": {"variants": {"a" * 64: {
+                    "variant_id": "a" * 64,
+                    "sha256": "a" * 64,
+                    "class_count": 1,
+                    "size_bytes": 40,
+                    "relative_path": "VRMaster.jar",
+                    "origin_packages": [{"package_id": "release-a", "relative_path": "VRMaster.jar"}],
+                }}}},
+            },
+            "vradm": {
+                "name": "VRAdm",
+                "versions": {"3.2.15.0": {"variants": {"c" * 64: {
+                    "variant_id": "c" * 64,
+                    "sha256": "c" * 64,
+                    "class_count": 1,
+                    "size_bytes": 40,
+                    "relative_path": "VRAdm.jar",
+                    "origin_packages": [{"package_id": "release-a", "relative_path": "VRAdm.jar"}],
+                }}}},
+            },
+        },
+        "packages": {"release-a": {
+            "package_id": "release-a",
+            "name": "Pacote A",
+            "manifest_sha256": "e" * 64,
+            "composition": [
+                {"app_id": "vrmaster", "app_name": "VRMaster", "version": "4.1.0",
+                 "variant_id": "a" * 64, "distribution_id": "dist-master",
+                 "jar_path": "VRMaster.jar", "sha256": "a" * 64},
+                {"app_id": "vradm", "app_name": "VRAdm", "version": "3.2.15.0",
+                 "variant_id": "c" * 64, "distribution_id": "dist-adm",
+                 "jar_path": "VRAdm.jar", "sha256": "c" * 64},
+            ],
+            "dependencies": [
+                {"relative_path": "VRFramework.jar", "sha256": "d" * 64, "size_bytes": 25},
+            ],
+        }},
+    }
+
+
+def _portable_records() -> list[dict]:
+    return [
+        {"source_key": "master-java", "artifact_sha256": "a" * 64,
+         "jar_relative_path": "VRMaster.jar", "output_reference": "",
+         "source_relative_path": "br/com/vr/App.java",
+         "body": "package br.com.vr;\npublic class App {}\n"},
+        {"source_key": "adm-kt", "artifact_sha256": "c" * 64,
+         "jar_relative_path": "VRAdm.jar", "output_reference": "",
+         "source_relative_path": "br/com/vr/config/AppConfig.kt",
+         "body": "package br.com.vr.config\nclass AppConfig\n"},
+        {"source_key": "framework-java", "artifact_sha256": "d" * 64,
+         "jar_relative_path": "VRFramework.jar", "output_reference": "",
+         "source_relative_path": "br/com/vr/Util.java",
+         "body": "package br.com.vr;\npublic class Util {}\n"},
+    ]
+
+
+def test_export_decompiled_package_contains_all_release_sources_and_manifest(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, _portable_records(), catalog=_portable_catalog())
+
+    result = export_decompiled_package(
+        workspace, destination / "Pacote-decompiled.zip", package_id="release-a"
+    )
+
+    exported = Path(result["destination"])
+    assert exported.name == "Pacote-decompiled.zip"
+    assert result["artifact_count"] == 3
+    with zipfile.ZipFile(exported) as archive:
+        names = archive.namelist()
+        assert names.count("vrstudio-package-export.json") == 1
+        manifest = json.loads(
+            archive.read("vrstudio-package-export.json").decode("utf-8")
+        )
+        assert manifest["format"] == "vrstudio-decompiled-package"
+        assert manifest["schema_version"] == 1
+        assert manifest["package_id"] == "release-a"
+        assert manifest["package_name"] == "Pacote A"
+        assert manifest["package_manifest_sha256"] == "e" * 64
+        expected_bytes = sum(
+            len(str(record["body"]).encode("utf-8")) for record in _portable_records()
+        )
+        assert manifest["file_count"] == 3
+        assert manifest["total_bytes"] == expected_bytes
+        assert result["file_count"] == 3
+        assert result["total_bytes"] == expected_bytes
+
+        artifacts = manifest["artifacts"]
+        assert [item["role"] for item in artifacts].count("application") == 2
+        assert [item["role"] for item in artifacts].count("dependency") == 1
+        applications = {item["application_id"]: item for item in artifacts
+                        if item["role"] == "application"}
+        assert set(applications) == {"vrmaster", "vradm"}
+        assert applications["vrmaster"]["application_name"] == "VRMaster"
+        assert applications["vrmaster"]["version"] == "4.1.0"
+        dependency = next(item for item in artifacts if item["role"] == "dependency")
+        assert dependency["jar_relative_path"] == "VRFramework.jar"
+        assert dependency["artifact_sha256"] == "d" * 64
+
+        exported_paths = []
+        for item in artifacts:
+            assert item["source_count"] == len(item["sources"]) >= 1
+            for source in item["sources"]:
+                assert source["archive_path"] == (
+                    f"sources/{item['artifact_index']:04d}/"
+                    f"{source['source_relative_path']}"
+                )
+                content = archive.read(source["archive_path"])
+                assert hashlib.sha256(content).hexdigest() == source["source_sha256"]
+                exported_paths.append(source["archive_path"])
+        assert sorted(exported_paths) == sorted(names[:0] + [
+            name for name in names if name != "vrstudio-package-export.json"
+        ])
+        assert str(workspace) not in json.dumps(manifest)
+        assert all(
+            not name.startswith("/") and ":" not in name and ".." not in name.split("/")
+            for name in names
+        )
+
+
+def test_export_decompiled_package_is_non_destructive(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, _portable_records(), catalog=_portable_catalog())
+
+    first = export_decompiled_package(
+        workspace, destination / "Pacote.zip", package_id="release-a"
+    )
+    second = export_decompiled_package(
+        workspace, destination / "Pacote.zip", package_id="release-a"
+    )
+    third = export_decompiled_package(
+        workspace, destination / "Pacote.zip", package_id="release-a"
+    )
+
+    assert Path(first["destination"]).name == "Pacote.zip"
+    assert Path(second["destination"]).name == "Pacote-2.zip"
+    assert Path(third["destination"]).name == "Pacote-3.zip"
+    assert sorted(path.name for path in destination.iterdir()) == [
+        "Pacote-2.zip", "Pacote-3.zip", "Pacote.zip",
+    ]
+
+
+def test_export_decompiled_package_removes_partial_zip_on_failure(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    records = _portable_records()
+    records.append({
+        "source_key": "broken", "artifact_sha256": "d" * 64,
+        "jar_relative_path": "VRFramework.jar", "output_reference": "",
+        "source_relative_path": "br/com/vr/Broken.java", "body": "",
+        "source_sha256": "0" * 64,
+    })
+    _prepare(workspace, records, catalog=_portable_catalog())
+
+    with pytest.raises(ValueError, match="alterada|inconsistente"):
+        export_decompiled_package(
+            workspace, destination / "Pacote.zip", package_id="release-a"
+        )
+
+    assert list(destination.iterdir()) == []
+
+
+def test_export_decompiled_package_rejects_conflicting_duplicate_source(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {"source_key": "one", "artifact_sha256": "a" * 64,
+         "jar_relative_path": "VRMaster.jar", "output_reference": "",
+         "source_relative_path": "br/com/vr/App.java", "body": "class App {}"},
+        {"source_key": "two", "artifact_sha256": "a" * 64,
+         "jar_relative_path": "VRMaster.jar", "output_reference": "",
+         "source_relative_path": "br/com/vr/App.java",
+         "body": "class App { int changed; }"},
+    ], catalog=_portable_catalog())
+
+    with pytest.raises(ValueError, match="conflitantes"):
+        export_decompiled_package(
+            workspace, destination / "Pacote.zip", package_id="release-a"
+        )
+
+    assert list(destination.iterdir()) == []
+

@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt, QUrl, QMetaObject
+from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, Qt, QUrl, QMetaObject
 from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -4759,6 +4759,46 @@ class QmlFrontendTest(unittest.TestCase):
                 apps_page.setProperty("versionSubTab", 0)
                 self.application.processEvents()
 
+                comparison_metrics = [
+                    window.findChild(QObject, "applicationComparisonAddedMetric"),
+                    window.findChild(QObject, "applicationComparisonModifiedMetric"),
+                    window.findChild(QObject, "applicationComparisonRemovedMetric"),
+                    window.findChild(QObject, "applicationComparisonUnchangedMetric"),
+                ]
+                for metric in comparison_metrics:
+                    self.assertIsNotNone(metric)
+                self.assertEqual(
+                    len({metric.property("radius") for metric in comparison_metrics}), 1
+                )
+                self.assertEqual(
+                    len({metric.property("color").name() for metric in comparison_metrics}), 1
+                )
+
+                pause_button = window.findChild(QObject, "appsBatchPauseButton")
+                cancel_button = window.findChild(QObject, "appsBatchCancelButton")
+                self.assertIsNotNone(pause_button)
+                self.assertIsNotNone(cancel_button)
+                self.assertGreaterEqual(pause_button.property("implicitHeight"), 28)
+                self.assertGreaterEqual(cancel_button.property("implicitHeight"), 28)
+
+                pending_only_button = window.findChild(QObject, "appSelectorPendingOnlyButton")
+                clear_selection_button = window.findChild(QObject, "appSelectorClearSelectionButton")
+                self.assertIsNotNone(pending_only_button)
+                self.assertIsNotNone(clear_selection_button)
+                self.assertGreaterEqual(pending_only_button.property("implicitHeight"), 28)
+                app_selector.openSelector()
+                app_selector.setProperty("selectedAppIds", ["vratacado", "vradm"])
+                app_selector.setProperty("searchText", "")
+                self.application.processEvents()
+                self.assertTrue(clear_selection_button.property("visible"))
+                self.assertGreaterEqual(clear_selection_button.property("implicitHeight"), 28)
+                app_selector.setProperty("selectedAppIds", [])
+                app_selector.closeSelector()
+                self.application.processEvents()
+                self.assertGreaterEqual(clear_selection_button.property("implicitHeight"), 28)
+                app_selector.setProperty("selectedAppIds", [])
+                self.application.processEvents()
+
                 export_calls = []
 
                 def fake_export(*args, **kwargs):
@@ -4966,6 +5006,465 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertNotIn('objectName: "applicationSourcePicker"', apps_qml)
         self.assertNotIn('objectName: "appSelectorHeaderBatchDecompile"', selector_qml)
         self.assertNotIn('objectName: "appSelectorBatchDecompile"', selector_qml)
+
+
+    def test_applications_source_browser_interaction_and_responsive_layout(self) -> None:
+        from vrsoft_extractor.mary.code_index import JavaCodeIndex
+        from vrsoft_extractor.mary.jvm_batches import (
+            DecompilationBatchExecutor,
+            DecompilationBatchPlanner,
+        )
+        from vrsoft_extractor.mary.jvm_toolchain import DecompileResult
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path, root=settings.root, backup_portable_migration=False
+            )
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(settings, database, preferences)
+            studio_bridge = StudioBridge(settings, database, preferences)
+
+            source_body = (
+                "package vr.app;\n"
+                "public class App {\n"
+                "    public int value() { return 2; }\n"
+                "}\n"
+            )
+            source = root / "package-1"
+            source.mkdir()
+            with zipfile.ZipFile(source / "VRApp.jar", "w") as jar:
+                jar.writestr("META-INF/MANIFEST.MF", "Main-Class: App\n")
+                jar.writestr(
+                    "vrapp.properties",
+                    "versao.major=1\nversao.minor=0\nversao.release=0\n"
+                    "versao.build=0\nversao.beta=0\n",
+                )
+                jar.writestr("App.class", "fixture bytecode")
+            catalog = ErpReleaseCatalog(settings.root, expected_jar_count=1)
+            catalog.import_release("package-1", source)
+
+            class PreviewAdapter:
+                name = "vineflower"
+
+                def decompile(self, request):
+                    request.output_dir.mkdir(parents=True, exist_ok=True)
+                    (request.output_dir / "App.java").write_text(source_body, encoding="utf-8")
+                    return DecompileResult(
+                        tool=self.name,
+                        status="completed",
+                        duration_ms=1,
+                        exit_code=0,
+                        output_dir=str(request.output_dir),
+                    )
+
+            plan = DecompilationBatchPlanner(settings.root, catalog=catalog).plan("package-1")
+            DecompilationBatchExecutor(
+                settings.root, catalog=catalog, adapters=(PreviewAdapter(),)
+            ).run(plan["plan_id"], limit=10)
+            JavaCodeIndex(settings.root, catalog=catalog).index_plan(plan["plan_id"])
+            chat_bridge.refreshApplicationsCatalog()
+            for _attempt in range(600):
+                self.application.processEvents()
+                if chat_bridge._apps_catalog_thread is None:
+                    break
+                QTest.qWait(10)
+            self.assertIsNone(chat_bridge._apps_catalog_thread)
+
+            engine = create_engine(bridge, chat_bridge, studio_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            try:
+                settings_page = window.findChild(QObject, "settingsPage")
+                self.assertIsNotNone(settings_page)
+                settings_page.setProperty("tabIndex", 3)
+                QTest.qWait(150)
+                apps_page = window.findChild(QObject, "appsSettingsPage")
+                self.assertIsNotNone(apps_page)
+
+                chat_bridge.selectApplication("vrapp")
+                self.assertEqual(len(chat_bridge.appVersions), 1)
+                chat_bridge.selectAppVersion(chat_bridge.appVersions[0]["version"])
+                self.assertEqual(len(chat_bridge.appVariants), 1)
+                chat_bridge.selectAppVariant(chat_bridge.appVariants[0]["variant_id"])
+                chat_bridge.selectAppOrigin("package-1")
+                self.assertEqual(chat_bridge.selectedAppOriginId, "package-1")
+                apps_page.setProperty("navigationLevel", 2)
+                apps_page.setProperty("versionSubTab", 4)
+                self.application.processEvents()
+                QTest.qWait(80)
+
+                self.assertTrue(chat_bridge.loadApplicationSources("", 0, ""))
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._app_sources_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._app_sources_thread)
+                sources = chat_bridge.applicationSources["sources"]
+                self.assertTrue(sources)
+
+                source_list = window.findChild(QObject, "applicationSourceList")
+                self.assertIsNotNone(source_list)
+                self.assertEqual(source_list.property("count"), len(sources))
+                source_key = sources[0]["source_key"]
+
+                source_scroll = window.findChild(QObject, "appsSettingsScroll").property(
+                    "contentItem"
+                )
+                source_scroll.setProperty(
+                    "contentY",
+                    max(
+                        0,
+                        source_scroll.property("contentHeight")
+                        - source_scroll.property("height"),
+                    ),
+                )
+                QTest.qWait(60)
+                source_grid = window.findChild(QObject, "applicationSourceBrowserGrid")
+                list_panel = window.findChild(QObject, "applicationSourceListPanel")
+                body_panel = window.findChild(QObject, "applicationSourceBodyPanel")
+                self.assertIsNotNone(source_grid)
+                self.assertIsNotNone(list_panel)
+                self.assertIsNotNone(body_panel)
+                self.assertGreaterEqual(source_grid.property("width"), 900)
+                self.assertLess(abs(list_panel.property("y") - body_panel.property("y")), 1)
+
+                scene_point = source_list.mapToScene(QPointF(source_list.width() / 2, 19))
+                QTest.mouseClick(
+                    window,
+                    Qt.LeftButton,
+                    Qt.NoModifier,
+                    QPoint(round(scene_point.x()), round(scene_point.y())),
+                )
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._app_sources_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._app_sources_thread)
+                self.assertEqual(chat_bridge.applicationSources["source_key"], source_key)
+                self.assertIn("public class App", chat_bridge.applicationSources["body"])
+
+                copy_button = window.findChild(QObject, "copyApplicationSourceButton")
+                self.assertIsNotNone(copy_button)
+                copy_point = copy_button.mapToScene(
+                    QPointF(copy_button.width() / 2, copy_button.height() / 2)
+                )
+                QTest.mouseClick(
+                    window,
+                    Qt.LeftButton,
+                    Qt.NoModifier,
+                    QPoint(round(copy_point.x()), round(copy_point.y())),
+                )
+                self.application.processEvents()
+                self.assertEqual(
+                    QApplication.clipboard().text(),
+                    chat_bridge.applicationSources["body"],
+                )
+
+                window.setWidth(390)
+                window.setHeight(844)
+                QTest.qWait(150)
+                self.application.processEvents()
+                self.assertLess(abs(list_panel.property("x") - body_panel.property("x")), 1)
+                self.assertGreaterEqual(
+                    body_panel.property("y"),
+                    list_panel.property("y") + list_panel.property("height"),
+                )
+            finally:
+                window.close()
+                engine.deleteLater()
+                studio_bridge.close()
+                self.application.processEvents()
+
+
+    def test_applications_portable_package_import_and_export_flows(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path, root=settings.root, backup_portable_migration=False
+            )
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(settings, database, preferences)
+            chat_bridge._packages_catalog = [{
+                "package_id": "release-a",
+                "name": "Pacote A",
+                "imported_at": "2026-01-01T00:00:00+00:00",
+                "composition": [],
+            }]
+            chat_bridge.stateChanged.emit()
+
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            try:
+                settings_page = window.findChild(QObject, "settingsPage")
+                self.assertIsNotNone(settings_page)
+                settings_page.setProperty("tabIndex", 3)
+                QTest.qWait(150)
+                apps_page = window.findChild(QObject, "appsSettingsPage")
+                self.assertIsNotNone(apps_page)
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._apps_catalog_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._apps_catalog_thread)
+                chat_bridge._packages_catalog = [{
+                    "package_id": "release-a",
+                    "name": "Pacote A",
+                    "imported_at": "2026-01-01T00:00:00+00:00",
+                    "composition": [],
+                }]
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(50)
+
+                def descendants(item):
+                    for child in item.childItems():
+                        yield child
+                        yield from descendants(child)
+
+                def find_by_name(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_by_name(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                def find_by_text(item, text):
+                    return next(
+                        (
+                            child for child in descendants(item)
+                            if child.property("text") == text
+                        ),
+                        None,
+                    )
+
+                def has_ancestor(item, ancestor):
+                    current = item.parentItem()
+                    while current is not None:
+                        if current is ancestor:
+                            return True
+                        current = current.parentItem()
+                    return False
+
+                import_card = window.findChild(QObject, "appsImportCard")
+                import_package_button = window.findChild(
+                    QObject, "importDecompiledPackageButton"
+                )
+                self.assertIsNotNone(import_card)
+                self.assertIsNotNone(import_package_button)
+                self.assertTrue(has_ancestor(import_package_button, import_card))
+
+                packages_toggle = window.findChild(QObject, "togglePackagesButton")
+                packages_panel = window.findChild(QObject, "applicationsPackagesPanel")
+                packages_toggle.clicked.emit()
+                self.application.processEvents()
+                QTest.qWait(50)
+                export_package_button = find_by_name(
+                    window.contentItem(), "exportDecompiledPackageButton"
+                )
+                self.assertIsNotNone(export_package_button)
+                self.assertTrue(has_ancestor(export_package_button, packages_panel))
+                self.assertIsNone(find_by_text(import_card, "Exportar pacote descompilado"))
+
+                export_calls = []
+
+                def fake_package_export(workspace, destination, *, package_id):
+                    export_calls.append((str(destination), package_id))
+                    return {
+                        "success": True,
+                        "destination": str(destination),
+                        "file_count": 3,
+                        "total_bytes": 3,
+                        "artifact_count": 1,
+                        "package_id": package_id,
+                    }
+
+                output_file = root / "Pacote-decompiled.zip"
+                with (
+                    patch.object(
+                        codeadmin, "export_decompiled_package", side_effect=fake_package_export
+                    ),
+                    patch.object(
+                        codeadmin.QFileDialog,
+                        "getSaveFileName",
+                        return_value=(str(output_file), ""),
+                    ),
+                ):
+                    self.assertTrue(QMetaObject.invokeMethod(export_package_button, "click"))
+                    for _attempt in range(200):
+                        self.application.processEvents()
+                        if export_calls and not chat_bridge.releaseSnapshotRunning:
+                            break
+                        QTest.qWait(10)
+                self.assertEqual(len(export_calls), 1)
+                self.assertEqual(export_calls[0][1], "release-a")
+                self.assertTrue(export_calls[0][0].endswith(".zip"))
+                self.assertFalse(chat_bridge.releaseSnapshotRunning)
+                packages_toggle.clicked.emit()
+                self.application.processEvents()
+
+                dialog = window.findChild(QObject, "decompiledImportDialog")
+                self.assertIsNotNone(dialog)
+                self.assertFalse(dialog.property("visible"))
+
+                portable_result = {
+                    "is_valid": True,
+                    "portable_package": True,
+                    "scope": "package",
+                    "source_archive": str(root / "Pacote-decompiled.zip"),
+                    "suggested_release_id": "release-a",
+                    "suggested_name": "Pacote A",
+                    "applications": [{"app_id": "vrmaster"}],
+                    "total_java_files": 3,
+                }
+                with (
+                    patch.object(
+                        codeadmin,
+                        "detect_decompiled_package_archive",
+                        return_value=portable_result,
+                    ),
+                    patch.object(
+                        codeadmin.QFileDialog,
+                        "getOpenFileName",
+                        return_value=(portable_result["source_archive"], ""),
+                    ),
+                ):
+                    self.assertTrue(QMetaObject.invokeMethod(import_package_button, "click"))
+                    for _attempt in range(200):
+                        self.application.processEvents()
+                        if dialog.property("visible"):
+                            break
+                        QTest.qWait(10)
+                self.assertTrue(dialog.property("visible"))
+                detection = apps_page.property("decompiledDetectionResult")
+                if hasattr(detection, "toVariant"):
+                    detection = detection.toVariant()
+                self.assertTrue(detection["portable_package"])
+                self.assertTrue(
+                    has_ancestor(import_package_button, import_card)
+                )
+                self.assertIsNotNone(
+                    find_by_text(dialog.property("contentItem"), "Pacote portátil VRStudio (.zip)")
+                )
+
+                import_calls = []
+
+                def fake_package_import(workspace, archive, *, release_id="", package_name=""):
+                    import_calls.append((str(archive), release_id, package_name))
+                    return {
+                        "success": True,
+                        "release_id": release_id,
+                        "package_name": package_name,
+                        "total_indexed_sources": 3,
+                        "imported_applications": 1,
+                        "package": {},
+                    }
+
+                confirm_button = find_by_text(dialog.property("contentItem"), "Importar e Indexar")
+                self.assertIsNotNone(confirm_button)
+                with patch.object(
+                    codeadmin,
+                    "import_decompiled_package_archive",
+                    side_effect=fake_package_import,
+                ):
+                    self.assertTrue(QMetaObject.invokeMethod(confirm_button, "click"))
+                    for _attempt in range(200):
+                        self.application.processEvents()
+                        if import_calls and not chat_bridge.releaseSnapshotRunning:
+                            break
+                        QTest.qWait(10)
+                self.assertFalse(dialog.property("visible"))
+                self.assertEqual(
+                    import_calls,
+                    [(
+                        portable_result["source_archive"],
+                        "release-a",
+                        "Pacote A",
+                    )],
+                )
+
+                directory_result = {
+                    "is_valid": True,
+                    "source_root": str(root / "fontes"),
+                    "suggested_release_id": "decompiled-vrmaster-1",
+                    "suggested_name": "Fontes Descompilados: VRMaster",
+                    "applications": [{"app_id": "vrmaster"}],
+                    "total_java_files": 2,
+                }
+                directory_button = find_by_text(import_card, "Importar código descompilado")
+                self.assertIsNotNone(directory_button)
+                with (
+                    patch.object(
+                        codeadmin, "detect_decompiled_source", return_value=directory_result
+                    ),
+                    patch.object(
+                        codeadmin.QFileDialog,
+                        "getExistingDirectory",
+                        return_value=directory_result["source_root"],
+                    ),
+                ):
+                    self.assertTrue(QMetaObject.invokeMethod(directory_button, "click"))
+                    for _attempt in range(200):
+                        self.application.processEvents()
+                        if dialog.property("visible"):
+                            break
+                        QTest.qWait(10)
+                self.assertTrue(dialog.property("visible"))
+                directory_calls = []
+
+                def fake_directory_import(workspace, source_dir, *, release_id="", package_name=""):
+                    directory_calls.append((str(source_dir), release_id, package_name))
+                    return {
+                        "success": True,
+                        "release_id": release_id,
+                        "package_name": package_name,
+                        "total_indexed_sources": 2,
+                        "imported_applications": 1,
+                        "package": {},
+                    }
+
+                confirm_button = find_by_text(dialog.property("contentItem"), "Importar e Indexar")
+                self.assertIsNotNone(confirm_button)
+                with patch.object(
+                    codeadmin,
+                    "import_decompiled_source",
+                    side_effect=fake_directory_import,
+                ):
+                    self.assertTrue(QMetaObject.invokeMethod(confirm_button, "click"))
+                    for _attempt in range(200):
+                        self.application.processEvents()
+                        if directory_calls and not chat_bridge.releaseSnapshotRunning:
+                            break
+                        QTest.qWait(10)
+                self.assertFalse(dialog.property("visible"))
+                self.assertEqual(
+                    directory_calls,
+                    [(
+                        directory_result["source_root"],
+                        "decompiled-vrmaster-1",
+                        "Fontes Descompilados: VRMaster",
+                    )],
+                )
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
 
 
     def test_software_rendering_flags_and_safe_mode_args(self):

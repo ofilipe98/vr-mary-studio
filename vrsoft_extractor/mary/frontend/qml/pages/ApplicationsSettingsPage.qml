@@ -881,6 +881,15 @@ Item {
                                 }
                             }
 
+                            VrButton {
+                                objectName: "importDecompiledPackageButton"
+                                text: "Importar pacote descompilado"
+                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
+                                variant: "secondary"
+                                implicitHeight: 32
+                                onClicked: chat.detectDecompiledPackageArchive("")
+                            }
+
                         }
                     }
 
@@ -1333,16 +1342,18 @@ Item {
                             }
 
                             VrButton {
+                                objectName: "appsBatchPauseButton"
                                 text: "Pausar"
                                 variant: "secondary"
-                                implicitHeight: 26
+                                implicitHeight: Theme.controlHeightCompact
                                 onClicked: chat.pauseCodeProcessing()
                             }
 
                             VrButton {
+                                objectName: "appsBatchCancelButton"
                                 text: chat.codeProcessingCancelRequested ? "Cancelando..." : "Cancelar"
                                 variant: "secondary"
-                                implicitHeight: 26
+                                implicitHeight: Theme.controlHeightCompact
                                 enabled: !chat.codeProcessingCancelRequested
                                 onClicked: chat.cancelCodeProcessing()
                             }
@@ -1499,6 +1510,17 @@ Item {
                                         Layout.minimumWidth: 0
                                         Layout.alignment: packagesPanel.width < 720 ? Qt.AlignLeft : Qt.AlignRight
                                         spacing: Theme.spaceXs
+
+                                        VrButton {
+                                            objectName: "exportDecompiledPackageButton"
+                                            text: "Exportar pacote descompilado"
+                                            variant: "secondary"
+                                            implicitHeight: 28
+                                            enabled: !chat.releaseSnapshotRunning
+                                                && !chat.codeProcessingRunning
+                                                && !chat.decompiledExportRunning
+                                            onClicked: chat.exportDecompiledPackage(modelData.package_id, "")
+                                        }
 
                                         VrButton {
                                             text: "Renomear"
@@ -2595,6 +2617,7 @@ Item {
                                     columnSpacing: Theme.spaceSm
 
                                     Rectangle {
+                                        objectName: "applicationComparisonAddedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
@@ -2609,7 +2632,7 @@ Item {
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.added : 0
-                                                color: Qt.rgba(0.1, 0.7, 0.1, 1.0)
+                                                color: Theme.palette.success
                                                 font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
@@ -2623,6 +2646,7 @@ Item {
                                     }
 
                                     Rectangle {
+                                        objectName: "applicationComparisonModifiedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
@@ -2651,6 +2675,7 @@ Item {
                                     }
 
                                     Rectangle {
+                                        objectName: "applicationComparisonRemovedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
@@ -2665,7 +2690,7 @@ Item {
                                             Text {
                                                 Layout.alignment: Qt.AlignHCenter
                                                 text: chat.versionComparisonResult.summary ? chat.versionComparisonResult.summary.removed : 0
-                                                color: Qt.rgba(0.9, 0.2, 0.2, 1.0)
+                                                color: Theme.palette.danger
                                                 font.pixelSize: Theme.headingSize
                                                 font.weight: Font.Bold
                                             }
@@ -2679,13 +2704,14 @@ Item {
                                     }
 
                                     Rectangle {
+                                        objectName: "applicationComparisonUnchangedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         implicitHeight: 56
-                                        radius: Theme.radiusSmall
-                                        color: Theme.palette.chatBackground
+                                        radius: Theme.radiusCard
+                                        color: Theme.palette.background
                                         border.width: 1
-                                        border.color: Theme.palette.chatBorder
+                                        border.color: Theme.palette.border
 
                                         ColumnLayout {
                                             anchors.centerIn: parent
@@ -3460,12 +3486,24 @@ Item {
             spacing: Theme.spaceMd
             Text {
                 Layout.fillWidth: true
+                visible: !!(root.decompiledDetectionResult && root.decompiledDetectionResult.portable_package)
+                text: "Pacote portátil VRStudio (.zip)"
+                color: Theme.palette.brandOrange
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSize(13)
+                font.weight: Font.DemiBold
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 text: root.decompiledDetectionResult ? (
                     "Fontes detectados com sucesso!\n" +
                     "Aplicativos: " + (root.decompiledDetectionResult.applications ? root.decompiledDetectionResult.applications.length : 0) +
                     " · Total de arquivos Java: " + (root.decompiledDetectionResult.total_java_files || 0) + "\n" +
-                    "Diretório: " + (root.decompiledDetectionResult.source_root || "")
+                    (root.decompiledDetectionResult.portable_package
+                        ? "Arquivo: " + (root.decompiledDetectionResult.source_archive || "")
+                        : "Diretório: " + (root.decompiledDetectionResult.source_root || ""))
                 ) : ""
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
@@ -3493,7 +3531,10 @@ Item {
                     onClicked: {
                         var res = root.decompiledDetectionResult;
                         decompiledImportDialog.close();
-                        if (res && res.source_root) {
+                        if (!res) return;
+                        if (res.portable_package === true) {
+                            chat.importDecompiledPackageArchive(res.source_archive, res.suggested_release_id || "", res.suggested_name || "");
+                        } else if (res.source_root) {
                             chat.importDecompiledDirectory(res.source_root, res.suggested_release_id || "", res.suggested_name || "");
                         }
                     }

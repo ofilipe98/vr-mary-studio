@@ -532,3 +532,133 @@ def test_global_decompile_configuration_persistence(bridge):
     assert cfg["timeout_seconds"] == 600
     assert cfg["max_cpu_cores"] == 4
     assert cfg["max_workers"] == codeadmin.CODE_PROCESSING_HARDWARE.parallel_workers_for(4, 4096)
+
+
+def test_package_portable_slots_are_exposed(bridge):
+    for signature in (
+        "detectDecompiledPackageArchive(QString)",
+        "importDecompiledPackageArchive(QString,QString,QString)",
+        "exportDecompiledPackage(QString)",
+        "exportDecompiledPackage(QString,QString)",
+    ):
+        assert bridge.metaObject().indexOfMethod(signature) >= 0, signature
+
+
+def test_package_detect_cancel_does_not_change_state(bridge, monkeypatch):
+    before_status = bridge.releaseSnapshotStatus
+    before_error = bridge.applicationsCatalogError
+    monkeypatch.setattr(codeadmin.QFileDialog, "getOpenFileName", lambda *args: ("", ""))
+
+    result = bridge.detectDecompiledPackageArchive("")
+
+    assert result == {"is_valid": False, "portable_package": True, "canceled": True}
+    assert bridge.releaseSnapshotRunning is False
+    assert bridge.decompiledExportRunning is False
+    assert bridge.releaseSnapshotStatus == before_status
+    assert bridge.applicationsCatalogError == before_error
+
+
+def test_package_export_save_dialog_cancel_is_silent(bridge, monkeypatch):
+    before_status = bridge.releaseSnapshotStatus
+    before_error = bridge.applicationsCatalogError
+    monkeypatch.setattr(codeadmin.QFileDialog, "getSaveFileName", lambda *args: ("", ""))
+
+    result = bridge.exportDecompiledPackage("release-a")
+
+    assert result == {"success": False, "canceled": True}
+    assert bridge.releaseSnapshotRunning is False
+    assert bridge.decompiledExportRunning is False
+    assert bridge.releaseSnapshotStatus == before_status
+    assert bridge.applicationsCatalogError == before_error
+
+
+def test_package_export_runs_off_qt_thread_rejects_overlap_and_clears_busy(
+    bridge, tmp_path, monkeypatch
+):
+    entered, release, heartbeat = (threading.Event() for _ in range(3))
+    worker_threads = []
+
+    def blocked(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(5)
+        return {
+            "success": True,
+            "destination": str(tmp_path / "Pacote.zip"),
+            "file_count": 7,
+            "total_bytes": 10,
+            "artifact_count": 2,
+        }
+
+    monkeypatch.setattr(codeadmin, "export_decompiled_package", blocked)
+    try:
+        assert bridge.exportDecompiledPackage("release-a", str(tmp_path / "Pacote.zip"))["pending"]
+        assert entered.wait(2)
+        assert bridge.releaseSnapshotRunning is True
+        assert bridge.decompiledExportRunning is True
+        assert bridge.exportDecompiledPackage("release-a", str(tmp_path / "Pacote.zip"))["busy"]
+        assert bridge.exportDecompiledCode(str(tmp_path))["busy"]
+        QTimer.singleShot(0, heartbeat.set)
+        wait_until(heartbeat.is_set)
+        assert worker_threads != [threading.get_ident()]
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert bridge.decompiledExportRunning is False
+    assert "7 arquivos exportados" in bridge.releaseSnapshotStatus
+
+
+def test_package_import_runs_off_qt_thread_and_rejects_overlap(bridge, tmp_path, monkeypatch):
+    entered, release, heartbeat = (threading.Event() for _ in range(3))
+    worker_threads = []
+
+    def blocked(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(5)
+        return {
+            "success": True,
+            "release_id": "release-a",
+            "package_name": "Pacote A",
+            "imported_applications": 2,
+            "total_indexed_sources": 3,
+            "package": {},
+        }
+
+    monkeypatch.setattr(codeadmin, "import_decompiled_package_archive", blocked)
+    archive = tmp_path / "Pacote-decompiled.zip"
+    archive.write_bytes(b"zip")
+    try:
+        assert bridge.importDecompiledPackageArchive(
+            str(archive), "release-a", "Pacote A"
+        )["pending"]
+        assert entered.wait(2)
+        assert bridge.releaseSnapshotRunning is True
+        assert bridge.importDecompiledPackageArchive(
+            str(archive), "release-a", "Pacote A"
+        )["busy"]
+        QTimer.singleShot(0, heartbeat.set)
+        wait_until(heartbeat.is_set)
+        assert worker_threads != [threading.get_ident()]
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert "3 fontes indexados" in bridge.releaseSnapshotStatus
+
+
+def test_package_export_failure_preserves_catalog_error(bridge, tmp_path, monkeypatch):
+    bridge._apps_catalog_error = "erro anterior do catálogo"
+    monkeypatch.setattr(
+        codeadmin,
+        "export_decompiled_package",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("pacote ausente")),
+    )
+
+    assert bridge.exportDecompiledPackage("release-a", str(tmp_path / "Pacote.zip"))["pending"]
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+
+    assert bridge.decompiledExportRunning is False
+    assert bridge.applicationsCatalogError == "erro anterior do catálogo"
+    assert bridge.releaseSnapshotStatus == (
+        "Não foi possível exportar o código descompilado: pacote ausente"
+    )

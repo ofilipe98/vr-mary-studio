@@ -10,9 +10,11 @@ import hashlib
 import json
 import re
 import shutil
+import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from uuid import uuid4
 
 from .apps_catalog import AppsCatalogStore, UNIDENTIFIED_VERSION, _transaction
 from .code_index import (
@@ -22,12 +24,21 @@ from .code_index import (
     parse_java_source,
     parse_kotlin_source,
 )
+from .decompiled_export import (
+    PORTABLE_PACKAGE_FORMAT,
+    PORTABLE_PACKAGE_MANIFEST,
+    PORTABLE_PACKAGE_SCHEMA_VERSION,
+    _relative_source_path,
+    _require_within,
+)
 from .erp_releases import parse_java_properties, _safe_component
 from .jvm_batches import PROCESSING_SCHEMA_VERSION
 
 
 _PROPERTIES_VERSION_KEYS = ("versao.major", "versao.minor", "versao.release")
 _JAVA_EXTENSIONS = {".java", ".kt"}
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+_SYMLINK_FILE_MODE = 0o120000
 
 
 def _utc_now() -> str:
@@ -428,3 +439,460 @@ def import_decompiled_source(
     return _import_decompiled_source(
         store, workspace, source_dir, release_id=release_id, package_name=package_name
     )
+
+
+def _portable_archive_error(message: str) -> dict[str, Any]:
+    return {
+        "is_valid": False,
+        "portable_package": True,
+        "error": message,
+        "applications": [],
+        "total_java_files": 0,
+    }
+
+
+def _validate_zip_entry_name(name: str, *, label: str = "entrada") -> str:
+    """Reject ZIP slip variants before any path is used."""
+    raw = str(name or "")
+    if not raw:
+        raise ValueError(f"O pacote contém uma {label} ZIP sem nome.")
+    normalized = raw.replace("\\", "/")
+    if normalized.startswith("/") or normalized.startswith("//") or PurePosixPath(normalized).is_absolute():
+        raise ValueError(f"O pacote contém um caminho absoluto: {raw}")
+    if PureWindowsPath(raw).is_absolute() or re.match(r"^[A-Za-z]:", normalized):
+        raise ValueError(f"O pacote contém um caminho com unidade Windows: {raw}")
+    if ".." in PurePosixPath(normalized).parts:
+        raise ValueError(f"O pacote contém um caminho com '..': {raw}")
+    return normalized
+
+
+def _archive_entry_is_symlink(info: zipfile.ZipInfo) -> bool:
+    return (info.external_attr >> 16) & 0o170000 == _SYMLINK_FILE_MODE
+
+
+def _read_validated_archive_source(
+    archive: zipfile.ZipFile,
+    entries: dict[str, zipfile.ZipInfo],
+    archive_path: str,
+    expected_hash: str,
+) -> bytes:
+    normalized = str(archive_path or "").replace("\\", "/")
+    info = entries.get(normalized)
+    if info is None:
+        raise ValueError(f"O pacote não contém a fonte referenciada: {archive_path}")
+    content = archive.read(info.filename)
+    if hashlib.sha256(content).hexdigest() != expected_hash:
+        raise ValueError(f"A fonte do pacote está corrompida: {archive_path}")
+    return content
+
+
+def detect_decompiled_package_archive(source_archive: str | Path) -> dict[str, Any]:
+    """Validate a portable decompiled package ZIP without mutating anything."""
+    archive_path = Path(source_archive).expanduser()
+    try:
+        resolved = archive_path.resolve(strict=True)
+    except OSError:
+        return _portable_archive_error(f"Arquivo não encontrado: {archive_path}")
+    if not resolved.is_file() or resolved.suffix.casefold() != ".zip":
+        return _portable_archive_error("Selecione um arquivo ZIP de pacote descompilado.")
+    if not zipfile.is_zipfile(resolved):
+        return _portable_archive_error("O arquivo selecionado não é um ZIP válido.")
+    try:
+        with zipfile.ZipFile(resolved) as archive:
+            entries: dict[str, zipfile.ZipInfo] = {}
+            for info in archive.infolist():
+                normalized = _validate_zip_entry_name(info.filename)
+                if _archive_entry_is_symlink(info):
+                    raise ValueError("O pacote contém uma entrada simbólica não suportada.")
+                entries[normalized] = info
+            if sum(1 for name in entries if name == PORTABLE_PACKAGE_MANIFEST) != 1:
+                raise ValueError("O pacote não contém o manifesto de exportação na raiz.")
+            try:
+                manifest = json.loads(
+                    archive.read(PORTABLE_PACKAGE_MANIFEST).decode("utf-8")
+                )
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise ValueError("O manifesto do pacote é inválido.") from exc
+            if not isinstance(manifest, dict):
+                raise ValueError("O manifesto do pacote é inválido.")
+            if manifest.get("format") != PORTABLE_PACKAGE_FORMAT:
+                raise ValueError("O arquivo não é um pacote portátil do VRStudio.")
+            if int(manifest.get("schema_version") or 0) != PORTABLE_PACKAGE_SCHEMA_VERSION:
+                raise ValueError("Versão do manifesto de pacote não suportada.")
+            package_id = str(manifest.get("package_id") or "").strip()
+            if not package_id:
+                raise ValueError("O manifesto do pacote não possui identificador.")
+            artifacts = manifest.get("artifacts")
+            if not isinstance(artifacts, list):
+                raise ValueError("O manifesto do pacote não possui artefatos.")
+
+            applications: list[dict[str, Any]] = []
+            verified_paths: dict[str, str] = {}
+            total_sources = 0
+            for artifact in artifacts:
+                if not isinstance(artifact, dict):
+                    raise ValueError("O manifesto do pacote contém um artefato inválido.")
+                role = str(artifact.get("role") or "")
+                if role not in {"application", "dependency"}:
+                    raise ValueError("O manifesto do pacote contém um papel de artefato inválido.")
+                try:
+                    artifact_index = int(artifact.get("artifact_index"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "O manifesto do pacote contém um índice de artefato inválido."
+                    ) from exc
+                if artifact_index < 1:
+                    raise ValueError(
+                        "O manifesto do pacote contém um índice de artefato inválido."
+                    )
+                artifact_sha = str(artifact.get("artifact_sha256") or "")
+                if not artifact_sha:
+                    raise ValueError("O manifesto do pacote contém um artefato sem SHA-256.")
+                _validate_zip_entry_name(
+                    str(artifact.get("jar_relative_path") or ""), label="origem"
+                )
+                sources = artifact.get("sources")
+                if not isinstance(sources, list):
+                    raise ValueError("O manifesto do pacote contém uma lista de fontes inválida.")
+                source_count = 0
+                for source in sources:
+                    if not isinstance(source, dict):
+                        raise ValueError("O manifesto do pacote contém uma fonte inválida.")
+                    relative = _relative_source_path(
+                        str(source.get("source_relative_path") or "")
+                    )
+                    expected_hash = str(source.get("source_sha256") or "").strip().casefold()
+                    if not _HEX64_RE.fullmatch(expected_hash):
+                        raise ValueError(
+                            "O manifesto do pacote contém hash inválido para: "
+                            f"{relative.as_posix()}"
+                        )
+                    archive_entry = _validate_zip_entry_name(
+                        str(source.get("archive_path") or ""), label="fonte"
+                    )
+                    previous_hash = verified_paths.get(archive_entry)
+                    if previous_hash is not None:
+                        if previous_hash != expected_hash:
+                            raise ValueError(
+                                "O pacote referencia a mesma fonte com conteúdos conflitantes."
+                            )
+                    else:
+                        content = archive.read(entries[archive_entry].filename)
+                        if hashlib.sha256(content).hexdigest() != expected_hash:
+                            raise ValueError(
+                                f"A fonte do pacote está corrompida: {archive_entry}"
+                            )
+                        verified_paths[archive_entry] = expected_hash
+                    source_count += 1
+                if int(artifact.get("source_count") or 0) != source_count:
+                    raise ValueError(
+                        "O manifesto do pacote contém contagens de fontes inconsistentes."
+                    )
+                if role == "application":
+                    application_id = str(artifact.get("application_id") or "").strip()
+                    version = str(artifact.get("version") or "").strip()
+                    if not application_id or not version:
+                        raise ValueError("O manifesto do pacote contém um aplicativo incompleto.")
+                    applications.append({
+                        "app_id": application_id,
+                        "app_name": str(artifact.get("application_name") or application_id),
+                        "version": version,
+                        "variant_id": str(artifact.get("variant_id") or ""),
+                        "sha256": artifact_sha,
+                        "source_count": source_count,
+                    })
+                total_sources += source_count
+            if int(manifest.get("file_count") or 0) != total_sources:
+                raise ValueError(
+                    "O manifesto do pacote contém um total de arquivos inconsistente."
+                )
+    except ValueError as exc:
+        return _portable_archive_error(str(exc))
+    except (OSError, zipfile.BadZipFile) as exc:
+        return _portable_archive_error(str(exc) or "Falha ao ler o pacote portátil.")
+
+    return {
+        "is_valid": True,
+        "portable_package": True,
+        "scope": "package",
+        "source_archive": str(resolved),
+        "suggested_release_id": package_id,
+        "suggested_name": str(manifest.get("package_name") or package_id),
+        "applications": applications,
+        "total_java_files": total_sources,
+        "manifest": manifest,
+    }
+
+
+@_transaction
+def _import_decompiled_package_archive(
+    store: AppsCatalogStore,
+    workspace: str | Path,
+    source_archive: str | Path,
+    *,
+    release_id: str = "",
+    package_name: str = "",
+) -> dict[str, Any]:
+    """Ingest a validated portable ZIP into a fresh catalog/workspace."""
+    ws = Path(workspace).resolve()
+    detection = detect_decompiled_package_archive(source_archive)
+    if not detection.get("is_valid"):
+        raise ValueError(detection.get("error") or "Pacote portátil inválido.")
+
+    selected_release_id = (
+        str(release_id or "").strip() or detection["suggested_release_id"]
+    ).strip()
+    if not selected_release_id or _safe_component(selected_release_id) != selected_release_id:
+        raise ValueError("Identificador de release inválido.")
+    selected_pkg_name = (
+        str(package_name or "").strip()
+        or str(detection.get("suggested_name") or "").strip()
+        or selected_release_id
+    )
+
+    if store.get_package(selected_release_id):
+        raise ValueError("Já existe um pacote com este identificador; use outro identificador.")
+    decomp_root = (ws / "indice" / "codigo" / "decompilation" / selected_release_id)
+    if decomp_root.resolve().exists():
+        raise ValueError("O diretório de destino já existe; use outro identificador.")
+    code_index = JavaCodeIndex(ws)
+    code_index.initialize()
+    batch_store = code_index.store
+    with batch_store.connect() as conn:
+        if conn.execute(
+            "SELECT 1 FROM code_sources WHERE release_id = ? LIMIT 1",
+            (selected_release_id,),
+        ).fetchone() or conn.execute(
+            "SELECT 1 FROM decompilation_plans WHERE release_id = ? LIMIT 1",
+            (selected_release_id,),
+        ).fetchone():
+            raise ValueError("Já existem dados indexados com este identificador; use outro identificador.")
+
+    manifest = detection["manifest"]
+    artifacts = manifest["artifacts"]
+    release_hash = hashlib.sha256(selected_release_id.encode("utf-8")).hexdigest()
+    portable_manifest_hash = str(manifest.get("package_manifest_sha256") or "").strip()
+    now = _utc_now()
+    relative_root = f"indice/codigo/decompilation/{selected_release_id}"
+    decomp_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = decomp_root.parent / f".{selected_release_id}.tmp-{uuid4().hex}"
+    total_indexed = 0
+    catalog_artifacts: list[dict[str, Any]] = []
+    try:
+        with zipfile.ZipFile(detection["source_archive"]) as archive:
+            entries = {
+                info.filename.replace("\\", "/"): info
+                for info in archive.infolist()
+            }
+            with batch_store.connect() as conn:
+                conn.execute(
+                    """INSERT INTO decompilation_plans
+                       (plan_id, schema_version, release_id, release_hash, state,
+                        max_classes, max_bytes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?)""",
+                    (
+                        selected_release_id,
+                        PROCESSING_SCHEMA_VERSION,
+                        selected_release_id,
+                        release_hash,
+                        int(manifest.get("file_count") or 0),
+                        0,
+                        now,
+                        now,
+                    ),
+                )
+                for artifact in artifacts:
+                    artifact_index = int(artifact["artifact_index"])
+                    role = str(artifact["role"])
+                    artifact_sha = str(artifact["artifact_sha256"])
+                    jar_path = _validate_zip_entry_name(
+                        str(artifact.get("jar_relative_path") or ""), label="origem"
+                    )
+                    artifact_dir = f"artifacts/{artifact_index:04d}"
+                    output_ref = f"{relative_root}/{artifact_dir}"
+                    if role == "application":
+                        catalog_artifacts.append({
+                            "artifact_role": "application",
+                            "application": str(
+                                artifact.get("application_name")
+                                or artifact.get("application_id")
+                                or ""
+                            ),
+                            "application_key": str(artifact.get("application_id") or ""),
+                            "application_name": str(artifact.get("application_name") or ""),
+                            "version_detected": str(artifact.get("version") or ""),
+                            "sha256": artifact_sha,
+                            "size_bytes": int(artifact.get("size_bytes") or 0),
+                            "relative_path": jar_path,
+                            "class_count": int(artifact.get("class_count") or 0)
+                                or int(artifact.get("source_count") or 0),
+                            "decompiled_classes": int(artifact.get("source_count") or 0),
+                        })
+                    else:
+                        catalog_artifacts.append({
+                            "artifact_role": "library",
+                            "relative_path": jar_path,
+                            "sha256": artifact_sha,
+                            "size_bytes": int(artifact.get("size_bytes") or 0),
+                        })
+
+                    for source in artifact["sources"]:
+                        relative = _relative_source_path(
+                            str(source["source_relative_path"])
+                        )
+                        expected_hash = str(source["source_sha256"]).strip().casefold()
+                        content = _read_validated_archive_source(
+                            archive,
+                            entries,
+                            str(source["archive_path"]),
+                            expected_hash,
+                        )
+                        body = content.decode("utf-8")
+                        target_file = _require_within(
+                            staging / artifact_dir / relative,
+                            staging,
+                            "O pacote contém um caminho de fonte inválido.",
+                        )
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+                        target_file.write_bytes(content)
+                        file_hash = hashlib.sha256(content).hexdigest()
+                        fallback_qualified = relative.as_posix().rsplit(".", 1)[0].replace("/", ".")
+                        parser = (
+                            parse_kotlin_source
+                            if relative.suffix.casefold() == ".kt"
+                            else parse_java_source
+                        )
+                        parsed = parser(body, fallback_qualified=fallback_qualified)
+                        source_key = _code_source_key(
+                            release_id=selected_release_id,
+                            release_hash=release_hash,
+                            artifact_sha256=artifact_sha,
+                            class_version=52,
+                            qualified_name=parsed.qualified_name,
+                            content_hashes=[file_hash],
+                        )
+                        symbols_text = " ".join(
+                            dict.fromkeys(
+                                [parsed.qualified_name]
+                                + [str(item["simple_name"]) for item in parsed.symbols]
+                                + [str(item["signature"]) for item in parsed.symbols]
+                                + [str(item["target"]) for item in parsed.relations]
+                            )
+                        )
+                        cursor = conn.execute(
+                            """INSERT INTO code_sources
+                               (source_key, schema_version, release_id, release_hash,
+                                jar_relative_path, artifact_sha256, batch_id,
+                                class_version, tool,
+                                output_reference, source_relative_path, source_sha256,
+                                package_name, primary_type, qualified_name,
+                                logical_names_json, content_hashes_json, occurrence_count,
+                                parser_kind, syntax_error_count, symbols_text, body, indexed_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                source_key,
+                                CODE_INDEX_SCHEMA_VERSION,
+                                selected_release_id,
+                                release_hash,
+                                jar_path,
+                                artifact_sha,
+                                f"batch-{selected_release_id}-package-{artifact_index:04d}",
+                                52,
+                                "decompiled_package_import",
+                                output_ref,
+                                relative.as_posix(),
+                                file_hash,
+                                parsed.package_name,
+                                parsed.primary_type,
+                                parsed.qualified_name,
+                                json.dumps([parsed.qualified_name]),
+                                json.dumps([file_hash]),
+                                1,
+                                parsed.parser_kind,
+                                parsed.syntax_error_count,
+                                symbols_text,
+                                body,
+                                now,
+                            ),
+                        )
+                        source_id = cursor.lastrowid
+                        conn.executemany(
+                            """INSERT INTO code_symbols
+                               (source_id, kind, simple_name, qualified_name, signature, visibility, line_start)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            [(source_id, item["kind"], item["simple_name"], item["qualified_name"],
+                              item["signature"], item["visibility"], item["line_start"])
+                             for item in parsed.symbols],
+                        )
+                        conn.executemany(
+                            """INSERT INTO code_relations
+                               (source_id, kind, target, source_symbol, confidence, line_start)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            [(source_id, item["kind"], item["target"], item.get("source_symbol", ""),
+                              float(item.get("confidence", 0.0)), item["line_start"])
+                             for item in parsed.relations],
+                        )
+                        total_indexed += 1
+
+                synthetic_manifest = {
+                    "release_id": selected_release_id,
+                    "release_manifest_sha256": portable_manifest_hash or release_hash,
+                    "source_dir": relative_root,
+                    "source_origin_dir": relative_root,
+                    "analysis_scope": "package",
+                    "artifacts": catalog_artifacts,
+                    "indexed_at": now,
+                }
+                registered_pkg = store.register_package(
+                    synthetic_manifest,
+                    package_id=selected_release_id,
+                    package_name=selected_pkg_name,
+                    source_path=relative_root,
+                )
+                for artifact in catalog_artifacts:
+                    if artifact.get("artifact_role") != "application":
+                        continue
+                    source_total = int(artifact.get("decompiled_classes") or 0)
+                    store.update_variant_state(
+                        str(artifact["application_key"]),
+                        str(artifact["version_detected"]),
+                        str(artifact["sha256"]),
+                        "ready",
+                        decompilation_state="ready",
+                        class_count=int(artifact.get("class_count") or 0) or source_total,
+                        indexed_classes=source_total,
+                        decompiled_classes=source_total,
+                    )
+                conn.commit()
+        staging.replace(decomp_root)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        if decomp_root.is_dir():
+            shutil.rmtree(decomp_root, ignore_errors=True)
+        raise
+
+    return {
+        "success": True,
+        "release_id": selected_release_id,
+        "package_name": selected_pkg_name,
+        "imported_applications": sum(
+            1 for artifact in artifacts if str(artifact.get("role")) == "application"
+        ),
+        "total_indexed_sources": total_indexed,
+        "package": registered_pkg,
+    }
+
+
+def import_decompiled_package_archive(
+    workspace: str | Path,
+    source_archive: str | Path,
+    *,
+    release_id: str = "",
+    package_name: str = "",
+    apps_store: AppsCatalogStore | None = None,
+) -> dict[str, Any]:
+    store = apps_store or AppsCatalogStore(root=workspace)
+    return _import_decompiled_package_archive(
+        store, workspace, source_archive, release_id=release_id, package_name=package_name
+    )
+

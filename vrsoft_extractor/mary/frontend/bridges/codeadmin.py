@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -17,8 +18,13 @@ from ...erp_releases import ErpReleaseCatalog, ErpReleaseError
 from ...jvm_batches import DecompilationBatchError
 from ...jvm_toolchain import JvmToolchain
 
-from ...decompiled_detection import detect_decompiled_source, import_decompiled_source
-from ...decompiled_export import export_decompiled_source
+from ...decompiled_detection import (
+    detect_decompiled_package_archive,
+    detect_decompiled_source,
+    import_decompiled_package_archive,
+    import_decompiled_source,
+)
+from ...decompiled_export import export_decompiled_package, export_decompiled_source
 from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
 
 class CodeAdminDomain:
@@ -2438,6 +2444,70 @@ class CodeAdminDomain:
         self._start_package_task(
             "export_decompiled",
             lambda: export_decompiled_source(workspace, target_dir, **selection),
+        )
+        return {"pending": True}
+
+    def detectDecompiledPackageArchive(self, archive_path: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"is_valid": False, "portable_package": True, "busy": True}
+        target = str(archive_path or "").strip()
+        if not target:
+            selected, _selected_filter = QFileDialog.getOpenFileName(
+                None,
+                "Importar pacote descompilado",
+                str(Path.home()),
+                "Pacote descompilado VRStudio (*.zip)",
+            )
+            if not selected:
+                return {"is_valid": False, "portable_package": True, "canceled": True}
+            target = selected
+        self._start_package_task(
+            "detect_decompiled",
+            lambda: detect_decompiled_package_archive(target),
+        )
+        return {"pending": True}
+
+    def importDecompiledPackageArchive(self, archive_path: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"success": False, "busy": True}
+        workspace = self._settings.root
+        self._start_package_task("import_decompiled", lambda: import_decompiled_package_archive(
+            workspace, archive_path, release_id=release_id, package_name=package_name,
+        ))
+        return {"pending": True}
+
+    def exportDecompiledPackage(self, package_id: str, destination_file: str = "") -> dict[str, Any]:  # noqa: N802
+        if self._closed or self._release_snapshot_running or self._code_processing_running:
+            return {"success": False, "busy": True}
+        selected_package = str(package_id or "").strip()
+        if not selected_package:
+            return {"success": False, "error": "Selecione um pacote de origem para exportar."}
+        target_file = str(destination_file or "").strip()
+        if not target_file:
+            suggested = str(Path.home() / f"{selected_package}-decompiled.zip")
+            try:
+                package = ErpReleaseCatalog(self._settings.root).apps_store.get_package(selected_package)
+                if package and package.get("name"):
+                    label = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", str(package["name"]).strip())
+                    label = re.sub(r"\s+", " ", label).strip(" .-")
+                    if label:
+                        suggested = str(Path.home() / f"{label[:100]}-decompiled.zip")
+            except Exception:
+                pass
+            target_file, _selected_filter = QFileDialog.getSaveFileName(
+                None,
+                "Exportar pacote descompilado",
+                suggested,
+                "Pacote descompilado VRStudio (*.zip)",
+            )
+            if not target_file:
+                return {"success": False, "canceled": True}
+        workspace = self._settings.root
+        self._start_package_task(
+            "export_decompiled",
+            lambda: export_decompiled_package(
+                workspace, target_file, package_id=selected_package,
+            ),
         )
         return {"pending": True}
 

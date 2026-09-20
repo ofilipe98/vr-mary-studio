@@ -15,6 +15,8 @@ import logging
 import re
 import shutil
 import sqlite3
+import zipfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -24,6 +26,9 @@ from .apps_catalog import AppsCatalogStore
 
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_SOURCE_SUFFIXES = frozenset({".java", ".kt"})
+PORTABLE_PACKAGE_FORMAT = "vrstudio-decompiled-package"
+PORTABLE_PACKAGE_SCHEMA_VERSION = 1
+PORTABLE_PACKAGE_MANIFEST = "vrstudio-package-export.json"
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
@@ -70,6 +75,47 @@ def _require_within(path: Path, root: Path, message: str) -> Path:
     except ValueError as exc:
         raise ValueError(message) from exc
     return resolved
+
+
+def _resolve_indexed_content(
+    workspace_root: Path,
+    row: Any,
+    relative: Path,
+) -> bytes:
+    """Resolve one indexed source against the shared integrity contract.
+
+    The physical file wins only when its byte hash matches ``source_sha256``;
+    otherwise the indexed body is authoritative.  Both exporter paths share
+    this rule so a single implementation guards every exported source.
+    """
+    output_raw = str(row["output_reference"] or "").replace("\\", "/")
+    output_reference = PurePosixPath(output_raw)
+    if (output_raw and (output_reference.is_absolute()
+            or PureWindowsPath(output_raw).is_absolute()
+            or ".." in output_reference.parts)):
+        raise ValueError("O índice contém uma referência de saída inválida.")
+    expected_hash = str(row["source_sha256"] or "").strip().casefold()
+    content: bytes | None = None
+    if output_raw:
+        source = _require_within(
+            workspace_root.joinpath(*output_reference.parts, relative),
+            workspace_root,
+            "O índice referencia um arquivo fora do workspace.",
+        )
+        if source.is_file():
+            physical_content = source.read_bytes()
+            if hashlib.sha256(physical_content).hexdigest() == expected_hash:
+                content = physical_content
+    if content is None and row["body"] is not None:
+        body_content = str(row["body"]).encode("utf-8")
+        if hashlib.sha256(body_content).hexdigest() == expected_hash:
+            content = body_content
+    if content is None:
+        raise ValueError(
+            "A fonte indexada foi alterada ou está inconsistente: "
+            f"{relative.as_posix()}"
+        )
+    return content
 
 
 def _available_destination(parent: Path, base_name: str) -> Path:
@@ -133,7 +179,7 @@ def export_decompiled_source(
         staging.mkdir()
         staging_root = staging.resolve(strict=True)
         uri = f"{database.as_uri()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as connection:
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """SELECT output_reference, source_relative_path, source_sha256, body
@@ -145,36 +191,8 @@ def export_decompiled_source(
             found_source = False
             for row in rows:
                 found_source = True
-                output_raw = str(row["output_reference"] or "").replace("\\", "/")
-                output_reference = PurePosixPath(output_raw)
-                if (output_raw and (output_reference.is_absolute()
-                        or PureWindowsPath(output_raw).is_absolute()
-                        or ".." in output_reference.parts)):
-                    raise ValueError("O índice contém uma referência de saída inválida.")
                 relative = _relative_source_path(row["source_relative_path"])
-                expected_hash = str(row["source_sha256"] or "").strip().casefold()
-                content: bytes | None = None
-                if output_raw:
-                    source = _require_within(
-                        workspace_root.joinpath(*output_reference.parts, relative),
-                        workspace_root,
-                        "O índice referencia um arquivo fora do workspace.",
-                    )
-                    if source.is_file():
-                        physical_content = source.read_bytes()
-                        if hashlib.sha256(physical_content).hexdigest() == expected_hash:
-                            content = physical_content
-                        else:
-                            physical_content = None
-                if content is None and row["body"] is not None:
-                    body_content = str(row["body"]).encode("utf-8")
-                    if hashlib.sha256(body_content).hexdigest() == expected_hash:
-                        content = body_content
-                if content is None:
-                    raise ValueError(
-                        "A fonte indexada foi alterada ou está inconsistente: "
-                        f"{relative.as_posix()}"
-                    )
+                content = _resolve_indexed_content(workspace_root, row, relative)
 
                 content_hash = hashlib.sha256(content).hexdigest()
                 key = relative.as_posix().casefold()
@@ -238,3 +256,220 @@ def export_decompiled_source(
         "file_count": file_count,
         "total_bytes": total_bytes,
     }
+
+
+def _available_zip_destination(parent: Path, base_name: str) -> Path:
+    candidate = parent / f"{base_name}.zip"
+    number = 2
+    while candidate.exists():
+        candidate = parent / f"{base_name}-{number}.zip"
+        number += 1
+    return candidate
+
+
+def _portable_artifact_identity(
+    catalog: dict[str, Any],
+    composition_item: dict[str, Any],
+) -> tuple[str, int, int]:
+    """Return application display name, class count and size for a composition entry."""
+    app_id = str(composition_item.get("app_id") or "")
+    version = str(composition_item.get("version") or "")
+    variant_id = str(composition_item.get("variant_id") or "")
+    app = catalog.get("applications", {}).get(app_id, {})
+    variant = app.get("versions", {}).get(version, {}).get("variants", {}).get(variant_id, {})
+    app_name = str(composition_item.get("app_name") or app.get("name") or app_id)
+    return app_name, int(variant.get("class_count") or 0), int(variant.get("size_bytes") or 0)
+
+
+def export_decompiled_package(
+    workspace: str | Path,
+    destination_file: str | Path,
+    *,
+    package_id: str,
+    apps_store: AppsCatalogStore | None = None,
+) -> dict[str, Any]:
+    """Export every indexed source of one catalog package as a portable ZIP.
+
+    The archive carries a single ``vrstudio-package-export.json`` manifest at
+    its root plus one entry per indexed source.  Dependencies indexed for the
+    release are exported as dependencies, not converted into applications.
+    """
+    workspace_root = Path(workspace).resolve(strict=True)
+    selected_package = str(package_id or "").strip()
+    store = apps_store or AppsCatalogStore(root=workspace_root)
+    catalog = store.load_catalog()
+    package = catalog.get("packages", {}).get(selected_package)
+    if not package:
+        raise ValueError("O pacote selecionado não foi encontrado no catálogo.")
+
+    destination = Path(destination_file).expanduser().resolve(strict=False)
+    if destination.suffix.casefold() != ".zip":
+        destination = destination.with_name(f"{destination.name}.zip")
+    parent = destination.parent
+    if not parent.is_dir():
+        raise ValueError("A pasta de destino selecionada não existe.")
+    destination = _available_zip_destination(parent, destination.stem)
+
+    database = workspace_root / "indice" / "codigo" / "processing.sqlite"
+    if not database.is_file():
+        raise ValueError("O índice de código não está disponível.")
+
+    composition_lookup = {
+        (str(item.get("sha256") or ""), str(item.get("jar_path") or "")): item
+        for item in package.get("composition", [])
+        if isinstance(item, dict)
+    }
+    dependency_lookup = {
+        (str(item.get("sha256") or ""), str(item.get("relative_path") or "")): item
+        for item in package.get("dependencies", [])
+        if isinstance(item, dict)
+    }
+
+    staging = parent / f".{destination.name}.tmp-{uuid4().hex}.zip"
+    file_count = 0
+    total_bytes = 0
+    try:
+        uri = f"{database.as_uri()}?mode=ro"
+        with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as archive:
+            with closing(sqlite3.connect(uri, uri=True)) as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    """SELECT id, jar_relative_path, artifact_sha256,
+                              source_relative_path, source_sha256,
+                              output_reference, body
+                         FROM code_sources
+                        WHERE release_id = ?
+                        ORDER BY jar_relative_path, artifact_sha256,
+                                 source_relative_path, id""",
+                    (selected_package,),
+                )
+
+                artifacts: list[dict[str, Any]] = []
+                current_artifact: dict[str, Any] | None = None
+                current_key: tuple[str, str] | None = None
+                exported_paths: dict[str, str] = {}
+                exported_spellings: dict[str, str] = {}
+
+                for row in rows:
+                    artifact_key = (
+                        str(row["artifact_sha256"] or ""),
+                        str(row["jar_relative_path"] or ""),
+                    )
+                    if artifact_key != current_key:
+                        current_key = artifact_key
+                        artifact_index = len(artifacts) + 1
+                        composition_item = composition_lookup.get(artifact_key)
+                        dependency_item = dependency_lookup.get(artifact_key)
+                        if composition_item is not None:
+                            role = "application"
+                            artifact = {
+                                "artifact_index": artifact_index,
+                                "role": role,
+                                "artifact_sha256": artifact_key[0],
+                                "jar_relative_path": artifact_key[1],
+                                "size_bytes": 0,
+                                "source_count": 0,
+                                "sources": [],
+                            }
+                            app_name, class_count, size_bytes = _portable_artifact_identity(
+                                catalog, composition_item
+                            )
+                            artifact.update({
+                                "application_id": str(composition_item.get("app_id") or ""),
+                                "application_name": app_name,
+                                "version": str(composition_item.get("version") or ""),
+                                "variant_id": str(composition_item.get("variant_id") or ""),
+                                "distribution_id": str(composition_item.get("distribution_id") or ""),
+                                "class_count": class_count,
+                                "size_bytes": size_bytes,
+                                "source_bytes": 0,
+                            })
+                        else:
+                            role = "dependency"
+                            artifact = {
+                                "artifact_index": artifact_index,
+                                "role": role,
+                                "artifact_sha256": artifact_key[0],
+                                "jar_relative_path": artifact_key[1],
+                                "size_bytes": int((dependency_item or {}).get("size_bytes") or 0),
+                                "source_bytes": 0,
+                                "source_count": 0,
+                                "sources": [],
+                            }
+                        artifacts.append(artifact)
+                        current_artifact = artifact
+                        exported_paths = {}
+                        exported_spellings = {}
+
+                    relative = _relative_source_path(row["source_relative_path"])
+                    content = _resolve_indexed_content(workspace_root, row, relative)
+                    content_hash = hashlib.sha256(content).hexdigest()
+                    key = relative.as_posix().casefold()
+                    previous_hash = exported_paths.get(key)
+                    if previous_hash is not None:
+                        if exported_spellings[key] != relative.as_posix():
+                            raise ValueError(
+                                "O índice contém caminhos incompatíveis com Windows: "
+                                f"{exported_spellings[key]} / {relative.as_posix()}"
+                            )
+                        if previous_hash != content_hash:
+                            raise ValueError(
+                                f"O índice contém fontes conflitantes para: {relative.as_posix()}"
+                            )
+                        continue
+
+                    archive_path = (
+                        f"sources/{int(current_artifact['artifact_index']):04d}/"
+                        f"{relative.as_posix()}"
+                    )
+                    archive.writestr(archive_path, content)
+                    current_artifact["sources"].append({
+                        "source_relative_path": relative.as_posix(),
+                        "source_sha256": content_hash,
+                        "archive_path": archive_path,
+                    })
+                    current_artifact["source_count"] += 1
+                    current_artifact["source_bytes"] += len(content)
+                    exported_paths[key] = content_hash
+                    exported_spellings[key] = relative.as_posix()
+                    file_count += 1
+                    total_bytes += len(content)
+
+            if not artifacts:
+                raise ValueError("Nenhum código decompilado disponível para este pacote.")
+
+            for artifact in artifacts:
+                if not artifact["size_bytes"]:
+                    artifact["size_bytes"] = artifact["source_bytes"]
+                artifact.pop("source_bytes", None)
+
+            manifest = {
+                "format": PORTABLE_PACKAGE_FORMAT,
+                "schema_version": PORTABLE_PACKAGE_SCHEMA_VERSION,
+                "package_id": selected_package,
+                "package_name": str(package.get("name") or selected_package),
+                "package_manifest_sha256": str(package.get("manifest_sha256") or ""),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "file_count": file_count,
+                "total_bytes": total_bytes,
+                "artifacts": artifacts,
+            }
+            archive.writestr(
+                PORTABLE_PACKAGE_MANIFEST,
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+        staging.replace(destination)
+    except Exception:
+        LOGGER.exception("Failed to export decompiled package %s", selected_package)
+        staging.unlink(missing_ok=True)
+        raise
+
+    return {
+        "success": True,
+        "destination": str(destination),
+        "package_id": selected_package,
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+        "artifact_count": len(artifacts),
+    }
+
