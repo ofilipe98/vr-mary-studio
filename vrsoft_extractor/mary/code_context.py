@@ -3,11 +3,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from .apps_catalog import AppsCatalogError
 from .erp_releases import ErpReleaseCatalog
+
+
+def application_context_warning(text: str, contexts: list[dict[str, Any]] | None) -> str:
+    """Detect explicit product stack frames; never infer from shared library names."""
+    if not contexts:
+        return ""
+    products = {"vratacarejo": "VRAtacarejo", "vrpdv": "VRPdv",
+                "vrmaster": "VRMaster", "vrfrente": "VRFrente"}
+    mentioned = set(re.findall(
+        r"\b(vratacarejo|vrpdv|vrmaster|vrfrente)\.[\w.$]+\([^\n)]*\.java:\d+\)",
+        text, re.IGNORECASE
+    ))
+    selected = [re.sub(r"[^a-z0-9]", "", str(c.get("app_id") or "").lower()) for c in contexts]
+    missing = [products[p.lower()] for p in mentioned
+               if not any(s.startswith(p.lower()) for s in selected)]
+    if not missing:
+        return ""
+    return ("O stack trace pertence a " + ", ".join(sorted(missing))
+            + ", mas esse aplicativo não está no contexto selecionado. "
+            "Selecione o aplicativo e a versão em Aplicativos antes de investigar esse código.")
 
 
 def freeze_application_contexts(root: Path, selections: list[dict[str, Any]], *, full_hash: bool = True) -> list[dict[str, Any]]:

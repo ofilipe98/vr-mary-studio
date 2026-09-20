@@ -25,9 +25,7 @@ from .knowledge_router import KnowledgeRouter
 from .retrieval.service import RetrievalService
 from .chat_tools import (
     all_vr_tools_specs,
-    run_vr_sources,
-    run_vr_search,
-    run_vr_read,
+    run_bounded_vr_tool,
     VR_SOURCES_TOOL_NAME,
     VR_SEARCH_TOOL_NAME,
     VR_READ_TOOL_NAME,
@@ -145,26 +143,27 @@ def run_mcp_server(
             arguments = params.get("arguments") or {}
             try:
                 scope = load_scope(context_path)
-                if calls >= 24 or output_chars >= 96000:
+                if calls >= 24:
                     raise ValueError("Limite de consultas deste turno atingido.")
                 calls += 1
-                if tool_name == VR_SEARCH_TOOL_NAME:
-                    exec_res = run_vr_search(arguments, service, **scope)
-                elif tool_name == VR_SOURCES_TOOL_NAME:
-                    exec_res = run_vr_sources(arguments, service, **scope)
-                elif tool_name == VR_READ_TOOL_NAME:
-                    exec_res = run_vr_read(arguments, service, **scope)
+                if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+                    exec_res = run_bounded_vr_tool(
+                        tool_name, arguments, service, max(0, 96000 - output_chars), **scope
+                    )
                 elif monitor is not None and tool_name in MONITOR_TOOL_NAMES:
+                    if output_chars >= 96000:
+                        raise ValueError("Limite de consultas deste turno atingido.")
                     exec_res = monitor.execute(
                         str(tool_name), arguments, monitor_session_id
                     )
+                    if output_chars + len(exec_res.text) > 96000:
+                        raise ValueError("Limite de resultados deste turno atingido; reduza limit.")
                 else:
                     raise ValueError(f"Tool desconhecida: {tool_name}")
 
                 load_scope(context_path)  # Reject work completed after cancellation.
-                if output_chars + len(exec_res.text) > 96000:
-                    raise ValueError("Limite de resultados deste turno atingido; reduza limit.")
-                output_chars += len(exec_res.text)
+                if exec_res.parsed.get("state") != "budget_exhausted":
+                    output_chars += len(exec_res.text)
                 if (
                     context_path
                     and tool_name not in MONITOR_TOOL_NAMES

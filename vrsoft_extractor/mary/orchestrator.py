@@ -632,6 +632,10 @@ class ChatOrchestrator:
                     code_scope_warning = ""
                     try:
                         application_contexts = resolve_code_contexts(self.settings.root, application_contexts)
+                        from .code_context import application_context_warning
+                        code_scope_warning = application_context_warning(text, application_contexts)
+                        if code_scope_warning:
+                            application_contexts = []
                     except (ValueError, RuntimeError) as exc:
                         application_contexts = []
                         code_scope_warning = f"O contexto de codigo selecionado esta indisponivel: {exc}"

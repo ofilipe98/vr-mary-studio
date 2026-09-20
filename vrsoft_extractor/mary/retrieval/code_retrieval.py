@@ -420,8 +420,13 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
             rows = conn.execute("SELECT s.* FROM code_sources s WHERE (" + predicate +
                 ") AND (s.source_key=? OR s.qualified_name=?) LIMIT 2", [*params, key, key]).fetchall()
         if len(rows) != 1:
+            selected = [str(c.get("label") or c.get("app_id") or "") for c in contexts or []]
+            message = ("Referência ambígua; use a referência exata retornada por vr_search."
+                       if len(rows) > 1 else
+                       "Fonte não encontrada no contexto selecionado. Confira o aplicativo e a versão "
+                       "em Aplicativos e use a referência retornada por vr_search.")
             return {"state": "scope_required" if len(rows) > 1 else "no_results", "reference": reference,
-                    "error": "Fonte não encontrada no contexto selecionado ou referência ambígua."}
+                    "selected_contexts": selected, "error": message}
         row = dict(rows[0])
         status = ErpReleaseCatalog(root).status(row["release_id"], full_hash=not bool(contexts))
         if status.get("freshness") != "fresh" or status.get("release_manifest_sha256") != row["release_hash"] or (

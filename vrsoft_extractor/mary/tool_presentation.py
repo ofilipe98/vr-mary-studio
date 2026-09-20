@@ -18,7 +18,7 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from typing import Any
 from urllib.parse import urlparse
@@ -191,6 +191,15 @@ def _map_state(status: ToolStatus) -> str:
 
 def _extract_errors(activity: ToolActivity) -> tuple[str, str]:
     """Return (error_summary, error_details)."""
+    raw = activity.error_details or activity.error
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+        return payload["error"], json.dumps(
+            {k: v for k, v in payload.items() if k != "error"}, ensure_ascii=False, indent=2
+        )
     if activity.error_details:
         return activity.error or "Erro", activity.error_details
     raw_error = activity.error or ""
@@ -294,7 +303,7 @@ class CommandExecutionFormatter(ToolFormatter):
             error_details=error_details,
             exit_code=activity.exit_code,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -403,7 +412,7 @@ class FileChangeFormatter(ToolFormatter):
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -478,7 +487,7 @@ class FileReadFormatter(ToolFormatter):
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -550,7 +559,7 @@ class WebSearchFormatter(ToolFormatter):
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -566,6 +575,12 @@ class McpToolCallFormatter(ToolFormatter):
         state = _map_state(activity.status)
         server = str(activity.metadata.get("server") or "")
         tool_name = str(activity.name or activity.metadata.get("tool") or "")
+        if tool_name.startswith("vr-mary-studio_"):
+            server, tool_name = "vr-mary-studio", tool_name.removeprefix("vr-mary-studio_")
+        elif tool_name.startswith("mcp__"):
+            parts = tool_name.split("__", 2)
+            if len(parts) == 3:
+                _, server, tool_name = parts
         server_tool = f"{server}/{tool_name}" if server else tool_name
 
         if state == "waiting_approval":
@@ -576,6 +591,15 @@ class McpToolCallFormatter(ToolFormatter):
             title = f"Erro em {server_tool}" if server_tool else "Chamada MCP falhou"
         else:
             title = f"Executando {server_tool}" if server_tool else "Chamando ferramenta MCP"
+
+        if server == "vr-mary-studio" and state != "waiting_approval":
+            args = activity.input if isinstance(activity.input, dict) else {}
+            if tool_name == "vr_read":
+                title = "Ler " + str(args.get("reference") or "fonte VR")
+            elif tool_name == "vr_search":
+                title = "Buscar " + str(args.get("query") or "na base VR")
+            elif tool_name == "vr_sources":
+                title = "Listar fontes " + str(args.get("source") or "VR")
 
         title = sanitize_title(title, activity.name, ToolType.MCP_TOOL_CALL, activity.status, error=activity.error)
         error_summary, error_details = _extract_errors(activity)
@@ -597,8 +621,6 @@ class McpToolCallFormatter(ToolFormatter):
                 detail_lines.append(f"Parâmetros: {activity.input}")
         if activity.output:
             detail_lines.append(f"\nResposta:\n{activity.output}")
-        if error_details:
-            detail_lines.append(f"\nErro:\n{error_details}")
 
         detail = "\n".join(detail_lines)
 
@@ -635,13 +657,13 @@ class McpToolCallFormatter(ToolFormatter):
             item_type="mcpToolCall",
             state=state,
             text=title,
-            subtitle=error_summary if (state == "error" and error_summary) else server_tool,
+            subtitle=server_tool,
             detail=detail,
             output=str(activity.output) if activity.output is not None else "",
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -723,7 +745,7 @@ class BrowserFormatter(ToolFormatter):
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -791,7 +813,7 @@ class SubagentFormatter(ToolFormatter):
             error_summary=error_summary,
             error_details=error_details,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -856,7 +878,7 @@ class GenericFormatter(ToolFormatter):
             error_details=error_details,
             exit_code=activity.exit_code,
             duration_ms=dur_ms,
-            duration_label=format_duration(dur_ms),
+            duration_label=format_duration(dur_ms) if activity.duration_ms() is not None else "",
             icon=icon,
             badge_text=badge_text,
             badge_variant=badge_variant,
@@ -890,6 +912,8 @@ class ToolPresentationRegistry:
         return self._formatters.get(tool_type, self._default_formatter)
 
     def format(self, activity: ToolActivity) -> ToolPresentation:
+        if activity.type == ToolType.UNKNOWN:
+            activity = replace(activity, type=ToolType.from_string(activity.name))
         formatter = self.get_formatter(activity.type)
         return formatter.format(activity)
 

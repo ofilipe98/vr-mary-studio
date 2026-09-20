@@ -143,6 +143,45 @@ def test_vr_tool_card_instantiation_and_properties(qml_env):
         app.processEvents()
 
 
+def test_tool_error_disclosure_deduplicates_and_fits_narrow_layout(qml_env):
+    from PySide6.QtQuick import QQuickWindow
+    from PySide6.QtTest import QTest
+    app, engine, *_ = qml_env
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrToolCard.qml")))
+    item = component.create()
+    window = QQuickWindow()
+    item.setParentItem(window.contentItem())
+    window.show()
+    try:
+        item.setWidth(320)
+        item.setProperty("modelData", {"text": "Ler fonte", "state": "error",
+                         "errorSummary": "Saldo insuficiente", "errorDetails": "Saldo insuficiente",
+                         "detail": 'Parâmetros: {"reference": "example.Fiscal"}'})
+        item.setProperty("detailExpanded", True)
+        QTest.qWait(50)
+        assert item.property("expandedText").count("Saldo insuficiente") == 1
+        assert '"reference"' in item.property("expandedText")
+        assert item.implicitHeight() > 60
+        item.setProperty("detailExpanded", False)
+        QTest.qWait(50)
+        assert item.implicitHeight() < 60
+    finally:
+        window.close()
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_mismatched_stack_does_not_start_a_turn(qml_env, monkeypatch):
+    app, engine, frontend, chat, studio = qml_env
+    chat._ultra_application_contexts = [{"app_id": "vrmaster", "version": "1.0"}]
+    calls = []
+    monkeypatch.setattr(chat._orchestrator, "send", lambda *a, **kw: calls.append(kw))
+    chat.sendMessage("vratacarejo.service.Nota.calcular(Nota.java:374)")
+    assert not calls
+    assert "VRAtacarejo" in chat._status_text
+    assert chat._ultra_application_contexts == [{"app_id": "vrmaster", "version": "1.0"}]
+
+
 def test_vr_chat_activity_renders_mixed_tools_without_warnings(qml_env):
     app, engine, frontend, chat, studio = qml_env
 

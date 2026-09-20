@@ -2770,6 +2770,12 @@ class ChatBridge(QObject):
                 return
             content = argument
             force_research = True
+        from ..code_context import application_context_warning
+        context_warning = application_context_warning(content, self._ultra_application_contexts)
+        if context_warning and not resume_run_id:
+            self._status_text = context_warning
+            self.stateChanged.emit()
+            return
         selected_extensions = [
             item
             for item in self._extension_items
