@@ -108,7 +108,9 @@ def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, 
     params = next(params for method, params in FakeClient.instances[0].calls if method == "session/new")
     server = params["mcpServers"][0]
     assert server["env"] == []
-    assert server["args"][-2:] == ["--context", "frozen-turn.json"]
+    assert server["args"][-4:] == [
+        "--context", "frozen-turn.json", "--monitor-session", "conversation"
+    ]
     assert "additionalDirectories" not in params
 
 

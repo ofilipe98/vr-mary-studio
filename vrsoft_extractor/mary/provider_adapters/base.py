@@ -373,7 +373,10 @@ def _parse_opencode_models(output: str) -> list[dict[str, Any]]:
 
 
 def _opencode_environment(
-    approval_profile: str, knowledge_root: Path | None = None, knowledge_context_path: str = ""
+    approval_profile: str,
+    knowledge_root: Path | None = None,
+    knowledge_context_path: str = "",
+    monitor_session_id: str = "",
 ) -> dict[str, str]:
     environment = os.environ.copy()
     config: dict[str, Any] = {}
@@ -416,7 +419,10 @@ def _opencode_environment(
     if knowledge_root:
         from ..knowledge_access import mcp_command
         config.setdefault("mcp", {})["vr-mary-studio"] = {
-            "type": "local", "command": mcp_command(knowledge_root, knowledge_context_path),
+            "type": "local",
+            "command": mcp_command(
+                knowledge_root, knowledge_context_path, monitor_session_id
+            ),
         }
         if isinstance(permission, dict):
             permission["vr-mary-studio_*"] = "allow"

@@ -189,7 +189,11 @@ class AntigravityProvider(AgentProvider):
             params = {"cwd": str(workspace.resolve()), "mcpServers": []}
             if self.knowledge_root and options.tools_enabled:
                 from ..knowledge_access import mcp_command
-                command = mcp_command(Path(self.knowledge_root), options.knowledge_context_path)
+                command = mcp_command(
+                    Path(self.knowledge_root),
+                    options.knowledge_context_path,
+                    cid,
+                )
                 params["mcpServers"] = [{
                     "name": "vr-mary-studio", "command": command[0],
                     "args": command[1:], "env": [],

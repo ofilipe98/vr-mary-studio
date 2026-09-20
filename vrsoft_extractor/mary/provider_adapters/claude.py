@@ -144,7 +144,9 @@ class ClaudeProvider(AgentProvider):
                 command.extend(["--permission-mode", permission_mode])
         if self.knowledge_root:
             from ..knowledge_access import mcp_command
-            mcp_args = mcp_command(self.knowledge_root, options.knowledge_context_path)
+            mcp_args = mcp_command(
+                self.knowledge_root, options.knowledge_context_path, conversation_id
+            )
             # Inline JSON avoids shared files in the user's project.
             command.extend(["--mcp-config", json.dumps({"mcpServers": {
                 "vr-mary-studio": {"command": mcp_args[0], "args": mcp_args[1:]}
