@@ -54,7 +54,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 28
             radius: 4
-            color: headerHover.hovered ? Theme.palette.hover : "transparent"
+            color: "transparent"
             clip: true
 
             RowLayout {
@@ -135,7 +135,6 @@ Item {
                 }
             }
 
-            HoverHandler { id: headerHover }
             TapHandler {
                 onTapped: root.groupExpanded = !root.groupExpanded
             }

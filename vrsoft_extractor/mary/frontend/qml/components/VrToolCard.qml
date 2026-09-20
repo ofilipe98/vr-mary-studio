@@ -42,7 +42,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(28, title.implicitHeight + 8)
             radius: 5
-            color: hover.hovered ? Theme.palette.hover : "transparent"
+            color: "transparent"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: root.titleText + (root.isError ? ", falhou" : "")
@@ -87,7 +87,6 @@ Item {
                     foreground: Theme.palette.mutedText
                 }
             }
-            HoverHandler { id: hover }
             TapHandler { onTapped: root.detailExpanded = !root.detailExpanded }
         }
         Rectangle {

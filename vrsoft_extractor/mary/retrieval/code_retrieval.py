@@ -375,6 +375,21 @@ def available_code_contexts(root: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _resolve_release_id(root: Path, release_id: str) -> str:
+    """Mirror JavaCodeIndex.search: map 'current'/'' to the indexed release id."""
+    normalized = str(release_id or "").strip()
+    if normalized not in ("", "current"):
+        return normalized
+    try:
+        from ..erp_releases import ErpReleaseCatalog
+        statuses = ErpReleaseCatalog(root).list_statuses(full_hash=False)
+        if statuses:
+            return str(statuses[0].get("release_id") or normalized)
+    except Exception:
+        pass
+    return normalized
+
+
 def _source_scope(contexts: list[dict[str, Any]] | None, release_id: str) -> tuple[str, list[Any]]:
     from ..code_context import artifact_sql_filter
     if contexts is None:
@@ -412,8 +427,12 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
             key = parts[-1]
             if len(parts) == 3:
                 context = parts[1]
+        if application_contexts is not None and len(application_contexts) == 0:
+            return {"state": "scope_required", "reference": reference, "selected_contexts": [],
+                    "error": "Nenhum aplicativo/versão selecionado para busca em código. "
+                             "Confira o aplicativo e a versão em Aplicativos."}
         contexts = resolve_code_contexts(root, application_contexts, context)
-        predicate, params = _source_scope(contexts, code_analysis_release)
+        predicate, params = _source_scope(contexts, _resolve_release_id(root, code_analysis_release))
         index = JavaCodeIndex(root)
         index.initialize()
         with index.store.connect() as conn:

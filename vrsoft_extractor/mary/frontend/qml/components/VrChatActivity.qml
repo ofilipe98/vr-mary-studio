@@ -44,7 +44,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
             radius: 7
-            color: activityHover.hovered ? Theme.palette.hover : "transparent"
+            color: "transparent"
 
             RowLayout {
                 anchors.fill: parent
@@ -62,7 +62,6 @@ Rectangle {
                 }
             }
 
-            HoverHandler { id: activityHover }
             TapHandler { onTapped: root.toggleRequested() }
         }
 
