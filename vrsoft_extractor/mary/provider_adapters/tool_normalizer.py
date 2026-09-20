@@ -267,72 +267,167 @@ def normalize_antigravity_event(
 ) -> NormalizedToolEvent | None:
     """Normalize Antigravity ACP/SSE session updates into a NormalizedToolEvent."""
     update = params.get("update") or {}
+    if not isinstance(update, dict):
+        return None
     session_update = update.get("sessionUpdate")
 
     if session_update in ("tool_call", "tool_call_update"):
         tool_call = update.get("toolCall") or {}
         if not isinstance(tool_call, dict):
             tool_call = {}
+
+        def field(name: str) -> Any:
+            value = update.get(name)
+            return value if value is not None else tool_call.get(name)
+
+        def first_legacy(*names: str) -> Any:
+            for name in names:
+                value = tool_call.get(name)
+                if value is not None:
+                    return value
+            return None
+
         event_id = _extract_event_id(params, update, tool_call)
         sequence = _extract_sequence(params, update, tool_call, provider="antigravity")
-        call_id = str(tool_call.get("toolCallId") or tool_call.get("id") or "")
-        raw_name = str(tool_call.get("name") or tool_call.get("title") or "ferramenta")
-        tool_type = ToolType.from_string(raw_name)
-        title = sanitize_title(
-            tool_call.get("title"), raw_name, tool_type, ToolStatus.RUNNING
+        call_id = str(
+            update.get("toolCallId")
+            or tool_call.get("toolCallId")
+            or tool_call.get("id")
+            or ""
         )
-        kind = (
-            ToolEventKind.STARTED
-            if session_update == "tool_call"
-            else ToolEventKind.UPDATED
-        )
-        args = (
-            tool_call.get("arguments")
-            or tool_call.get("args")
-            or tool_call.get("input")
+
+        title_value = field("title")
+        kind_value = field("kind")
+        has_top_level_kind = update.get("kind") is not None
+        name_value = field("name")
+        raw_name = str(name_value or title_value or kind_value or "")
+
+        acp_kind = str(kind_value or "").strip().lower()
+        acp_types = {
+            "execute": ToolType.COMMAND_EXECUTION,
+            "edit": ToolType.FILE_CHANGE,
+            "delete": ToolType.FILE_CHANGE,
+            "move": ToolType.FILE_CHANGE,
+            "search": ToolType.WEB_SEARCH,
+            "fetch": ToolType.WEB_SEARCH,
+        }
+        tool_type = acp_types.get(acp_kind, ToolType.UNKNOWN)
+        if tool_type == ToolType.UNKNOWN and not has_top_level_kind:
+            for legacy_type in (
+                tool_call.get("kind"),
+                tool_call.get("name"),
+                tool_call.get("title"),
+            ):
+                candidate = ToolType.from_string(str(legacy_type or ""))
+                if candidate != ToolType.UNKNOWN:
+                    tool_type = candidate
+                    break
+
+        raw_input = field("rawInput")
+        args = raw_input if raw_input is not None else first_legacy(
+            "arguments", "args", "input"
         )
         command_str = ""
-        if tool_type == ToolType.COMMAND_EXECUTION and isinstance(args, dict):
-            command_str = str(args.get("CommandLine") or args.get("command") or "")
+        if isinstance(args, dict):
+            command = (
+                args.get("CommandLine")
+                or args.get("command")
+                or args.get("command_line")
+                or args.get("commandLine")
+            )
+            if command is not None:
+                command_str = (
+                    " ".join(str(part) for part in command)
+                    if isinstance(command, list)
+                    else str(command)
+                )
+            elif args.get("executable"):
+                command_parts = [str(args["executable"])]
+                command_args = args.get("args")
+                if isinstance(command_args, (list, tuple)):
+                    command_parts.extend(str(part) for part in command_args)
+                elif command_args is not None:
+                    command_parts.append(str(command_args))
+                command_str = " ".join(command_parts)
+        elif isinstance(args, str):
+            command_str = args
+
+        raw_output = field("rawOutput")
+        output = None
+        if isinstance(raw_output, dict):
+            for output_key in ("combinedOutput", "combined_output"):
+                if raw_output.get(output_key) is not None:
+                    output = raw_output[output_key]
+                    break
+            if output is None:
+                stdout = raw_output.get("stdout")
+                stderr = raw_output.get("stderr")
+                if stdout is not None or stderr is not None:
+                    chunks = [str(chunk) for chunk in (stdout, stderr) if chunk not in (None, "")]
+                    output = "\n".join(chunks)
+            if output is None:
+                for output_key in ("output", "content"):
+                    if raw_output.get(output_key) is not None:
+                        output = raw_output[output_key]
+                        break
+        elif raw_output is not None:
+            output = raw_output
+
+        content = field("content")
+        if output is None and content is not None:
+            output = content
+        if output is None:
+            output = first_legacy("output", "result")
+
         # TC-04: tool_call_update must carry real content updates (output /
         # content / result / delta / rawOutput / status), with correct
         # delta vs snapshot semantics. Never emit an empty update with only
         # id/name/input.
-        output = (
-            tool_call.get("output")
-            if tool_call.get("output") is not None
-            else tool_call.get("content")
-            if tool_call.get("content") is not None
-            else tool_call.get("result")
-            if tool_call.get("result") is not None
-            else tool_call.get("rawOutput")
-            if tool_call.get("rawOutput") is not None
-            else update.get("output")
-            if update.get("output") is not None
-            else update.get("content")
-            if update.get("content") is not None
-            else None
-        )
-        delta = (
-            tool_call.get("delta")
-            if tool_call.get("delta") is not None
-            else update.get("delta")
-            if update.get("delta") is not None
-            else None
-        )
-        status_raw = str(
-            tool_call.get("status") or update.get("status") or ""
-        ).strip()
-        error_text = str(tool_call.get("error") or update.get("error") or "")
-        exit_code = tool_call.get("exitCode")
+        delta = field("delta")
+        status_raw = str(field("status") or "").strip()
+        error_value = field("error")
+        if error_value is None and isinstance(raw_output, dict):
+            error_value = raw_output.get("error")
+        error_text = str(error_value or "")
+
+        exit_code = None
+        if isinstance(raw_output, dict):
+            exit_code = raw_output.get("exitCode")
+            if exit_code is None:
+                exit_code = raw_output.get("exit_code")
         if exit_code is None:
-            exit_code = tool_call.get("exit_code")
+            exit_code = field("exitCode")
+        if exit_code is None:
+            exit_code = field("exit_code")
+
+        locations_value = field("locations")
+        locations = (
+            [location for location in locations_value if isinstance(location, dict)]
+            if isinstance(locations_value, list)
+            else []
+        )
+        explicit_error = bool(error_text) or bool(field("isError"))
+        normalized_status = status_raw.replace("_", "").replace("-", "").lower()
+        if explicit_error or normalized_status in {"failed", "error"}:
+            event_kind = ToolEventKind.FAILED
+            tool_status = ToolStatus.FAILURE
+        elif normalized_status in {"completed", "success", "done"}:
+            event_kind = ToolEventKind.COMPLETED
+            tool_status = ToolStatus.SUCCESS
+        elif session_update == "tool_call":
+            event_kind = ToolEventKind.STARTED
+            tool_status = ToolStatus.RUNNING
+        else:
+            event_kind = ToolEventKind.UPDATED
+            tool_status = ToolStatus.RUNNING
+
         if session_update == "tool_call_update" and (
             output is None
             and delta is None
             and not status_raw
             and not error_text
             and exit_code is None
+            and not locations
         ):
             return None
         if delta is not None and output is None:
@@ -341,9 +436,23 @@ def normalize_antigravity_event(
             output_mode = "snapshot"
         else:
             output_mode = ""
+        has_presentation = any(value not in (None, "") for value in (
+            title_value, name_value, kind_value
+        ))
+        title = (
+            sanitize_title(
+                str(title_value or ""),
+                raw_name or ("ferramenta" if session_update == "tool_call" else ""),
+                tool_type,
+                tool_status,
+                error=error_text,
+            )
+            if session_update == "tool_call" or has_presentation
+            else ""
+        )
         return NormalizedToolEvent(
             tool_id=call_id,
-            kind=kind,
+            kind=event_kind,
             event_id=event_id,
             sequence=sequence,
             provider="antigravity",
@@ -351,6 +460,7 @@ def normalize_antigravity_event(
             type=tool_type,
             name=raw_name,
             title=title,
+            status=tool_status,
             command=command_str,
             input=args,
             output=output,
@@ -358,6 +468,7 @@ def normalize_antigravity_event(
             output_mode=output_mode,
             error=error_text,
             exit_code=exit_code,
+            locations=locations,
             metadata=dict(params),
         )
 
@@ -409,6 +520,7 @@ def normalize_antigravity_event(
             output=output,
             output_mode="snapshot" if output is not None else "",
             error=error,
+            status=tool_status,
             metadata=dict(params),
         )
 
@@ -625,6 +737,8 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
                 d["sequence"] = ext_seq
         if not d.get("conversation_id") and event.conversation_id:
             d["conversation_id"] = event.conversation_id
+        if not d.get("execution_id") and payload.get("execution_id") is not None:
+            d["execution_id"] = payload["execution_id"]
         kind = ToolEventKind.from_string(d.pop("kind", None))
         type_ = ToolType.from_string(d.pop("type", None))
         status = ToolStatus(d["status"]) if "status" in d and d["status"] else None
@@ -745,6 +859,7 @@ def normalize_generic_event(event: RuntimeEvent) -> NormalizedToolEvent | None:
         event_id=event_id,
         provider=str(payload.get("provider") or ""),
         conversation_id=event.conversation_id,
+        execution_id=payload.get("execution_id", ""),
         type=tool_type,
         name=raw_name,
         title=title,

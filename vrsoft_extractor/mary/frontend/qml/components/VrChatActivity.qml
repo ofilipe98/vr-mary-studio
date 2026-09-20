@@ -14,9 +14,6 @@ Rectangle {
     property string taskStep: ""
     property bool running: false
     property bool expanded: false
-    property int recentCount: 5
-    property bool logExpanded: false
-    readonly property int hiddenCount: Math.max(0, items.length - recentCount)
     readonly property string headerLabel: root.headerText()
     signal toggleRequested()
 
@@ -103,6 +100,7 @@ Rectangle {
                 model: root.visibleItems()
 
                 Loader {
+                    id: activityItemLoader
                     required property var modelData
                     Layout.fillWidth: true
                     sourceComponent: {
@@ -115,7 +113,7 @@ Rectangle {
                         return toolCardComponent
                     }
                     onLoaded: {
-                        if (item) item.modelData = Qt.binding(function() { return modelData })
+                        if (item) item.modelData = activityItemLoader.modelData
                     }
                 }
             }
@@ -166,25 +164,19 @@ Rectangle {
     Component {
         id: commandCardComponent
 
-        VrCommandCard {
-            property var modelData: ({})
-        }
+        VrCommandCard {}
     }
 
     Component {
         id: toolCardComponent
 
-        VrToolCard {
-            property var modelData: ({})
-        }
+        VrToolCard {}
     }
 
     Component {
         id: toolGroupComponent
 
-        VrToolGroupCard {
-            property var modelData: ({})
-        }
+        VrToolGroupCard {}
     }
 
     Component {
@@ -225,24 +217,22 @@ Rectangle {
     }
 
     function visibleItems() {
-        if (root.expanded || root.logExpanded)
+        if (root.expanded)
             return root.items || []
         if (!root.items || root.items.length === 0)
             return []
 
-        // When collapsed, prioritize showing running tools or waiting approval
-        var activeItems = root.items.filter(function(i) {
-            return i.state === "running" || i.state === "waiting_approval"
-        })
-        if (activeItems.length > 0) return activeItems
+        // The live trace stays complete even while the disclosure is collapsed.
+        if (root.running)
+            return root.items
 
-        // If no running tools, show recent failures
+        // A settled failure remains available as a compact diagnostic summary.
         var failedItems = root.items.filter(function(i) {
             return i.state === "error" || i.state === "failed"
         })
         if (failedItems.length > 0) return failedItems.slice(-1)
 
-        // Otherwise show last item
-        return root.items.slice(-1)
+        // Successful settled work is disclosed by the Worked for ... header.
+        return []
     }
 }

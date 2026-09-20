@@ -698,9 +698,9 @@ def test_chat_updates_use_studio_event_contract():
         {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Hello"}},
         {"sessionUpdate": "agent_thought_chunk", "thought": "plan"},
         {"sessionUpdate": "thought", "thought": "more"},
-        {"sessionUpdate": "tool_call", "toolCall": {"toolCallId": "t1", "title": "Read", "status": "inProgress"}},
-        {"sessionUpdate": "tool_call_update", "toolCall": {"toolCallId": "t1", "title": "Read", "status": "inProgress"}},
-        {"sessionUpdate": "tool_result", "toolResult": {"toolCallId": "t1", "title": "Read", "status": "completed"}},
+        {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Read", "kind": "fetch", "status": "inProgress"},
+        {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "inProgress", "content": "Reading"},
+        {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "rawOutput": {"content": "Done"}},
         {"sessionUpdate": "usage_update", "used": 42, "size": 1000},
     ]
     for update in feed:
@@ -715,6 +715,10 @@ def test_chat_updates_use_studio_event_contract():
     assert usage["last"]["totalTokens"] == 42
     assert [e.text for e in events if e.kind == "assistant_delta"] == ["Hello"]
     assert [e.text for e in events if e.kind == "reasoning_delta"] == ["plan", "more"]
+    tool_events = [e for e in events if e.kind == "tool_event"]
+    assert all(e.payload["item"]["id"] == "t1" for e in tool_events)
+    assert tool_events[-1].payload["canonical_event"]["kind"] == "tool.completed"
+    assert tool_events[-1].payload["canonical_event"]["status"] == "success"
 
 
 def test_acp_client_ignores_non_oauth_url_when_unattended():

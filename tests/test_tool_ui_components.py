@@ -24,6 +24,23 @@ ROOT = Path(__file__).resolve().parents[1]
 QML_DIR = ROOT / "vrsoft_extractor/mary/frontend/qml"
 
 
+def _activity_cards(item) -> list:
+    names = {"toolCard", "commandCard", "toolGroupCard"}
+    cards = [item] if item.objectName() in names else []
+    for child in item.childItems():
+        cards.extend(_activity_cards(child))
+    return cards
+
+
+def _create_activity(engine):
+    activity_path = QML_DIR / "components/VrChatActivity.qml"
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(activity_path)))
+    assert not component.isError(), [error.toString() for error in component.errors()]
+    item = component.create()
+    assert item is not None
+    return component, item
+
+
 @pytest.fixture
 def qml_env(tmp_path):
     app = QApplication.instance() or QApplication([])
@@ -178,6 +195,157 @@ def test_vr_chat_activity_renders_mixed_tools_without_warnings(qml_env):
 
         assert item.property("headerLabel") == "Worked for 3s"
         assert len(item.property("items")) == 3
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_vr_chat_activity_settled_success_folds_tools_behind_worked_for(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    completed_items = [
+        {
+            "id": "cmd-1",
+            "kind": "tool",
+            "itemType": "commandExecution",
+            "state": "completed",
+            "text": "Executou os testes ACP",
+            "command": "python -m pytest tests/test_antigravity_acp.py",
+        },
+        {
+            "id": "search-1",
+            "kind": "tool",
+            "itemType": "webSearch",
+            "state": "completed",
+            "text": "Consultou a referência ACP",
+        },
+        {
+            "id": "mcp-1",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "Leu o resultado da ferramenta",
+        },
+        {
+            "id": "group-1",
+            "kind": "action_group",
+            "itemType": "unknown",
+            "state": "completed",
+            "text": "Validou o lifecycle",
+        },
+    ]
+    try:
+        item.setProperty("items", completed_items)
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        item.setProperty("expanded", False)
+        item.setProperty("elapsedLabel", "42s")
+        app.processEvents()
+
+        assert item.property("headerLabel") == "Worked for 42s"
+        assert _activity_cards(item) == []
+
+        item.setProperty("expanded", True)
+        app.processEvents()
+
+        assert len(_activity_cards(item)) == len(completed_items)
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_vr_chat_activity_live_turn_keeps_tool_trace_visible(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    live_items = [
+        {
+            "id": "cmd-live",
+            "kind": "tool",
+            "itemType": "commandExecution",
+            "state": "running",
+            "text": "Executando testes ACP",
+            "command": "python -m pytest tests/test_antigravity_acp.py",
+        },
+        {
+            "id": "search-done",
+            "kind": "tool",
+            "itemType": "webSearch",
+            "state": "completed",
+            "text": "Referência ACP consultada",
+        },
+        {
+            "id": "mcp-live",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "running",
+            "text": "Aguardando retorno da ferramenta",
+        },
+        {
+            "id": "search-live",
+            "kind": "tool",
+            "itemType": "webSearch",
+            "state": "running",
+            "text": "Validando o lifecycle",
+        },
+    ]
+    try:
+        item.setProperty("items", live_items)
+        item.setProperty("running", True)
+        item.setProperty("statusText", "Executando uma ação…")
+        item.setProperty("expanded", False)
+        app.processEvents()
+
+        assert len(_activity_cards(item)) == len(live_items)
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_vr_chat_activity_settled_failure_keeps_failure_summary_visible(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    try:
+        item.setProperty(
+            "items",
+            [
+                {
+                    "id": "cmd-ok",
+                    "kind": "tool",
+                    "itemType": "commandExecution",
+                    "state": "completed",
+                    "text": "Preparou o ambiente",
+                    "command": "python --version",
+                },
+                {
+                    "id": "tool-old-failure",
+                    "kind": "tool",
+                    "itemType": "mcpToolCall",
+                    "state": "error",
+                    "text": "Falha anterior",
+                },
+                {
+                    "id": "tool-latest-failure",
+                    "kind": "tool",
+                    "itemType": "mcpToolCall",
+                    "state": "failed",
+                    "text": "Falha terminal mais recente",
+                },
+            ],
+        )
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Erro")
+        item.setProperty("expanded", False)
+        app.processEvents()
+
+        cards = _activity_cards(item)
+        assert len(cards) == 1
+        assert cards[0].property("titleText") == "Falha terminal mais recente", cards[0].property("modelData")
+        assert len(engine._qml_warnings) == warning_count
     finally:
         item.deleteLater()
         app.processEvents()

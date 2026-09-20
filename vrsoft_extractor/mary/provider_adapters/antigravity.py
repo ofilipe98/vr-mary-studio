@@ -347,23 +347,45 @@ class AntigravityProvider(AgentProvider):
             tool_call = update.get("toolCall") or {}
             if not isinstance(tool_call, dict):
                 tool_call = {}
-            title = norm.title if norm else str(tool_call.get("title") or tool_call.get("name") or "Ferramenta externa")
+            tool_id = str(
+                update.get("toolCallId")
+                or tool_call.get("toolCallId")
+                or tool_call.get("id")
+                or ""
+            )
+            title = norm.title if norm else str(
+                update.get("title")
+                or tool_call.get("title")
+                or tool_call.get("name")
+                or "Ferramenta externa"
+            )
             status = str(update.get("status") or tool_call.get("status") or "")
             payload = {
+                "provider": "antigravity",
                 "sessionUpdate": kind,
                 "status": status,
                 "title": title,
-                "name": str(tool_call.get("name") or tool_call.get("title") or ""),
-                "toolCall": tool_call,
                 "item": {
-                    "id": str(tool_call.get("toolCallId") or ""),
+                    "id": tool_id,
                     "type": "toolCall",
                     "status": status,
                     "title": title,
                 },
             }
+            for key in (
+                "toolCallId", "kind", "rawInput", "rawOutput", "content", "locations",
+            ):
+                if key in update:
+                    payload[key] = update[key]
+            if tool_call:
+                payload["toolCall"] = tool_call
             if norm:
-                payload["canonical_event"] = asdict(norm)
+                canonical_event = asdict(norm)
+                canonical_event["metadata"] = {
+                    "sessionId": params.get("sessionId"),
+                    "sessionUpdate": kind,
+                }
+                payload["canonical_event"] = canonical_event
             callback(RuntimeEvent(cid, "tool_event", title, payload))
         elif kind == "tool_result":
             norm = normalize_antigravity_event(params, method, cid)

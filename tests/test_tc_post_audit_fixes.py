@@ -225,6 +225,65 @@ class TestTC04ProviderStreaming(unittest.TestCase):
         self.assertEqual(len(r.get_all_tools()), 1)
 
 
+def test_antigravity_typed_acp_updates_keep_one_tool_identity() -> None:
+    reducer = ToolLifecycleReducer()
+    start = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tool-typed-1",
+                "title": "Run focused tests",
+                "kind": "execute",
+                "status": "in_progress",
+                "rawInput": {"CommandLine": "pytest tests/test_one.py -q"},
+            },
+        },
+        "session/update",
+        "conversation",
+    )
+    assert start is not None
+    reducer.reduce(start)
+
+    for progress in range(1, 21):
+        update = normalize_antigravity_event(
+            {
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "tool-typed-1",
+                    "status": "inProgress",
+                    "rawOutput": {"combinedOutput": f"progress {progress}/20"},
+                },
+            },
+            "session/update",
+            "conversation",
+        )
+        assert update is not None
+        reducer.reduce(update)
+
+    terminal = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-typed-1",
+                "status": "completed",
+                "rawOutput": {"combinedOutput": "20 passed", "exitCode": 0},
+            },
+        },
+        "session/update",
+        "conversation",
+    )
+    assert terminal is not None
+    tool = reducer.reduce(terminal)
+
+    assert len(reducer.get_all_tools()) == 1
+    assert tool.id == "tool-typed-1"
+    assert not tool.id.startswith("anon:")
+    assert reducer.get_active_tools() == []
+    assert tool.status == ToolStatus.SUCCESS
+    assert tool.title == "Run focused tests"
+    assert tool.command == "pytest tests/test_one.py -q"
+
+
 class TestTC05AnonymousIdentity(unittest.TestCase):
     def test_two_anonymous_tools_do_not_collide(self):
         r = ToolLifecycleReducer()

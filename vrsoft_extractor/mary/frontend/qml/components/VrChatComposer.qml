@@ -507,9 +507,11 @@ Item {
         anchors.rightMargin: Theme.spaceXl
         height: Theme.compactControlHeight
         radius: Theme.radiusControl
-        color: Theme.palette.chatControl
+        color: Theme.palette.chatComposer
         border.width: 1
-        border.color: Theme.palette.chatBorder
+        border.color: Theme.palette.appearance === "light"
+            ? Qt.alpha(Theme.palette.border, 0.6)
+            : Qt.rgba(255, 255, 255, 0.08)
         z: 0
         clip: true
         visible: opacity > 0.001
@@ -523,7 +525,10 @@ Item {
             id: composerControls
             anchors.fill: parent
             anchors.leftMargin: 12
-            anchors.rightMargin: 12
+            // Termina Theme.spaceSm antes de attachButton.left, como no viewport anterior;
+            // a bandeja já está recuada Theme.spaceXl em relação ao card.
+            anchors.rightMargin: attachButton.width + attachButton.anchors.rightMargin
+                + sendButton.width + sendButton.anchors.rightMargin + Theme.spaceSm - Theme.spaceXl
             contentWidth: controlsRow.width
             contentHeight: height
             clip: true

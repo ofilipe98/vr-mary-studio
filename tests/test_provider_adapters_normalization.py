@@ -121,11 +121,11 @@ def test_antigravity_tool_call_and_result():
         "sessionId": "ses_ag_1",
         "update": {
             "sessionUpdate": "tool_call",
-            "toolCall": {
-                "toolCallId": "ag_call_1",
-                "name": "run_command",
-                "arguments": {"CommandLine": "dir", "Cwd": "C:/test"},
-            },
+            "toolCallId": "ag_call_1",
+            "title": "Run directory listing",
+            "kind": "execute",
+            "status": "in_progress",
+            "rawInput": {"CommandLine": "dir", "Cwd": "C:/test"},
         },
     }
     event_start = normalize_antigravity_event(call_params, "session/update", "conv_ag")
@@ -159,6 +159,97 @@ def test_antigravity_tool_call_and_result():
     tool = reducer.reduce(event_done)
     assert tool.status == ToolStatus.SUCCESS
     assert tool.output == "Directory contents..."
+
+
+def test_antigravity_legacy_nested_tool_call_remains_supported():
+    event = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCall": {
+                    "toolCallId": "legacy-call",
+                    "name": "run_command",
+                    "arguments": {"CommandLine": "dir"},
+                },
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert event is not None
+    assert event.tool_id == "legacy-call"
+    assert event.type == ToolType.COMMAND_EXECUTION
+    assert event.command == "dir"
+
+
+def test_antigravity_typed_acp_tool_call_uses_top_level_identity() -> None:
+    norm = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tool-1",
+                "title": "Run tests",
+                "kind": "execute",
+                "status": "inProgress",
+                "rawInput": {"executable": "pytest", "args": ["-q", "-x"]},
+                "toolCall": {},
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert norm is not None
+    assert norm.tool_id == "tool-1"
+    assert norm.kind == ToolEventKind.STARTED
+    assert norm.status == ToolStatus.RUNNING
+    assert norm.type == ToolType.COMMAND_EXECUTION
+    assert norm.command == "pytest -q -x"
+
+
+def test_antigravity_typed_acp_completed_update_is_terminal() -> None:
+    norm = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-1",
+                "status": "completed",
+                "rawOutput": {"combinedOutput": "24 passed", "exitCode": 0},
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert norm is not None
+    assert norm.tool_id == "tool-1"
+    assert norm.kind == ToolEventKind.COMPLETED
+    assert norm.status == ToolStatus.SUCCESS
+    assert norm.output == "24 passed"
+    assert norm.exit_code == 0
+
+
+def test_antigravity_typed_acp_failed_update_is_terminal() -> None:
+    norm = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-1",
+                "status": "failed",
+                "rawOutput": {"stderr": "tests failed", "exit_code": 1},
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert norm is not None
+    assert norm.tool_id == "tool-1"
+    assert norm.kind == ToolEventKind.FAILED
+    assert norm.status == ToolStatus.FAILURE
+    assert norm.output == "tests failed"
+    assert norm.exit_code == 1
 
 
 def test_antigravity_tool_result_error():
@@ -261,3 +352,23 @@ def test_generic_event_fallback_with_canonical_event():
     assert norm.tool_id == "canon_1"
     assert norm.kind == ToolEventKind.COMPLETED
     assert norm.output == "All done"
+
+
+def test_generic_canonical_event_backfills_execution_id() -> None:
+    runtime_event = RuntimeEvent(
+        conversation_id="conv_1",
+        kind="tool_event",
+        payload={
+            "execution_id": 77,
+            "canonical_event": {
+                "tool_id": "canon_1",
+                "kind": "tool.completed",
+                "status": "success",
+            },
+        },
+    )
+
+    norm = normalize_generic_event(runtime_event)
+
+    assert norm is not None
+    assert norm.execution_id == 77
