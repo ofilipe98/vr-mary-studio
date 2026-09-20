@@ -593,6 +593,11 @@ def normalize_opencode_event(
         sequence = _extract_sequence(payload, part, provider="opencode")
         raw_state = part.get("state")
         state_obj = raw_state if isinstance(raw_state, dict) else {}
+        state_metadata = (
+            state_obj.get("metadata")
+            if isinstance(state_obj.get("metadata"), dict)
+            else {}
+        )
         # Stable provider identity only: callID/id from the part (or payload).
         # Never derive identity from title/tool/name/input/output/timestamps.
         call_id = str(
@@ -652,6 +657,9 @@ def normalize_opencode_event(
         exit_code_raw = _first_present(
             state_obj.get("exitCode"),
             state_obj.get("exit_code"),
+            state_metadata.get("exitCode"),
+            state_metadata.get("exit_code"),
+            state_metadata.get("exit"),
             part.get("exitCode"),
             part.get("exit_code"),
             payload.get("exitCode"),
@@ -671,12 +679,21 @@ def normalize_opencode_event(
             elif isinstance(input_data, str):
                 command_str = input_data
 
-        if state in ("completed", "success", "done"):
-            event_kind = ToolEventKind.COMPLETED
-            status = ToolStatus.SUCCESS
-        elif state in ("error", "failed") or bool(error_data):
+        if state in ("error", "failed") or bool(error_data):
             event_kind = ToolEventKind.FAILED
             status = ToolStatus.FAILURE
+        elif (
+            tool_type == ToolType.COMMAND_EXECUTION
+            and exit_code is not None
+            and exit_code != 0
+        ):
+            event_kind = ToolEventKind.FAILED
+            status = ToolStatus.FAILURE
+            if not error_data:
+                error_data = f"Comando encerrou com código {exit_code}."
+        elif state in ("completed", "success", "done"):
+            event_kind = ToolEventKind.COMPLETED
+            status = ToolStatus.SUCCESS
         else:
             event_kind = ToolEventKind.STARTED
             status = ToolStatus.RUNNING
@@ -695,9 +712,6 @@ def normalize_opencode_event(
             output_mode = "snapshot"
         else:
             output_mode = ""
-        metadata = dict(payload)
-        if state_obj:
-            metadata.setdefault("state", dict(state_obj))
         return NormalizedToolEvent(
             tool_id=call_id,
             kind=event_kind,
@@ -716,7 +730,7 @@ def normalize_opencode_event(
             output_mode=output_mode,
             error=error_data,
             exit_code=exit_code,
-            metadata=metadata,
+            metadata=dict(payload),
         )
 
     return None

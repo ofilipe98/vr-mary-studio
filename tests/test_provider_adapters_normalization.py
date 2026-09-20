@@ -320,7 +320,7 @@ def test_opencode_dict_state_completed_preserves_identity_and_nested_payload():
                 "input": {"command": "git status"},
                 "output": "On branch dev",
                 "title": "git status",
-                "metadata": {"exit": 0, "truncated": False},
+                "metadata": {"exitCode": 0, "truncated": False},
                 "time": {"start": 100, "end": 250},
             },
         },
@@ -331,10 +331,12 @@ def test_opencode_dict_state_completed_preserves_identity_and_nested_payload():
     assert not norm.tool_id.startswith("anon:")
     assert norm.kind == ToolEventKind.COMPLETED
     assert norm.status == ToolStatus.SUCCESS
+    assert norm.exit_code == 0
     assert norm.input == {"command": "git status"}
     assert norm.output == "On branch dev"
     assert norm.title == "git status"
     assert norm.command == "git status"
+    assert norm.metadata["part"]["state"]["metadata"]["exitCode"] == 0
 
     reducer = ToolLifecycleReducer()
     tool = reducer.reduce(norm)
@@ -343,6 +345,47 @@ def test_opencode_dict_state_completed_preserves_identity_and_nested_payload():
     assert tool.output == "On branch dev"
     assert tool.input == {"command": "git status"}
     assert reducer.get_active_tools() == []
+
+
+def test_opencode_dict_state_exit_code_one_fails_without_explicit_error():
+    payload = {
+        "type": "tool_use",
+        "sessionID": "ses_current",
+        "part": {
+            "id": "prt_current_exit_1",
+            "callID": "call_current_exit_1",
+            "tool": "bash",
+            "state": {
+                "status": "completed",
+                "input": {"command": "false"},
+                "output": "boom",
+                "title": "false",
+                "metadata": {"exitCode": 1},
+            },
+        },
+    }
+    norm = normalize_opencode_event(payload, "conv_oc")
+    assert norm is not None
+    assert norm.tool_id == "call_current_exit_1"
+    assert not norm.tool_id.startswith("anon:")
+    assert norm.exit_code == 1
+    assert norm.kind == ToolEventKind.FAILED
+    assert norm.status == ToolStatus.FAILURE
+    assert norm.error == "Comando encerrou com código 1."
+    assert norm.output == "boom"
+
+    reducer = ToolLifecycleReducer()
+    reducer.reduce(NormalizedToolEvent(
+        tool_id=norm.tool_id,
+        kind=ToolEventKind.STARTED,
+        provider="opencode",
+        type=ToolType.COMMAND_EXECUTION,
+    ))
+    tool = reducer.reduce(norm)
+    assert tool.status == ToolStatus.FAILURE
+    assert tool.status != ToolStatus.RUNNING
+    assert tool.exit_code == 1
+    assert tool.output == "boom"
 
 
 def test_opencode_dict_state_terminal_error_is_failure_with_stable_id():
