@@ -81,7 +81,8 @@ Item {
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
     // Altura total do conjunto: card principal (mesma altura visual anterior) + parte exposta da bandeja.
     readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22 + Theme.compactControlHeight - Theme.spaceXs
-    readonly property real compactHeight: 46
+    readonly property real compactSurfaceHeight: 46
+    readonly property real compactHeight: compactSurfaceHeight + Theme.compactControlHeight - Theme.spaceXs
 
     objectName: "chatComposerCard"
     z: 20
@@ -114,11 +115,12 @@ Item {
     // Card principal de digitação: fundo, borda, raio e recorte do composer.
     Rectangle {
         id: composerSurface
+        objectName: "chatComposerSurface"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
         height: composerCard.isCompact
-            ? composerCard.compactHeight
+            ? composerCard.compactSurfaceHeight
             : composerCard.normalHeight - Theme.compactControlHeight + Theme.spaceXs
         radius: 16
         clip: true
@@ -494,11 +496,49 @@ Item {
             }
             onClicked: composerCard.page.chatBridge.turnRunning ? composerCard.page.chatBridge.stopTurn() : composerCard.page.submitMessage()
         }
+
+        Button {
+            id: vrModeButton
+            objectName: "vrModeButton"
+            property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
+            implicitWidth: vrModeContent.implicitWidth + 14
+            implicitHeight: 28
+            leftPadding: 6
+            rightPadding: 6
+            hoverEnabled: true
+            focusPolicy: Qt.StrongFocus
+            anchors.right: attachButton.left
+            anchors.rightMargin: Theme.spaceSm
+            anchors.verticalCenter: attachButton.verticalCenter
+            contentItem: Row {
+                id: vrModeContent
+                spacing: 4
+                anchors.centerIn: parent
+                Text {
+                    text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
+                    color: composerCard.page.chatBridge.vrMode !== "off"
+                        ? (Theme.palette.brandOrange || "#f59e0b")
+                        : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSize(12.5)
+                    font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
+                    renderType: Theme.textRenderType
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+            background: Rectangle {
+                radius: 6
+                color: vrModeButton.down || vrModeButton.hovered
+                    ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
+            }
+            onClicked: composerCard.page.chatBridge.cycleVrMode()
+        }
     }
 
     // Bandeja horizontal encaixada abaixo do card principal, mais estreita que ele.
     Rectangle {
         id: composerControlsBox
+        objectName: "chatComposerControlsBox"
         anchors.top: composerSurface.bottom
         anchors.topMargin: -Theme.spaceXs
         anchors.left: parent.left
@@ -514,21 +554,12 @@ Item {
             : Qt.rgba(255, 255, 255, 0.08)
         z: 0
         clip: true
-        visible: opacity > 0.001
-        opacity: composerCard.isCompact ? 0.0 : 1.0
-        Behavior on opacity {
-            enabled: !composerCard.page.frontendBridge.reduceMotion
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
 
         Flickable {
             id: composerControls
             anchors.fill: parent
-            anchors.leftMargin: 12
-            // Termina Theme.spaceSm antes de attachButton.left, como no viewport anterior;
-            // a bandeja já está recuada Theme.spaceXl em relação ao card.
-            anchors.rightMargin: attachButton.width + attachButton.anchors.rightMargin
-                + sendButton.width + sendButton.anchors.rightMargin + Theme.spaceSm - Theme.spaceXl
+            anchors.leftMargin: Theme.spaceMd
+            anchors.rightMargin: Theme.spaceMd
             contentWidth: controlsRow.width
             contentHeight: height
             clip: true
@@ -538,7 +569,7 @@ Item {
                 id: controlsRow
                 width: Math.max(implicitWidth, composerControls.width)
                 height: Theme.compactControlHeight
-                spacing: 6
+                spacing: Theme.spaceSm
 
                 VrModelPicker {
                     id: modelSelector
@@ -556,7 +587,8 @@ Item {
                     Layout.preferredWidth: 1
                     Layout.preferredHeight: 14
                     Layout.alignment: Qt.AlignVCenter
-                    color: Qt.rgba(255, 255, 255, 0.12)
+                    color: Theme.palette.chatDivider
+                    opacity: 0.7
                 }
 
                 VrReasoningPicker {
@@ -575,7 +607,8 @@ Item {
                     Layout.preferredWidth: 1
                     Layout.preferredHeight: 14
                     Layout.alignment: Qt.AlignVCenter
-                    color: Qt.rgba(255, 255, 255, 0.12)
+                    color: Theme.palette.chatDivider
+                    opacity: 0.7
                 }
 
                 VrPermissionPicker {
@@ -587,40 +620,6 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
-
-                Button {
-                    id: vrModeButton
-                    objectName: "vrModeButton"
-                    property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
-                    implicitWidth: vrModeContent.implicitWidth + 14
-                    implicitHeight: 28
-                    leftPadding: 6
-                    rightPadding: 6
-                    hoverEnabled: true
-                    focusPolicy: Qt.StrongFocus
-                    contentItem: Row {
-                        id: vrModeContent
-                        spacing: 4
-                        anchors.centerIn: parent
-                        Text {
-                            text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-                            color: composerCard.page.chatBridge.vrMode !== "off"
-                                ? (Theme.palette.brandOrange || "#f59e0b")
-                                : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12.5)
-                            font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
-                            renderType: Theme.textRenderType
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                    }
-                    background: Rectangle {
-                        radius: 6
-                        color: vrModeButton.down || vrModeButton.hovered
-                            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
-                    }
-                    onClicked: composerCard.page.chatBridge.cycleVrMode()
-                }
 
                 VrContextButton {
                     id: contextUsageButton

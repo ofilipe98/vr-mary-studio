@@ -1410,57 +1410,6 @@ Item {
                 }
             }
 
-            // Bottom bar beneath compact composer containing ONLY the marked fields: Model & Permission selectors
-            Item {
-                id: compactBottomBar
-                objectName: "compactBottomBar"
-                visible: opacity > 0.001
-                anchors.horizontalCenter: composerCard.horizontalCenter
-                anchors.top: composerCard.bottom
-                anchors.topMargin: 4
-                width: composerCard.width
-                height: 30
-                z: 15
-                opacity: composerCard.isCompact && root.expertReveal <= 0.001 && messageList.count > 0 ? 1.0 : 0.0
-                scale: composerCard.isCompact ? 1.0 : 0.94
-                Behavior on opacity {
-                    enabled: !root.frontendBridge.reduceMotion
-                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-                }
-                Behavior on scale {
-                    enabled: !root.frontendBridge.reduceMotion
-                    NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-                }
-
-                RowLayout {
-                    id: compactButtonsRow
-                    anchors.centerIn: parent
-                    spacing: 6
-
-                    VrModelPicker {
-                        id: compactModelPicker
-                        objectName: "compactModelPicker"
-                        compact: true
-                        model: root.chatBridge.modelItems
-                        currentIndex: root.chatBridge.modelIndex
-                        loading: root.chatBridge.modelCatalogLoading
-                        enabled: !root.chatBridge.turnRunning
-                        popupAbove: true
-                        onActivated: index => root.chatBridge.setModel(index)
-                        onFavoriteToggled: index => root.chatBridge.toggleModelFavorite(index)
-                    }
-
-                    VrPermissionPicker {
-                        id: compactPermissionPicker
-                        objectName: "compactPermissionPicker"
-                        compact: true
-                        model: root.chatBridge.approvalItems
-                        currentIndex: root.chatBridge.approvalIndex
-                        onActivated: index => root.chatBridge.setApproval(index)
-                    }
-                }
-            }
-
             // One continuous gradient stroke: no overlapping dashes or seam at the loop.
             Rectangle {
                 id: ultraGlowOuter
