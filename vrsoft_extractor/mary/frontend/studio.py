@@ -1703,7 +1703,7 @@ class StudioBridge(QObject):
         self._refresh_review_filter_values()
         self.toastRequested.emit(f"{label}: sincronização concluída.", "success")
 
-    def _sync_failed(self, task: _Task, error: str) -> None:
+    def _sync_failed(self, task: _Task, error: object) -> None:
         self._tasks.discard(task)
         self._sync_running = False
         self._sync_status = "Falha na sincronização"
@@ -1711,7 +1711,7 @@ class StudioBridge(QObject):
         self._append_log(error)
         self.syncChanged.emit()
         self._refresh_review_filter_values()
-        self.toastRequested.emit(error, "error")
+        self.toastRequested.emit(str(error), "error")
 
     @Slot(result=str)
     def chooseSchemaFile(self) -> str:  # noqa: N802

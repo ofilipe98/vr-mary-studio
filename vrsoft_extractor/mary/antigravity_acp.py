@@ -662,6 +662,105 @@ def preflight_browser_helper(timeout: float = 5.0, helper_cmd: list[str] | None 
         raise BrowserHelperError("O helper de navegador não emitiu o frame exato esperado em stderr.")
 
 
+# The ACP runtime is a PyInstaller one-file executable: the bootloader spawns
+# a child that maps every extracted file inside the client's temporary
+# directory. A kill-on-close job object makes Windows terminate the whole tree
+# when VRStudio exits, even after a crash, so no orphan ACP process can keep
+# the directory locked forever.
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+
+def _win32_job_api():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return ctypes, wintypes, kernel32
+
+
+def _create_kill_on_close_job():
+    """Creates a Windows job that kills its processes when the handle closes."""
+    if os.name != "nt":
+        return None
+    ctypes, _, kernel32 = _win32_job_api()
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimits),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    limits = _ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not kernel32.SetInformationJobObject(
+        job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+    ):
+        kernel32.CloseHandle(job)
+        return None
+    return job
+
+
+def _assign_process_to_job(job, process) -> bool:
+    """Assigns a spawned process, plus its future descendants, to the job."""
+    if job is None or os.name != "nt":
+        return False
+    handle = getattr(process, "_handle", None)
+    if handle is None:
+        return False
+    _, wintypes, kernel32 = _win32_job_api()
+    return bool(kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(handle))))
+
+
+def _close_kill_on_close_job(job) -> None:
+    """Closes the job handle; Windows kills every process still assigned to it."""
+    if job is None or os.name != "nt":
+        return
+    _, _, kernel32 = _win32_job_api()
+    try:
+        kernel32.CloseHandle(job)
+    except OSError:
+        pass
+
+
 def stop_process_tree(process) -> None:
     if not process or process.poll() is not None:
         return
@@ -962,6 +1061,8 @@ class AcpClient:
         # nothing on disk.
         self._temp_dir = None
         self._temp_lock: BinaryIO | None = None
+        # Kill-on-close job bound to the spawned runtime tree (Windows only).
+        self._job = None
 
     def __enter__(self):
         return self
@@ -994,6 +1095,7 @@ class AcpClient:
 
             env = dict(self.env)
             env.update(TEMP=self._temp_dir, TMP=self._temp_dir, TMPDIR=self._temp_dir)
+            self._job = _create_kill_on_close_job()
             try:
                 self.process = subprocess.Popen(
                     [self.command],
@@ -1008,6 +1110,11 @@ class AcpClient:
             except OSError:
                 self.close()
                 raise
+            if self._job is not None and not _assign_process_to_job(self._job, self.process):
+                # A nested/restricted job configuration can refuse the assign;
+                # the spawn stays valid and shutdown falls back to taskkill.
+                _close_kill_on_close_job(self._job)
+                self._job = None
             for name in ("stdout", "stderr"):
                 reader = threading.Thread(target=self._read, args=(getattr(self.process, name), name), daemon=True)
                 self._readers.append(reader)
@@ -1150,8 +1257,10 @@ class AcpClient:
             process = self.process
             temp_dir = self._temp_dir
             temp_lock = self._temp_lock
+            job = self._job
             self._temp_dir = None
             self._temp_lock = None
+            self._job = None
         self._fail_pending()
         if process and process.stdin:
             try:
@@ -1173,13 +1282,25 @@ class AcpClient:
                         stream.close()
                     except Exception:
                         pass
-        if not temp_dir:
-            return
+        if process is not None and process.poll() is None:
+            # Last resort: closing the kill-on-close job terminates the whole
+            # tree, including PyInstaller descendants that ``taskkill /T`` can
+            # no longer reach once their bootloader is gone.
+            _close_kill_on_close_job(job)
+            job = None
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if job is not None:
+            _close_kill_on_close_job(job)
         if process is not None and process.poll() is None:
             # The process survived the shutdown routine: keep the owner lock
             # and the directory so nothing reclaims what it is still using.
             self._temp_lock = temp_lock
             logger.warning("Diretório temporário ACP preservado; processo ainda ativo: %s", temp_dir)
+            return
+        if not temp_dir:
             return
         _release_temp_lock(temp_lock)
         _remove_acp_temp_dir(temp_dir)

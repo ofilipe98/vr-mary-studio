@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -497,6 +498,57 @@ def test_close_retries_transient_temp_cleanup_failure(tmp_path, caplog):
     warnings = [r for r in caplog.records
                 if r.name == "vrsoft_extractor.mary.antigravity_acp" and r.levelno >= logging.WARNING]
     assert warnings == [], "a retry that succeeds must not emit a final warning"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="kill-on-close job objects are Windows-only")
+def test_kill_on_close_job_terminates_descendants(tmp_path):
+    """Closing the job must kill the PyInstaller-style child, not just the parent."""
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.execution.ownership import process_identity
+
+    script = tmp_path / "spawner.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "print(child.pid, flush=True)\n"
+        "time.sleep(120)\n",
+        encoding="utf-8",
+    )
+    job = acp_module._create_kill_on_close_job()
+    assert job is not None
+    process = subprocess.Popen(
+        [sys.executable, "-u", str(script)],
+        stdout=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    grandchild = None
+    try:
+        if not acp_module._assign_process_to_job(job, process):
+            pytest.skip("this session does not allow nested job objects")
+        grandchild = int(process.stdout.readline().strip())
+        acp_module._close_kill_on_close_job(job)
+        job = None
+        process.wait(timeout=10)
+        deadline = time.time() + 10
+        while time.time() < deadline and process_identity(grandchild):
+            time.sleep(0.05)
+        assert process_identity(grandchild) == ""
+    finally:
+        if job is not None:
+            acp_module._close_kill_on_close_job(job)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+        if grandchild and process_identity(grandchild):
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(grandchild), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
 
 
 def test_prepare_profile_reclaims_unlocked_owned_temp_dir(tmp_path, monkeypatch):
