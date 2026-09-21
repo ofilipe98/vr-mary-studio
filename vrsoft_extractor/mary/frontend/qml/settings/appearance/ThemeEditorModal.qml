@@ -44,7 +44,7 @@ Popup {
         // Header
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 52
+            implicitHeight: Theme.scaledGeometry(52)
             color: Theme.palette.surfaceRaised
             radius: Theme.radiusCard
 
@@ -53,7 +53,7 @@ Popup {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: 10
+                height: Theme.scaledGeometry(10)
                 color: Theme.palette.surfaceRaised
             }
 
@@ -86,10 +86,10 @@ Popup {
             Layout.fillHeight: true
             clip: true
             contentWidth: availableWidth
-            leftPadding: 16
-            rightPadding: 16
-            topPadding: 16
-            bottomPadding: 16
+            leftPadding: Theme.scaledGeometry(16)
+            rightPadding: Theme.scaledGeometry(16)
+            topPadding: Theme.scaledGeometry(16)
+            bottomPadding: Theme.scaledGeometry(16)
 
             ColumnLayout {
                 width: editorScroll.availableWidth
@@ -126,7 +126,7 @@ Popup {
 
                     ColumnLayout {
                         spacing: Theme.spaceXs
-                        Layout.preferredWidth: 160
+                        Layout.preferredWidth: Theme.scaledGeometry(160)
 
                         Text {
                             text: "Aparência base"
@@ -142,14 +142,14 @@ Popup {
                             VrButton {
                                 text: "Escuro"
                                 variant: modal.themeAppearance === "dark" ? "primary" : "secondary"
-                                implicitHeight: 36
+                                implicitHeight: Theme.scaledGeometry(36)
                                 onClicked: modal.themeAppearance = "dark"
                             }
 
                             VrButton {
                                 text: "Claro"
                                 variant: modal.themeAppearance === "light" ? "primary" : "secondary"
-                                implicitHeight: 36
+                                implicitHeight: Theme.scaledGeometry(36)
                                 onClicked: modal.themeAppearance = "light"
                             }
                         }
@@ -171,7 +171,7 @@ Popup {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 110
+                        Layout.preferredHeight: Theme.scaledGeometry(110)
                         radius: Theme.radiusControl
                         color: modal.colorBackground
                         border.width: 1
@@ -193,18 +193,18 @@ Popup {
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: Theme.spaceSm
-                                    spacing: 6
+                                    spacing: Theme.scaledGeometry(6)
 
                                     Rectangle {
-                                        width: 16; height: 16; radius: 4
+                                        width: Theme.scaledGeometry(16); height: Theme.scaledGeometry(16); radius: Theme.scaledGeometry(4)
                                         color: modal.colorAccent
                                     }
                                     Rectangle {
-                                        Layout.fillWidth: true; height: 6; radius: 3
+                                        Layout.fillWidth: true; height: Theme.scaledGeometry(6); radius: Theme.scaledGeometry(3)
                                         color: modal.colorMuted
                                     }
                                     Rectangle {
-                                        Layout.fillWidth: true; height: 6; radius: 3
+                                        Layout.fillWidth: true; height: Theme.scaledGeometry(6); radius: Theme.scaledGeometry(3)
                                         color: modal.colorBorder
                                     }
                                 }
@@ -215,7 +215,7 @@ Popup {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 anchors.margins: Theme.spaceMd
-                                spacing: 8
+                                spacing: Theme.scaledGeometry(8)
 
                                 Text {
                                     text: modal.themeName || "VRStudio"
@@ -238,9 +238,9 @@ Popup {
                                     spacing: Theme.spaceSm
 
                                     Rectangle {
-                                        implicitHeight: 24
-                                        implicitWidth: 70
-                                        radius: 6
+                                        implicitHeight: Theme.scaledGeometry(24)
+                                        implicitWidth: Theme.scaledGeometry(70)
+                                        radius: Theme.scaledGeometry(6)
                                         color: modal.colorAccent
 
                                         Text {
@@ -254,9 +254,9 @@ Popup {
                                     }
 
                                     Rectangle {
-                                        implicitHeight: 24
-                                        implicitWidth: 80
-                                        radius: 6
+                                        implicitHeight: Theme.scaledGeometry(24)
+                                        implicitWidth: Theme.scaledGeometry(80)
+                                        radius: Theme.scaledGeometry(6)
                                         color: modal.colorSurface
                                         border.width: 1
                                         border.color: modal.colorBorder
@@ -290,7 +290,7 @@ Popup {
                         Text { text: "Fundo principal"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorBackground; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorBackground; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorBackgroundInput
                                 objectName: "colorBackgroundInput"
@@ -310,7 +310,7 @@ Popup {
                         Text { text: "Superfície (cartões e barra lateral)"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorSurface; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorSurface; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorSurfaceInput
                                 objectName: "colorSurfaceInput"
@@ -330,7 +330,7 @@ Popup {
                         Text { text: "Bordas e divisores"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorBorder; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorBorder; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorBorderInput
                                 objectName: "colorBorderInput"
@@ -350,7 +350,7 @@ Popup {
                         Text { text: "Cor primária / Destaque"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorAccent; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorAccent; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorAccentInput
                                 objectName: "colorAccentInput"
@@ -370,7 +370,7 @@ Popup {
                         Text { text: "Texto principal"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorText; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorText; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorTextInput
                                 objectName: "colorTextInput"
@@ -390,7 +390,7 @@ Popup {
                         Text { text: "Texto secundário / suave"; font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; color: Theme.palette.text }
                         RowLayout {
                             spacing: Theme.spaceSm
-                            Rectangle { width: 32; height: 32; radius: 6; color: modal.colorMuted; border.width: 1; border.color: Theme.palette.border }
+                            Rectangle { width: Theme.scaledGeometry(32); height: Theme.scaledGeometry(32); radius: Theme.scaledGeometry(6); color: modal.colorMuted; border.width: 1; border.color: Theme.palette.border }
                             VrTextField {
                                 id: colorMutedInput
                                 objectName: "colorMutedInput"
@@ -408,7 +408,7 @@ Popup {
         // Footer Actions
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 56
+            implicitHeight: Theme.scaledGeometry(56)
             color: Theme.palette.surfaceRaised
             radius: Theme.radiusCard
 
@@ -417,7 +417,7 @@ Popup {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: 10
+                height: Theme.scaledGeometry(10)
                 color: Theme.palette.surfaceRaised
             }
 

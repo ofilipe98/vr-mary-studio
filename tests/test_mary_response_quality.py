@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,15 @@ class TestPromptPrefixCache:
         assert head_one.replace("Pergunta um", "") == head_two.replace(
             "Pergunta dois totalmente diferente", ""
         )
+
+    def test_windows_prefix_warns_about_native_stderr_exit_code(self, tmp_path: Path) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        prompt = orchestrator._enrich_prompt("pergunta", evidence_bundle=None)
+        if os.name == "nt":
+            assert "cmd /c" in prompt
+            assert "stderr" in prompt
+        else:
+            assert "cmd /c" not in prompt
 
 
 # ---------------------------------------------------------------- #5 validação

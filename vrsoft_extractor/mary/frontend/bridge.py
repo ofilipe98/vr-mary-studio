@@ -24,6 +24,7 @@ from .text_rendering import (
     table_clipboard_text,
     table_row_edges,
 )
+from .file_links import linkify_file_references
 from ..config import MarySettings
 
 
@@ -53,6 +54,7 @@ def _stored_bool(value: object, default: bool = False) -> bool:
 
 UI_SCALE_OPTIONS = (
     "auto",
+    "90",
     "100",
     "101",
     "102",
@@ -593,6 +595,11 @@ class FrontendBridge(QObject):
     def messageBlocks(self, markdown: str):
         return presentation_blocks(markdown)
 
+    @Slot(str, result=str)
+    def displayMarkdown(self, markdown: str) -> str:
+        """Linkify inline-code file references for QML text surfaces."""
+        return linkify_file_references(str(markdown or ""))
+
     @Slot(str, str, result=str)
     def tableClipboardText(self, markdown: str, format_name: str) -> str:
         return table_clipboard_text(markdown, format_name)
@@ -621,6 +628,7 @@ class FrontendBridge(QObject):
                 str(markdown or ""),
                 dark=self.themeId == "dark_orange" or self.resolvedAppearance == "dark",
                 monospace_family=self.monospaceFontFamily,
+                palette=dict(self._theme_manager.palette),
             )
         finally:
             self._styling_document = False
@@ -677,6 +685,18 @@ class FrontendBridge(QObject):
         )
         self._preferences.sync()
         self.uiScaleChanged.emit()
+
+    @Slot(int)
+    def stepUiScale(self, direction: int) -> None:  # noqa: N802
+        """Zoom presentation without changing browser or user font preferences."""
+        if direction == 0:
+            self.setUiScale("100")
+            return
+        stops = (90, 100, 110, 125, 150)
+        current = round(self.uiScaleFactor * 100)
+        candidates = [value for value in stops if (value - current) * direction > 0]
+        if candidates:
+            self.setUiScale(str(min(candidates) if direction > 0 else max(candidates)))
 
     @Slot(bool)
     def setHardwareAcceleration(self, enabled: bool) -> None:  # noqa: N802

@@ -52,6 +52,12 @@ def _antigravity_tool_event(
     )
 
 
+def _publish(bridge, db, event: RuntimeEvent) -> None:
+    """Persist then dispatch, mirroring the production orchestrator contract."""
+    db.add_event(event)
+    bridge._on_runtime_event(event)
+
+
 def _typed_tool_sequence(
     provider: AntigravityProvider,
     conversation_id: str,
@@ -229,8 +235,10 @@ def test_antigravity_typed_acp_completed_turn_has_no_active_tool_rows(
     bridge.selectConversationId(cid)
 
     caplog.set_level(logging.WARNING, logger="mary.tool_activity")
-    bridge._on_runtime_event(
-        RuntimeEvent(cid, "turn_started", payload={"execution_id": execution_id})
+    _publish(
+        bridge,
+        db,
+        RuntimeEvent(cid, "turn_started", payload={"execution_id": execution_id}),
     )
     for event in _typed_tool_sequence(
         provider,
@@ -240,9 +248,11 @@ def test_antigravity_typed_acp_completed_turn_has_no_active_tool_rows(
         command="pytest -q",
         title="Executar testes",
     ):
-        bridge._on_runtime_event(event)
-    bridge._on_runtime_event(
-        RuntimeEvent(cid, "turn_completed", payload={"execution_id": execution_id})
+        _publish(bridge, db, event)
+    _publish(
+        bridge,
+        db,
+        RuntimeEvent(cid, "turn_completed", payload={"execution_id": execution_id}),
     )
 
     activities = [row for row in bridge.messages._items if row["role"] == "activity"]
@@ -266,12 +276,14 @@ def test_antigravity_typed_acp_completed_turn_has_no_active_tool_rows(
     parallel_execution = db.add_message(parallel_cid, "user", "Execute em paralelo")
     bridge.refresh()
     bridge.selectConversationId(parallel_cid)
-    bridge._on_runtime_event(
+    _publish(
+        bridge,
+        db,
         RuntimeEvent(
             parallel_cid,
             "turn_started",
             payload={"execution_id": parallel_execution},
-        )
+        ),
     )
     sequences = {
         "tool-a": _typed_tool_sequence(
@@ -292,14 +304,16 @@ def test_antigravity_typed_acp_completed_turn_has_no_active_tool_rows(
         ),
     }
     for index in range(4):
-        bridge._on_runtime_event(sequences["tool-a"][index])
-        bridge._on_runtime_event(sequences["tool-b"][index])
-    bridge._on_runtime_event(
+        _publish(bridge, db, sequences["tool-a"][index])
+        _publish(bridge, db, sequences["tool-b"][index])
+    _publish(
+        bridge,
+        db,
         RuntimeEvent(
             parallel_cid,
             "turn_completed",
             payload={"execution_id": parallel_execution},
-        )
+        ),
     )
     parallel_rows = [
         row for row in bridge.messages._items if row["role"] == "activity"
@@ -380,10 +394,14 @@ def test_antigravity_orphan_still_warns_and_is_interrupted(
     bridge.selectConversationId(cid)
     caplog.set_level(logging.WARNING, logger="mary.tool_activity")
 
-    bridge._on_runtime_event(
-        RuntimeEvent(cid, "turn_started", payload={"execution_id": execution_id})
+    _publish(
+        bridge,
+        db,
+        RuntimeEvent(cid, "turn_started", payload={"execution_id": execution_id}),
     )
-    bridge._on_runtime_event(
+    _publish(
+        bridge,
+        db,
         _antigravity_tool_event(
             provider,
             cid,
@@ -396,10 +414,12 @@ def test_antigravity_orphan_still_warns_and_is_interrupted(
                 "status": "in_progress",
                 "rawInput": {"CommandLine": "sleep 10"},
             },
-        )
+        ),
     )
-    bridge._on_runtime_event(
-        RuntimeEvent(cid, "turn_completed", payload={"execution_id": execution_id})
+    _publish(
+        bridge,
+        db,
+        RuntimeEvent(cid, "turn_completed", payload={"execution_id": execution_id}),
     )
 
     activities = [row for row in bridge.messages._items if row["role"] == "activity"]

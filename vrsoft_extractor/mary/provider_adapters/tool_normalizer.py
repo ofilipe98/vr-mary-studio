@@ -45,6 +45,42 @@ def _first_present(*values: Any) -> Any:
     return None
 
 
+def _acp_content_text(content: Any) -> str | None:
+    """Extract textual blocks from an ACP typed ``content`` collection.
+
+    ACP delivers ``content`` as a list of typed blocks. Only textual blocks
+    become tool output; images, diffs and arbitrary objects are ignored so a
+    Python ``str()`` representation can never leak into the UI. Textual
+    blocks are joined with newlines in their original order, preserving the
+    internal whitespace of each block.
+    """
+    blocks = content if isinstance(content, list) else [content]
+    chunks: list[str] = []
+    for block in blocks:
+        text: str | None = None
+        if isinstance(block, str):
+            text = block
+        elif isinstance(block, dict):
+            inner = block.get("content")
+            if (
+                str(block.get("type") or "content") == "content"
+                and isinstance(inner, dict)
+                and str(inner.get("type") or "text") == "text"
+                and isinstance(inner.get("text"), str)
+            ):
+                text = inner["text"]
+            elif isinstance(block.get("text"), str):
+                text = block["text"]
+        if text is None:
+            continue
+        stripped = text.strip()
+        if stripped:
+            chunks.append(stripped)
+    if not chunks:
+        return None
+    return "\n".join(chunks)
+
+
 _TOOL_IDENTITY_KEYS = (
     ("toolCallId", "tool_call_id", "callID", "callId"),
     ("itemId", "item_id"),
@@ -412,7 +448,7 @@ def normalize_antigravity_event(
 
         content = field("content")
         if output is None and content is not None:
-            output = content
+            output = _acp_content_text(content)
         if output is None:
             output = first_legacy("output", "result")
 

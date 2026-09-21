@@ -9,9 +9,9 @@ import time
 from visual_chat_review import (
     QApplication, QSettings, QObject, QTest, MarySettings, MaryDatabase,
     FrontendBridge, ChatBridge, StudioBridge, create_engine,
-    _apply_application_font, repaint_icons, find_items, Qt,
+    _apply_application_font, repaint_icons, find_items,
 )
-from PySide6.QtCore import QPointF, QPoint
+from PySide6.QtCore import QPointF, QPoint, Qt
 
 
 def main():
@@ -120,6 +120,19 @@ def main():
                 phase = arc.property('sweep')
                 QTest.qWait(100)
                 assert arc.property('sweep') == phase
+                # VR ativo no expandido: sem anel e sem herdar o azul do tema.
+                chat.setVrMode('vr')
+                for theme in ('dark_orange', 'ocean'):
+                    frontend.setTheme(theme)
+                    QTest.qWait(120)
+                    repaint_icons(window.contentItem())
+                    QTest.qWait(40)
+                    name = f'border-vr-expanded-{theme}.png'
+                    window.grabWindow().save(str(output / name))
+                    results.append(name)
+                chat.setVrMode('ultra')
+                frontend.setTheme('dark_orange')
+                QTest.qWait(80)
                 # Existing conversation placement uses the same composer anchor.
                 cid = db.create_conversation('Usage review', 'codex', 'gpt-6-astra', settings.root)
                 db.add_message(cid, 'user', 'Mensagem de teste visual')
@@ -135,6 +148,34 @@ def main():
                 QTest.keyClick(window, Qt.Key_Escape)
                 QTest.qWait(80)
                 assert not dialog.property('visible')
+                # Retraído com VR Ultra: o contorno segue a silhueta campo +
+                # bandeja, sem recuo lateral e sem sobra sob os cantos da bandeja.
+                for _ in range(12):
+                    db.add_message(cid, 'user', 'Mensagem para rolagem.\n\n' * 3)
+                    db.add_message(cid, 'assistant', 'Resposta para rolagem.\n\n' * 3)
+                chat.refresh()
+                chat.selectConversationId(cid)
+                QTest.qWait(120)
+                chat.setVrMode('ultra')
+                timeline = window.findChild(QObject, 'messageList')
+                timeline.setProperty('followTail', False)
+                timeline.setProperty('contentY', 0)
+                QTest.qWait(250)
+                assert card.property('isCompact')
+                # Retraído: o anel do Ultra não é desenhado sobre a bandeja.
+                assert not arc.property('visible')
+                # Captura VR e Ultra nos dois temas para confirmar o composer
+                # retraído sem anel e sem realce laranja no contorno.
+                for mode in ('vr', 'ultra'):
+                    chat.setVrMode(mode)
+                    for theme in ('dark_orange', 'ocean'):
+                        frontend.setTheme(theme)
+                        QTest.qWait(120)
+                        repaint_icons(window.contentItem())
+                        QTest.qWait(40)
+                        name = f'border-compact-{mode}-{theme}.png'
+                        window.grabWindow().save(str(output / name))
+                        results.append(name)
                 warnings = [w.toString() for w in engine._qml_warnings]
                 assert not warnings, warnings
                 (output / 'results.json').write_text(json.dumps(dict(captures=results, warnings=warnings), indent=2), encoding='utf-8')

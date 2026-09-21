@@ -123,6 +123,7 @@ class RetrievalService:
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
         project_workspace: str = "",
+        master_fallback: bool = False,
     ) -> dict[str, Any]:
         """Run a focused evidence retrieval for tools or direct queries."""
         from .code_retrieval import retrieve_code_candidates, resolve_code_contexts
@@ -151,7 +152,7 @@ class RetrievalService:
                             application_contexts=contexts, code_analysis_release=code_analysis_release,
                             code_analysis_manifest_sha256=code_analysis_manifest_sha256,
                             limit_per_scope=needed, limit_per_query=needed, max_caller_nodes=0,
-                            max_excerpt_chars=1200, module=module)
+                            max_excerpt_chars=1200, module=module, master_fallback=master_fallback)
                         hits = [{**c.to_dict(), "reference": c.evidence_id, "excerpt": c.excerpt[:600]} for c in candidates]
                         states[lane] = "scope_required" if contexts == [] else ("available" if hits else "no_results")
                     else:
@@ -217,7 +218,8 @@ class RetrievalService:
 
     def read(self, reference: str, *, cursor: int = 0, limit: int = 4000, start_line: int | None = None,
              end_line: int | None = None, application_contexts: list[dict[str, Any]] | None = None,
-             code_analysis_release: str = "current", code_analysis_manifest_sha256: str = "", project_workspace: str = "") -> dict:
+             code_analysis_release: str = "current", code_analysis_manifest_sha256: str = "", project_workspace: str = "",
+             master_fallback: bool = False) -> dict:
         from .code_retrieval import read_code_source
         if reference.startswith("project:"):
             from .project_sources import read_source
@@ -238,7 +240,8 @@ class RetrievalService:
             return {"state": "no_results", "reference": reference, "error": "Documento indisponível ou fora do escopo permitido."}
         return read_code_source(self._router.root, reference, application_contexts=application_contexts,
             code_analysis_release=code_analysis_release, code_analysis_manifest_sha256=code_analysis_manifest_sha256,
-            cursor=cursor, limit=limit, start_line=start_line, end_line=end_line)
+            cursor=cursor, limit=limit, start_line=start_line, end_line=end_line,
+            master_fallback=master_fallback)
 
     def hybrid_search(self, query: str, limit: int = 10, *, source: str = "", module: str = "") -> list[str]:
         """Run hybrid search (FTS5 + Semantic RRF)."""
@@ -294,6 +297,7 @@ class RetrievalService:
                             limit_per_query=2,
                             module=bundle.profile.module,
                             product=bundle.profile.product,
+                            master_fallback=True,
                         )
                         if code_cands:
                             bundle = replace(bundle, candidates=tuple(code_cands) + tuple(bundle.candidates))

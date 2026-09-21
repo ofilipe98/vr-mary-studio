@@ -8,6 +8,19 @@ import "../theme"
 Item {
     id: composerCard
     required property var page
+    property string submissionError: ""
+    Text {
+        objectName: "chatSubmissionError"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.top
+        anchors.bottomMargin: Theme.scaledGeometry(8)
+        visible: composerCard.submissionError.length > 0
+        text: composerCard.submissionError
+        color: Theme.palette.danger
+        font.pixelSize: Theme.fontSize(12)
+        wrapMode: Text.Wrap
+    }
     property alias approvalSelectorItem: approvalSelector
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
@@ -60,29 +73,29 @@ Item {
     readonly property bool hasSkills: composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0
     readonly property real attachmentsAreaHeight: {
         var h = 0
-        if (hasImageAttachments) h += 68
-        if (hasFileAttachments) h += 34
+        if (hasImageAttachments) h += Theme.scaledGeometry(68)
+        if (hasFileAttachments) h += Theme.scaledGeometry(34)
         return h
     }
     // Distância do topo do cartão até o campo de texto, sem ler AnchorLines
     // (attachmentList.bottom.y é indefinido e zerava a margem, sobrepondo o texto aos thumbnails).
     // Thumbnails: top 12 + altura 60 = 72; faixa de arquivos: 10 (sem thumbs) ou 8 + 30 de altura.
     readonly property real composerTopMargin: {
-        if (composerCard.isCompact) return 6
-        if (hasImageAttachments && hasFileAttachments) return 116
-        if (hasImageAttachments) return 78
-        if (hasFileAttachments) return 46
-        return 12
+        if (composerCard.isCompact) return Theme.scaledGeometry(6)
+        if (hasImageAttachments && hasFileAttachments) return Theme.scaledGeometry(116)
+        if (hasImageAttachments) return Theme.scaledGeometry(78)
+        if (hasFileAttachments) return Theme.scaledGeometry(46)
+        return Theme.scaledGeometry(12)
     }
-    readonly property real skillsAreaHeight: hasSkills ? 34 : 0
+    readonly property real skillsAreaHeight: hasSkills ? Theme.scaledGeometry(34) : 0
     readonly property real chipAreaHeight: attachmentsAreaHeight + skillsAreaHeight
 
-    readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
+    readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54),
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
     // Expandido: card único com a linha de controles integrada na base.
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + 8 : 0) + Theme.compactControlHeight + 22
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + Theme.spaceSm : 0) + Theme.compactControlHeight + Theme.scaledGeometry(22)
     // Compacto: faixa do campo + bandeja de controles separada logo abaixo.
-    readonly property real compactSurfaceHeight: 46
+    readonly property real compactSurfaceHeight: Theme.scaledGeometry(46)
     readonly property real compactHeight: compactSurfaceHeight + Theme.compactControlHeight - Theme.spaceXs
 
     objectName: "chatComposerCard"
@@ -123,14 +136,14 @@ Item {
         height: composerCard.isCompact
             ? composerCard.compactSurfaceHeight
             : composerCard.normalHeight
-        radius: 16
+        radius: Theme.scaledGeometry(16)
         clip: true
         color: Theme.palette.chatComposer
         border.width: 1
         border.color: composerCard.page.composerDropActive
-            ? Theme.palette.brandOrange
-            : composerCard.vrActive
-                ? (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45))
+            ? (composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange)
+            : (composerCard.vrActive && !composerCard.isCompact)
+                ? (composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45))
                 : (composerInput.activeFocus
                     ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
                     : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
@@ -173,12 +186,12 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
-            anchors.topMargin: 12
-            height: visible ? 60 : 0
+            anchors.leftMargin: Theme.scaledGeometry(14)
+            anchors.rightMargin: Theme.scaledGeometry(14)
+            anchors.topMargin: Theme.scaledGeometry(12)
+            height: visible ? Theme.scaledGeometry(60) : 0
             orientation: ListView.Horizontal
-            spacing: 10
+            spacing: Theme.scaledGeometry(10)
             clip: true
             model: composerCard.page.chatBridge.attachments
             delegate: Item {
@@ -199,14 +212,14 @@ Item {
                     return "file://" + p.replace(/\\/g, "/")
                 }
                 visible: isImage
-                width: isImage ? 60 : 0
-                height: isImage ? 60 : 0
+                width: isImage ? Theme.scaledGeometry(60) : 0
+                height: isImage ? Theme.scaledGeometry(60) : 0
 
                 Rectangle {
                     id: imageThumbnailCard
                     objectName: "chatAttachmentThumbnail"
                     anchors.fill: parent
-                    radius: 8
+                    radius: Theme.scaledGeometry(8)
                     color: Theme.palette.chatControl
                     border.width: 1
                     border.color: Theme.palette.chatBorder
@@ -231,22 +244,22 @@ Item {
                     Rectangle {
                         id: thumbMask
                         anchors.fill: parent
-                        radius: 8
+                        radius: Theme.scaledGeometry(8)
                         visible: false
                     }
 
                     Rectangle {
                         anchors.top: parent.top
                         anchors.right: parent.right
-                        anchors.margins: 3
-                        width: 16
-                        height: 16
-                        radius: 8
+                        anchors.margins: Theme.scaledGeometry(3)
+                        width: Theme.scaledGeometry(16)
+                        height: Theme.scaledGeometry(16)
+                        radius: Theme.scaledGeometry(8)
                         color: Qt.rgba(0, 0, 0, 0.65)
                         VrIconButton {
                             anchors.centerIn: parent
-                            width: 16
-                            height: 16
+                            width: Theme.scaledGeometry(16)
+                            height: Theme.scaledGeometry(16)
                             iconKind: "close"
                             iconSize: 8
                             foreground: "#FFFFFF"
@@ -265,12 +278,12 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: attachmentThumbnailsList.visible ? attachmentThumbnailsList.bottom : parent.top
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
+            anchors.leftMargin: Theme.scaledGeometry(14)
+            anchors.rightMargin: Theme.scaledGeometry(14)
             anchors.topMargin: attachmentThumbnailsList.visible ? 8 : 10
-            height: visible ? 30 : 0
+            height: visible ? Theme.scaledGeometry(30) : 0
             orientation: ListView.Horizontal
-            spacing: 6
+            spacing: Theme.scaledGeometry(6)
             clip: true
             model: composerCard.page.chatBridge.attachments
             delegate: Rectangle {
@@ -285,19 +298,19 @@ Item {
                 }
                 visible: !isImageChip
                 width: isImageChip ? 0 : Math.min(220, chipText.implicitWidth + 38)
-                height: isImageChip ? 0 : 26
-                radius: 8
+                height: isImageChip ? 0 : Theme.scaledGeometry(26)
+                radius: Theme.scaledGeometry(8)
                 color: Theme.palette.chatControl
                 border.width: 1
                 border.color: Theme.palette.chatBorder
                 Row {
                     anchors.fill: parent
-                    anchors.leftMargin: 8
-                    anchors.rightMargin: 4
-                    spacing: 5
+                    anchors.leftMargin: Theme.scaledGeometry(8)
+                    anchors.rightMargin: Theme.scaledGeometry(4)
+                    spacing: Theme.scaledGeometry(5)
                     VrLineIcon {
-                        width: 14
-                        height: 14
+                        width: Theme.scaledGeometry(14)
+                        height: Theme.scaledGeometry(14)
                         anchors.verticalCenter: parent.verticalCenter
                         kind: "file"
                         foreground: Theme.palette.brandOrange
@@ -313,8 +326,8 @@ Item {
                         font.pixelSize: Theme.fontSize(12)
                     }
                     VrIconButton {
-                        width: 22
-                        height: 22
+                        width: Theme.scaledGeometry(22)
+                        height: Theme.scaledGeometry(22)
                         anchors.verticalCenter: parent.verticalCenter
                         iconKind: "close"
                         iconSize: 12
@@ -332,11 +345,11 @@ Item {
             property alias text: composerInput.text
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: 16
+            anchors.leftMargin: Theme.scaledGeometry(16)
             anchors.rightMargin: composerCard.isCompact ? 86 : 16
             anchors.top: parent.top
             anchors.topMargin: composerCard.composerTopMargin
-            height: composerCard.isCompact ? 34 : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54,
+            height: composerCard.isCompact ? Theme.scaledGeometry(34) : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54),
                 contentHeight + topPadding + bottomPadding))
             clip: true
 
@@ -355,6 +368,10 @@ Item {
             ScrollBar.vertical: VrScrollBar {
                 id: composerScrollBar
                 objectName: "chatComposerScrollBar"
+                parent: composerScroll
+                x: composerScroll.mirrored ? 0 : composerScroll.width - width
+                y: composerScroll.topPadding
+                height: composerScroll.availableHeight
             }
 
             VrTextArea {
@@ -396,12 +413,12 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: composerScroll.bottom
-            anchors.leftMargin: 14
-            anchors.rightMargin: 14
+            anchors.leftMargin: Theme.scaledGeometry(14)
+            anchors.rightMargin: Theme.scaledGeometry(14)
             anchors.topMargin: 2
-            height: visible ? 30 : 0
+            height: visible ? Theme.scaledGeometry(30) : 0
             orientation: ListView.Horizontal
-            spacing: 6
+            spacing: Theme.scaledGeometry(6)
             clip: true
             model: composerCard.page.chatBridge.activeSkills
             delegate: Rectangle {
@@ -409,16 +426,16 @@ Item {
                 required property int index
                 required property var modelData
                 width: Math.min(220, skillLabel.implicitWidth + 34)
-                height: 26
-                radius: 8
+                height: Theme.scaledGeometry(26)
+                radius: Theme.scaledGeometry(8)
                 color: Theme.palette.chatControl
                 border.width: 1
                 border.color: Theme.palette.chatBorder
                 Row {
                     anchors.fill: parent
-                    anchors.leftMargin: 8
-                    anchors.rightMargin: 4
-                    spacing: 4
+                    anchors.leftMargin: Theme.scaledGeometry(8)
+                    anchors.rightMargin: Theme.scaledGeometry(4)
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         id: skillLabel
                         width: parent.parent.width - 30
@@ -431,8 +448,8 @@ Item {
                         font.weight: Font.DemiBold
                     }
                     VrIconButton {
-                        width: 22
-                        height: 22
+                        width: Theme.scaledGeometry(22)
+                        height: Theme.scaledGeometry(22)
                         anchors.verticalCenter: parent.verticalCenter
                         iconKind: "close"
                         iconSize: 12
@@ -447,13 +464,13 @@ Item {
             id: attachButton
             objectName: "chatAttachButton"
             anchors.right: sendButton.left
-            anchors.rightMargin: 8
+            anchors.rightMargin: Theme.scaledGeometry(8)
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            width: 32
-            height: 32
-            implicitWidth: 32
-            implicitHeight: 32
+            anchors.bottomMargin: Theme.scaledGeometry(8)
+            width: Theme.scaledGeometry(32)
+            height: Theme.scaledGeometry(32)
+            implicitWidth: Theme.scaledGeometry(32)
+            implicitHeight: Theme.scaledGeometry(32)
             iconKind: "attachment"
             iconSize: 18
             foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
@@ -464,14 +481,15 @@ Item {
 
         VrIconButton {
             id: sendButton
+            objectName: "chatSendButton"
             anchors.right: parent.right
-            anchors.rightMargin: 12
+            anchors.rightMargin: Theme.scaledGeometry(12)
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            width: 32
-            height: 32
-            implicitWidth: 32
-            implicitHeight: 32
+            anchors.bottomMargin: Theme.scaledGeometry(8)
+            width: Theme.scaledGeometry(32)
+            height: Theme.scaledGeometry(32)
+            implicitWidth: Theme.scaledGeometry(32)
+            implicitHeight: Theme.scaledGeometry(32)
             round: true
             enabled: composerCard.page.chatBridge.turnRunning || composerInput.text.trim().length > 0 || composerCard.page.chatBridge.attachments.length > 0 || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
             Accessible.name: composerCard.page.chatBridge.turnRunning ? "Interromper geração" : "Enviar mensagem"
@@ -480,7 +498,7 @@ Item {
                 : "../../../assets/chat-send.svg")
             foreground: "#FFFFFF"
             background: Rectangle {
-                radius: 16
+                radius: Theme.scaledGeometry(16)
                 color: composerCard.page.chatBridge.turnRunning
                     ? (parent.down
                         ? Qt.darker(Theme.palette.danger, 1.18)
@@ -503,9 +521,9 @@ Item {
             objectName: "vrModeButton"
             property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
             implicitWidth: vrModeContent.implicitWidth + 14
-            implicitHeight: 28
-            leftPadding: 6
-            rightPadding: 6
+            implicitHeight: Theme.scaledGeometry(28)
+            leftPadding: Theme.scaledGeometry(6)
+            rightPadding: Theme.scaledGeometry(6)
             hoverEnabled: true
             focusPolicy: Qt.StrongFocus
             anchors.right: attachButton.left
@@ -513,12 +531,12 @@ Item {
             anchors.verticalCenter: attachButton.verticalCenter
             contentItem: Row {
                 id: vrModeContent
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
                 anchors.centerIn: parent
                 Text {
                     text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
                     color: composerCard.page.chatBridge.vrMode !== "off"
-                        ? (Theme.palette.brandOrange || "#f59e0b")
+                        ? Theme.vrAccent
                         : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12.5)
@@ -528,7 +546,7 @@ Item {
                 }
             }
             background: Rectangle {
-                radius: 6
+                radius: Theme.scaledGeometry(6)
                 color: vrModeButton.down || vrModeButton.hovered
                     ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
             }
@@ -541,12 +559,16 @@ Item {
     Rectangle {
         id: composerControlsBox
         objectName: "chatComposerControlsBox"
-        x: composerCard.isCompact ? Theme.spaceXl : Theme.spaceXs
+        // Retraído: bandeja mais estreita, ancorada nas laterais do composer e
+        // sobreposta ao campo logo acima, de modo que só os cantos inferiores
+        // arredondados apareçam — sem uma segunda curva solta no meio.
+        readonly property real compactInset: Theme.spaceLg
+        x: composerCard.isCompact ? compactInset : Theme.spaceXs
         y: composerCard.isCompact
             ? composerCard.compactSurfaceHeight - Theme.spaceXs
             : composerCard.normalHeight - height - 8
         width: composerCard.isCompact
-            ? composerCard.width - 2 * Theme.spaceXl
+            ? composerCard.width - 2 * compactInset
             : Math.max(0, vrModeButton.x - 2 * Theme.spaceXs)
         height: Theme.compactControlHeight
         radius: composerCard.isCompact ? Theme.radiusControl : 0
@@ -593,7 +615,7 @@ Item {
                 Rectangle {
                     visible: effortSelector.visible
                     Layout.preferredWidth: 1
-                    Layout.preferredHeight: 14
+                    Layout.preferredHeight: Theme.scaledGeometry(14)
                     Layout.alignment: Qt.AlignVCenter
                     color: Theme.palette.chatDivider
                     opacity: 0.7
@@ -613,7 +635,7 @@ Item {
 
                 Rectangle {
                     Layout.preferredWidth: 1
-                    Layout.preferredHeight: 14
+                    Layout.preferredHeight: Theme.scaledGeometry(14)
                     Layout.alignment: Qt.AlignVCenter
                     color: Theme.palette.chatDivider
                     opacity: 0.7
@@ -632,8 +654,8 @@ Item {
                 VrContextButton {
                     id: contextUsageButton
                     objectName: "contextUsageButton"
-                    implicitWidth: 28
-                    implicitHeight: 28
+                    implicitWidth: Theme.scaledGeometry(28)
+                    implicitHeight: Theme.scaledGeometry(28)
                     visible: composerCard.page.chatBridge.hasContextWindow
                     fraction: composerCard.page.chatBridge.contextUsageFraction
                     usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel

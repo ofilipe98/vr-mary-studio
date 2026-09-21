@@ -20,6 +20,10 @@ ApplicationWindow {
     font.family: Theme.fontFamily
     font.pixelSize: Theme.bodySize
 
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: frontend.stepUiScale(1) }
+    Shortcut { sequence: "Ctrl+-"; onActivated: frontend.stepUiScale(-1) }
+    Shortcut { sequence: "Ctrl+0"; onActivated: frontend.stepUiScale(0) }
+
     Binding { target: Theme; property: "viewportWidth"; value: window.width }
     Binding { target: Theme; property: "viewportHeight"; value: window.height }
 

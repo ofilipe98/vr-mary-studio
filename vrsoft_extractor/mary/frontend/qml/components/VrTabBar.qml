@@ -7,7 +7,7 @@ Item {
 
     property var model: []
     property int currentIndex: 0
-    property bool understated: false
+    property bool understated: true
     readonly property int count: model.length
     signal activated(int index)
 
@@ -39,7 +39,7 @@ Item {
                 required property string modelData
 
                 width: tabLabel.implicitWidth + 28
-                height: Theme.compactControlHeight
+                height: Math.max(Theme.compactControlHeight, tabLabel.implicitHeight + Theme.spaceMd)
                 activeFocusOnTab: true
                 transformOrigin: Item.Center
                 scale: !frontend.reduceMotion && tabTap.pressed ? 0.97 : 1
@@ -87,7 +87,7 @@ Item {
                         ? Font.DemiBold : Font.Medium
                 }
 
-                HoverHandler { id: tabHover }
+                HoverHandler { id: tabHover; cursorShape: Qt.PointingHandCursor }
 
                 TapHandler {
                     id: tabTap
@@ -107,7 +107,14 @@ Item {
         }
     }
 
-    onCurrentIndexChanged: {
+    onCurrentIndexChanged: Qt.callLater(ensureCurrentVisible)
+    onWidthChanged: Qt.callLater(ensureCurrentVisible)
+    Connections {
+        target: Theme
+        function onTextScaleChanged() { Qt.callLater(root.ensureCurrentVisible) }
+    }
+
+    function ensureCurrentVisible() {
         const target = tabRepeater.itemAt(currentIndex)
         if (target) {
             const left = target.x

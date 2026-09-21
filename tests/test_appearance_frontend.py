@@ -193,9 +193,14 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         assert composer.property("color").alphaF() == 1.0
         frontend.setUiScale("150")
         QTest.qWait(20)
-        # T3 model: prompt/code stay absolute in their own setting; only the
-        # interface scale follows uiScale (18px prompt unchanged at 150%).
-        assert prompt.property("font").pixelSize() == 18
+        # App zoom magnifies all text. Interface font size, like T3's root rem,
+        # is separate and must not double-scale the prompt's own preference.
+        assert prompt.property("font").pixelSize() == 27
+        frontend.setInterfaceTypography("Arial", 20)
+        QTest.qWait(20)
+        assert prompt.property("font").pixelSize() == 27
+        assert frontend.promptFontSize == 18
+        frontend.setInterfaceTypography("Arial", 16)
         frontend.setCurrentPage(7)
         QTest.qWait(100)
         window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
@@ -206,4 +211,84 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         assert window.property("font").family() == "Arial"
         assert window.property("font").pixelSize() == 24
         assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
+        assert not warnings
+
+
+def test_zoom_control_scales_geometry_and_preserves_typography_preferences(appearance):
+    frontend, window = appearance
+    frontend.setTypographyAdvanced(True)
+    combo = item(window, "appearanceScaleCombo")
+    baseline_height = combo.height()
+    baseline_font = combo.property("font").pixelSize()
+    original_prompt = frontend.promptFontSize
+    original_code = frontend.codeFontSize
+    frontend.setUiScale("150")
+    QTest.qWait(50)
+    assert combo.height() == pytest.approx(baseline_height * 1.5, abs=1)
+    assert combo.property("font").pixelSize() == pytest.approx(baseline_font * 1.5, abs=1)
+    assert frontend.promptFontSize == original_prompt
+    assert frontend.codeFontSize == original_code
+    frontend.stepUiScale(-1)
+    assert frontend.uiScale == "125"
+    frontend.stepUiScale(0)
+    assert frontend.uiScale == "100"
+    frontend.stepUiScale(-1)
+    frontend.stepUiScale(-1)
+    assert frontend.uiScale == "90"
+    frontend.stepUiScale(1)
+    assert frontend.uiScale == "100"
+    frontend.setInterfaceTypography("Segoe UI", 20)
+    QTest.qWait(50)
+    assert combo.height() == pytest.approx(baseline_height * 1.25, abs=1)
+    assert frontend.promptFontSize == original_prompt
+    assert frontend.codeFontSize == original_code
+
+
+def test_compact_navigation_keeps_all_pages_reachable(tmp_path):
+    with appearance_window(tmp_path, full=True) as (frontend, engine, window, warnings):
+        window.setWidth(390)
+        window.setHeight(844)
+        frontend.setUiScale("125")
+        QTest.qWait(50)
+        navigation = item(window, "compactPageNavigation")
+        assert navigation.isVisible()
+        assert navigation.property("count") == 8
+        navigation.activated.emit(2)
+        QTest.qWait(50)
+        assert frontend.currentPage == 2
+        page = item(window, "knowledgePage")
+        assert page.width() <= window.width()
+        assert page.mapToScene(QPointF(page.width(), 0)).x() <= window.width()
+        navigation.activated.emit(7)
+        QTest.qWait(50)
+        assert frontend.currentPage == 7
+        assert not warnings
+
+
+def test_surface_redocks_without_retaining_desktop_geometry(tmp_path):
+    with appearance_window(tmp_path, full=True) as (frontend, engine, window, warnings):
+        frontend.setReduceMotion(True)
+        chat = engine.rootContext().contextProperty("chat")
+        studio = engine.rootContext().contextProperty("studio")
+        with patch.object(chat, "refreshModels"), patch.object(studio, "refreshProviders"):
+            frontend.setCurrentPage(1)
+            QTest.qWait(100)
+        page = item(window, "chatPage")
+        page.setProperty("surfaceVisible", True)
+        page.setProperty("surfaceIndex", 2)
+        frontend.setTypographyAdvanced(True)
+        frontend.setTerminalTypography("Consolas", 15)
+        QTest.qWait(50)
+        terminal = item(window, "terminalCommandInput")
+        assert terminal.property("font").family() == "Consolas"
+        assert terminal.property("font").pixelSize() == 15
+        for width in (1366, 390, 768, 1366):
+            window.setWidth(width)
+            QTest.qWait(100)
+            panel = item(window, "surfacePanel")
+            close = item(window, "surfaceCollapseButton")
+            assert panel.isVisible()
+            assert panel.mapToScene(QPointF()).x() >= 0
+            assert panel.mapToScene(QPointF(panel.width(), 0)).x() <= width + 1
+            assert close.mapToScene(QPointF(close.width(), 0)).x() <= width + 1
         assert not warnings

@@ -13,7 +13,7 @@ Item {
     property bool openingLogin: false
     property string refreshFeedback: ""
     property bool copied: false
-    readonly property bool narrow: width < 720
+    readonly property bool narrow: width < Theme.scaledGeometry(720)
     readonly property var selected: {
         var items = studio.providerItems
         for (var i = 0; i < items.length; ++i)
@@ -122,7 +122,7 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 12
+        spacing: Theme.scaledGeometry(12)
 
         VrComboBox {
             id: providerCombo
@@ -140,7 +140,7 @@ Item {
             Accessible.name: "Provedor selecionado"
             onActivated: root.selectProvider(studio.providerItems[currentIndex].id)
             background: Rectangle {
-                radius: 10
+                radius: Theme.scaledGeometry(10)
                 color: Theme.palette.background
                 border.width: providerCombo.activeFocus ? 2 : 1
                 border.color: providerCombo.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -150,19 +150,19 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 16
+            spacing: Theme.scaledGeometry(16)
 
             // ------------------------------------------------ Left Sidebar
             ColumnLayout {
                 visible: !root.narrow
-                Layout.preferredWidth: 280
+                Layout.preferredWidth: Theme.scaledGeometry(280)
                 Layout.fillHeight: true
-                spacing: 12
+                spacing: Theme.scaledGeometry(12)
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 4
-                    Layout.rightMargin: 4
+                    Layout.leftMargin: Theme.scaledGeometry(4)
+                    Layout.rightMargin: Theme.scaledGeometry(4)
 
                     Text {
                         text: "Provedores"
@@ -175,12 +175,12 @@ Item {
                     }
 
                     Rectangle {
-                        radius: 8
+                        radius: Theme.scaledGeometry(8)
                         color: Theme.palette.codeSurface
                         border.width: 1
                         border.color: Theme.palette.border
                         implicitWidth: countText.implicitWidth + 14
-                        implicitHeight: 22
+                        implicitHeight: Theme.scaledGeometry(22)
 
                         Text {
                             id: countText
@@ -200,7 +200,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
                     model: studio.providerItems
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: VrScrollBar {}
@@ -210,7 +210,7 @@ Item {
                         required property int index
                         readonly property var stateInfo: root.status(modelData)
                         width: providerList.width
-                        height: 72
+                        height: Theme.scaledGeometry(72)
                         padding: 0
                         objectName: "providerRow_" + modelData.id
                         Accessible.name: modelData.name + ", " + stateInfo.text
@@ -221,7 +221,7 @@ Item {
                         Keys.onUpPressed: root.moveProvider(-1)
 
                         background: Rectangle {
-                            radius: 12
+                            radius: Theme.scaledGeometry(12)
                             color: root.selected.id === providerRow.modelData.id
                                 ? Qt.alpha(Theme.palette.brandOrange, 0.08)
                                 : providerRow.hovered ? Theme.palette.codeSurface : Theme.palette.background
@@ -234,8 +234,8 @@ Item {
                                 visible: root.selected.id === providerRow.modelData.id
                                 anchors.left: parent.left
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: 3
-                                height: 28
+                                width: Theme.scaledGeometry(3)
+                                height: Theme.scaledGeometry(28)
                                 radius: 1.5
                                 color: Theme.palette.brandOrange
                             }
@@ -246,22 +246,22 @@ Item {
 
                         contentItem: RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 12
-                            spacing: 10
+                            anchors.leftMargin: Theme.scaledGeometry(12)
+                            anchors.rightMargin: Theme.scaledGeometry(12)
+                            spacing: Theme.scaledGeometry(10)
 
                             Rectangle {
-                                Layout.preferredWidth: 34
-                                Layout.preferredHeight: 34
-                                radius: 8
+                                Layout.preferredWidth: Theme.scaledGeometry(34)
+                                Layout.preferredHeight: Theme.scaledGeometry(34)
+                                radius: Theme.scaledGeometry(8)
                                 color: Theme.palette.codeSurface
                                 border.width: 1
                                 border.color: Theme.palette.border
 
                                 VrProviderIcon {
                                     anchors.centerIn: parent
-                                    width: 22
-                                    height: 22
+                                    width: Theme.scaledGeometry(22)
+                                    height: Theme.scaledGeometry(22)
                                     provider: providerRow.modelData.id
                                 }
                             }
@@ -269,11 +269,11 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                spacing: 3
+                                spacing: Theme.scaledGeometry(3)
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 6
+                                    spacing: Theme.scaledGeometry(6)
 
                                     Text {
                                         Layout.fillWidth: true
@@ -287,12 +287,12 @@ Item {
 
                                     Rectangle {
                                         visible: !!providerRow.modelData.installVersion
-                                        radius: 4
+                                        radius: Theme.scaledGeometry(4)
                                         color: Theme.palette.codeSurface
                                         border.width: 1
                                         border.color: Theme.palette.border
                                         implicitWidth: verText.implicitWidth + 8
-                                        implicitHeight: 16
+                                        implicitHeight: Theme.scaledGeometry(16)
 
                                         Text {
                                             id: verText
@@ -307,10 +307,10 @@ Item {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 5
+                                    spacing: Theme.scaledGeometry(5)
 
                                     Rectangle {
-                                        width: 6; height: 6; radius: 3
+                                        width: Theme.scaledGeometry(6); height: Theme.scaledGeometry(6); radius: Theme.scaledGeometry(3)
                                         color: providerRow.stateInfo.tone === "success" ? Theme.palette.success
                                             : providerRow.stateInfo.tone === "danger" ? Theme.palette.danger
                                             : providerRow.stateInfo.tone === "warning" ? Theme.palette.warning
@@ -359,8 +359,8 @@ Item {
                 contentWidth: availableWidth
                 clip: true
                 topPadding: 0
-                rightPadding: 12
-                bottomPadding: 24
+                rightPadding: Theme.scaledGeometry(12)
+                bottomPadding: Theme.scaledGeometry(24)
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -372,7 +372,7 @@ Item {
                         id: detailsColumn
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(848, parent.width)
-                        spacing: 24
+                        spacing: Theme.scaledGeometry(24)
 
                         // Header Identity Card
                         AppearanceGroup {
@@ -380,30 +380,31 @@ Item {
 
                             Item {
                                 Layout.fillWidth: true
-                                implicitHeight: headerDetailsContent.implicitHeight + 28
+                                implicitHeight: headerDetailsContent.implicitHeight + Theme.space2Xl
 
                                 ColumnLayout {
                                     id: headerDetailsContent
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 16
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(16)
 
-                                    RowLayout {
+                                    GridLayout {
                                         Layout.fillWidth: true
-                                        spacing: 14
+                                        columns: headerDetailsContent.width < Theme.scaledGeometry(600) ? 2 : 3
+                                        columnSpacing: Theme.scaledGeometry(14)
 
                                         Rectangle {
-                                            Layout.preferredWidth: 44
-                                            Layout.preferredHeight: 44
-                                            radius: 10
+                                            Layout.preferredWidth: Theme.scaledGeometry(44)
+                                            Layout.preferredHeight: Theme.scaledGeometry(44)
+                                            radius: Theme.scaledGeometry(10)
                                             color: Theme.palette.codeSurface
                                             border.width: 1
                                             border.color: Theme.palette.border
 
                                             VrProviderIcon {
                                                 anchors.centerIn: parent
-                                                width: 26
-                                                height: 26
+                                                width: Theme.scaledGeometry(26)
+                                                height: Theme.scaledGeometry(26)
                                                 provider: root.selected.id || "codex"
                                             }
                                         }
@@ -411,11 +412,15 @@ Item {
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
-                                            spacing: 3
+                                            spacing: Theme.scaledGeometry(3)
 
-                                            RowLayout {
-                                                spacing: 8
+                                            GridLayout {
+                                                Layout.fillWidth: true
+                                                columns: headerDetailsContent.width < Theme.scaledGeometry(600) ? 1 : 2
+                                                columnSpacing: Theme.spaceSm
                                                 Text {
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                     text: root.selected.name || "Selecione um provedor"
                                                     elide: Text.ElideRight
                                                     color: Theme.palette.headingText
@@ -443,8 +448,9 @@ Item {
                                         }
 
                                         RowLayout {
-                                            spacing: 10
-                                            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                                            spacing: Theme.scaledGeometry(10)
+                                            Layout.columnSpan: headerDetailsContent.width < Theme.scaledGeometry(600) ? 2 : 1
+                                            Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
 
                                             Text {
                                                 text: root.selected.enabled ? "Ativado" : "Desativado"
@@ -470,7 +476,7 @@ Item {
                                                 objectName: "refreshProviderRuntimes"
                                                 text: root.refreshing ? "Verificando\u2026" : "Verificar runtime"
                                                 variant: "secondary"
-                                                implicitHeight: 32
+                                                implicitHeight: Theme.scaledGeometry(32)
                                                 enabled: !root.refreshing && !root.runtimeBusy
                                                 Accessible.name: "Verificar os execut\u00e1veis instalados nesta m\u00e1quina"
                                                 onClicked: {
@@ -498,9 +504,10 @@ Item {
                                         color: Theme.palette.border
                                     }
 
-                                    RowLayout {
+                                    GridLayout {
                                         Layout.fillWidth: true
-                                        spacing: 12
+                                        columns: headerDetailsContent.width < Theme.scaledGeometry(500) ? 1 : 2
+                                        columnSpacing: Theme.spaceMd
 
                                         Text {
                                             text: "Nome de exibi\u00e7\u00e3o"
@@ -508,19 +515,19 @@ Item {
                                             font.family: Theme.fontFamily
                                             font.pixelSize: Theme.fontSize(13)
                                             font.weight: Font.Medium
-                                            Layout.preferredWidth: 140
+                                            Layout.preferredWidth: Theme.scaledGeometry(140)
                                         }
 
                                         VrTextField {
                                             id: providerDisplayName
                                             objectName: "providerDisplayName"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             text: root.selected.name || ""
                                             maximumLength: 80
                                             Accessible.name: "Nome de exibi\u00e7\u00e3o do provedor"
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: providerDisplayName.activeFocus ? 2 : 1
                                                 border.color: providerDisplayName.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -539,7 +546,7 @@ Item {
                         // ---------------- Section 1: Runtime
                         Text {
                             text: "Runtime"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -552,18 +559,19 @@ Item {
 
                             Item {
                                 Layout.fillWidth: true
-                                implicitHeight: runtimeStatusRow.implicitHeight + 24
+                                implicitHeight: runtimeStatusRow.implicitHeight + Theme.space2Xl
 
-                                RowLayout {
+                                GridLayout {
                                     id: runtimeStatusRow
+                                    columns: width < Theme.scaledGeometry(500) ? 1 : 2
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 12
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    columnSpacing: Theme.scaledGeometry(12)
 
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        spacing: 4
+                                        spacing: Theme.scaledGeometry(4)
 
                                         Text {
                                             text: "Estado da instala\u00e7\u00e3o"
@@ -611,13 +619,13 @@ Item {
                                 RowLayout {
                                     id: pathContentRow
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 12
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(12)
 
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        spacing: 4
+                                        spacing: Theme.scaledGeometry(4)
 
                                         Text {
                                             text: "Caminho do execut\u00e1vel"
@@ -629,7 +637,7 @@ Item {
 
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: 8
+                                            spacing: Theme.scaledGeometry(8)
                                             HoverHandler { id: pathHover }
 
                                             Text {
@@ -646,8 +654,8 @@ Item {
                                             VrIconButton {
                                                 id: copyPath
                                                 objectName: "copyProviderPath"
-                                                implicitWidth: 28
-                                                implicitHeight: 28
+                                                implicitWidth: Theme.scaledGeometry(28)
+                                                implicitHeight: Theme.scaledGeometry(28)
                                                 iconSize: 14
                                                 iconKind: root.copied ? "check" : "copy"
                                                 opacity: pathHover.hovered || hovered || activeFocus || root.copied ? 1 : 0.6
@@ -678,8 +686,8 @@ Item {
                                 ColumnLayout {
                                     id: installActionsCol
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 10
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(10)
 
                                     Text {
                                         visible: !root.selected.available && !root.runtimeBusy
@@ -706,7 +714,7 @@ Item {
 
                                     Flow {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.scaledGeometry(8)
 
                                         VrProviderAction {
                                             objectName: "installProviderCli"
@@ -718,7 +726,7 @@ Item {
                                                 : root.selected.runtimeState === "error" ? "Tentar instalar novamente"
                                                 : "Baixar e instalar CLI"
                                             variant: root.selected.available ? "secondary" : "primary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.installProviderCli(root.selected.id)
                                         }
 
@@ -727,7 +735,7 @@ Item {
                                             visible: root.runtimeBusy && !!root.selected.installSupported
                                             text: "Cancelar"
                                             variant: "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.cancelProviderInstall(root.selected.id)
                                         }
 
@@ -735,7 +743,7 @@ Item {
                                             visible: !!root.selected.installDocs
                                             text: "Instala\u00e7\u00e3o oficial \u2197"
                                             variant: "ghost"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: Qt.openUrlExternally(root.selected.installDocs)
                                         }
                                     }
@@ -756,7 +764,7 @@ Item {
                         // ---------------- Section 2: Autenticação e conta
                         Text {
                             text: "Autentica\u00e7\u00e3o e conta"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -775,8 +783,8 @@ Item {
                                 ColumnLayout {
                                     id: cliLoginContent
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 12
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(12)
 
                                     Text {
                                         text: "Login via CLI oficial"
@@ -799,7 +807,7 @@ Item {
                                         objectName: "providerCliLogin"
                                         text: "Entrar na conta"
                                         variant: "primary"
-                                        implicitHeight: 32
+                                        implicitHeight: Theme.scaledGeometry(32)
                                         enabled: !!root.selected.available && !root.runtimeBusy
                                         onClicked: studio.openProviderLogin(root.selected.id)
                                     }
@@ -814,8 +822,8 @@ Item {
                                 ColumnLayout {
                                     id: googleAuthContent
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 12
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(12)
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -864,7 +872,7 @@ Item {
 
                                     Flow {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.scaledGeometry(8)
 
                                         VrProviderAction {
                                             objectName: "providerGoogleLogin"
@@ -873,7 +881,7 @@ Item {
                                                 : root.hasCallback ? "Abrir no navegador"
                                                 : "Entrar com Google"
                                             variant: !root.authenticated && !root.loginPending && !root.authError ? "primary" : "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isVerifying && (!root.isWaiting || root.hasCallback) && !root.openingLogin && !root.runtimeBusy
                                             onClicked: {
                                                 root.openingLogin = true
@@ -885,7 +893,7 @@ Item {
                                             visible: root.hasCallback
                                             text: "Copiar link"
                                             variant: "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             enabled: Boolean(root.authUrl)
                                             onClicked: studio.copyText(root.authUrl)
                                         }
@@ -894,7 +902,7 @@ Item {
                                             visible: root.isWaiting || root.isStarting || root.isVerifying
                                             text: "Cancelar login"
                                             variant: "ghost"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.cancelAntigravityLogin()
                                         }
 
@@ -903,7 +911,7 @@ Item {
                                             visible: root.authenticated && !root.loginPending
                                             text: root.validating ? "Validando\u2026" : "Validar conex\u00e3o"
                                             variant: root.authError ? "primary" : "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                             onClicked: studio.validateAntigravityAccount()
                                         }
@@ -911,7 +919,7 @@ Item {
                                             visible: root.authenticated
                                             text: "Trocar conta"
                                             variant: "ghost"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             enabled: !!root.selected.available && !root.validating && !root.isStarting && !root.isWaiting && !root.openingLogin && !root.runtimeBusy
                                             onClicked: studio.reconnectAntigravityAccount()
                                         }
@@ -920,7 +928,7 @@ Item {
                                     ColumnLayout {
                                         visible: root.hasCallback
                                         Layout.fillWidth: true
-                                        spacing: 6
+                                        spacing: Theme.scaledGeometry(6)
 
                                         Text {
                                             Layout.fillWidth: true
@@ -933,16 +941,16 @@ Item {
 
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: 8
+                                            spacing: Theme.scaledGeometry(8)
 
                                             VrTextField {
                                                 id: manualCallbackField
                                                 objectName: "manualCallbackField"
                                                 Layout.fillWidth: true
-                                                implicitHeight: 36
+                                                implicitHeight: Theme.scaledGeometry(36)
                                                 placeholderText: "Cole a URL final (ex.: http://127.0.0.1:port/?code=...&state=...)"
                                                 background: Rectangle {
-                                                    radius: 8
+                                                    radius: Theme.scaledGeometry(8)
                                                     color: Theme.palette.codeSurface
                                                     border.width: manualCallbackField.activeFocus ? 2 : 1
                                                     border.color: manualCallbackField.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -958,7 +966,7 @@ Item {
                                             VrProviderAction {
                                                 text: "Concluir retorno"
                                                 variant: "secondary"
-                                                implicitHeight: 36
+                                                implicitHeight: Theme.scaledGeometry(36)
                                                 enabled: manualCallbackField.text.trim().length > 0
                                                 onClicked: {
                                                     studio.submitAntigravityCallback(manualCallbackField.text.trim())
@@ -987,8 +995,8 @@ Item {
                                 ColumnLayout {
                                     id: otherContent
                                     anchors.fill: parent
-                                    anchors.margins: 16
-                                    spacing: 8
+                                    anchors.margins: Theme.scaledGeometry(16)
+                                    spacing: Theme.scaledGeometry(8)
 
                                     Text {
                                         text: "Status da conta"
@@ -1013,7 +1021,7 @@ Item {
                         // ---------------- Section 3: Método de acesso
                         Text {
                             text: "M\u00e9todo de acesso"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -1044,7 +1052,7 @@ Item {
                             }
                         }
 
-                        Item { Layout.preferredHeight: 16 }
+                        Item { Layout.preferredHeight: Theme.scaledGeometry(16) }
                     }
                 }
             }

@@ -111,9 +111,9 @@ Item {
         anchors.fill: parent
         clip: true
         contentWidth: availableWidth
-        topPadding: 4
-        rightPadding: 12
-        bottomPadding: 24
+        topPadding: Theme.scaledGeometry(4)
+        rightPadding: Theme.scaledGeometry(12)
+        bottomPadding: Theme.scaledGeometry(24)
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -328,25 +328,25 @@ Item {
                 ColumnLayout {
                     id: previewContentLayout
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                    anchors.margins: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(12)
 
                     // Header Row
                     GridLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         columns: root.width < 640 ? 1 : 2
-                        rowSpacing: 10
-                        columnSpacing: 12
+                        rowSpacing: Theme.scaledGeometry(10)
+                        columnSpacing: Theme.scaledGeometry(12)
 
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 10
+                            spacing: Theme.scaledGeometry(10)
 
                             Rectangle {
-                                Layout.preferredWidth: 36
-                                Layout.preferredHeight: 36
+                                Layout.preferredWidth: Theme.scaledGeometry(36)
+                                Layout.preferredHeight: Theme.scaledGeometry(36)
                                 radius: Theme.radiusSmall
                                 color: chat.applicationImportPreview.error
                                     ? Qt.rgba(0.9, 0.2, 0.2, 0.15)
@@ -358,8 +358,8 @@ Item {
 
                                 VrLineIcon {
                                     anchors.centerIn: parent
-                                    width: 18
-                                    height: 18
+                                    width: Theme.scaledGeometry(18)
+                                    height: Theme.scaledGeometry(18)
                                     kind: chat.applicationImportPreview.error ? "warning" : "files"
                                     foreground: chat.applicationImportPreview.error
                                         ? Theme.palette.danger
@@ -405,12 +405,12 @@ Item {
 
                         RowLayout {
                             Layout.alignment: root.width < 640 ? Qt.AlignLeft : Qt.AlignRight
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
 
                             VrButton {
                                 text: "Cancelar"
                                 variant: "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: chat.cancelApplicationImport()
                             }
 
@@ -418,7 +418,7 @@ Item {
                                 objectName: "confirmApplicationImport"
                                 text: "Confirmar importação"
                                 variant: "primary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 enabled: chat.applicationImportPreview.state === "ready"
                                 onClicked: chat.confirmApplicationImport()
                             }
@@ -430,7 +430,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         visible: chat.applicationImportPreview.state === "running"
-                        spacing: 6
+                        spacing: Theme.scaledGeometry(6)
 
                         VrProgressBar {
                             Layout.fillWidth: true
@@ -446,18 +446,18 @@ Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         visible: chat.applicationImportPreview.state === "ready"
-                        spacing: 10
+                        spacing: Theme.scaledGeometry(10)
 
                         // Summary metrics badges
                         Flow {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 6
+                            spacing: Theme.scaledGeometry(6)
 
                             Rectangle {
-                                implicitHeight: 24
+                                implicitHeight: Theme.scaledGeometry(24)
                                 implicitWidth: totalLabel.implicitWidth + 14
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Theme.palette.chatBackground
                                 border.width: 1
                                 border.color: Theme.palette.chatBorder
@@ -474,9 +474,9 @@ Item {
 
                             Rectangle {
                                 visible: importPreviewCard.newAppsCount > 0
-                                implicitHeight: 24
+                                implicitHeight: Theme.scaledGeometry(24)
                                 implicitWidth: newLabel.implicitWidth + 14
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Qt.rgba(0.06, 0.72, 0.50, 0.15)
                                 border.width: 1
                                 border.color: Theme.palette.success
@@ -493,9 +493,9 @@ Item {
 
                             Rectangle {
                                 visible: importPreviewCard.depsCount > 0
-                                implicitHeight: 24
+                                implicitHeight: Theme.scaledGeometry(24)
                                 implicitWidth: depLabel.implicitWidth + 14
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Qt.rgba(0.23, 0.51, 0.96, 0.15)
                                 border.width: 1
                                 border.color: "#3B82F6"
@@ -512,9 +512,9 @@ Item {
 
                             Rectangle {
                                 visible: importPreviewCard.updateCount > 0
-                                implicitHeight: 24
+                                implicitHeight: Theme.scaledGeometry(24)
                                 implicitWidth: updateLabel.implicitWidth + 14
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Qt.rgba(0.96, 0.62, 0.04, 0.15)
                                 border.width: 1
                                 border.color: Theme.palette.warning
@@ -531,9 +531,9 @@ Item {
 
                             Rectangle {
                                 visible: importPreviewCard.existingCount > 0
-                                implicitHeight: 24
+                                implicitHeight: Theme.scaledGeometry(24)
                                 implicitWidth: existLabel.implicitWidth + 14
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Qt.rgba(0.5, 0.5, 0.5, 0.12)
                                 border.width: 1
                                 border.color: Theme.palette.chatBorder
@@ -552,13 +552,13 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
 
                             VrTextField {
                                 id: previewSearchInput
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 80
-                                implicitHeight: 32
+                                Layout.minimumWidth: Theme.scaledGeometry(80)
+                                implicitHeight: Theme.scaledGeometry(32)
                                 placeholderText: "Filtrar por aplicativo, versão ou caminho…"
                                 text: importPreviewCard.searchFilter
                                 onTextChanged: importPreviewCard.searchFilter = text
@@ -567,21 +567,21 @@ Item {
                             VrButton {
                                 text: "Todos"
                                 variant: importPreviewCard.filterRole === "all" ? "primary" : "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: importPreviewCard.filterRole = "all"
                             }
 
                             VrButton {
                                 text: "Apps"
                                 variant: importPreviewCard.filterRole === "app" ? "primary" : "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: importPreviewCard.filterRole = "app"
                             }
 
                             VrButton {
                                 text: "Dependências"
                                 variant: importPreviewCard.filterRole === "dependency" ? "primary" : "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: importPreviewCard.filterRole = "dependency"
                             }
                         }
@@ -598,7 +598,7 @@ Item {
                             ColumnLayout {
                                 id: previewItemsColumn
                                 width: parent.width
-                                spacing: 6
+                                spacing: Theme.scaledGeometry(6)
 
                                 Repeater {
                                     model: importPreviewCard.getFilteredRows()
@@ -627,14 +627,14 @@ Item {
                                         RowLayout {
                                             id: itemRowLayout
                                             anchors.fill: parent
-                                            anchors.leftMargin: 8
-                                            anchors.rightMargin: 8
-                                            spacing: 10
+                                            anchors.leftMargin: Theme.scaledGeometry(8)
+                                            anchors.rightMargin: Theme.scaledGeometry(8)
+                                            spacing: Theme.scaledGeometry(10)
 
                                             // Official Application Icon
                                             VrAppIcon {
-                                                Layout.preferredWidth: 32
-                                                Layout.preferredHeight: 32
+                                                Layout.preferredWidth: Theme.scaledGeometry(32)
+                                                Layout.preferredHeight: Theme.scaledGeometry(32)
                                                 appName: modelData.application
                                                 fallbackKind: modelData.role === "dependency" ? "files" : "browser"
                                                 iconSize: 22
@@ -649,7 +649,7 @@ Item {
                                                 RowLayout {
                                                     Layout.fillWidth: true
                                                     Layout.minimumWidth: 0
-                                                    spacing: 6
+                                                    spacing: Theme.scaledGeometry(6)
 
                                                     Text {
                                                         text: modelData.application
@@ -662,8 +662,8 @@ Item {
 
                                                     Rectangle {
                                                         implicitWidth: verText.implicitWidth + 8
-                                                        implicitHeight: 18
-                                                        radius: 4
+                                                        implicitHeight: Theme.scaledGeometry(18)
+                                                        radius: Theme.scaledGeometry(4)
                                                         color: Theme.palette.codeSurface
                                                         border.width: 1
                                                         border.color: Theme.palette.chatBorder
@@ -684,7 +684,7 @@ Item {
                                                 RowLayout {
                                                     Layout.fillWidth: true
                                                     Layout.minimumWidth: 0
-                                                    spacing: 6
+                                                    spacing: Theme.scaledGeometry(6)
 
                                                     Text {
                                                         text: modelData.relative_path
@@ -692,7 +692,7 @@ Item {
                                                         font.family: Theme.fontFamily
                                                         font.pixelSize: Theme.fontSizeMicro
                                                         elide: Text.ElideMiddle
-                                                        Layout.maximumWidth: 220
+                                                        Layout.maximumWidth: Theme.scaledGeometry(220)
                                                     }
 
                                                     Text {
@@ -710,8 +710,8 @@ Item {
 
                                                     Rectangle {
                                                         implicitWidth: copyLabel.implicitWidth + 8
-                                                        implicitHeight: 16
-                                                        radius: 3
+                                                        implicitHeight: Theme.scaledGeometry(16)
+                                                        radius: Theme.scaledGeometry(3)
                                                         color: copyMouse.containsMouse ? Theme.palette.selection : "transparent"
 
                                                         Text {
@@ -743,9 +743,9 @@ Item {
                                             // Status badge
                                             Rectangle {
                                                 Layout.alignment: Qt.AlignVCenter
-                                                implicitHeight: 22
+                                                implicitHeight: Theme.scaledGeometry(22)
                                                 implicitWidth: statusText.implicitWidth + 12
-                                                radius: 11
+                                                radius: Theme.scaledGeometry(11)
                                                 color: previewItemDelegate.isNew ? Qt.rgba(0.06, 0.72, 0.50, 0.15)
                                                      : (previewItemDelegate.isDep ? Qt.rgba(0.23, 0.51, 0.96, 0.15)
                                                      : (previewItemDelegate.isUpdate ? Qt.rgba(0.96, 0.62, 0.04, 0.15)
@@ -779,7 +779,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
 
                             Text {
                                 Layout.fillWidth: true
@@ -793,14 +793,14 @@ Item {
                             VrButton {
                                 text: "Cancelar"
                                 variant: "secondary"
-                                implicitHeight: 30
+                                implicitHeight: Theme.scaledGeometry(30)
                                 onClicked: chat.cancelApplicationImport()
                             }
 
                             VrButton {
                                 text: "Confirmar importação"
                                 variant: "primary"
-                                implicitHeight: 30
+                                implicitHeight: Theme.scaledGeometry(30)
                                 enabled: chat.applicationImportPreview.state === "ready"
                                 onClicked: chat.confirmApplicationImport()
                             }
@@ -838,14 +838,14 @@ Item {
                         divider: true
 
                         Flow {
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
                             Layout.alignment: Qt.AlignRight
 
                             VrButton {
                                 text: "Importar pacote VR"
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 variant: "primary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: {
                                     var res = chat.selectAndImportPackage();
                                     if (res) {
@@ -858,7 +858,7 @@ Item {
                                 text: "Importar JAR avulso"
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 variant: "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: {
                                     var res = chat.selectAndImportSingleJar();
                                     if (res) {
@@ -871,7 +871,7 @@ Item {
                                 text: "Importar código descompilado"
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 variant: "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: {
                                     var det = chat.detectDecompiledDirectory("");
                                     if (det && det.is_valid) {
@@ -886,7 +886,7 @@ Item {
                                 text: "Importar pacote descompilado"
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 variant: "secondary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: chat.detectDecompiledPackageArchive("")
                             }
 
@@ -899,13 +899,13 @@ Item {
                         divider: true
 
                         RowLayout {
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
 
                             VrComboBox {
                                 id: jarSourcePicker
                                 objectName: "vrUltraJarDirectoryPicker"
-                                Layout.preferredWidth: 240
-                                implicitHeight: 34
+                                Layout.preferredWidth: Theme.scaledGeometry(240)
+                                implicitHeight: Theme.scaledGeometry(34)
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 model: chat.codeAnalysisJarSourceItems
                                 textRole: "label"
@@ -921,7 +921,7 @@ Item {
                                         chat.setCodeAnalysisJarSource(chat.codeAnalysisJarSourceItems[index].value)
                                 }
                                 background: Rectangle {
-                                    radius: 8
+                                    radius: Theme.scaledGeometry(8)
                                     color: Theme.palette.codeSurface
                                     border.width: jarSourcePicker.activeFocus ? 2 : 1
                                     border.color: jarSourcePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -931,7 +931,7 @@ Item {
                             VrButton {
                                 text: "Escolher pasta…"
                                 variant: "secondary"
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 onClicked: chat.selectCustomJarDirectory()
                             }
@@ -946,8 +946,8 @@ Item {
                         VrComboBox {
                             id: jarScopePicker
                             objectName: "vrUltraJarScopePicker"
-                            Layout.preferredWidth: 260
-                            implicitHeight: 34
+                            Layout.preferredWidth: Theme.scaledGeometry(260)
+                            implicitHeight: Theme.scaledGeometry(34)
                             enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                             model: [
                                 { "label": "Pacote completo ou parcial", "value": "full_release" },
@@ -959,7 +959,7 @@ Item {
                                 index === 1 ? "single_jar" : "full_release"
                             )
                             background: Rectangle {
-                                radius: 8
+                                radius: Theme.scaledGeometry(8)
                                 color: Theme.palette.codeSurface
                                 border.width: jarScopePicker.activeFocus ? 2 : 1
                                 border.color: jarScopePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -969,10 +969,10 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        Layout.leftMargin: 16
-                        Layout.rightMargin: 16
-                        Layout.topMargin: 4
-                        Layout.bottomMargin: 8
+                        Layout.leftMargin: Theme.scaledGeometry(16)
+                        Layout.rightMargin: Theme.scaledGeometry(16)
+                        Layout.topMargin: Theme.scaledGeometry(4)
+                        Layout.bottomMargin: Theme.scaledGeometry(8)
                         text: {
                             var index = jarSourcePicker.currentIndex
                             if (index < 0 || index >= chat.codeAnalysisJarSourceItems.length)
@@ -999,18 +999,18 @@ Item {
 
                         RowLayout {
                             objectName: "vrUltraSingleJarRow"
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
                             Layout.preferredWidth: Math.min(340, importActionsLayout.width - 32)
 
                             VrTextField {
                                 objectName: "vrUltraSingleJarPath"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 readOnly: true
                                 text: chat.codeAnalysisSingleJarPath
                                 placeholderText: "Nenhum JAR selecionado"
                                 background: Rectangle {
-                                    radius: 8
+                                    radius: Theme.scaledGeometry(8)
                                     color: Theme.palette.codeSurface
                                     border.width: 1
                                     border.color: Theme.palette.border
@@ -1020,7 +1020,7 @@ Item {
                             VrButton {
                                 objectName: "vrUltraSelectSingleJarButton"
                                 text: "Escolher JAR…"
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 onClicked: chat.selectCodeAnalysisSingleJar()
                             }
@@ -1033,21 +1033,21 @@ Item {
                         divider: false
 
                         RowLayout {
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
                             Layout.preferredWidth: Math.min(340, importActionsLayout.width - 32)
 
                             VrTextField {
                                 id: releaseIdField
                                 objectName: "vrUltraReleaseIdField"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 placeholderText: chat.codeAnalysisSnapshotScope === "single_jar"
                                     ? "Automático: aplicação e versão do vr*.properties"
                                     : "ID automático; informe somente se quiser personalizar"
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                 onAccepted: chat.previewConfiguredImport(text.trim())
                                 background: Rectangle {
-                                    radius: 8
+                                    radius: Theme.scaledGeometry(8)
                                     color: Theme.palette.codeSurface
                                     border.width: releaseIdField.activeFocus ? 2 : 1
                                     border.color: releaseIdField.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -1058,7 +1058,7 @@ Item {
                                 objectName: "vrUltraAddReleaseButton"
                                 text: chat.releaseSnapshotRunning ? "Detectando…" : "Preparar prévia"
                                 variant: "primary"
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
                                     && (chat.codeAnalysisSnapshotScope !== "single_jar" || chat.codeAnalysisSingleJarPath.length > 0)
                                 onClicked: chat.previewConfiguredImport(releaseIdField.text.trim())
@@ -1069,10 +1069,10 @@ Item {
                     Text {
                         objectName: "vrUltraReleaseSnapshotStatus"
                         Layout.fillWidth: true
-                        Layout.leftMargin: 16
-                        Layout.rightMargin: 16
-                        Layout.topMargin: 4
-                        Layout.bottomMargin: 8
+                        Layout.leftMargin: Theme.scaledGeometry(16)
+                        Layout.rightMargin: Theme.scaledGeometry(16)
+                        Layout.topMargin: Theme.scaledGeometry(4)
+                        Layout.bottomMargin: Theme.scaledGeometry(8)
                         visible: text.length > 0
                         text: chat.releaseSnapshotStatus
                         color: (text.indexOf("Não foi possível") === 0 || text.indexOf("não encontrada") !== -1 || text.indexOf("não encontrado") !== -1 || text.indexOf("não é um JAR") !== -1 || text.indexOf("mudaram após a prévia") !== -1 || text.indexOf("Erro") === 0) ? Theme.palette.warning : Theme.palette.mutedText
@@ -1110,14 +1110,14 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 8
+                    anchors.leftMargin: Theme.scaledGeometry(12)
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(8)
 
                     VrButton {
                         text: root.width < 600 ? "Aplicativos" : "Catálogo de Aplicativos"
                         variant: "ghost"
-                        implicitHeight: 28
+                        implicitHeight: Theme.scaledGeometry(28)
                         onClicked: root.navigationLevel = 0
                     }
 
@@ -1168,13 +1168,13 @@ Item {
                 objectName: "appsCatalogView"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                spacing: 16
+                spacing: Theme.scaledGeometry(16)
                 visible: root.navigationLevel === 0
 
                 RowLayout {
                     Layout.fillWidth: true
                     visible: chat.applicationsCatalogLoading && chat.applicationsCatalog.length > 0
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
                     VrProgressBar {
                         Layout.fillWidth: true
                         barHeight: 3
@@ -1248,8 +1248,8 @@ Item {
                             spacing: Theme.spaceSm
 
                             VrLineIcon {
-                                Layout.preferredWidth: 18
-                                Layout.preferredHeight: 18
+                                Layout.preferredWidth: Theme.scaledGeometry(18)
+                                Layout.preferredHeight: Theme.scaledGeometry(18)
                                 kind: "play"
                                 foreground: Theme.palette.brandOrange
                             }
@@ -1278,14 +1278,14 @@ Item {
                                 objectName: "batchDecompileSettingsButton"
                                 text: "Configurações globais"
                                 variant: "secondary"
-                                implicitHeight: 30
+                                implicitHeight: Theme.scaledGeometry(30)
                                 onClicked: globalDecompileConfigDialog.open()
                             }
 
                             VrButton {
                                 text: "Limpar seleção"
                                 variant: "ghost"
-                                implicitHeight: 30
+                                implicitHeight: Theme.scaledGeometry(30)
                                 onClicked: appSelector.clearSelection()
                             }
 
@@ -1293,7 +1293,7 @@ Item {
                                 objectName: "startBatchAppsProcessingButton"
                                 text: "Iniciar lote (" + (appSelector.selectedAppIds ? appSelector.selectedAppIds.length : 0) + ")"
                                 variant: "primary"
-                                implicitHeight: 30
+                                implicitHeight: Theme.scaledGeometry(30)
                                 onClicked: {
                                     chat.startBatchAppsProcessing(appSelector.selectedAppIds);
                                 }
@@ -1307,7 +1307,7 @@ Item {
                     objectName: "appsBatchProcessingStatusCard"
                     Layout.fillWidth: true
                     implicitHeight: liveBatchLayout.implicitHeight + 24
-                    radius: 14
+                    radius: Theme.scaledGeometry(14)
                     color: Theme.palette.codeSurface
                     border.width: 1
                     border.color: Theme.palette.brandOrange
@@ -1316,12 +1316,12 @@ Item {
                     ColumnLayout {
                         id: liveBatchLayout
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
+                        anchors.margins: Theme.scaledGeometry(12)
+                        spacing: Theme.scaledGeometry(8)
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
 
                             Text {
                                 text: "Descompilação e Indexação em Andamento..."
@@ -1515,7 +1515,7 @@ Item {
                                             objectName: "exportDecompiledPackageButton"
                                             text: "Exportar pacote descompilado"
                                             variant: "secondary"
-                                            implicitHeight: 28
+                                            implicitHeight: Theme.scaledGeometry(28)
                                             enabled: !chat.releaseSnapshotRunning
                                                 && !chat.codeProcessingRunning
                                                 && !chat.decompiledExportRunning
@@ -1525,7 +1525,7 @@ Item {
                                         VrButton {
                                             text: "Renomear"
                                             variant: "secondary"
-                                            implicitHeight: 28
+                                            implicitHeight: Theme.scaledGeometry(28)
                                             onClicked: {
                                                 root.pendingRenamePackageId = modelData.package_id;
                                                 root.pendingRenamePackageName = modelData.name || modelData.package_id;
@@ -1537,7 +1537,7 @@ Item {
                                         VrButton {
                                             text: "Excluir JARs originais"
                                             variant: "ghost"
-                                            implicitHeight: 28
+                                            implicitHeight: Theme.scaledGeometry(28)
                                             onClicked: {
                                                 root.pendingDeleteJarsPackageId = modelData.package_id;
                                                 root.pendingDeleteJarsPackageName = modelData.name || modelData.package_id;
@@ -1549,7 +1549,7 @@ Item {
                                             objectName: "vrUltraRemoveReleaseButton"
                                             text: "Remover / Desvincular"
                                             variant: "danger"
-                                            implicitHeight: 28
+                                            implicitHeight: Theme.scaledGeometry(28)
                                             onClicked: {
                                                 root.pendingUnlinkPackageId = modelData.package_id;
                                                 root.pendingUnlinkPackageName = modelData.name || modelData.package_id;
@@ -1569,7 +1569,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                spacing: 16
+                spacing: Theme.scaledGeometry(16)
                 visible: root.navigationLevel === 1
 
                 Rectangle {
@@ -1596,8 +1596,8 @@ Item {
                             spacing: Theme.spaceMd
 
                             VrAppIcon {
-                                Layout.preferredWidth: 40
-                                Layout.preferredHeight: 40
+                                Layout.preferredWidth: Theme.scaledGeometry(40)
+                                Layout.preferredHeight: Theme.scaledGeometry(40)
                                 appName: root.activeApplication
                                     ? (root.activeApplication.name || root.activeApplication.appId)
                                     : root.activeAppId
@@ -1658,7 +1658,7 @@ Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         implicitHeight: verCardLayout.implicitHeight + 20
-                        radius: 14
+                        radius: Theme.scaledGeometry(14)
                         color: Theme.palette.background
                         border.width: 1
                         border.color: Theme.palette.border
@@ -1666,7 +1666,7 @@ Item {
                         GridLayout {
                             id: verCardLayout
                             anchors.fill: parent
-                            anchors.margins: 10
+                            anchors.margins: Theme.scaledGeometry(10)
                             columns: width < 640 ? 1 : 2
                             rowSpacing: Theme.spaceSm
                             columnSpacing: Theme.spaceMd
@@ -1674,7 +1674,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                spacing: 4
+                                spacing: Theme.scaledGeometry(4)
 
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -1694,7 +1694,7 @@ Item {
                                         Layout.alignment: Qt.AlignVCenter
                                         visible: modelData.manualOverride
                                         implicitWidth: manualTag.implicitWidth + 8
-                                        implicitHeight: 18
+                                        implicitHeight: Theme.scaledGeometry(18)
                                         radius: Theme.radiusCard
                                         color: Theme.palette.background
                                         border.width: 1
@@ -1734,7 +1734,7 @@ Item {
                                 Layout.alignment: verCardLayout.width < 640 ? Qt.AlignLeft : Qt.AlignRight
                                 text: "Abrir versão"
                                 variant: "primary"
-                                implicitHeight: 32
+                                implicitHeight: Theme.scaledGeometry(32)
                                 onClicked: {
                                     chat.selectAppVersion(modelData.version);
                                     root.activeVersion = modelData.version;
@@ -1751,7 +1751,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                spacing: 14
+                spacing: Theme.scaledGeometry(14)
                 visible: root.navigationLevel === 2
 
                 Rectangle {
@@ -1783,8 +1783,8 @@ Item {
                                 spacing: Theme.spaceMd
 
                                 VrAppIcon {
-                                    Layout.preferredWidth: 40
-                                    Layout.preferredHeight: 40
+                                    Layout.preferredWidth: Theme.scaledGeometry(40)
+                                    Layout.preferredHeight: Theme.scaledGeometry(40)
                                     appName: root.activeApplication
                                         ? (root.activeApplication.name || root.activeApplication.appId)
                                         : root.activeAppId
@@ -1967,7 +1967,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 12
+                    spacing: Theme.scaledGeometry(12)
                     visible: root.versionSubTab === 0
 
                     Rectangle {
@@ -2056,8 +2056,8 @@ Item {
                         ColumnLayout {
                             id: detailsCardLayout
                             anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 8
+                            anchors.margins: Theme.scaledGeometry(12)
+                            spacing: Theme.scaledGeometry(8)
 
                             Text {
                                 text: "Metadados"
@@ -2121,7 +2121,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 12
+                    spacing: Theme.scaledGeometry(12)
                     visible: root.versionSubTab === 1
 
                     Rectangle {
@@ -2137,8 +2137,8 @@ Item {
                         ColumnLayout {
                             id: decompCardLayout
                             anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 10
+                            anchors.margins: Theme.scaledGeometry(12)
+                            spacing: Theme.scaledGeometry(10)
 
                             Text {
                                 text: "Status de Processamento Local"
@@ -2172,8 +2172,8 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 columns: root.width < 800 ? 1 : 5
-                                rowSpacing: 10
-                                columnSpacing: 10
+                                rowSpacing: Theme.scaledGeometry(10)
+                                columnSpacing: Theme.scaledGeometry(10)
 
                                 Text {
                                     objectName: "vrUltraCodeProcessingProgressLabel"
@@ -2193,7 +2193,7 @@ Item {
                                     objectName: "vrUltraStartCodeProcessing"
                                     text: chat.codeProcessingRunning ? "Processando…" : "Iniciar processamento"
                                     variant: "primary"
-                                    implicitHeight: 30
+                                    implicitHeight: Theme.scaledGeometry(30)
                                     enabled: !chat.codeProcessingRunning && chat.selectedAppVariantId.length > 0 && chat.selectedAppOriginId.length > 0
                                     onClicked: chat.startVariantProcessing(root.activeAppId, root.activeVersion, chat.selectedAppVariantId)
                                 }
@@ -2202,7 +2202,7 @@ Item {
                                     objectName: "vrUltraPauseCodeProcessing"
                                     text: "Pausar"
                                     variant: "secondary"
-                                    implicitHeight: 30
+                                    implicitHeight: Theme.scaledGeometry(30)
                                     enabled: chat.codeProcessingRunning
                                     onClicked: chat.pauseCodeProcessing()
                                 }
@@ -2211,7 +2211,7 @@ Item {
                                     objectName: "vrUltraCancelCodeProcessing"
                                     text: chat.codeProcessingCancelRequested ? "Cancelando…" : "Cancelar"
                                     variant: "secondary"
-                                    implicitHeight: 30
+                                    implicitHeight: Theme.scaledGeometry(30)
                                     enabled: (chat.codeProcessingRunning || chat.codeProcessingCanCancel) && !chat.codeProcessingCancelRequested
                                     onClicked: chat.cancelCodeProcessing()
                                 }
@@ -2220,7 +2220,7 @@ Item {
                                     objectName: "vrUltraRetryCodeProcessing"
                                     text: "Repetir"
                                     variant: "secondary"
-                                    implicitHeight: 30
+                                    implicitHeight: Theme.scaledGeometry(30)
                                     enabled: chat.codeProcessingCanRetry && !chat.codeProcessingRunning
                                         && !!chat.selectedAppVariantId && chat.selectedAppOriginId === chat.codeAnalysisRelease
                                     onClicked: chat.retryCodeProcessing()
@@ -2242,8 +2242,8 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 columns: root.width < 800 ? 1 : 3
-                                rowSpacing: 12
-                                columnSpacing: 12
+                                rowSpacing: Theme.scaledGeometry(12)
+                                columnSpacing: Theme.scaledGeometry(12)
 
                                 Text {
                                     objectName: "vrUltraCodeProcessingCurrentBatch"
@@ -2454,7 +2454,7 @@ Item {
                                     VrButton {
                                         text: "Configurações globais"
                                         variant: "secondary"
-                                        implicitHeight: 28
+                                        implicitHeight: Theme.scaledGeometry(28)
                                         enabled: !chat.codeProcessingRunning
                                         onClicked: globalDecompileConfigDialog.open()
                                     }
@@ -2463,7 +2463,7 @@ Item {
                                         objectName: "vrUltraCleanCodeProcessingOrphans"
                                         text: "Limpar órfãos"
                                         variant: "ghost"
-                                        implicitHeight: 28
+                                        implicitHeight: Theme.scaledGeometry(28)
                                         enabled: !chat.codeProcessingRunning
                                         onClicked: cleanOrphansDialog.open()
                                     }
@@ -2477,7 +2477,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 12
+                    spacing: Theme.scaledGeometry(12)
                     visible: root.versionSubTab === 2
 
                     Rectangle {
@@ -2492,8 +2492,8 @@ Item {
                         ColumnLayout {
                             id: compareCardLayout
                             anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 10
+                            anchors.margins: Theme.scaledGeometry(12)
+                            spacing: Theme.scaledGeometry(10)
 
                             Text {
                                 text: "Comparar Versão " + root.activeVersion + " com outra versão"
@@ -2507,8 +2507,8 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 columns: root.width < 800 ? 1 : 3
-                                rowSpacing: 10
-                                columnSpacing: 10
+                                rowSpacing: Theme.scaledGeometry(10)
+                                columnSpacing: Theme.scaledGeometry(10)
 
                                 Text {
                                     text: "Versão de destino:"
@@ -2518,8 +2518,8 @@ Item {
 
                                 VrComboBox {
                                     id: compareTargetCombo
-                                    Layout.preferredWidth: 160
-                                    implicitHeight: 32
+                                    Layout.preferredWidth: Theme.scaledGeometry(160)
+                                    implicitHeight: Theme.scaledGeometry(32)
                                     model: {
                                         var list = [];
                                         for (var i = 0; i < chat.appVersions.length; ++i) {
@@ -2539,7 +2539,7 @@ Item {
                                 VrButton {
                                     text: "Comparar bytecode"
                                     variant: "primary"
-                                    implicitHeight: 32
+                                    implicitHeight: Theme.scaledGeometry(32)
                                     enabled: compareTargetCombo.currentText.length > 0 && chat.selectedAppVariantId.length > 0 && targetVariantCombo.currentIndex > 0 && chat.versionComparisonResult.state !== "running"
                                     onClicked: {
                                         var target = compareTargetCombo.currentText;
@@ -2571,7 +2571,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                spacing: 8
+                                spacing: Theme.scaledGeometry(8)
                                 visible: Boolean(chat.versionComparisonResult && chat.versionComparisonResult.summary)
 
                                 Rectangle {
@@ -2587,12 +2587,12 @@ Item {
                                     RowLayout {
                                         id: pendingAlertLayout
                                         anchors.fill: parent
-                                        anchors.margins: 8
-                                        spacing: 8
+                                        anchors.margins: Theme.scaledGeometry(8)
+                                        spacing: Theme.scaledGeometry(8)
 
                                         VrLineIcon {
-                                            width: 16
-                                            height: 16
+                                            width: Theme.scaledGeometry(16)
+                                            height: Theme.scaledGeometry(16)
                                             kind: "browser"
                                             foreground: Theme.palette.warning
                                         }
@@ -2620,7 +2620,7 @@ Item {
                                         objectName: "applicationComparisonAddedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 56
+                                        implicitHeight: Theme.scaledGeometry(56)
                                         radius: Theme.radiusCard
                                         color: Theme.palette.background
                                         border.width: 1
@@ -2649,7 +2649,7 @@ Item {
                                         objectName: "applicationComparisonModifiedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 56
+                                        implicitHeight: Theme.scaledGeometry(56)
                                         radius: Theme.radiusCard
                                         color: Theme.palette.background
                                         border.width: 1
@@ -2678,7 +2678,7 @@ Item {
                                         objectName: "applicationComparisonRemovedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 56
+                                        implicitHeight: Theme.scaledGeometry(56)
                                         radius: Theme.radiusCard
                                         color: Theme.palette.background
                                         border.width: 1
@@ -2707,7 +2707,7 @@ Item {
                                         objectName: "applicationComparisonUnchangedMetric"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        implicitHeight: 56
+                                        implicitHeight: Theme.scaledGeometry(56)
                                         radius: Theme.radiusCard
                                         color: Theme.palette.background
                                         border.width: 1
@@ -2844,7 +2844,7 @@ Item {
                             objectName: "applicationSourceListPanel"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            Layout.preferredHeight: 440
+                            Layout.preferredHeight: Theme.scaledGeometry(440)
                             radius: Theme.radiusCard
                             color: Theme.palette.background
                             border.width: 1
@@ -2891,7 +2891,7 @@ Item {
                                         required property int index
                                         required property var modelData
                                         width: applicationSourceList.width
-                                        height: 38
+                                        height: Theme.scaledGeometry(38)
                                         radius: Theme.radiusSmall
                                         color: modelData.source_key === chat.applicationSources.source_key
                                             ? Theme.palette.selection
@@ -2956,7 +2956,7 @@ Item {
                             objectName: "applicationSourceBodyPanel"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            Layout.preferredHeight: 440
+                            Layout.preferredHeight: Theme.scaledGeometry(440)
                             radius: Theme.radiusCard
                             color: Theme.palette.background
                             border.width: 1
@@ -3035,7 +3035,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    spacing: 12
+                    spacing: Theme.scaledGeometry(12)
                     visible: root.versionSubTab === 3
 
                     Rectangle {
@@ -3176,8 +3176,8 @@ Item {
                         ColumnLayout {
                             id: originsCardLayout
                             anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 8
+                            anchors.margins: Theme.scaledGeometry(12)
+                            spacing: Theme.scaledGeometry(8)
 
                             Text {
                                 text: "Pacotes que contêm esta versão"
@@ -3326,8 +3326,8 @@ Item {
                 ColumnLayout {
                     id: checkLayout
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: Theme.scaledGeometry(10)
+                    spacing: Theme.scaledGeometry(6)
 
                     VrCheckBox {
                         id: unlinkDeleteDataCheckBox
@@ -3337,7 +3337,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        Layout.leftMargin: 28
+                        Layout.leftMargin: Theme.scaledGeometry(28)
                         text: unlinkDeleteDataCheckBox.checked
                             ? "Atenção: Os fontes Java descompilados e os índices de busca do SQLite deste pacote serão permanentemente excluídos do disco."
                             : "Apenas desvincula o pacote do catálogo. Os arquivos descompilados e índices existentes são mantidos no disco."
@@ -3581,14 +3581,14 @@ Item {
                 ColumnLayout {
                     id: globalSummaryCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 4
+                    anchors.margins: Theme.scaledGeometry(10)
+                    spacing: Theme.scaledGeometry(4)
 
                     RowLayout {
-                        spacing: 6
+                        spacing: Theme.scaledGeometry(6)
                         VrLineIcon {
-                            Layout.preferredWidth: 14
-                            Layout.preferredHeight: 14
+                            Layout.preferredWidth: Theme.scaledGeometry(14)
+                            Layout.preferredHeight: Theme.scaledGeometry(14)
                             kind: "settings"
                             foreground: Theme.palette.brandOrange
                         }
@@ -3616,12 +3616,12 @@ Item {
             GridLayout {
                 Layout.fillWidth: true
                 columns: 2
-                columnSpacing: 12
-                rowSpacing: 12
+                columnSpacing: Theme.scaledGeometry(12)
+                rowSpacing: Theme.scaledGeometry(12)
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Memória Máxima da JVM"
                         color: Theme.palette.headingText
@@ -3652,7 +3652,7 @@ Item {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Timeout do Lote"
                         color: Theme.palette.headingText
@@ -3683,7 +3683,7 @@ Item {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Núcleos de CPU / Concorrência"
                         color: Theme.palette.headingText
@@ -3714,7 +3714,7 @@ Item {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Multiplicador de Disco"
                         color: Theme.palette.headingText
@@ -3746,7 +3746,7 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
                 Text {
                     text: "Janela de Processamento"
                     color: Theme.palette.headingText

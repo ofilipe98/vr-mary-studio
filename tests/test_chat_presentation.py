@@ -7,9 +7,11 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings
+from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtGui import QColor, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from vrsoft_extractor.mary.brand import brand_palette
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.frontend.app import create_engine
@@ -18,8 +20,122 @@ from vrsoft_extractor.mary.frontend.chat import ChatBridge
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.frontend.text_rendering import presentation_blocks
 from vrsoft_extractor.mary.frontend.text_rendering import CodeSyntaxHighlighter
+from vrsoft_extractor.mary.frontend.text_rendering import apply_message_document_style
 
 pytestmark = pytest.mark.qml
+
+
+def test_file_reference_anchors_render_as_chips():
+    QApplication.instance() or QApplication([])
+    markdown = (
+        "Veja [file_links.py · L12](vr-file:mary/frontend/file_links.py#L12) "
+        "e [site](https://example.com)."
+    )
+    document = QTextDocument()
+    document.setMarkdown(markdown)
+    apply_message_document_style(document, markdown, dark=True, monospace_family="Consolas")
+    formats = {}
+    iterator = document.firstBlock().begin()
+    while not iterator.atEnd():
+        fragment = iterator.fragment()
+        formats[fragment.text()] = fragment.charFormat()
+        iterator += 1
+    chip = formats["file_links.py · L12"]
+    assert chip.anchorHref() == "vr-file:mary/frontend/file_links.py#L12"
+    assert chip.fontFamilies() == ["Consolas"]
+    assert chip.background().style() != Qt.BrushStyle.NoBrush
+    assert not chip.fontUnderline()
+    # t3code parity: the chip follows the theme foreground, not the link accent.
+    assert chip.foreground().color().name() == "#d6d6d9"
+    assert chip.foreground().color().name() != "#ffad70"
+    link = formats["site"]
+    assert link.anchorHref() == "https://example.com"
+    assert link.background().style() == Qt.BrushStyle.NoBrush
+    assert link.foreground().color().name() == "#ffad70"
+
+
+def test_message_style_follows_active_palette():
+    QApplication.instance() or QApplication([])
+    palette = dict(brand_palette("light"))
+    palette.update({
+        "text": "#102a43",
+        "headingText": "#0b1f33",
+        "link": "#0055ff",
+        "inlineCodeSurface": "#eef4ff",
+        "chatBorder": "#c7d2fe",
+    })
+    markdown = "# Título\n\n`código` e [link](https://example.com) e [a.py](vr-file:a.py#L1)."
+    document = QTextDocument()
+    document.setMarkdown(markdown)
+    apply_message_document_style(document, markdown, palette=palette, monospace_family="Consolas")
+    formats = {}
+    block = document.firstBlock()
+    while block.isValid():
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            formats.setdefault(fragment.text(), fragment.charFormat())
+            iterator += 1
+        block = block.next()
+    assert formats["Título"].foreground().color().name() == "#0b1f33"
+    assert formats["código"].foreground().color().name() == "#102a43"
+    assert formats["código"].background().color().name() == "#eef4ff"
+    assert formats["link"].foreground().color().name() == "#0055ff"
+    chip = formats["a.py"]
+    assert chip.foreground().color().name() == "#102a43"
+    assert chip.background().color().name() == "#eef4ff"
+
+
+def test_bridge_styles_messages_with_active_theme_palette(tmp_path):
+    QApplication.instance() or QApplication([])
+
+    class QuickDocument(QObject):
+        def __init__(self, document):
+            super().__init__()
+            self._document = document
+
+        def textDocument(self):
+            return self._document
+
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    frontend = FrontendBridge(settings, prefs, theme_override="nightfall", initial_page="Chat VR")
+    palette = frontend.palette
+    assert palette["link"] == "#7dcfff"
+    document = QTextDocument()
+    markdown = "`código` e [link](https://example.com)."
+    document.setMarkdown(markdown)
+    frontend.styleMessageDocument(QuickDocument(document), markdown)
+    formats = {}
+    iterator = document.firstBlock().begin()
+    while not iterator.atEnd():
+        fragment = iterator.fragment()
+        formats.setdefault(fragment.text(), fragment.charFormat())
+        iterator += 1
+    assert formats["código"].foreground().color().name() == QColor(palette["text"]).name()
+    assert formats["link"].foreground().color().name() == palette["link"]
+
+
+def test_open_file_reference_resolves_and_emits(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    try:
+        target = settings.root / "mary" / "file_links.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x", encoding="utf-8")
+        received = []
+        chat.filePreviewRequested.connect(
+            lambda path, line, column: received.append((path, line, column))
+        )
+        chat.openFileReference("vr-file:mary/file_links.py#L12:C3")
+        assert received == [(str(target.resolve()), 12, 3)]
+        chat.openFileReference("calcularImpostoItem")
+        assert len(received) == 1
+    finally:
+        chat.close()
 
 
 def test_sources_preserve_prose_code_and_incomplete_links():
@@ -153,6 +269,52 @@ def test_streaming_preserves_blocks_scroll_copy_and_theme(tmp_path):
             edges = [item.y() for item in find_items(window.contentItem(), "tableRowRule")]
             assert edges == sorted(edges)
             assert edges[-1] <= table_viewport.height()
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_chat_opens_file_reference_in_files_surface(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    target = settings.root / "mary" / "frontend" / "file_links.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("linha um\nlinha dois\nlinha tres", encoding="utf-8")
+    cid = db.create_conversation("Arquivos", "codex", "gpt-5.6", settings.root)
+    db.add_message(cid, "assistant", "Veja `mary/frontend/file_links.py:2`.")
+    frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(250)
+            displays = [
+                str(chat.messages.item(index).get("displayContent") or "")
+                for index in range(chat.messages.rowCount())
+            ]
+            assert any(
+                "vr-file:mary/frontend/file_links.py#L2" in display
+                for display in displays
+            ), displays
+            page = window.findChild(QObject, "chatPage")
+            chat.openFileReference("vr-file:mary/frontend/file_links.py#L2")
+            QTest.qWait(250)
+            assert page.property("surfaceVisible")
+            assert page.property("surfaceIndex") == 3
+            assert page.property("surfaceFilePath") == str(target.resolve())
+            assert page.property("surfaceFileLine") == 2
+            assert page.property("surfaceFilePreview") == "linha um\nlinha dois\nlinha tres"
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:

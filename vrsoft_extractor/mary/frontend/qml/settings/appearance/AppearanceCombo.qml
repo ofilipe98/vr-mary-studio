@@ -5,11 +5,11 @@ import "../../components"
 
 ComboBox {
     id: control
-    implicitWidth: 160; implicitHeight: Math.max(28, font.pixelSize + 14)
-    leftPadding: 10; rightPadding: 24
+    implicitWidth: Theme.scaledGeometry(160); implicitHeight: Math.max(28, font.pixelSize + 14)
+    leftPadding: Theme.scaledGeometry(10); rightPadding: Theme.scaledGeometry(24)
     font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13)
     background: Rectangle {
-        radius: 9
+        radius: Theme.scaledGeometry(9)
         color: control.hovered ? Theme.palette.hover : Theme.palette.chatControl
         border.color: control.activeFocus ? Theme.palette.focus : (Theme.palette.controlBorder || Theme.palette.border)
     }
@@ -19,7 +19,7 @@ ComboBox {
     }
     indicator: VrLineIcon {
         x: control.width - width - 8; y: (control.height - height) / 2
-        width: 10; height: 10; kind: "chevronDown"; foreground: Theme.palette.mutedText
+        width: Theme.scaledGeometry(10); height: Theme.scaledGeometry(10); kind: "chevronDown"; foreground: Theme.palette.mutedText
     }
     delegate: ItemDelegate {
         required property int index
@@ -34,8 +34,8 @@ ComboBox {
     popup: Popup {
         y: control.height + 4; width: control.width
         implicitHeight: Math.min(300, contentItem.implicitHeight + 8)
-        padding: 4
-        background: Rectangle { color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity); radius: 9; border.color: Theme.palette.border }
+        padding: Theme.scaledGeometry(4)
+        background: Rectangle { color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity); radius: Theme.scaledGeometry(9); border.color: Theme.palette.border }
         contentItem: ListView {
             clip: true; implicitHeight: contentHeight
             model: control.popup.visible ? control.delegateModel : null

@@ -108,7 +108,9 @@ def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, 
     params = next(params for method, params in FakeClient.instances[0].calls if method == "session/new")
     server = params["mcpServers"][0]
     assert server["env"] == []
-    assert server["args"][-2:] == ["--context", "frozen-turn.json"]
+    assert server["args"][-4:] == [
+        "--context", "frozen-turn.json", "--monitor-session", "conversation"
+    ]
     assert "additionalDirectories" not in params
 
 
@@ -719,6 +721,37 @@ def test_chat_updates_use_studio_event_contract():
     assert all(e.payload["item"]["id"] == "t1" for e in tool_events)
     assert tool_events[-1].payload["canonical_event"]["kind"] == "tool.completed"
     assert tool_events[-1].payload["canonical_event"]["status"] == "success"
+
+
+def test_antigravity_empty_tool_call_update_emits_no_tool_event():
+    provider = AntigravityProvider()
+    events = []
+    state = {"session": "native", "cancelled": False, "text": False}
+    provider._update(
+        "chat", state, events.append, "session/update",
+        {
+            "sessionId": "native",
+            "update": {"sessionUpdate": "tool_call_update", "toolCallId": "tool-empty-1"},
+        },
+    )
+    assert events == []
+
+    provider._update(
+        "chat", state, events.append, "session/update",
+        {
+            "sessionId": "native",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-empty-1",
+                "content": "saída real",
+            },
+        },
+    )
+    assert len(events) == 1
+    assert events[0].kind == "tool_event"
+    canonical = events[0].payload["canonical_event"]
+    assert canonical["tool_id"] == "tool-empty-1"
+    assert canonical["kind"] == "tool.updated"
 
 
 def test_acp_client_ignores_non_oauth_url_when_unattended():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -27,6 +28,13 @@ from .chat_tools import (
     run_vr_search,
     run_vr_sources,
     run_vr_read,
+)
+from .monitor_adapter import (
+    MONITOR_TOOL_NAMES,
+    MonitorAdapter,
+    MonitorConfigurationError,
+    MonitorToolError,
+    monitor_tool_specs,
 )
 from .task_plan import claude_task_result, provider_plan
 from .models import (
@@ -201,6 +209,13 @@ class ChatOrchestrator:
     def __init__(self, settings: MarySettings, database: MaryDatabase):
         self.settings = settings
         self.database = database
+        try:
+            self._monitor_adapter = MonitorAdapter.from_path(
+                settings.state_dir / "vrmonitor.json"
+            )
+        except MonitorConfigurationError as exc:
+            LOGGER.warning("Integração VRMonitor desabilitada: %s", exc)
+            self._monitor_adapter = None
         self.database.recover_interrupted_conversations()
         self.providers = provider_registry(settings.root)
         self.knowledge_router = KnowledgeRouter(
@@ -610,7 +625,7 @@ class ChatOrchestrator:
             handle_turn_event = self._guarded_turn_callback(conversation_id)
 
             def run() -> None:
-                nonlocal application_contexts, code_analysis_manifest_sha256, orchestration_request
+                nonlocal application_contexts, code_analysis_release, code_analysis_manifest_sha256, orchestration_request
                 self._execution_context.owner = message_id
                 try:
                     from .knowledge_access import publish_scope
@@ -618,9 +633,16 @@ class ChatOrchestrator:
                     code_scope_warning = ""
                     try:
                         application_contexts = resolve_code_contexts(self.settings.root, application_contexts)
+                        from .code_context import application_context_warning
+                        code_scope_warning = application_context_warning(text, application_contexts)
+                        if code_scope_warning:
+                            application_contexts = None
                     except (ValueError, RuntimeError) as exc:
-                        application_contexts = []
+                        application_contexts = None
                         code_scope_warning = f"O contexto de codigo selecionado esta indisponivel: {exc}"
+                    if code_scope_warning:
+                        code_analysis_release = "current"
+                        code_analysis_manifest_sha256 = ""
                     if application_contexts is not None:
                         code_analysis_manifest_sha256 = ""
                     from .workspace import is_managed_conversation_workspace
@@ -636,6 +658,8 @@ class ChatOrchestrator:
                             "application_contexts": application_contexts,
                             "code_analysis_release": code_analysis_release,
                             "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+                            # VR/Ultra consult the central VRMaster as fallback only.
+                            "master_fallback": bool(use_vr and application_contexts),
                         })
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None
@@ -654,6 +678,11 @@ class ChatOrchestrator:
                             LOGGER.exception(
                                 "Falha ao rotear as fontes de conhecimento VR"
                             )
+                        with self._agent_run_lock:
+                            if (self._pending_user_messages.get(conversation_id) != message_id
+                                    or conversation_id in self._cancelled_conversations
+                                    or conversation_id in self._finalized_turns):
+                                return
                         evidence_degraded = (
                             evidence_bundle is None
                             or not evidence_bundle.candidates
@@ -808,6 +837,11 @@ class ChatOrchestrator:
                         )
                         else None
                     )
+                    with self._agent_run_lock:
+                        if (self._pending_user_messages.get(conversation_id) != message_id
+                                or conversation_id in self._cancelled_conversations
+                                or conversation_id in self._finalized_turns):
+                            return
                     if fanout_modules:
                         self._run_module_fanout(
                             conversation_id,
@@ -1845,6 +1879,13 @@ class ChatOrchestrator:
         # Stable prefix first: identical across turns so provider prompt
         # caching applies. Variable context comes next; the user request
         # always closes the prompt.
+        environment_note = ""
+        if os.name == "nt":
+            environment_note = (
+                " AMBIENTE: terminal Windows PowerShell; comandos nativos que escrevem em stderr "
+                "(ex.: `java -version`) retornam código 1 quando a saída é redirecionada com `2>&1` — "
+                'para checar versões use `cmd /c "java -version"`.'
+            )
         prefix = (
             "MODO VR ATIVO — CONTRATO DE IDENTIDADE:\n"
             + VRMASTER_DIRECT_RESPONSE_POLICY
@@ -1854,6 +1895,7 @@ class ChatOrchestrator:
             + f"Para uma busca estruturada, use `{search_tool}`. "
             + pull_hint
             + "A pasta de trabalho da conversa é o projeto atual e é independente da fonte VR."
+            + environment_note
         )
         middle_parts: list[str] = []
         if has_images:
@@ -2683,6 +2725,8 @@ class ChatOrchestrator:
         conversation = self.database.get_conversation(conversation_id)
         if conversation:
             with self._agent_run_lock:
+                callback = self._guarded_turn_callback(conversation_id)
+                owner = self._pending_user_messages.get(conversation_id)
                 self._cancelled_conversations.add(conversation_id)
                 from .knowledge_access import invalidate_scope
                 invalidate_scope(self._turn_access_paths.get(conversation_id, ""))
@@ -2707,7 +2751,14 @@ class ChatOrchestrator:
                     provider.interrupt(local_id)
                 except Exception:
                     pass
-            self._provider(conversation["provider"]).interrupt(conversation_id)
+            try:
+                self._provider(conversation["provider"]).interrupt(conversation_id)
+            finally:
+                # Preparation may not have started a provider process yet.
+                # Complete locally instead of waiting for a nonexistent callback.
+                if owner is not None:
+                    callback(RuntimeEvent(conversation_id, "orchestration_cancelled", "Execução interrompida."))
+                    callback(RuntimeEvent(conversation_id, "turn_completed"))
 
     def approve(
         self,
@@ -2737,6 +2788,8 @@ class ChatOrchestrator:
             tool_name = str(tool.get("name"))
             if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
                 self._execute_vr_native_tool(event, tool_name)
+            elif tool_name in MONITOR_TOOL_NAMES:
+                self._execute_monitor_tool(event, tool_name)
             else:
                 self._execute_dynamic_tool(event, tool)
         else:
@@ -3120,6 +3173,11 @@ class ChatOrchestrator:
             for spec in all_vr_tools_specs():
                 if not any(d.get("name") == spec.get("name") for d in dynamic):
                     dynamic = (*dynamic, spec)
+        if self._monitor_adapter is not None:
+            dynamic = tuple(
+                spec for spec in dynamic if spec.get("name") not in MONITOR_TOOL_NAMES
+            )
+            dynamic = (*dynamic, *monitor_tool_specs())
         base = ConversationOptions.from_mapping(row)
         row_mode = str(row["vr_mode"] or "").strip().casefold()
         if row_mode not in ConversationOptions.VALID_VR_MODES:
@@ -3331,6 +3389,9 @@ class ChatOrchestrator:
         if name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
             self._handle_vr_native_tool(event, name)
             return
+        if name in MONITOR_TOOL_NAMES:
+            self._handle_monitor_tool(event, name)
+            return
         selected = self.database.conversation_tools(event.conversation_id)["dynamic"]
         tools = {
             str(tool["name"]): tool
@@ -3362,6 +3423,74 @@ class ChatOrchestrator:
                 )
             return
         self._execute_dynamic_tool(event, tool)
+
+    def _handle_monitor_tool(self, event: RuntimeEvent, tool_name: str) -> None:
+        if self._monitor_adapter is None:
+            self._respond_dynamic_tool(event, "Integração VRMonitor não configurada.", False)
+            return
+        row = self._conversation(event.conversation_id)
+        request_id = str(event.payload.get("request_id") or "")
+        profile = str(row["approval_profile"])
+        needs_approval = profile == "supervised" or (
+            tool_name == "run_readonly_query" and profile != "full_access"
+        )
+        if needs_approval:
+            self.database.save_approval(request_id, event.conversation_id, event.payload)
+            self._pending_dynamic_tools[request_id] = (event, {"name": tool_name})
+            callback = self._external_callbacks.get(event.conversation_id)
+            if callback:
+                callback(
+                    RuntimeEvent(
+                        event.conversation_id,
+                        "dynamic_tool_approval_requested",
+                        f"Executar operação VRMonitor {tool_name}?",
+                        event.payload,
+                    )
+                )
+            return
+        self._execute_monitor_tool(event, tool_name)
+
+    def _execute_monitor_tool(self, event: RuntimeEvent, tool_name: str) -> None:
+        adapter = self._monitor_adapter
+        cid = event.conversation_id
+        owner = self._pending_user_messages.get(cid)
+
+        def owns_turn() -> bool:
+            return (
+                adapter is not None
+                and self._pending_user_messages.get(cid) == owner
+                and cid not in self._cancelled_conversations
+            )
+
+        def run() -> None:
+            try:
+                if not owns_turn():
+                    return
+                with self._agent_run_lock:
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if calls >= 24 or chars >= 96000:
+                        raise ValueError("Limite de consultas deste turno atingido.")
+                    self._turn_tool_usage[cid] = (calls + 1, chars)
+                raw_arguments = event.payload.get("arguments") or {}
+                if isinstance(raw_arguments, str):
+                    raw_arguments = json.loads(raw_arguments)
+                result = adapter.execute(tool_name, raw_arguments, cid)
+                with self._agent_run_lock:
+                    if not owns_turn():
+                        return
+                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
+                    if chars + len(result.text) > 96000:
+                        raise ValueError("Limite de resultados atingido; reduza limit.")
+                    self._turn_tool_usage[cid] = (calls, chars + len(result.text))
+                    self._respond_dynamic_tool(
+                        event, result.text, True, result.content_items()
+                    )
+            except (MonitorToolError, ValueError, json.JSONDecodeError) as exc:
+                with self._agent_run_lock:
+                    if owns_turn():
+                        self._respond_dynamic_tool(event, str(exc), False)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _handle_vr_native_tool(self, event: RuntimeEvent, tool_name: str) -> None:
         row = self._conversation(event.conversation_id)

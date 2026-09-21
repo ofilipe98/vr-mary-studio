@@ -105,9 +105,9 @@ Item {
                 objectName: "generalScroll"
                 clip: true
                 contentWidth: availableWidth
-                topPadding: 4
-                rightPadding: 12
-                bottomPadding: 24
+                topPadding: Theme.scaledGeometry(4)
+                rightPadding: Theme.scaledGeometry(12)
+                bottomPadding: Theme.scaledGeometry(24)
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -119,11 +119,11 @@ Item {
                         id: generalColumn
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(848, parent.width)
-                        spacing: 24
+                        spacing: Theme.scaledGeometry(24)
 
                         Text {
                             text: "Base de conhecimento"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -140,11 +140,11 @@ Item {
                                 ColumnLayout {
                                     id: rootFieldContent
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
-                                    anchors.topMargin: 12
-                                    anchors.bottomMargin: 12
-                                    spacing: 10
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
+                                    anchors.topMargin: Theme.scaledGeometry(12)
+                                    anchors.bottomMargin: Theme.scaledGeometry(12)
+                                    spacing: Theme.scaledGeometry(10)
 
                                     Text {
                                         text: "Repositório local de documentação"
@@ -165,17 +165,17 @@ Item {
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: Theme.scaledGeometry(8)
 
                                         VrTextField {
                                             id: rootField
                                             objectName: "rootField"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             text: studio.settingsValues.root || ""
                                             placeholderText: "Caminho da pasta do repositório VR..."
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: rootField.activeFocus ? 2 : 1
                                                 border.color: rootField.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -185,7 +185,7 @@ Item {
                                         VrButton {
                                             text: "Procurar…"
                                             variant: "secondary"
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             onClicked: {
                                                 var value = studio.chooseKnowledgeRoot()
                                                 if (value.length) rootField.text = value
@@ -209,7 +209,7 @@ Item {
 
                         Text {
                             text: "Credenciais de sincronização"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -226,11 +226,11 @@ Item {
                                 ColumnLayout {
                                     id: movideskContent
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
-                                    anchors.topMargin: 12
-                                    anchors.bottomMargin: 12
-                                    spacing: 10
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
+                                    anchors.topMargin: Theme.scaledGeometry(12)
+                                    anchors.bottomMargin: Theme.scaledGeometry(12)
+                                    spacing: Theme.scaledGeometry(10)
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -262,18 +262,18 @@ Item {
                                     GridLayout {
                                         Layout.fillWidth: true
                                         columns: root.width < 500 ? 1 : 2
-                                        columnSpacing: 10
-                                        rowSpacing: 8
+                                        columnSpacing: Theme.scaledGeometry(10)
+                                        rowSpacing: Theme.scaledGeometry(8)
 
                                         VrTextField {
                                             id: movideskEmail
                                             objectName: "movideskEmail"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             placeholderText: "Email Movidesk"
                                             text: studio.settingsValues.movideskEmail || ""
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: movideskEmail.activeFocus ? 2 : 1
                                                 border.color: movideskEmail.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -284,12 +284,12 @@ Item {
                                             id: movideskPassword
                                             objectName: "movideskPassword"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             placeholderText: studio.settingsValues.movideskPasswordConfigured ? "Senha configurada" : "Senha Movidesk"
                                             text: ""
                                             echoMode: TextInput.Password
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: movideskPassword.activeFocus ? 2 : 1
                                                 border.color: movideskPassword.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -314,11 +314,11 @@ Item {
                                 ColumnLayout {
                                     id: endooContent
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
-                                    anchors.topMargin: 12
-                                    anchors.bottomMargin: 12
-                                    spacing: 10
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
+                                    anchors.topMargin: Theme.scaledGeometry(12)
+                                    anchors.bottomMargin: Theme.scaledGeometry(12)
+                                    spacing: Theme.scaledGeometry(10)
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -350,18 +350,18 @@ Item {
                                     GridLayout {
                                         Layout.fillWidth: true
                                         columns: root.width < 500 ? 1 : 2
-                                        columnSpacing: 10
-                                        rowSpacing: 8
+                                        columnSpacing: Theme.scaledGeometry(10)
+                                        rowSpacing: Theme.scaledGeometry(8)
 
                                         VrTextField {
                                             id: endooEmail
                                             objectName: "endooEmail"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             placeholderText: "Email Endoo"
                                             text: studio.settingsValues.endooEmail || ""
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: endooEmail.activeFocus ? 2 : 1
                                                 border.color: endooEmail.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -372,12 +372,12 @@ Item {
                                             id: endooPassword
                                             objectName: "endooPassword"
                                             Layout.fillWidth: true
-                                            implicitHeight: 34
+                                            implicitHeight: Theme.scaledGeometry(34)
                                             placeholderText: studio.settingsValues.endooPasswordConfigured ? "Senha configurada" : "Senha Endoo"
                                             text: ""
                                             echoMode: TextInput.Password
                                             background: Rectangle {
-                                                radius: 8
+                                                radius: Theme.scaledGeometry(8)
                                                 color: Theme.palette.codeSurface
                                                 border.width: endooPassword.activeFocus ? 2 : 1
                                                 border.color: endooPassword.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -390,7 +390,7 @@ Item {
 
                         Text {
                             text: "Sincronização e diagnóstico"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -407,8 +407,8 @@ Item {
 
                                 VrComboBox {
                                     id: interval
-                                    Layout.preferredWidth: 210
-                                    implicitHeight: 34
+                                    Layout.preferredWidth: Theme.scaledGeometry(210)
+                                    implicitHeight: Theme.scaledGeometry(34)
                                     model: ["A cada 15 minutos", "A cada 30 minutos", "A cada 1 hora", "A cada 2 horas", "A cada 4 horas", "A cada 8 horas", "A cada 24 horas"]
                                     property var values: ["15", "30", "60", "120", "240", "480", "1440"]
                                     Component.onCompleted: {
@@ -416,7 +416,7 @@ Item {
                                         currentIndex = found >= 0 ? found : 3
                                     }
                                     background: Rectangle {
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: interval.activeFocus ? 2 : 1
                                         border.color: interval.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -431,11 +431,11 @@ Item {
                                 ColumnLayout {
                                     id: diagnosticContent
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
-                                    anchors.topMargin: 12
-                                    anchors.bottomMargin: 12
-                                    spacing: 8
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
+                                    anchors.topMargin: Theme.scaledGeometry(12)
+                                    anchors.bottomMargin: Theme.scaledGeometry(12)
+                                    spacing: Theme.scaledGeometry(8)
 
                                     Text {
                                         text: "Diagnóstico local"
@@ -448,7 +448,7 @@ Item {
                                     Rectangle {
                                         Layout.fillWidth: true
                                         implicitHeight: Math.max(38, diagnosticText.implicitHeight + 16)
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: 1
                                         border.color: Theme.palette.border
@@ -456,7 +456,7 @@ Item {
                                         Text {
                                             id: diagnosticText
                                             anchors.fill: parent
-                                            anchors.margins: 10
+                                            anchors.margins: Theme.scaledGeometry(10)
                                             text: studio.settingsValues.diagnostic || "Ambiente pronto e sem inconsistências reportadas."
                                             color: Theme.palette.mutedText
                                             font.family: Theme.monospaceFontFamily
@@ -471,7 +471,7 @@ Item {
 
                         Text {
                             text: "Ações do sistema"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -488,16 +488,16 @@ Item {
                                 RowLayout {
                                     id: actionsContent
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
-                                    anchors.topMargin: 12
-                                    anchors.bottomMargin: 12
-                                    spacing: 16
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
+                                    anchors.topMargin: Theme.scaledGeometry(12)
+                                    anchors.bottomMargin: Theme.scaledGeometry(12)
+                                    spacing: Theme.scaledGeometry(16)
 
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        spacing: 3
+                                        spacing: Theme.scaledGeometry(3)
 
                                         Text {
                                             text: "Manutenção do ambiente"
@@ -520,14 +520,14 @@ Item {
                                     Flow {
                                         id: systemActions
                                         objectName: "systemActions"
-                                        spacing: 8
+                                        spacing: Theme.scaledGeometry(8)
                                         Layout.alignment: Qt.AlignRight
 
                                         VrButton {
                                             objectName: "installOcrAction"
                                             text: "Instalar OCR portátil"
                                             variant: "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.runSync("ocr")
                                         }
 
@@ -535,7 +535,7 @@ Item {
                                             objectName: "openCodexAction"
                                             text: "Abrir no Codex"
                                             variant: "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.openVrInCodex()
                                         }
 
@@ -543,7 +543,7 @@ Item {
                                             objectName: "saveSettingsAction"
                                             text: "Salvar .env"
                                             variant: "primary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.saveSettings(rootField.text, movideskEmail.text, movideskPassword.text, endooEmail.text, endooPassword.text, interval.values[interval.currentIndex])
                                         }
                                     }
@@ -585,7 +585,7 @@ Item {
                             }
                         }
 
-                        Item { Layout.preferredHeight: 16 }
+                        Item { Layout.preferredHeight: Theme.scaledGeometry(16) }
                     }
                 }
             }
@@ -627,9 +627,9 @@ Item {
                 objectName: "appearanceSettingsScroll"
                 clip: true
                 contentWidth: availableWidth
-                topPadding: 4
-                rightPadding: 12
-                bottomPadding: 20
+                topPadding: Theme.scaledGeometry(4)
+                rightPadding: Theme.scaledGeometry(12)
+                bottomPadding: Theme.scaledGeometry(20)
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -640,7 +640,7 @@ Item {
                     id: appearanceColumn
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min(848, parent.width)
-                    spacing: 24
+                    spacing: Theme.scaledGeometry(24)
 
                     AppearanceSettingsView {
                         Layout.fillWidth: true
@@ -661,7 +661,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 3
+                            spacing: Theme.scaledGeometry(3)
                             Text {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
@@ -691,8 +691,8 @@ Item {
                             Layout.alignment: Qt.AlignRight
                             id: uiScaleCombo
                             objectName: "uiScaleCombo"
-                            Layout.preferredWidth: 210
-                            implicitHeight: 38
+                            Layout.preferredWidth: Theme.scaledGeometry(210)
+                            implicitHeight: Theme.scaledGeometry(38)
                             model: ["Automática", "100%", "101%", "102%", "103%", "104%", "105%", "110%", "125%", "150%"]
                             property var values: ["auto", "100", "101", "102", "103", "104", "105", "110", "125", "150"]
                             currentIndex: Math.max(0, values.indexOf(frontend.uiScale))
@@ -714,7 +714,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            spacing: 3
+                            spacing: Theme.scaledGeometry(3)
                             Text {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
@@ -750,7 +750,7 @@ Item {
                         }
                     }
 
-                    Item { Layout.preferredHeight: 16 }
+                    Item { Layout.preferredHeight: Theme.scaledGeometry(16) }
                 }
             }
             }
@@ -761,9 +761,9 @@ Item {
                 objectName: "browserSettingsScroll"
                 clip: true
                 contentWidth: availableWidth
-                topPadding: 4
-                rightPadding: 12
-                bottomPadding: 24
+                topPadding: Theme.scaledGeometry(4)
+                rightPadding: Theme.scaledGeometry(12)
+                bottomPadding: Theme.scaledGeometry(24)
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -775,11 +775,11 @@ Item {
                         id: browserColumn
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(848, parent.width)
-                        spacing: 24
+                        spacing: Theme.scaledGeometry(24)
 
                         Text {
                             text: "Integração com o agente"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -820,7 +820,7 @@ Item {
 
                         Text {
                             text: "Visualização e dimensões"
-                            Layout.leftMargin: 16
+                            Layout.leftMargin: Theme.scaledGeometry(16)
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
@@ -837,14 +837,14 @@ Item {
 
                                 VrComboBox {
                                     objectName: "browserViewportCombo"
-                                    Layout.preferredWidth: 210
-                                    implicitHeight: 34
+                                    Layout.preferredWidth: Theme.scaledGeometry(210)
+                                    implicitHeight: Theme.scaledGeometry(34)
                                     model: ["Preencher painel", "Desktop 1280 × 720", "Desktop 1440 × 900", "Mobile 390 × 844"]
                                     property var values: ["fill", "1280x720", "1440x900", "390x844"]
                                     currentIndex: Math.max(0, values.indexOf(frontend.browserViewport))
                                     onActivated: index => frontend.setBrowserViewport(values[index])
                                     background: Rectangle {
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: parent.activeFocus ? 2 : 1
                                         border.color: parent.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -859,14 +859,14 @@ Item {
 
                                 VrComboBox {
                                     objectName: "browserZoomCombo"
-                                    Layout.preferredWidth: 210
-                                    implicitHeight: 34
+                                    Layout.preferredWidth: Theme.scaledGeometry(210)
+                                    implicitHeight: Theme.scaledGeometry(34)
                                     model: ["75%", "90%", "100%", "110%", "125%", "150%"]
                                     property var values: ["75", "90", "100", "110", "125", "150"]
                                     currentIndex: Math.max(0, values.indexOf(frontend.browserZoom))
                                     onActivated: index => frontend.setBrowserZoom(values[index])
                                     background: Rectangle {
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: parent.activeFocus ? 2 : 1
                                         border.color: parent.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -881,14 +881,14 @@ Item {
 
                                 VrComboBox {
                                     objectName: "browserAppearanceCombo"
-                                    Layout.preferredWidth: 210
-                                    implicitHeight: 34
+                                    Layout.preferredWidth: Theme.scaledGeometry(210)
+                                    implicitHeight: Theme.scaledGeometry(34)
                                     model: ["Sistema", "Claro", "Escuro"]
                                     property var values: ["system", "light", "dark"]
                                     currentIndex: Math.max(0, values.indexOf(frontend.browserAppearance))
                                     onActivated: index => frontend.setBrowserAppearance(values[index])
                                     background: Rectangle {
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: parent.activeFocus ? 2 : 1
                                         border.color: parent.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -897,7 +897,7 @@ Item {
                             }
                         }
 
-                        Item { Layout.preferredHeight: 16 }
+                        Item { Layout.preferredHeight: Theme.scaledGeometry(16) }
                     }
                 }
             }
@@ -907,10 +907,10 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 0
-                    anchors.rightMargin: 12
-                    anchors.topMargin: 4
-                    anchors.bottomMargin: 24
-                    spacing: 16
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    anchors.topMargin: Theme.scaledGeometry(4)
+                    anchors.bottomMargin: Theme.scaledGeometry(24)
+                    spacing: Theme.scaledGeometry(16)
 
                     Item {
                         Layout.fillWidth: true
@@ -920,11 +920,11 @@ Item {
                             id: archivedHeaderCol
                             anchors.horizontalCenter: parent.horizontalCenter
                             width: Math.min(848, parent.width)
-                            spacing: 12
+                            spacing: Theme.scaledGeometry(12)
 
                             Text {
                                 text: "Histórico de conversas arquivadas"
-                                Layout.leftMargin: 16
+                                Layout.leftMargin: Theme.scaledGeometry(16)
                                 color: Theme.palette.text
                                 opacity: 0.7
                                 font.family: Theme.fontFamily
@@ -935,10 +935,10 @@ Item {
                                 id: archivedSearch
                                 objectName: "archivedSearch"
                                 Layout.fillWidth: true
-                                implicitHeight: 38
+                                implicitHeight: Theme.scaledGeometry(38)
                                 placeholderText: "Buscar por título, repositório ou data…"
                                 background: Rectangle {
-                                    radius: 10
+                                    radius: Theme.scaledGeometry(10)
                                     color: Theme.palette.background
                                     border.width: archivedSearch.activeFocus ? 2 : 1
                                     border.color: archivedSearch.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -951,7 +951,7 @@ Item {
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.minimumHeight: 120
+                        Layout.minimumHeight: Theme.scaledGeometry(120)
 
                         ListView {
                             id: archivedList
@@ -961,7 +961,7 @@ Item {
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             clip: true
-                            spacing: 8
+                            spacing: Theme.scaledGeometry(8)
                             model: studio.archivedModel
                             delegate: Rectangle {
                                 objectName: "archivedConversationRow"
@@ -973,7 +973,7 @@ Item {
                                 required property string updatedAt
                                 width: archivedList.width
                                 height: Math.max(68, archivedRowContent.implicitHeight + 24)
-                                radius: 10
+                                radius: Theme.scaledGeometry(10)
                                 color: index % 2 ? frontend.palette.chatSidebar : 'transparent'
                                 border.width: 1
                                 border.color: Theme.palette.border
@@ -981,25 +981,25 @@ Item {
                                 GridLayout {
                                     id: archivedRowContent
                                     columns: width < 520 ? 1 : 3
-                                    columnSpacing: 12
-                                    rowSpacing: 8
+                                    columnSpacing: Theme.scaledGeometry(12)
+                                    rowSpacing: Theme.scaledGeometry(8)
                                     anchors.fill: parent
-                                    anchors.leftMargin: 16
-                                    anchors.rightMargin: 16
+                                    anchors.leftMargin: Theme.scaledGeometry(16)
+                                    anchors.rightMargin: Theme.scaledGeometry(16)
 
                                     Rectangle {
                                         visible: archivedRowContent.columns > 1
-                                        Layout.preferredWidth: 32
-                                        Layout.preferredHeight: 32
-                                        radius: 8
+                                        Layout.preferredWidth: Theme.scaledGeometry(32)
+                                        Layout.preferredHeight: Theme.scaledGeometry(32)
+                                        radius: Theme.scaledGeometry(8)
                                         color: Theme.palette.codeSurface
                                         border.width: 1
                                         border.color: Theme.palette.border
 
                                         VrLineIcon {
                                             anchors.centerIn: parent
-                                            width: 16
-                                            height: 16
+                                            width: Theme.scaledGeometry(16)
+                                            height: Theme.scaledGeometry(16)
                                             kind: "archive"
                                             foreground: Theme.palette.brandOrange
                                         }
@@ -1008,7 +1008,7 @@ Item {
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        spacing: 3
+                                        spacing: Theme.scaledGeometry(3)
 
                                         Text {
                                             Layout.fillWidth: true
@@ -1033,19 +1033,19 @@ Item {
                                     }
 
                                     RowLayout {
-                                        spacing: 8
+                                        spacing: Theme.scaledGeometry(8)
 
                                         VrButton {
                                             text: "Restaurar"
                                             variant: "secondary"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: studio.restoreArchived(conversationId)
                                         }
 
                                         VrButton {
                                             text: "Excluir"
                                             variant: "ghost"
-                                            implicitHeight: 32
+                                            implicitHeight: Theme.scaledGeometry(32)
                                             onClicked: {
                                                 root.pendingDeleteId = conversationId
                                                 deleteDialog.open()
@@ -1059,12 +1059,12 @@ Item {
                                 anchors.centerIn: parent
                                 width: Math.max(0, parent.width - 24)
                                 visible: archivedList.count === 0
-                                spacing: 8
+                                spacing: Theme.scaledGeometry(8)
 
                                 VrLineIcon {
                                     Layout.alignment: Qt.AlignHCenter
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
+                                    Layout.preferredWidth: Theme.scaledGeometry(32)
+                                    Layout.preferredHeight: Theme.scaledGeometry(32)
                                     kind: "archive"
                                     foreground: Theme.palette.mutedText
                                 }
@@ -1130,27 +1130,27 @@ Item {
             color: Theme.palette.surface
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 14
+            radius: Theme.scaledGeometry(14)
         }
         contentItem: ColumnLayout {
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 20
-                Layout.leftMargin: 20
-                Layout.rightMargin: 16
-                Layout.bottomMargin: 14
-                spacing: 14
+                Layout.topMargin: Theme.scaledGeometry(20)
+                Layout.leftMargin: Theme.scaledGeometry(20)
+                Layout.rightMargin: Theme.scaledGeometry(16)
+                Layout.bottomMargin: Theme.scaledGeometry(14)
+                spacing: Theme.scaledGeometry(14)
                 Rectangle {
-                    width: 40
-                    height: 40
-                    radius: 20
+                    width: Theme.scaledGeometry(40)
+                    height: Theme.scaledGeometry(40)
+                    radius: Theme.scaledGeometry(20)
                     color: Qt.alpha(Theme.palette.danger, 0.12)
                     Layout.alignment: Qt.AlignTop
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: 18
-                        height: 18
+                        width: Theme.scaledGeometry(18)
+                        height: Theme.scaledGeometry(18)
                         kind: "trash"
                         foreground: Theme.palette.danger
                     }
@@ -1158,7 +1158,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Excluir conversa definitivamente?"
                         color: Theme.palette.text
@@ -1179,8 +1179,8 @@ Item {
                     Layout.alignment: Qt.AlignTop
                     iconKind: "close"
                     iconSize: 10
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    implicitWidth: Theme.scaledGeometry(26)
+                    implicitHeight: Theme.scaledGeometry(26)
                     foreground: Theme.palette.mutedText
                     onClicked: deleteDialog.close()
                 }
@@ -1192,11 +1192,11 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
-                Layout.bottomMargin: 14
-                Layout.leftMargin: 20
-                Layout.rightMargin: 20
-                spacing: 10
+                Layout.topMargin: Theme.scaledGeometry(12)
+                Layout.bottomMargin: Theme.scaledGeometry(14)
+                Layout.leftMargin: Theme.scaledGeometry(20)
+                Layout.rightMargin: Theme.scaledGeometry(20)
+                spacing: Theme.scaledGeometry(10)
                 Item { Layout.fillWidth: true }
                 VrButton {
                     text: "Cancelar"

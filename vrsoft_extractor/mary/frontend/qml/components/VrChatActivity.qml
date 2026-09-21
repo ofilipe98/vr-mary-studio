@@ -29,7 +29,7 @@ Rectangle {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: 4
+        spacing: Theme.scaledGeometry(4)
 
         Rectangle {
             id: activityHeader
@@ -42,17 +42,25 @@ Rectangle {
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
-            radius: 7
-            color: activityHover.hovered ? Theme.palette.hover : "transparent"
+            Layout.preferredHeight: Theme.scaledGeometry(30)
+            radius: Theme.scaledGeometry(7)
+            color: "transparent"
 
             RowLayout {
                 anchors.fill: parent
-                spacing: 6
+                spacing: Theme.scaledGeometry(6)
 
-                Text {
+                VrLineIcon {
+                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                    Layout.preferredHeight: Theme.scaledGeometry(16)
+                    kind: root.headerIcon()
+                    foreground: Theme.palette.mutedText
+                }
+
+                VrShimmerText {
                     Layout.fillWidth: true
                     text: root.headerText()
+                    running: root.running
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(13)
@@ -60,9 +68,15 @@ Rectangle {
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                 }
+                VrLineIcon {
+                    Layout.preferredWidth: Theme.iconSmall
+                    Layout.preferredHeight: Theme.iconSmall
+                    kind: root.expanded ? "chevronDown" : "chevronRight"
+                    foreground: Theme.palette.mutedText
+                }
             }
 
-            HoverHandler { id: activityHover }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.toggleRequested() }
         }
 
@@ -79,7 +93,7 @@ Rectangle {
             visible: root.expanded || root.visibleItems().length > 0
             Layout.fillWidth: true
             Layout.leftMargin: 0
-            spacing: 3
+            spacing: Theme.scaledGeometry(3)
 
             TextEdit {
                 visible: !root.items.some(function(item) { return item.itemType === "reasoning" })
@@ -126,7 +140,10 @@ Rectangle {
         TextEdit {
             id: commentaryText
             property var modelData: ({})
-            text: String(modelData.text || "")
+            readonly property string displayText: (typeof frontend !== "undefined" && frontend)
+                ? frontend.displayMarkdown(String(modelData.text || ""))
+                : String(modelData.text || "")
+            text: displayText
             textFormat: TextEdit.MarkdownText
             readOnly: true
             activeFocusOnPress: false
@@ -137,24 +154,29 @@ Rectangle {
             font.pixelSize: Theme.fontSize(13)
             font.weight: Font.Normal
             onLinkActivated: link => {
-                if (typeof studio !== "undefined" && studio) studio.openExternalUrl(link)
+                var value = String(link)
+                if (value.indexOf("vr-file:") === 0 || value.indexOf("file:") === 0) {
+                    if (typeof chat !== "undefined" && chat) chat.openFileReference(value)
+                } else if (typeof studio !== "undefined" && studio) {
+                    studio.openExternalUrl(value)
+                }
             }
             onTextChanged: frontend.styleMessageDocument(
                 textDocument,
-                String(modelData.text || "")
+                displayText
             )
             Connections {
                 target: frontend
                 function onThemeChanged() {
                     frontend.styleMessageDocument(
                         commentaryText.textDocument,
-                        String(commentaryText.modelData.text || "")
+                        commentaryText.displayText
                     )
                 }
                 function onTypographyChanged() {
                     frontend.styleMessageDocument(
                         commentaryText.textDocument,
-                        String(commentaryText.modelData.text || "")
+                        commentaryText.displayText
                     )
                 }
             }
@@ -195,7 +217,7 @@ Rectangle {
 
     function headerText() {
         if (root.running) {
-            var base = "Working for " + root.elapsedLabel
+            var base = "Trabalhando há " + root.elapsedLabel
             if (root.taskStep.length > 0)
                 return base + " · " + root.taskStep
             return base
@@ -203,7 +225,7 @@ Rectangle {
         if (root.statusText === "Erro") return "Falhou após " + root.elapsedLabel
         if (root.statusText === "Interrompido")
             return "Interrompido após " + root.elapsedLabel
-        return "Worked for " + root.elapsedLabel
+        return "Concluído em " + root.elapsedLabel
     }
 
     function itemIcon(item) {
@@ -214,6 +236,18 @@ Rectangle {
             return "terminalPrompt"
         }
         return "hammer"
+    }
+
+    function headerIcon() {
+        var list = root.items || []
+        for (var index = list.length - 1; index >= 0; --index) {
+            var state = String(list[index].state || "")
+            if (state === "running" || state === "waiting_approval")
+                return root.itemIcon(list[index])
+        }
+        if (list.length > 0)
+            return root.itemIcon(list[list.length - 1])
+        return "terminalPrompt"
     }
 
     function visibleItems() {
@@ -232,7 +266,7 @@ Rectangle {
         })
         if (failedItems.length > 0) return failedItems.slice(-1)
 
-        // Successful settled work is disclosed by the Worked for ... header.
+        // Successful settled work is disclosed by the Concluído em ... header.
         return []
     }
 }

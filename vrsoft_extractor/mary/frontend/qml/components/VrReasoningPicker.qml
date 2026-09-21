@@ -33,8 +33,8 @@ Button {
 
     implicitHeight: Theme.compactControlHeight
     implicitWidth: Math.max(96, compactRow.implicitWidth + 14)
-    leftPadding: 7
-    rightPadding: 7
+    leftPadding: Theme.scaledGeometry(7)
+    rightPadding: Theme.scaledGeometry(7)
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
@@ -51,7 +51,7 @@ Button {
 
     contentItem: RowLayout {
         id: compactRow
-        spacing: 7
+        spacing: Theme.scaledGeometry(7)
         Text {
             text: control.compactLabel || "Medium"
             color: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
@@ -60,15 +60,15 @@ Button {
             renderType: Theme.textRenderType
         }
         VrLineIcon {
-            Layout.preferredWidth: 11
-            Layout.preferredHeight: 11
+            Layout.preferredWidth: Theme.scaledGeometry(11)
+            Layout.preferredHeight: Theme.scaledGeometry(11)
             kind: "chevronDown"
             foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: 6
+        radius: Theme.scaledGeometry(6)
         color: control.down || control.hovered || optionsPopup.opened
             ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
         border.width: control.outlined || control.activeFocus ? 1 : 0
@@ -85,17 +85,17 @@ Button {
         parent: control
         x: 0
         y: control.popupAbove ? -height - 7 : control.height + 7
-        width: 220
+        width: Theme.scaledGeometry(220)
         height: 38 + control.effortModel.length * 32
             + (control.tierModel.length > 0 ? 34 + control.tierModel.length * 48 : 0)
-        padding: 6
+        padding: Theme.scaledGeometry(6)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
             color: Theme.palette.chatComposer
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 11
+            radius: Theme.scaledGeometry(11)
         }
 
         contentItem: ColumnLayout {
@@ -103,8 +103,8 @@ Button {
 
             Text {
                 Layout.fillWidth: true
-                Layout.leftMargin: 7
-                Layout.preferredHeight: 24
+                Layout.leftMargin: Theme.scaledGeometry(7)
+                Layout.preferredHeight: Theme.scaledGeometry(24)
                 text: "Raciocínio"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
@@ -119,15 +119,15 @@ Button {
                     required property int index
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 30
-                    radius: 7
+                    Layout.preferredHeight: Theme.scaledGeometry(30)
+                    radius: Theme.scaledGeometry(7)
                     color: control.currentEffortIndex === index
                         ? Theme.palette.chatControl : effortHover.hovered
                             ? Theme.palette.surfaceRaised : "transparent"
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
                         Text {
                             Layout.fillWidth: true
                             text: modelData.label
@@ -139,8 +139,8 @@ Button {
                         Rectangle {
                             visible: modelData.default === true
                             Layout.preferredWidth: defaultLabel.implicitWidth + 8
-                            Layout.preferredHeight: 18
-                            radius: 5
+                            Layout.preferredHeight: Theme.scaledGeometry(18)
+                            radius: Theme.scaledGeometry(5)
                             color: Theme.palette.surfaceRaised
                             Text {
                                 id: defaultLabel
@@ -165,8 +165,8 @@ Button {
             Rectangle {
                 visible: control.tierModel.length > 0
                 Layout.fillWidth: true
-                Layout.leftMargin: 7
-                Layout.rightMargin: 7
+                Layout.leftMargin: Theme.scaledGeometry(7)
+                Layout.rightMargin: Theme.scaledGeometry(7)
                 Layout.preferredHeight: 1
                 color: Theme.palette.chatBorder
             }
@@ -174,8 +174,8 @@ Button {
             Text {
                 visible: control.tierModel.length > 0
                 Layout.fillWidth: true
-                Layout.leftMargin: 7
-                Layout.preferredHeight: 24
+                Layout.leftMargin: Theme.scaledGeometry(7)
+                Layout.preferredHeight: Theme.scaledGeometry(24)
                 text: "Service Tier"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
@@ -191,14 +191,14 @@ Button {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: modelData.description ? 46 : 32
-                    radius: 7
+                    radius: Theme.scaledGeometry(7)
                     color: control.currentTierIndex === index
                         ? Theme.palette.chatControl : tierHover.hovered
                             ? Theme.palette.surfaceRaised : "transparent"
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
                         spacing: 1
                         RowLayout {
                             Layout.fillWidth: true
@@ -213,8 +213,8 @@ Button {
                             Rectangle {
                                 visible: modelData.default === true
                                 Layout.preferredWidth: tierDefault.implicitWidth + 8
-                                Layout.preferredHeight: 18
-                                radius: 5
+                                Layout.preferredHeight: Theme.scaledGeometry(18)
+                                radius: Theme.scaledGeometry(5)
                                 color: Theme.palette.surfaceRaised
                                 Text {
                                     id: tierDefault

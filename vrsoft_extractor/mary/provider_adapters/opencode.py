@@ -109,10 +109,14 @@ class OpenCodeProvider(AgentProvider):
         if not self.command:
             raise ProviderError("OpenCode não foi encontrado no PATH.")
         options = options or ConversationOptions(model=model, effort=effort)
+        startup_token = object()
         with self._state_lock:
             if time.monotonic() < self._rate_limited_until:
                 raise ProviderRateLimited("Limite de requisições do OpenCode atingido. Aguarde antes de tentar novamente.")
             resume_id = self._sessions.get(native_id, native_id)
+            if conversation_id in self._active or conversation_id in self._starting:
+                raise ProviderError("Já existe um turno OpenCode em execução.")
+            self._starting[conversation_id] = startup_token
         command = [
             self.command,
             "run",
@@ -139,16 +143,16 @@ class OpenCodeProvider(AgentProvider):
         if normalized_effort in self._model_variants.get(model, set()):
             command.extend(["--variant", normalized_effort])
 
-        startup_token = object()
-        with self._state_lock:
-            if conversation_id in self._active or conversation_id in self._starting:
-                raise ProviderError("Já existe um turno OpenCode em execução.")
-            self._starting[conversation_id] = startup_token
-
         startup_info: dict[str, Any] = {}
         if os.name == "nt":
             startup_info["creationflags"] = subprocess.CREATE_NO_WINDOW
         try:
+            with self._state_lock:
+                if self._starting.get(conversation_id) is not startup_token:
+                    raise ProviderError("A inicialização do turno OpenCode foi cancelada.")
+            if options.knowledge_context_path:
+                from ..knowledge_access import load_scope
+                load_scope(options.knowledge_context_path)
             process = subprocess.Popen(
                 command,
                 cwd=workspace,
@@ -163,6 +167,7 @@ class OpenCodeProvider(AgentProvider):
                     options.approval_profile,
                     self.knowledge_root if self.knowledge_root else None,
                     options.knowledge_context_path,
+                    conversation_id,
                 ),
                 **startup_info,
             )
@@ -182,6 +187,13 @@ class OpenCodeProvider(AgentProvider):
                 process.terminate()
             raise ProviderError("A inicialização do turno OpenCode foi cancelada.")
 
+        # Drain output while writing the prompt: both OS pipes are bounded.
+        # Large prompts otherwise deadlock if startup logs fill stdout/stderr.
+        threading.Thread(
+            target=self._consume,
+            args=(conversation_id, native_id, process, callback),
+            daemon=True,
+        ).start()
         try:
             stdin = process.stdin
             if stdin is None:
@@ -195,12 +207,6 @@ class OpenCodeProvider(AgentProvider):
             if process.poll() is None:
                 process.terminate()
             raise
-
-        threading.Thread(
-            target=self._consume,
-            args=(conversation_id, native_id, process, callback),
-            daemon=True,
-        ).start()
 
     def _consume(
         self,

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .monitor_adapter import MONITOR_TOOL_NAMES
+
 
 MAX_TOOL_OUTPUT_BYTES = 64 * 1024
 TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
@@ -18,6 +20,7 @@ RESERVED_TOOL_NAMES = {
     "update_plan",
     "view_image",
     "web_search",
+    *MONITOR_TOOL_NAMES,
 }
 
 
@@ -403,4 +406,33 @@ def run_vr_read(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolEx
     payload = service.read(str(arguments.get("reference") or "").strip(),
         cursor=max(0, int(arguments.get("cursor") or 0)), limit=max(1, min(8000, int(arguments.get("limit") or 4000))),
         start_line=arguments.get("start_line"), end_line=arguments.get("end_line"), **kwargs)
+    return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
+
+
+def run_bounded_vr_tool(name: str, arguments: dict[str, Any], router: Any,
+                        remaining_chars: int, **scope: Any) -> ToolExecutionResult:
+    """Fit a real page, never truncate JSON or lose continuation references."""
+    runners = {VR_SEARCH_TOOL_NAME: (run_vr_search, 6),
+               VR_READ_TOOL_NAME: (run_vr_read, 4000),
+               VR_SOURCES_TOOL_NAME: (run_vr_sources, 20)}
+    runner, default_limit = runners[name]
+    options = dict(arguments)
+    size = max(1, int(options.get("limit") or default_limit))
+    while remaining_chars > 256:
+        options["limit"] = size
+        result = runner(options, router, **scope)
+        payload = dict(result.parsed)
+        payload["budget"] = {"remaining_chars": 0, "page_reduced": size < int(arguments.get("limit") or default_limit)}
+        # Reserve enough digits for the remaining budget before measuring.
+        payload["budget"]["remaining_chars"] = remaining_chars
+        text = json.dumps(payload, ensure_ascii=False)
+        if len(text) <= remaining_chars:
+            payload["budget"]["remaining_chars"] = remaining_chars - len(text)
+            return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
+        if size == 1 or payload.get("error"):
+            break
+        size = max(1, size // 2)
+    payload = {"state": "budget_exhausted", "remaining_chars": remaining_chars,
+               "error": "O saldo de respostas deste turno não comporta outra página. "
+                        "Use as evidências já recebidas ou continue em um novo turno; não repita a consulta."}
     return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)

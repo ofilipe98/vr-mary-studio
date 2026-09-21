@@ -40,7 +40,7 @@ Item {
         id: mainColumn
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: 4
+        spacing: Theme.scaledGeometry(4)
 
         // Header Row
         Rectangle {
@@ -54,20 +54,20 @@ Item {
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            radius: 4
-            color: headerHover.hovered ? Theme.palette.hover : "transparent"
+            Layout.preferredHeight: Theme.scaledGeometry(28)
+            radius: Theme.scaledGeometry(4)
+            color: "transparent"
             clip: true
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 6
-                spacing: 7
+                anchors.leftMargin: Theme.scaledGeometry(4)
+                anchors.rightMargin: Theme.scaledGeometry(6)
+                spacing: Theme.scaledGeometry(7)
 
                 VrLineIcon {
-                    Layout.preferredWidth: 14
-                    Layout.preferredHeight: 14
+                    Layout.preferredWidth: Theme.scaledGeometry(14)
+                    Layout.preferredHeight: Theme.scaledGeometry(14)
                     kind: root.isError ? "close" : (root.isSuccess ? "check" : (root.isWaitingApproval ? "alert" : "terminalPrompt"))
                     foreground: root.isError
                         ? Theme.palette.danger
@@ -76,9 +76,10 @@ Item {
                             : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
                 }
 
-                Text {
+                VrShimmerText {
                     Layout.fillWidth: true
                     text: root.commandText
+                    running: root.isRunning
                     color: root.isError
                         ? Theme.palette.danger
                         : (root.isWaitingApproval
@@ -104,9 +105,9 @@ Item {
                 // Status / Exit code badge
                 Rectangle {
                     visible: String(root.modelData.badgeText || "").length > 0
-                    Layout.preferredHeight: 18
+                    Layout.preferredHeight: Theme.scaledGeometry(18)
                     Layout.preferredWidth: badgeLabel.implicitWidth + 10
-                    radius: 3
+                    radius: Theme.scaledGeometry(3)
                     color: root.isError
                         ? Qt.rgba(Theme.palette.danger.r, Theme.palette.danger.g, Theme.palette.danger.b, 0.15)
                         : (root.isSuccess
@@ -132,48 +133,14 @@ Item {
                 }
 
                 VrLineIcon {
-                    Layout.preferredWidth: 9
-                    Layout.preferredHeight: 9
+                    Layout.preferredWidth: Theme.scaledGeometry(9)
+                    Layout.preferredHeight: Theme.scaledGeometry(9)
                     kind: root.detailExpanded ? "chevronDown" : "chevronRight"
                     foreground: Theme.palette.mutedText
                 }
             }
 
-            // Specular highlight shimmer animation on running tool call (disabled when reduceMotion is set)
-            Rectangle {
-                id: specularShimmer
-                anchors.fill: parent
-                radius: parent.radius
-                clip: true
-                color: "transparent"
-                visible: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
-
-                Rectangle {
-                    id: shimmerBeam
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: Math.max(120, parent.width * 0.4)
-                    x: -width
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: "transparent" }
-                        GradientStop { position: 0.35; color: Qt.rgba(255, 255, 255, 0.0) }
-                        GradientStop { position: 0.5; color: Qt.rgba(255, 255, 255, 0.28) }
-                        GradientStop { position: 0.65; color: Qt.rgba(255, 255, 255, 0.0) }
-                        GradientStop { position: 1.0; color: "transparent" }
-                    }
-                    NumberAnimation on x {
-                        running: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
-                        from: -shimmerBeam.width
-                        to: specularShimmer.width + shimmerBeam.width
-                        duration: 1500
-                        loops: Animation.Infinite
-                        easing.type: Easing.Linear
-                    }
-                }
-            }
-
-            HoverHandler { id: headerHover }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler {
                 onTapped: root.detailExpanded = !root.detailExpanded
             }
@@ -184,7 +151,7 @@ Item {
             visible: root.detailExpanded
             Layout.fillWidth: true
             Layout.preferredHeight: detailContent.implicitHeight + 16
-            radius: 6
+            radius: Theme.scaledGeometry(6)
             color: Theme.palette.surfaceRaised
             border.width: 1
             border.color: Theme.palette.chatBorder
@@ -195,13 +162,13 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.margins: 8
-                spacing: 6
+                anchors.margins: Theme.scaledGeometry(8)
+                spacing: Theme.scaledGeometry(6)
 
                 // Action / Metadata bar
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
 
                     Text {
                         visible: String(root.modelData.cwd || "").length > 0
@@ -230,9 +197,9 @@ Item {
 
                     // Copy command button
                     Rectangle {
-                        Layout.preferredHeight: 22
+                        Layout.preferredHeight: Theme.scaledGeometry(22)
                         Layout.preferredWidth: copyCmdText.implicitWidth + 12
-                        radius: 3
+                        radius: Theme.scaledGeometry(3)
                         color: copyCmdHover.hovered ? Theme.palette.hover : "transparent"
                         border.width: 1
                         border.color: Theme.palette.chatBorder
@@ -261,9 +228,9 @@ Item {
                     // Copy output button
                     Rectangle {
                         visible: root.outputText.length > 0
-                        Layout.preferredHeight: 22
+                        Layout.preferredHeight: Theme.scaledGeometry(22)
                         Layout.preferredWidth: copyOutputText.implicitWidth + 12
-                        radius: 3
+                        radius: Theme.scaledGeometry(3)
                         color: copyOutputHover.hovered ? Theme.palette.hover : "transparent"
                         border.width: 1
                         border.color: Theme.palette.chatBorder
@@ -295,7 +262,7 @@ Item {
                     visible: root.isError && (root.errorDetailsText.length > 0 || root.errorSummaryText.length > 0)
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(errorColumn.implicitHeight + 12, 180)
-                    radius: 4
+                    radius: Theme.scaledGeometry(4)
                     color: Qt.rgba(Theme.palette.danger.r, Theme.palette.danger.g, Theme.palette.danger.b, 0.08)
                     border.width: 1
                     border.color: Qt.rgba(Theme.palette.danger.r, Theme.palette.danger.g, Theme.palette.danger.b, 0.3)
@@ -303,14 +270,14 @@ Item {
 
                     ScrollView {
                         anchors.fill: parent
-                        anchors.margins: 6
+                        anchors.margins: Theme.scaledGeometry(6)
                         clip: true
                         contentWidth: availableWidth
 
                         ColumnLayout {
                             id: errorColumn
                             width: parent.width
-                            spacing: 4
+                            spacing: Theme.scaledGeometry(4)
 
                             Text {
                                 visible: root.errorSummaryText.length > 0
@@ -346,7 +313,7 @@ Item {
                     visible: root.outputText.length > 0
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(outputArea.implicitHeight + 16, 220)
-                    radius: 4
+                    radius: Theme.scaledGeometry(4)
                     color: Theme.palette.chatBackground
                     border.width: 1
                     border.color: Theme.palette.chatBorder
@@ -354,7 +321,7 @@ Item {
 
                     ScrollView {
                         anchors.fill: parent
-                        anchors.margins: 8
+                        anchors.margins: Theme.scaledGeometry(8)
                         clip: true
                         contentWidth: availableWidth
 

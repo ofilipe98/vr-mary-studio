@@ -25,13 +25,12 @@ from .knowledge_router import KnowledgeRouter
 from .retrieval.service import RetrievalService
 from .chat_tools import (
     all_vr_tools_specs,
-    run_vr_sources,
-    run_vr_search,
-    run_vr_read,
+    run_bounded_vr_tool,
     VR_SOURCES_TOOL_NAME,
     VR_SEARCH_TOOL_NAME,
     VR_READ_TOOL_NAME,
 )
+from .monitor_adapter import MONITOR_TOOL_NAMES, MonitorAdapter, monitor_tool_specs
 
 
 def read_message(stream: Any) -> dict[str, Any] | None:
@@ -58,7 +57,11 @@ def write_message(stream: Any, payload: dict[str, Any]) -> None:
     stream.flush()
 
 
-def run_mcp_server(root_path: Path | None = None, context_path: str = "") -> None:
+def run_mcp_server(
+    root_path: Path | None = None,
+    context_path: str = "",
+    monitor_session_id: str = "",
+) -> None:
     root = root_path or Path(os.environ.get("VR_STUDIO_ROOT", ".")).resolve()
     settings = load_vr_settings(root=root)
     database = MaryDatabase(settings.database_path, root=settings.root)
@@ -68,6 +71,14 @@ def run_mcp_server(root_path: Path | None = None, context_path: str = "") -> Non
         disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
     )
     service = RetrievalService(router)
+    try:
+        monitor = (
+            MonitorAdapter.from_path(settings.state_dir / "vrmonitor.json")
+            if monitor_session_id
+            else None
+        )
+    except ValueError:
+        monitor = None
 
     stdin = sys.stdin
     stdout = sys.stdout
@@ -111,6 +122,8 @@ def run_mcp_server(root_path: Path | None = None, context_path: str = "") -> Non
                 write_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": {}})
         elif method == "tools/list":
             specs = all_vr_tools_specs()
+            if monitor is not None:
+                specs = (*specs, *monitor_tool_specs())
             mcp_tools = [
                 {
                     "name": s["name"],
@@ -130,23 +143,32 @@ def run_mcp_server(root_path: Path | None = None, context_path: str = "") -> Non
             arguments = params.get("arguments") or {}
             try:
                 scope = load_scope(context_path)
-                if calls >= 24 or output_chars >= 96000:
+                if calls >= 24:
                     raise ValueError("Limite de consultas deste turno atingido.")
                 calls += 1
-                if tool_name == VR_SEARCH_TOOL_NAME:
-                    exec_res = run_vr_search(arguments, service, **scope)
-                elif tool_name == VR_SOURCES_TOOL_NAME:
-                    exec_res = run_vr_sources(arguments, service, **scope)
-                elif tool_name == VR_READ_TOOL_NAME:
-                    exec_res = run_vr_read(arguments, service, **scope)
+                if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+                    exec_res = run_bounded_vr_tool(
+                        tool_name, arguments, service, max(0, 96000 - output_chars), **scope
+                    )
+                elif monitor is not None and tool_name in MONITOR_TOOL_NAMES:
+                    if output_chars >= 96000:
+                        raise ValueError("Limite de consultas deste turno atingido.")
+                    exec_res = monitor.execute(
+                        str(tool_name), arguments, monitor_session_id
+                    )
+                    if output_chars + len(exec_res.text) > 96000:
+                        raise ValueError("Limite de resultados deste turno atingido; reduza limit.")
                 else:
                     raise ValueError(f"Tool desconhecida: {tool_name}")
 
                 load_scope(context_path)  # Reject work completed after cancellation.
-                if output_chars + len(exec_res.text) > 96000:
-                    raise ValueError("Limite de resultados deste turno atingido; reduza limit.")
-                output_chars += len(exec_res.text)
-                if context_path and tool_name != VR_SOURCES_TOOL_NAME:
+                if exec_res.parsed.get("state") != "budget_exhausted":
+                    output_chars += len(exec_res.text)
+                if (
+                    context_path
+                    and tool_name not in MONITOR_TOOL_NAMES
+                    and tool_name != VR_SOURCES_TOOL_NAME
+                ):
                     with open(context_path + ".events", "a", encoding="utf-8") as journal:
                         journal.write(json.dumps(exec_res.parsed, ensure_ascii=False) + "\n")
 
@@ -200,8 +222,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="VR Mary Studio MCP Server")
     parser.add_argument("--root", type=Path, default=None, help="Caminho raiz da base do VR Studio")
     parser.add_argument("--context", default="", help="Contexto imutavel do turno")
+    parser.add_argument(
+        "--monitor-session", default="", help="UUID da conversa vinculada ao VRMonitor"
+    )
     args = parser.parse_args()
-    run_mcp_server(args.root, args.context)
+    run_mcp_server(args.root, args.context, args.monitor_session)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, Qt, QUrl, QMetaObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -631,6 +631,54 @@ class QmlFrontendTest(unittest.TestCase):
                 settings_navigation.property("color"),
                 QColor(bridge.palette["navigationBackground"]),
             )
+            window.close()
+            engine.deleteLater()
+            self.application.processEvents()
+
+    def test_text_fields_expose_themed_edit_context_menu(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+
+            composer_input = window.findChild(QObject, "chatComposerInput")
+            self.assertIsNotNone(composer_input)
+            # The themed menu is created lazily on the first context-menu
+            # request, so the control must receive one before it can be found.
+            composer_input.forceActiveFocus()
+            self.application.processEvents()
+            context_event = QContextMenuEvent(
+                QContextMenuEvent.Mouse, QPoint(10, 10), QPoint(10, 10)
+            )
+            self.application.sendEvent(composer_input, context_event)
+            self.application.processEvents()
+            menu = composer_input.findChild(QObject, "textEditContextMenu")
+            self.assertIsNotNone(menu)
+
+            expected = {
+                "textEditContextCut": "Recortar",
+                "textEditContextCopy": "Copiar",
+                "textEditContextPaste": "Colar",
+                "textEditContextSelectAll": "Selecionar tudo",
+            }
+            for object_name, label in expected.items():
+                entry = menu.findChild(QObject, object_name)
+                self.assertIsNotNone(entry, object_name)
+                self.assertEqual(entry.property("text"), label)
+
             window.close()
             engine.deleteLater()
             self.application.processEvents()
@@ -2969,6 +3017,10 @@ class QmlFrontendTest(unittest.TestCase):
 
                 card = None
                 content_item = window.property("contentItem")
+                activity = find_qml_item(content_item, "chatActivity")
+                self.assertIsNotNone(activity)
+                activity.setProperty("cardExpanded", True)
+                self.application.processEvents()
                 for _attempt in range(20):
                     self.application.processEvents()
                     card = find_qml_item(content_item, "changedFilesCard")
@@ -3209,7 +3261,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
-        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54", composer_qml)
+        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54)", composer_qml)
         self.assertIn(
             'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
             composer_qml,
@@ -3312,6 +3364,30 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIsNotNone(scroll_bar)
                 self.assertTrue(scroll_bar.property("visible"))
                 self.assertLess(scroll_bar.property("size"), 1.0)
+                self.assertAlmostEqual(
+                    scroll_bar.property("x") + scroll_bar.property("width"),
+                    composer.property("width"),
+                    delta=0.5,
+                )
+                self.assertAlmostEqual(
+                    scroll_bar.property("height"),
+                    composer.property("height"),
+                    delta=0.5,
+                )
+
+                input_item = composer.property("contentItem")
+                before_y = input_item.property("contentY")
+                thumb_y = (scroll_bar.property("visualPosition")
+                           + scroll_bar.property("visualSize") / 2) * scroll_bar.property("height")
+                start = scroll_bar.mapToScene(
+                    QPointF(scroll_bar.property("width") / 2, thumb_y)).toPoint()
+                end = scroll_bar.mapToScene(
+                    QPointF(scroll_bar.property("width") / 2, thumb_y + scroll_bar.property("height") / 3)).toPoint()
+                QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, start)
+                QTest.mouseMove(window, end, 20)
+                QTest.qWait(50)
+                self.assertGreater(input_item.property("contentY"), before_y)
+                QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, end)
             finally:
                 if engine.rootObjects():
                     engine.rootObjects()[0].close()
@@ -3955,6 +4031,30 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("required property bool vrEnabled", chat_preview_qml)
             self.assertIn('text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"', chat_preview_qml)
             self.assertIn("Theme.palette.accessibleOrange", chat_preview_qml)
+            composer_qml = (
+                MAIN_QML.parent / "components" / "VrChatComposer.qml"
+            ).read_text(encoding="utf-8")
+            theme_qml = (
+                MAIN_QML.parent / "theme" / "Theme.qml"
+            ).read_text(encoding="utf-8")
+            # VR/VR Ultra keep the fixed orange identity (ring/halo/border/label)
+            # instead of inheriting the theme's remapped accent.
+            self.assertIn("readonly property color vrAccent", theme_qml)
+            self.assertIn(
+                "composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45)",
+                composer_qml,
+            )
+            # O realce laranja do VR só vale no composer expandido; no retraído
+            # o campo mantém a borda neutra.
+            self.assertIn("composerCard.vrActive && !composerCard.isCompact", composer_qml)
+            self.assertIn("composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange", composer_qml)
+            self.assertIn("? Theme.vrAccent", composer_qml)
+            self.assertIn("Qt.alpha(Theme.vrAccent, 0.12)", chat_preview_qml)
+            # O anel do Ultra só existe no composer expandido.
+            self.assertIn(
+                'visible: root.chatBridge.vrMode === "ultra" && !composerCard.isCompact',
+                chat_preview_qml,
+            )
 
     def test_vr_mode_tag_stays_fixed_until_question_sent_with_different_mode(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as temporary:

@@ -33,10 +33,10 @@ Item {
         property string subtitle: ""
         implicitHeight: subtitle.length ? 44 : 36
         contentItem: RowLayout {
-            spacing: 9
+            spacing: Theme.scaledGeometry(9)
             VrProjectIcon {
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
+                Layout.preferredWidth: Theme.scaledGeometry(24)
+                Layout.preferredHeight: Theme.scaledGeometry(24)
                 boxSize: 24
                 iconSize: 14
                 projectLabel: entry.text
@@ -75,7 +75,7 @@ Item {
             }
         }
         background: Rectangle {
-            radius: 7
+            radius: Theme.scaledGeometry(7)
             color: entry.highlighted ? Theme.palette.chatControl : "transparent"
         }
     }
@@ -83,8 +83,8 @@ Item {
     component KbdHint: Rectangle {
         property string label: ""
         implicitWidth: Math.max(22, hintText.implicitWidth + 10)
-        implicitHeight: 20
-        radius: 5
+        implicitHeight: Theme.scaledGeometry(20)
+        radius: Theme.scaledGeometry(5)
         color: Theme.palette.chatControl
         border.width: 1
         border.color: Theme.palette.chatBorder
@@ -121,6 +121,8 @@ Item {
     property var expandedFileFolders: ({})
     property string surfaceFilePath: ""
     property string surfaceFilePreview: ""
+    property int surfaceFileLine: 0
+    property int surfaceFileColumn: 0
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
@@ -223,6 +225,9 @@ Item {
             root.openSurface(1)
             root.navigateBrowser(address)
         }
+        function onFilePreviewRequested(path, line, column) {
+            root.openFileSurface(path, line, column)
+        }
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
         }
@@ -266,7 +271,7 @@ Item {
 
         handle: Rectangle {
             id: chatSplitHandle
-            implicitWidth: 7
+            implicitWidth: Theme.scaledGeometry(7)
             color: "transparent"
 
             // Left slice matches sidebar background
@@ -315,8 +320,8 @@ Item {
             // Interactive grip indicator pill on hover/press
             Rectangle {
                 anchors.centerIn: parent
-                width: 3
-                height: 36
+                width: Theme.scaledGeometry(3)
+                height: Theme.scaledGeometry(36)
                 radius: 1.5
                 visible: SplitHandle.hovered || SplitHandle.pressed
                 color: SplitHandle.pressed ? Theme.palette.brandOrange : Theme.palette.focus
@@ -357,20 +362,20 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
+                anchors.margins: Theme.scaledGeometry(10)
+                spacing: Theme.scaledGeometry(6)
 
                 Item {
                     id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    Layout.minimumHeight: 32
-                    Layout.maximumHeight: 32
+                    Layout.preferredHeight: Theme.scaledGeometry(32)
+                    Layout.minimumHeight: Theme.scaledGeometry(32)
+                    Layout.maximumHeight: Theme.scaledGeometry(32)
                     Layout.fillHeight: false
 
                     RowLayout {
                         anchors.fill: parent
-                        spacing: 6
+                        spacing: Theme.scaledGeometry(6)
 
                         Item {
                             Layout.fillWidth: true
@@ -381,8 +386,8 @@ Item {
                                 id: conversationSearch
                                 objectName: "conversationSearch"
                                 anchors.fill: parent
-                                leftPadding: 30
-                                rightPadding: 6
+                                leftPadding: Theme.scaledGeometry(30)
+                                rightPadding: Theme.scaledGeometry(6)
                                 placeholderText: "Pesquisar"
                                 Accessible.name: "Pesquisar conversas"
                                 font.family: Theme.fontFamily
@@ -415,10 +420,10 @@ Item {
                             }
                             VrLineIcon {
                                 anchors.left: parent.left
-                                anchors.leftMargin: 7
+                                anchors.leftMargin: Theme.scaledGeometry(7)
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: 16
-                                height: 16
+                                width: Theme.scaledGeometry(16)
+                                height: Theme.scaledGeometry(16)
                                 kind: "search"
                                 foreground: conversationSearch.activeFocus
                                     ? Theme.palette.text : Theme.palette.mutedText
@@ -428,17 +433,17 @@ Item {
                         // Grouped actions for folder / chat (transparent, like T3)
                         Rectangle {
                             id: folderActionsCapsule
-                            Layout.preferredHeight: 32
+                            Layout.preferredHeight: Theme.scaledGeometry(32)
                             Layout.alignment: Qt.AlignVCenter
                             implicitWidth: folderActionsRow.implicitWidth + 4
-                            radius: 8
+                            radius: Theme.scaledGeometry(8)
                             color: "transparent"
                             border.width: 0
 
                             RowLayout {
                                 id: folderActionsRow
                                 anchors.centerIn: parent
-                                spacing: 4
+                                spacing: Theme.scaledGeometry(4)
 
                                 VrProjectSelector {
                                     id: projectSelector
@@ -463,8 +468,8 @@ Item {
                                 VrIconButton {
                                     id: addProjectButton
                                     objectName: "addProjectButton"
-                                    implicitWidth: 32
-                                    implicitHeight: 32
+                                    implicitWidth: Theme.scaledGeometry(32)
+                                    implicitHeight: Theme.scaledGeometry(32)
                                     iconSize: 16
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
@@ -480,8 +485,8 @@ Item {
                                 VrIconButton {
                                     id: newChatButton
                                     objectName: "newChatButton"
-                                    implicitWidth: 32
-                                    implicitHeight: 32
+                                    implicitWidth: Theme.scaledGeometry(32)
+                                    implicitHeight: Theme.scaledGeometry(32)
                                     iconSize: 16
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
@@ -511,7 +516,7 @@ Item {
                     clip: true
                     reuseItems: true
                     cacheBuffer: 240
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     model: root.chatBridge.conversations
                     currentIndex: root.chatBridge.selectedIndex
                     ScrollBar.vertical: VrScrollBar { }
@@ -536,8 +541,8 @@ Item {
                         required property int taskCompleted
                         required property int taskTotal
                         width: conversationList.width
-                        height: 78
-                        radius: 8
+                        height: Theme.scaledGeometry(78)
+                        radius: Theme.scaledGeometry(8)
                         color: root.chatBridge.selectedIndex === index ? Theme.palette.selection
                             : itemHover.hovered ? Theme.palette.chatControl : "transparent"
                         border.width: 1
@@ -549,18 +554,18 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.leftMargin: 9
-                            anchors.rightMargin: 9
-                            anchors.topMargin: 6
-                            anchors.bottomMargin: 6
+                            anchors.leftMargin: Theme.scaledGeometry(9)
+                            anchors.rightMargin: Theme.scaledGeometry(9)
+                            anchors.topMargin: Theme.scaledGeometry(6)
+                            anchors.bottomMargin: Theme.scaledGeometry(6)
                             spacing: 2
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 5
+                                spacing: Theme.scaledGeometry(5)
                                 VrLineIcon {
-                                    Layout.preferredWidth: 16
-                                    Layout.preferredHeight: 16
+                                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                                    Layout.preferredHeight: Theme.scaledGeometry(16)
                                     kind: conversationItem.editing ? "edit" : "folder"
                                     foreground: conversationItem.editing
                                         ? "#F3C74E" : Theme.palette.mutedText
@@ -576,7 +581,7 @@ Item {
                                     elide: Text.ElideRight
                                     maximumLineCount: 1
                                     Layout.fillWidth: true
-                                    Layout.minimumWidth: 30
+                                    Layout.minimumWidth: Theme.scaledGeometry(30)
                                     Layout.preferredWidth: Math.max(30, conversationItem.width - (conversationVrBadge.visible ? conversationVrBadge.implicitWidth + 10 : 0) - 118)
                                     Accessible.name: conversationItem.projectLabel
                                     HoverHandler { id: projectLabelHover }
@@ -586,9 +591,9 @@ Item {
                                     objectName: "conversationVrBadge"
                                     visible: conversationItem.vrEnabled && conversationItem.vrMode !== "off"
                                     Layout.alignment: Qt.AlignVCenter
-                                    implicitHeight: 16
+                                    implicitHeight: Theme.scaledGeometry(16)
                                     implicitWidth: conversationVrBadgeText.implicitWidth + 8
-                                    radius: 4
+                                    radius: Theme.scaledGeometry(4)
                                     color: Theme.palette.accessibleOrange
 
                                     Text {
@@ -612,15 +617,15 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: 16
-                                    Layout.preferredHeight: 16
+                                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                                    Layout.preferredHeight: Theme.scaledGeometry(16)
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
                                 Item {
                                     visible: conversationItem.running
-                                    Layout.preferredWidth: 16
-                                    Layout.preferredHeight: 16
+                                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                                    Layout.preferredHeight: Theme.scaledGeometry(16)
                                     Canvas {
                                         anchors.fill: parent
                                         onPaint: {
@@ -652,10 +657,10 @@ Item {
                                     id: discardDraftButton
                                     objectName: "discardDraftButton"
                                     visible: conversationItem.editing
-                                    Layout.preferredWidth: 18
-                                    Layout.preferredHeight: 18
-                                    implicitWidth: 18
-                                    implicitHeight: 18
+                                    Layout.preferredWidth: Theme.scaledGeometry(18)
+                                    Layout.preferredHeight: Theme.scaledGeometry(18)
+                                    implicitWidth: Theme.scaledGeometry(18)
+                                    implicitHeight: Theme.scaledGeometry(18)
                                     iconKind: "close"
                                     iconSize: 10
                                     round: true
@@ -683,7 +688,7 @@ Item {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 5
+                                spacing: Theme.scaledGeometry(5)
                                 Text {
                                     Layout.fillWidth: true
                                     text: (conversationItem.running && conversationItem.taskTotal > 0 && conversationItem.taskStep.length > 0)
@@ -701,16 +706,16 @@ Item {
                                 }
                                 Rectangle {
                                     visible: !conversationItem.editing
-                                    Layout.preferredWidth: 6
-                                    Layout.preferredHeight: 6
-                                    radius: 3
+                                    Layout.preferredWidth: Theme.scaledGeometry(6)
+                                    Layout.preferredHeight: Theme.scaledGeometry(6)
+                                    radius: Theme.scaledGeometry(3)
                                     color: conversationItem.running ? "#18A8E8"
                                         : conversationItem.status === "error" ? Theme.palette.danger
                                         : Theme.palette.success
                                 }
                                 VrProviderIcon {
-                                    Layout.preferredWidth: 16
-                                    Layout.preferredHeight: 16
+                                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                                    Layout.preferredHeight: Theme.scaledGeometry(16)
                                     provider: conversationItem.provider.toLowerCase()
                                 }
                             }
@@ -764,8 +769,8 @@ Item {
                 VrIconButton {
                     objectName: "chatSettingsButton"
                     Layout.alignment: Qt.AlignLeft
-                    implicitWidth: 38
-                    implicitHeight: 38
+                    implicitWidth: Theme.scaledGeometry(38)
+                    implicitHeight: Theme.scaledGeometry(38)
                     iconKind: "settings"
                     foreground: Theme.palette.mutedText
                     Accessible.name: "Abrir Configurações"
@@ -776,7 +781,7 @@ Item {
 
         Item {
             id: chatMain
-            SplitView.minimumWidth: 320
+            SplitView.minimumWidth: Math.min(root.width, Theme.scaledGeometry(320))
             SplitView.fillWidth: true
 
             Item {
@@ -936,7 +941,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.leftMargin: chatMain.width < 600 ? 14 : 24
                 anchors.rightMargin: chatMain.width < 600 ? 14 : 24
-                anchors.topMargin: 20
+                anchors.topMargin: Theme.scaledGeometry(20)
                 anchors.bottomMargin: 0
                 visible: count > 0
                 clip: true
@@ -1121,11 +1126,11 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: composerCard.y - root.usagePanelHeight - height - 24
                 width: Math.min(parent.width - 48, 720)
-                spacing: 8
+                spacing: Theme.scaledGeometry(8)
                 RowLayout {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min(implicitWidth, parent.width)
-                    spacing: 6
+                    spacing: Theme.scaledGeometry(6)
                     Text {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -1192,9 +1197,9 @@ Item {
                             y: parent.height + 6
                             width: Math.min(260, Overlay.overlay.width - 16)
                             margins: 8
-                            padding: 5
+                            padding: Theme.scaledGeometry(5)
                             background: Rectangle {
-                                radius: 12
+                                radius: Theme.scaledGeometry(12)
                                 color: Theme.palette.chatSidebar
                                 border.color: Theme.palette.chatBorder
                                 border.width: 1
@@ -1250,7 +1255,7 @@ Item {
             VrResearchResume {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: composerCard.top
-                anchors.bottomMargin: 10
+                anchors.bottomMargin: Theme.scaledGeometry(10)
                 z: 20
                 research: root.chatBridge.resumableResearch || ({})
                 onResumeRequested: function(grantBudget) { root.chatBridge.resumeResearch(grantBudget) }
@@ -1307,9 +1312,9 @@ Item {
                 anchors.bottom: composerCard.top
                 anchors.bottomMargin: taskBar.visible ? taskBar.height + 16 : 10
                 z: 25
-                radius: 13
+                radius: Theme.scaledGeometry(13)
                 width: pillRow.implicitWidth + 22
-                height: 26
+                height: Theme.scaledGeometry(26)
                 color: pillHover.hovered ? Theme.palette.chatControl : Theme.palette.chatComposer
                 border.width: 1
                 border.color: Theme.palette.chatBorder
@@ -1317,11 +1322,11 @@ Item {
                 Row {
                     id: pillRow
                     anchors.centerIn: parent
-                    spacing: 6
+                    spacing: Theme.scaledGeometry(6)
                     VrLineIcon {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 12
-                        height: 12
+                        width: Theme.scaledGeometry(12)
+                        height: Theme.scaledGeometry(12)
                         kind: "chevronDown"
                         foreground: Theme.palette.mutedText
                     }
@@ -1343,7 +1348,7 @@ Item {
 
             VrChatComposer { id: composerCard; page: root }
 
-            Item {
+            Flickable {
                 id: expertProfileStrip
                 objectName: "expertProfileStrip"
                 z: 20
@@ -1352,14 +1357,21 @@ Item {
                 y: composerCard.y + composerCard.height
                     + 8 - (1.0 - root.expertReveal) * 8
                 width: composerCard.width
-                height: 34
+                height: Theme.scaledGeometry(34)
                 opacity: root.expertReveal
                 scale: 0.94 + root.expertReveal * 0.06
+                contentWidth: Math.max(width, profileRow.implicitWidth)
+                contentHeight: height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
+                interactive: contentWidth > width
 
                 Row {
                     id: profileRow
-                    anchors.centerIn: parent
-                    spacing: 7
+                    x: Math.max(0, (expertProfileStrip.width - implicitWidth) / 2)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.scaledGeometry(7)
 
                     Repeater {
                         model: root.expertProfiles
@@ -1369,20 +1381,35 @@ Item {
                             required property var modelData
                             readonly property bool selected: root.expertProfileSelected(
                                 modelData.key)
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.CheckBox
+                            Accessible.name: modelData.label
+                            Accessible.checked: selected
+                            Keys.onReturnPressed: root.activateExpertProfile(modelData.key)
+                            Keys.onSpacePressed: root.activateExpertProfile(modelData.key)
+                            onActiveFocusChanged: {
+                                if (activeFocus) {
+                                    var right = x + width
+                                    if (x < expertProfileStrip.contentX)
+                                        expertProfileStrip.contentX = x
+                                    else if (right > expertProfileStrip.contentX + expertProfileStrip.width)
+                                        expertProfileStrip.contentX = right - expertProfileStrip.width
+                                }
+                            }
                             width: chipContent.implicitWidth + 20
-                            height: 32
-                            radius: 8
+                            height: Theme.scaledGeometry(32)
+                            radius: Theme.scaledGeometry(8)
                             color: selected ? Theme.palette.chatControl
                                 : chipHover.hovered ? Theme.palette.hover
                                 : Theme.palette.chatComposer
                             border.width: 1
-                            border.color: selected ? Theme.palette.brandOrange
+                            border.color: activeFocus ? Theme.palette.focus : selected ? Theme.palette.brandOrange
                                 : Theme.palette.chatBorder
 
                             Row {
                                 id: chipContent
                                 anchors.centerIn: parent
-                                spacing: 6
+                                spacing: Theme.scaledGeometry(6)
                                 VrProfileIcon {
                                     anchors.verticalCenter: parent.verticalCenter
                                     kind: expertChip.modelData.icon
@@ -1410,23 +1437,14 @@ Item {
                 }
             }
 
-            // One continuous gradient stroke: no overlapping dashes or seam at the loop.
-            Rectangle {
-                id: ultraGlowOuter
-                visible: root.chatBridge.vrMode === "ultra"
-                anchors.centerIn: composerCard
-                width: composerCard.width + 6
-                height: composerCard.height + 6
-                radius: composerCard.radius + 3
-                color: "transparent"
-                border.width: 3
-                border.color: Qt.alpha(Theme.palette.accessibleOrange, 0.12)
-            }
+            // Contorno do VR Ultra: o anel só existe no composer expandido —
+            // no modo retraído ele sai de cena e a bandeja fica limpa.
             Canvas {
                 id: ultraArc
                 objectName: "chatUltraBorder"
-                visible: root.chatBridge.vrMode === "ultra"
-                anchors.centerIn: composerCard
+                visible: root.chatBridge.vrMode === "ultra" && !composerCard.isCompact
+                anchors.horizontalCenter: composerCard.horizontalCenter
+                anchors.verticalCenter: composerCard.verticalCenter
                 width: composerCard.width + 8
                 height: composerCard.height + 8
                 property real sweep: 0
@@ -1445,15 +1463,6 @@ Item {
                     var left = inset, top = inset
                     var right = width - inset, bottom = height - inset
                     var r = Math.min(composerCard.radius + 0.5, (bottom - top) / 2)
-                    var angle = sweep * Math.PI * 2
-                    var dx = Math.cos(angle) * width / 2
-                    var dy = Math.sin(angle) * height / 2
-                    var gradient = ctx.createLinearGradient(width / 2 - dx, height / 2 - dy,
-                                                            width / 2 + dx, height / 2 + dy)
-                    gradient.addColorStop(0, "#F04424")
-                    gradient.addColorStop(0.35, "#F57616")
-                    gradient.addColorStop(0.7, "#EFB825")
-                    gradient.addColorStop(1, "#F7D85C")
                     ctx.beginPath()
                     ctx.moveTo(left + r, top)
                     ctx.lineTo(right - r, top)
@@ -1465,6 +1474,18 @@ Item {
                     ctx.lineTo(left, top + r)
                     ctx.arcTo(left, top, left + r, top, r)
                     ctx.closePath()
+                    ctx.strokeStyle = Qt.alpha(Theme.vrAccent, 0.12)
+                    ctx.lineWidth = 6
+                    ctx.stroke()
+                    var angle = sweep * Math.PI * 2
+                    var dx = Math.cos(angle) * width / 2
+                    var dy = Math.sin(angle) * height / 2
+                    var gradient = ctx.createLinearGradient(width / 2 - dx, height / 2 - dy,
+                                                            width / 2 + dx, height / 2 + dy)
+                    gradient.addColorStop(0, "#F04424")
+                    gradient.addColorStop(0.35, "#F57616")
+                    gradient.addColorStop(0.7, "#EFB825")
+                    gradient.addColorStop(1, "#F7D85C")
                     ctx.strokeStyle = gradient
                     ctx.lineWidth = strokeWidth
                     ctx.stroke()
@@ -1526,19 +1547,25 @@ Item {
             }
         }
 
+        Item {
+            id: surfaceDock
+            visible: root.width >= 1000 && root.surfacePanelWidth > 0.5
+            SplitView.minimumWidth: 0
+            SplitView.preferredWidth: root.surfacePanelWidth
+            SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
+
         Rectangle {
             id: surfacePanel
-            parent: root.width < 1000 ? root : mainSplit
+            // Only the dock participates in SplitView geometry. The panel can
+            // move to an overlay without retaining the dock's x/width writes.
+            parent: root.width < 1000 ? root : surfaceDock
             z: root.width < 1000 ? 45 : 0
             x: root.width < 1000 ? root.width - width : 0
-            width: Math.min(root.width, root.surfacePanelWidth)
+            width: root.width < 1000 ? Math.min(root.width, root.surfacePanelWidth) : surfaceDock.width
             height: root.height
             objectName: "surfacePanel"
             visible: root.surfacePanelWidth > 0.5
             opacity: root.surfaceVisible ? 1 : 0
-            SplitView.minimumWidth: 0
-            SplitView.preferredWidth: root.surfacePanelWidth
-            SplitView.maximumWidth: root.surfacePanelWidth > 0.5 ? 720 : 0
             color: Theme.palette.chatSidebar
             Rectangle {
                 anchors.left: parent.left
@@ -1565,15 +1592,15 @@ Item {
                 Item {
                     id: surfaceHeader
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    Layout.preferredHeight: Theme.scaledGeometry(42)
 
                     Flickable {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
-                        anchors.leftMargin: 5
-                        anchors.rightMargin: 42
+                        anchors.leftMargin: Theme.scaledGeometry(5)
+                        anchors.rightMargin: Theme.scaledGeometry(42)
                         contentWidth: surfaceTabRow.width
                         contentHeight: height
                         boundsBehavior: Flickable.StopAtBounds
@@ -1582,7 +1609,7 @@ Item {
                         Row {
                             id: surfaceTabRow
                             height: parent.height
-                            spacing: 3
+                            spacing: Theme.scaledGeometry(3)
 
                             Repeater {
                                 model: root.openSurfaceTabs
@@ -1592,7 +1619,7 @@ Item {
                                     required property var modelData
                                     readonly property bool selected: root.surfaceIndex === modelData.page
                                     width: Math.max(84, tabContent.implicitWidth + 18)
-                                    height: 36
+                                    height: Theme.scaledGeometry(36)
                                     anchors.verticalCenter: parent.verticalCenter
                                     padding: 0
                                     hoverEnabled: true
@@ -1610,10 +1637,10 @@ Item {
 
                                     contentItem: RowLayout {
                                         id: tabContent
-                                        spacing: 7
+                                        spacing: Theme.scaledGeometry(7)
                                         VrLineIcon {
-                                            Layout.preferredWidth: 17
-                                            Layout.preferredHeight: 17
+                                            Layout.preferredWidth: Theme.scaledGeometry(17)
+                                            Layout.preferredHeight: Theme.scaledGeometry(17)
                                             kind: surfaceTab.modelData.kind
                                             foreground: surfaceTab.selected
                                                 ? Theme.palette.text : Theme.palette.mutedText
@@ -1626,8 +1653,8 @@ Item {
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
-                                            Layout.preferredWidth: 14
-                                            Layout.preferredHeight: 14
+                                            Layout.preferredWidth: Theme.scaledGeometry(14)
+                                            Layout.preferredHeight: Theme.scaledGeometry(14)
                                             kind: "close"
                                             foreground: Theme.palette.mutedText
                                             visible: surfaceTab.hovered || surfaceTab.selected
@@ -1640,7 +1667,7 @@ Item {
                                         }
                                     }
                                     background: Rectangle {
-                                        radius: 8
+                                        radius: Theme.scaledGeometry(8)
                                         color: surfaceTab.selected
                                             ? Theme.palette.chatControl
                                             : surfaceTab.hovered ? Theme.palette.hover : "transparent"
@@ -1664,8 +1691,8 @@ Item {
                             VrIconButton {
                                 id: surfaceAddButton
                                 objectName: "surfaceAddButton"
-                                implicitWidth: 34
-                                implicitHeight: 34
+                                implicitWidth: Theme.scaledGeometry(34)
+                                implicitHeight: Theme.scaledGeometry(34)
                                 iconKind: "plus"
                                 foreground: Theme.palette.mutedText
                                 Accessible.name: "Abrir superfície"
@@ -1680,17 +1707,17 @@ Item {
                         objectName: "surfaceCollapseButton"
                         anchors.top: parent.top
                         anchors.right: parent.right
-                        anchors.topMargin: 5
-                        anchors.rightMargin: 6
-                        implicitWidth: 32
-                        implicitHeight: 32
+                        anchors.topMargin: Theme.scaledGeometry(5)
+                        anchors.rightMargin: Theme.scaledGeometry(6)
+                        implicitWidth: Theme.scaledGeometry(32)
+                        implicitHeight: Theme.scaledGeometry(32)
                         iconSize: 17
                         iconKind: "panelRight"
                         foreground: Theme.palette.mutedText
                         Accessible.name: "Recolher painel direito"
                         onClicked: root.surfaceVisible = false
                         background: Rectangle {
-                            radius: 8
+                            radius: Theme.scaledGeometry(8)
                             color: parent.down || parent.hovered
                                 ? Theme.palette.chatControl : "transparent"
                         }
@@ -1703,9 +1730,9 @@ Item {
                         x: Math.max(5, Math.min(surfaceHeader.width - width - 5,
                             surfaceAddButton.x + surfaceAddButton.width - width))
                         y: surfaceHeader.height - 2
-                        width: 176
+                        width: Theme.scaledGeometry(176)
                         height: surfacePickerList.contentHeight + 12
-                        padding: 6
+                        padding: Theme.scaledGeometry(6)
                         focus: true
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
@@ -1717,18 +1744,18 @@ Item {
                                 id: surfaceChoice
                                 required property var modelData
                                 width: surfacePickerList.width
-                                height: 36
-                                radius: 6
+                                height: Theme.scaledGeometry(36)
+                                radius: Theme.scaledGeometry(6)
                                 color: surfaceChoiceHover.hovered
                                     ? Theme.palette.chatControl : "transparent"
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.leftMargin: 8
-                                    anchors.rightMargin: 8
-                                    spacing: 8
+                                    anchors.leftMargin: Theme.scaledGeometry(8)
+                                    anchors.rightMargin: Theme.scaledGeometry(8)
+                                    spacing: Theme.scaledGeometry(8)
                                     VrLineIcon {
-                                        Layout.preferredWidth: 16
-                                        Layout.preferredHeight: 16
+                                        Layout.preferredWidth: Theme.scaledGeometry(16)
+                                        Layout.preferredHeight: Theme.scaledGeometry(16)
                                         kind: surfaceChoice.modelData.kind
                                         foreground: Theme.palette.mutedText
                                     }
@@ -1756,7 +1783,7 @@ Item {
                             }
                         }
                         background: Rectangle {
-                            radius: 9
+                            radius: Theme.scaledGeometry(9)
                             color: Theme.palette.chatComposer
                             border.width: 1
                             border.color: Theme.palette.chatBorder
@@ -1768,6 +1795,7 @@ Item {
                     id: surfaceStack
                     objectName: "surfaceContentStack"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.fillHeight: true
                     currentIndex: root.displayedSurfaceIndex
                     transform: Translate { id: surfaceShift; x: 0 }
@@ -1808,13 +1836,13 @@ Item {
                         ScrollView {
                             id: surfaceChooser
                             anchors.fill: parent
-                            anchors.margins: 14
+                            anchors.margins: Theme.scaledGeometry(14)
                             clip: true
                             contentWidth: availableWidth
 
                             ColumnLayout {
                                 width: surfaceChooser.availableWidth
-                                spacing: 7
+                                spacing: Theme.scaledGeometry(7)
                                 Text {
                                     Layout.fillWidth: true
                                     text: "Abrir uma superfície"
@@ -1835,10 +1863,10 @@ Item {
                                 GridLayout {
                                     id: surfaceChooserGrid
                                     Layout.fillWidth: true
-                                    Layout.topMargin: 8
+                                    Layout.topMargin: Theme.scaledGeometry(8)
                                     columns: width >= 380 ? 2 : 1
-                                    columnSpacing: 8
-                                    rowSpacing: 8
+                                    columnSpacing: Theme.scaledGeometry(8)
+                                    rowSpacing: Theme.scaledGeometry(8)
                                     Repeater {
                                         model: root.surfaceTabs
                                         delegate: VrSurfaceCard {
@@ -1850,7 +1878,7 @@ Item {
                                                 - surfaceChooserGrid.columnSpacing
                                                     * (surfaceChooserGrid.columns - 1)
                                             ) / surfaceChooserGrid.columns
-                                            implicitHeight: 84
+                                            implicitHeight: Theme.scaledGeometry(84)
                                             iconKind: modelData.kind
                                             title: modelData.title
                                             description: modelData.description
@@ -1863,14 +1891,14 @@ Item {
                         }
                     }
                     ColumnLayout {
-                        spacing: 6
+                        spacing: Theme.scaledGeometry(6)
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.margins: 8
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "back"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; Accessible.name: "Voltar"; onClicked: root.browserBack() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "forward"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; Accessible.name: "Avançar"; onClicked: root.browserForward() }
-                            VrIconButton { implicitWidth: 32; implicitHeight: 32; iconKind: "reload"; foreground: Theme.palette.mutedText; enabled: browserLoader.item !== null; Accessible.name: "Recarregar"; onClicked: root.reloadBrowser() }
-                            VrTextField { id: browserAddress; Layout.fillWidth: true; placeholderText: "Pesquisar ou inserir URL"; onAccepted: root.navigateBrowser(text) }
+                            VrIconButton { implicitWidth: Theme.scaledGeometry(32); implicitHeight: Theme.scaledGeometry(32); iconKind: "back"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoBack; Accessible.name: "Voltar"; onClicked: root.browserBack() }
+                            VrIconButton { implicitWidth: Theme.scaledGeometry(32); implicitHeight: Theme.scaledGeometry(32); iconKind: "forward"; foreground: Theme.palette.mutedText; enabled: browserLoader.item && browserLoader.item.canGoForward; Accessible.name: "Avançar"; onClicked: root.browserForward() }
+                            VrIconButton { implicitWidth: Theme.scaledGeometry(32); implicitHeight: Theme.scaledGeometry(32); iconKind: "reload"; foreground: Theme.palette.mutedText; enabled: browserLoader.item !== null; Accessible.name: "Recarregar"; onClicked: root.reloadBrowser() }
+                            VrTextField { id: browserAddress; Layout.fillWidth: true; Layout.minimumWidth: 0; placeholderText: "Pesquisar ou inserir URL"; onAccepted: root.navigateBrowser(text) }
                         }
                         Loader {
                             id: browserLoader
@@ -1902,30 +1930,33 @@ Item {
                         Rectangle {
                             objectName: "terminalSurfaceBackground"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 44
+                            Layout.preferredHeight: Theme.scaledGeometry(44)
                             color: Theme.palette.chatSidebar
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                spacing: 5
+                                anchors.leftMargin: Theme.scaledGeometry(10)
+                                anchors.rightMargin: Theme.scaledGeometry(10)
+                                spacing: Theme.scaledGeometry(5)
                                 Text {
                                     text: (Qt.platform.os === "windows" ? "PS " : "")
                                         + root.frontendBridge.projectPath + ">"
+                                    Layout.maximumWidth: surfacePanel.width * 0.4
+                                    elide: Text.ElideMiddle
                                     color: Theme.palette.text
-                                    font.family: "Cascadia Mono"
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.family: Theme.terminalFontFamily
+                                    font.pixelSize: Theme.terminalFontSize(12)
                                 }
                                 TextField {
                                     id: terminalCommandInput
                                     objectName: "terminalCommandInput"
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     readOnly: root.studioBridge.terminalRunning
                                     color: Theme.palette.text
                                     selectionColor: Theme.palette.focus
                                     selectedTextColor: Theme.palette.text
-                                    font.family: "Cascadia Mono"
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.family: Theme.terminalFontFamily
+                                    font.pixelSize: Theme.terminalFontSize(12)
                                     leftPadding: 0
                                     rightPadding: 0
                                     placeholderText: ""
@@ -1941,7 +1972,7 @@ Item {
                                     enabled: root.studioBridge.terminalRunning
                                     text: "Parar"
                                     variant: "danger"
-                                    implicitHeight: 30
+                                    implicitHeight: Theme.scaledGeometry(30)
                                     onClicked: root.studioBridge.stopTerminalCommand()
                                 }
                             }
@@ -1960,13 +1991,13 @@ Item {
                                     objectName: "terminalOutputBackground"
                                     color: Theme.palette.chatSidebar
                                 }
-                                font.family: "Cascadia Mono"
-                                font.pixelSize: Theme.fontSize(12)
+                                font.family: Theme.terminalFontFamily
+                                font.pixelSize: Theme.terminalFontSize(12)
                             }
                         }
                     }
                     ColumnLayout {
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
                         VrTextField {
                             id: fileSearch
                             Layout.fillWidth: true
@@ -1979,8 +2010,8 @@ Item {
                             id: fileList
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.max(100, surfaceStack.height * 0.38)
-                            Layout.leftMargin: 8
-                            Layout.rightMargin: 8
+                            Layout.leftMargin: Theme.scaledGeometry(8)
+                            Layout.rightMargin: Theme.scaledGeometry(8)
                             clip: true
                             reuseItems: true
                             cacheBuffer: 300
@@ -1993,31 +2024,31 @@ Item {
                                 width: ListView.view.width
                                 height: root.fileTreeItemVisible(fileTreeRow.modelData) ? 30 : 0
                                 visible: height > 0
-                                radius: 6
+                                radius: Theme.scaledGeometry(6)
                                 color: root.surfaceFilePath === fileTreeRow.modelData.path
                                     ? Theme.palette.selection
                                     : fileTreeHover.hovered ? Theme.palette.chatControl : "transparent"
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 6 + Math.min(8, Number(fileTreeRow.modelData.depth || 0)) * 14
-                                    anchors.rightMargin: 6
-                                    spacing: 5
+                                    anchors.rightMargin: Theme.scaledGeometry(6)
+                                    spacing: Theme.scaledGeometry(5)
                                     VrLineIcon {
                                         visible: fileTreeRow.modelData.isDirectory === true
-                                        Layout.preferredWidth: 12
-                                        Layout.preferredHeight: 12
+                                        Layout.preferredWidth: Theme.scaledGeometry(12)
+                                        Layout.preferredHeight: Theme.scaledGeometry(12)
                                         kind: root.expandedFileFolders[fileTreeRow.modelData.label]
                                             ? "chevronDown" : "chevronRight"
                                         foreground: Theme.palette.mutedText
                                     }
                                     Item {
                                         visible: fileTreeRow.modelData.isDirectory !== true
-                                        Layout.preferredWidth: 11
-                                        Layout.preferredHeight: 11
+                                        Layout.preferredWidth: Theme.scaledGeometry(11)
+                                        Layout.preferredHeight: Theme.scaledGeometry(11)
                                     }
                                     VrLineIcon {
-                                        Layout.preferredWidth: 15
-                                        Layout.preferredHeight: 15
+                                        Layout.preferredWidth: Theme.scaledGeometry(15)
+                                        Layout.preferredHeight: Theme.scaledGeometry(15)
                                         kind: fileTreeRow.modelData.isDirectory === true ? "folder" : "files"
                                         foreground: fileTreeRow.modelData.isDirectory === true
                                             ? Theme.palette.brandOrange : Theme.palette.mutedText
@@ -2038,6 +2069,8 @@ Item {
                                             root.toggleFileFolder(fileTreeRow.modelData.label)
                                             return
                                         }
+                                        root.surfaceFileLine = 0
+                                        root.surfaceFileColumn = 0
                                         root.surfaceFilePath = fileTreeRow.modelData.path
                                         root.surfaceFilePreview = root.chatBridge.readFilePreview(fileTreeRow.modelData.path)
                                     }
@@ -2054,18 +2087,22 @@ Item {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            Layout.leftMargin: 8
-                            Layout.rightMargin: 8
+                            Layout.leftMargin: Theme.scaledGeometry(8)
+                            Layout.rightMargin: Theme.scaledGeometry(8)
                             Text { Layout.fillWidth: true; text: root.surfaceFilePath || "Selecione um arquivo para visualizar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideMiddle }
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: root.studioBridge.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
+                            id: filePreviewScroll
+                            objectName: "filePreviewScroll"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Layout.leftMargin: 8
-                            Layout.rightMargin: 8
-                            Layout.bottomMargin: 8
+                            Layout.leftMargin: Theme.scaledGeometry(8)
+                            Layout.rightMargin: Theme.scaledGeometry(8)
+                            Layout.bottomMargin: Theme.scaledGeometry(8)
                             TextArea {
+                                id: filePreviewArea
+                                objectName: "filePreviewArea"
                                 width: parent.width
                                 readOnly: true
                                 selectByMouse: true
@@ -2083,7 +2120,7 @@ Item {
                         }
                     }
                     ColumnLayout {
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
                         VrTextField {
                             id: contextSearch
                             Layout.fillWidth: true
@@ -2096,25 +2133,25 @@ Item {
                             id: contextList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Layout.leftMargin: 8
-                            Layout.rightMargin: 8
+                            Layout.leftMargin: Theme.scaledGeometry(8)
+                            Layout.rightMargin: Theme.scaledGeometry(8)
                             clip: true
                             reuseItems: true
                             cacheBuffer: 300
-                            spacing: 5
+                            spacing: Theme.scaledGeometry(5)
                             model: root.contextItems
                             ScrollBar.vertical: VrScrollBar { }
                             delegate: Rectangle {
                         id: contextChoice
                                 required property var modelData
                                 width: ListView.view.width
-                                height: 72
-                                radius: 8
+                                height: Theme.scaledGeometry(72)
+                                radius: Theme.scaledGeometry(8)
                                 color: contextHover.hovered ? Theme.palette.chatControl : "transparent"
                                 Column {
                                     anchors.fill: parent
-                                    anchors.margins: 8
-                                    spacing: 3
+                                    anchors.margins: Theme.scaledGeometry(8)
+                                    spacing: Theme.scaledGeometry(3)
                                     Text { width: parent.width; text: contextChoice.modelData.title + " · " + contextChoice.modelData.source; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold; elide: Text.ElideRight }
                                     Text { width: parent.width; text: contextChoice.modelData.excerpt; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; lineHeight: Theme.denseLineHeight; maximumLineCount: 2; elide: Text.ElideRight; wrapMode: Text.WordWrap }
                                 }
@@ -2132,7 +2169,7 @@ Item {
                         }
                     }
                     ColumnLayout {
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
                         Text {
                             Layout.fillWidth: true
                             Layout.margins: 10
@@ -2151,25 +2188,25 @@ Item {
                             ScrollBar.vertical: VrScrollBar { }
                             Layout.fillWidth: true
                             Layout.preferredHeight: Math.min(contentHeight, 260)
-                            Layout.leftMargin: 8
-                            Layout.rightMargin: 8
+                            Layout.leftMargin: Theme.scaledGeometry(8)
+                            Layout.rightMargin: Theme.scaledGeometry(8)
                             clip: true
-                            spacing: 4
+                            spacing: Theme.scaledGeometry(4)
                             model: root.chatBridge.agentItems
                             delegate: Rectangle {
                         id: agentChoice
                                 required property int index
                                 required property var modelData
                                 width: agentList.width
-                                height: 58
-                                radius: 8
+                                height: Theme.scaledGeometry(58)
+                                radius: Theme.scaledGeometry(8)
                                 color: root.selectedAgentIndex === agentChoice.index ? Theme.palette.selection
                                     : agentHover.hovered ? Theme.palette.chatControl : "transparent"
                                 border.width: root.selectedAgentIndex === agentChoice.index ? 1 : 0
                                 border.color: Theme.palette.chatBorder
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 8
+                                    anchors.margins: Theme.scaledGeometry(8)
                                     Text {
                                         text: agentChoice.modelData.status === "concluído" ? "✓"
                                             : agentChoice.modelData.status === "falhou" ? "!"
@@ -2195,8 +2232,8 @@ Item {
                         ScrollView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Layout.leftMargin: 10
-                            Layout.rightMargin: 10
+                            Layout.leftMargin: Theme.scaledGeometry(10)
+                            Layout.rightMargin: Theme.scaledGeometry(10)
                             TextArea {
                                 width: parent.width
                                 readOnly: true
@@ -2214,6 +2251,7 @@ Item {
             }
         }
     }
+    }
 
     Timer { id: searchDelay; interval: 180; onTriggered: root.chatBridge.setSearch(conversationSearch.text) }
     Timer { id: composerAssistDelay; interval: 120; onTriggered: root.updateComposerSuggestions() }
@@ -2226,6 +2264,8 @@ Item {
         function onFileSuggestionsChanged() {
             root.surfaceFiles = root.chatBridge.fileSuggestions(fileSearch.text)
             root.updateComposerSuggestions()
+            if (root.surfaceVisible && root.surfaceIndex === 3 && root.surfaceFilePath.length)
+                root.revealFileFolder(root.surfaceFilePath)
         }
     }
 
@@ -2246,9 +2286,9 @@ Item {
         y: -height - 8
         width: composerCard.width
         height: Math.min(250, assistList.contentHeight + 12)
-        padding: 6
+        padding: Theme.scaledGeometry(6)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.chatBorder; radius: 12 }
+        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.chatBorder; radius: Theme.scaledGeometry(12) }
         contentItem: ListView {
             id: assistList
             clip: true
@@ -2261,15 +2301,15 @@ Item {
                 required property int index
                 required property var modelData
                 width: assistList.width
-                height: 44
-                radius: 7
+                height: Theme.scaledGeometry(44)
+                radius: Theme.scaledGeometry(7)
                 color: (assistItem.index === root.composerAssistIndex || assistHover.hovered) ? Theme.palette.chatControl : "transparent"
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 9
-                    anchors.rightMargin: 9
+                    anchors.leftMargin: Theme.scaledGeometry(9)
+                    anchors.rightMargin: Theme.scaledGeometry(9)
                     Text {
-                        Layout.preferredWidth: 140
+                        Layout.preferredWidth: Theme.scaledGeometry(140)
                         text: assistItem.modelData.label
                         color: assistItem.modelData.action === "skill" ? Theme.palette.brandOrange : Theme.palette.text
                         font.family: Theme.fontFamily
@@ -2302,7 +2342,7 @@ Item {
         anchors.centerIn: parent
         width: Math.min(560, parent.width - 48)
         height: Math.min(parent.height - 80,
-            Math.max(264, 163 + Math.min(6,
+            Math.max(264, 117 + Math.min(6,
                 root.filteredProjects(newChatProjectSearch.text).length) * 56))
         padding: 0
         modal: true
@@ -2317,14 +2357,14 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 49
-                Layout.leftMargin: 7
-                Layout.rightMargin: 10
-                spacing: 4
+                Layout.preferredHeight: Theme.scaledGeometry(49)
+                Layout.leftMargin: Theme.scaledGeometry(7)
+                Layout.rightMargin: Theme.scaledGeometry(10)
+                spacing: Theme.scaledGeometry(4)
 
                 VrIconButton {
-                    implicitWidth: 34
-                    implicitHeight: 34
+                    implicitWidth: Theme.scaledGeometry(34)
+                    implicitHeight: Theme.scaledGeometry(34)
                     iconKind: "back"
                     foreground: Theme.palette.mutedText
                     Accessible.name: "Voltar"
@@ -2334,7 +2374,7 @@ Item {
                     id: newChatProjectSearch
                     objectName: "newChatProjectSearch"
                     Layout.fillWidth: true
-                    implicitHeight: 36
+                    implicitHeight: Theme.scaledGeometry(36)
                     placeholderText: "Buscar projetos..."
                     background: Item { }
                     onTextChanged: newChatProjectList.currentIndex = 0
@@ -2374,10 +2414,10 @@ Item {
             }
             Text {
                 Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
-                Layout.topMargin: 9
-                Layout.bottomMargin: 6
+                Layout.leftMargin: Theme.scaledGeometry(10)
+                Layout.rightMargin: Theme.scaledGeometry(10)
+                Layout.topMargin: Theme.scaledGeometry(9)
+                Layout.bottomMargin: Theme.scaledGeometry(6)
                 text: "Projetos"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
@@ -2391,8 +2431,8 @@ Item {
                 objectName: "newChatProjectList"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.leftMargin: 8
-                Layout.rightMargin: 8
+                Layout.leftMargin: Theme.scaledGeometry(8)
+                Layout.rightMargin: Theme.scaledGeometry(8)
                 spacing: 2
                 clip: true
                 currentIndex: count ? 0 : -1
@@ -2403,20 +2443,20 @@ Item {
                     required property int index
                     required property var modelData
                     width: newChatProjectList.width
-                    height: 54
-                    radius: 7
+                    height: Theme.scaledGeometry(54)
+                    radius: Theme.scaledGeometry(7)
                     color: newChatProjectList.currentIndex === index
                         ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
                         : (newProjectHover.hovered ? Theme.palette.chatControl : "transparent")
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 9
-                        spacing: 9
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(9)
+                        spacing: Theme.scaledGeometry(9)
                         VrProjectIcon {
-                            Layout.preferredWidth: 30
-                            Layout.preferredHeight: 30
+                            Layout.preferredWidth: Theme.scaledGeometry(30)
+                            Layout.preferredHeight: Theme.scaledGeometry(30)
                             boxSize: 30
                             iconSize: 17
                             projectLabel: String(newProjectItem.modelData.label || "")
@@ -2480,58 +2520,14 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                Layout.leftMargin: 8
-                Layout.rightMargin: 8
-                Layout.topMargin: 4
-                Layout.bottomMargin: 2
-                radius: 7
-                color: newChatNewHover.hovered ? Theme.palette.chatControl : "transparent"
-                border.width: 1
-                border.color: Theme.palette.chatBorder
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 9
-                    VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
-                        kind: "folderPlus"
-                        foreground: Theme.palette.brandOrange
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: "New project"
-                        color: Theme.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        font.weight: Font.DemiBold
-                    }
-                }
-                HoverHandler { id: newChatNewHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler {
-                    onTapped: {
-                        newChatProjectPopup.close()
-                        root.addProjectView = "sources"
-                        addProjectSearch.clear()
-                        addProjectPopup.open()
-                    }
-                }
-                Accessible.role: Accessible.Button
-                Accessible.name: "New project"
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 38
-                radius: 12
+                Layout.preferredHeight: Theme.scaledGeometry(38)
+                radius: Theme.scaledGeometry(12)
                 color: Theme.palette.chatComposer
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    height: 12
+                    height: Theme.scaledGeometry(12)
                     color: Theme.palette.chatComposer
                 }
                 Rectangle {
@@ -2543,14 +2539,14 @@ Item {
                 }
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 6
+                    anchors.leftMargin: Theme.scaledGeometry(12)
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(6)
                     KbdHint { label: "↑" }
                     KbdHint { label: "↓" }
-                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: Theme.scaledGeometry(6) }
                     KbdHint { label: "Enter" }
-                    Text { text: "Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    Text { text: "Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: Theme.scaledGeometry(6) }
                     KbdHint { label: "Backspace" }
                     Text { text: "Voltar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                     Item { Layout.fillWidth: true }
@@ -2560,7 +2556,7 @@ Item {
             }
         }
         background: Rectangle {
-            radius: 12
+            radius: Theme.scaledGeometry(12)
             color: Theme.palette.chatSidebar
             border.width: 1
             border.color: Theme.palette.chatBorder
@@ -2591,13 +2587,13 @@ Item {
                 spacing: 0
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 50
-                Layout.leftMargin: 8
-                Layout.rightMargin: 10
-                spacing: 4
+                Layout.preferredHeight: Theme.scaledGeometry(50)
+                Layout.leftMargin: Theme.scaledGeometry(8)
+                Layout.rightMargin: Theme.scaledGeometry(10)
+                spacing: Theme.scaledGeometry(4)
                 VrIconButton {
-                    implicitWidth: 34
-                    implicitHeight: 34
+                    implicitWidth: Theme.scaledGeometry(34)
+                    implicitHeight: Theme.scaledGeometry(34)
                     iconKind: "back"
                     foreground: Theme.palette.mutedText
                     onClicked: addProjectPopup.close()
@@ -2606,7 +2602,7 @@ Item {
                     id: addProjectSearch
                     objectName: "addProjectSearch"
                     Layout.fillWidth: true
-                    implicitHeight: 36
+                    implicitHeight: Theme.scaledGeometry(36)
                     placeholderText: "Search..."
                     background: Item { }
                     Keys.onEscapePressed: addProjectPopup.close()
@@ -2615,10 +2611,10 @@ Item {
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.palette.chatDivider }
             Text {
                 Layout.fillWidth: true
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                Layout.topMargin: 14
-                Layout.bottomMargin: 6
+                Layout.leftMargin: Theme.scaledGeometry(18)
+                Layout.rightMargin: Theme.scaledGeometry(18)
+                Layout.topMargin: Theme.scaledGeometry(14)
+                Layout.bottomMargin: Theme.scaledGeometry(6)
                 text: "Sources"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
@@ -2630,8 +2626,8 @@ Item {
                 objectName: "addProjectSourceList"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
+                Layout.leftMargin: Theme.scaledGeometry(10)
+                Layout.rightMargin: Theme.scaledGeometry(10)
                 clip: true
                 spacing: 2
                 model: root.filteredAddProjectSources(addProjectSearch.text)
@@ -2640,19 +2636,19 @@ Item {
                     required property int index
                     required property var modelData
                     width: addProjectList.width
-                    height: 48
-                    radius: 7
+                    height: Theme.scaledGeometry(48)
+                    radius: Theme.scaledGeometry(7)
                     color: sourceHover.hovered && sourceRow.modelData.enabled
                         ? Theme.palette.chatControl : "transparent"
                     opacity: sourceRow.modelData.enabled ? 1.0 : 0.72
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 9
-                        anchors.rightMargin: 9
-                        spacing: 9
+                        anchors.leftMargin: Theme.scaledGeometry(9)
+                        anchors.rightMargin: Theme.scaledGeometry(9)
+                        spacing: Theme.scaledGeometry(9)
                         VrLineIcon {
-                            Layout.preferredWidth: 18
-                            Layout.preferredHeight: 18
+                            Layout.preferredWidth: Theme.scaledGeometry(18)
+                            Layout.preferredHeight: Theme.scaledGeometry(18)
                             kind: sourceRow.modelData.icon
                             foreground: sourceRow.modelData.enabled
                                 ? Theme.palette.text : Theme.palette.mutedText
@@ -2681,8 +2677,8 @@ Item {
                         Rectangle {
                             visible: sourceRow.modelData.badge.length > 0
                             Layout.preferredWidth: badgeText.implicitWidth + 14
-                            Layout.preferredHeight: 24
-                            radius: 5
+                            Layout.preferredHeight: Theme.scaledGeometry(24)
+                            radius: Theme.scaledGeometry(5)
                             color: Theme.palette.chatComposer
                             border.width: 1
                             border.color: Theme.palette.chatBorder
@@ -2721,14 +2717,14 @@ Item {
             }
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 38
-                radius: 18
+                Layout.preferredHeight: Theme.scaledGeometry(38)
+                radius: Theme.scaledGeometry(18)
                 color: Theme.palette.chatComposer
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    height: 18
+                    height: Theme.scaledGeometry(18)
                     color: Theme.palette.chatComposer
                 }
                 Rectangle {
@@ -2740,12 +2736,12 @@ Item {
                 }
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 6
+                    anchors.leftMargin: Theme.scaledGeometry(12)
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(6)
                     KbdHint { label: "↑" }
                     KbdHint { label: "↓" }
-                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: 6 }
+                    Text { text: "Navegar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium; Layout.rightMargin: Theme.scaledGeometry(6) }
                     KbdHint { label: "Enter" }
                     Text { text: "Selecionar"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Theme.weightMedium }
                     Item { Layout.fillWidth: true }
@@ -2769,16 +2765,16 @@ Item {
             color: Theme.palette.chatBackground
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 18
+            radius: Theme.scaledGeometry(18)
         }
     }
 
     Popup {
         id: conversationContextMenu
         objectName: "conversationContextMenu"
-        width: 196
-        height: 126
-        padding: 5
+        width: Theme.scaledGeometry(196)
+        height: Theme.scaledGeometry(126)
+        padding: Theme.scaledGeometry(5)
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         contentItem: ColumnLayout {
@@ -2793,12 +2789,12 @@ Item {
                         id: conversationAction
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 36
-                    radius: 7
+                    Layout.preferredHeight: Theme.scaledGeometry(36)
+                    radius: Theme.scaledGeometry(7)
                     color: menuHover.hovered ? Theme.palette.chatControl : "transparent"
                     RowLayout {
-                        anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9; spacing: 8
-                        VrLineIcon { Layout.preferredWidth: 16; Layout.preferredHeight: 16; kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
+                        anchors.fill: parent; anchors.leftMargin: Theme.scaledGeometry(9); anchors.rightMargin: Theme.scaledGeometry(9); spacing: Theme.scaledGeometry(8)
+                        VrLineIcon { Layout.preferredWidth: Theme.scaledGeometry(16); Layout.preferredHeight: Theme.scaledGeometry(16); kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
                         Text { Layout.fillWidth: true; text: conversationAction.modelData.action === "pin" ? (root.conversationMenuConversationId ? (root.chatBridge.isConversationPinned(root.conversationMenuConversationId) ? "Desafixar conversa" : "Fixar conversa") : conversationAction.modelData.label) : conversationAction.modelData.label; color: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                     }
                     HoverHandler { id: menuHover }
@@ -2820,7 +2816,7 @@ Item {
 
         }
         background: Rectangle {
-            radius: 10
+            radius: Theme.scaledGeometry(10)
             color: Theme.palette.chatComposer
             border.width: 1
             border.color: Theme.palette.chatBorder
@@ -2843,14 +2839,14 @@ Item {
     Dialog {
         id: extensionsDialog
         anchors.centerIn: parent
-        width: 610
-        height: 520
+        width: Theme.scaledGeometry(610)
+        height: Theme.scaledGeometry(520)
         modal: true
         title: "Skills, tools e MCP"
         standardButtons: Dialog.Close
         onOpened: root.chatBridge.refreshExtensions()
         contentItem: ColumnLayout {
-            spacing: 8
+            spacing: Theme.scaledGeometry(8)
             RowLayout {
                 Layout.fillWidth: true
                 Text { Layout.fillWidth: true; text: "Selecione recursos para a próxima mensagem. Alterar tools em um chat iniciado cria uma ramificação segura."; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); wrapMode: Text.WordWrap }
@@ -2859,14 +2855,14 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 8
+                radius: Theme.scaledGeometry(8)
                 color: Theme.palette.chatSidebar
                 border.width: 1
                 border.color: Theme.palette.chatBorder
                 ListView {
                     anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 3
+                    anchors.margins: Theme.scaledGeometry(6)
+                    spacing: Theme.scaledGeometry(3)
                     clip: true
                     model: root.chatBridge.extensionItems
                     delegate: VrCheckBox {
@@ -2901,7 +2897,7 @@ Item {
         title: "Aprovação necessária"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.scaledGeometry(12)
             Text { Layout.fillWidth: true; text: String(root.approvalPayload.reason || root.approvalPayload.description || "O agente solicitou permissão para continuar."); color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.bodySize; lineHeight: Theme.bodyLineHeight; wrapMode: Text.WordWrap }
             RowLayout {
                 Layout.fillWidth: true
@@ -2967,6 +2963,58 @@ Item {
             root.selectedAgentIndex = 0
     }
 
+    // Open a chat file reference in the Arquivos surface and reveal its line.
+    function openFileSurface(path, line, column) {
+        var target = String(path || "")
+        if (!target.length) return
+        root.openSurface(3)
+        root.revealFileFolder(target)
+        root.surfaceFilePath = target
+        root.surfaceFileLine = Math.max(0, Number(line || 0))
+        root.surfaceFileColumn = Math.max(0, Number(column || 0))
+        root.surfaceFilePreview = root.chatBridge.readFilePreview(target)
+        Qt.callLater(root.scrollFilePreviewToLine)
+    }
+
+    function revealFileFolder(path) {
+        var target = String(path || "").replace(/\\/g, "/").toLowerCase()
+        var next = {}
+        for (var key in root.expandedFileFolders)
+            next[key] = root.expandedFileFolders[key]
+        var files = root.surfaceFiles || []
+        for (var index = 0; index < files.length; ++index) {
+            var item = files[index]
+            if (item.isDirectory !== true) continue
+            var folder = String(item.path || "").replace(/\\/g, "/").toLowerCase()
+            if (!folder.length) continue
+            if (target === folder || target.indexOf(folder + "/") === 0)
+                next[item.label] = true
+        }
+        root.expandedFileFolders = next
+    }
+
+    function scrollFilePreviewToLine() {
+        if (!filePreviewScroll.contentItem) return
+        var area = filePreviewArea
+        var text = String(area.text || "")
+        var line = Math.max(0, root.surfaceFileLine)
+        if (line <= 0 || !text.length) {
+            filePreviewScroll.contentItem.contentY = 0
+            return
+        }
+        var lines = text.split("\n")
+        var offset = 0
+        for (var index = 0; index < Math.min(line - 1, lines.length); ++index)
+            offset += lines[index].length + 1
+        var lineText = lines[line - 1] !== undefined ? lines[line - 1] : ""
+        if (area.select)
+            area.select(offset, offset + lineText.length)
+        var lineHeight = area.contentHeight / Math.max(1, area.lineCount)
+        var maxY = Math.max(0, area.contentHeight - filePreviewScroll.height)
+        var targetY = (line - 1) * lineHeight - filePreviewScroll.height * 0.3
+        filePreviewScroll.contentItem.contentY = Math.max(0, Math.min(targetY, maxY))
+    }
+
     Dialog {
         id: conversationDeleteDialog
         objectName: "conversationDeleteDialog"
@@ -2987,27 +3035,27 @@ Item {
             color: Theme.palette.surface
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 14
+            radius: Theme.scaledGeometry(14)
         }
         contentItem: ColumnLayout {
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 20
-                Layout.leftMargin: 20
-                Layout.rightMargin: 16
-                Layout.bottomMargin: 14
-                spacing: 14
+                Layout.topMargin: Theme.scaledGeometry(20)
+                Layout.leftMargin: Theme.scaledGeometry(20)
+                Layout.rightMargin: Theme.scaledGeometry(16)
+                Layout.bottomMargin: Theme.scaledGeometry(14)
+                spacing: Theme.scaledGeometry(14)
                 Rectangle {
-                    width: 40
-                    height: 40
-                    radius: 20
+                    width: Theme.scaledGeometry(40)
+                    height: Theme.scaledGeometry(40)
+                    radius: Theme.scaledGeometry(20)
                     color: Qt.alpha(Theme.palette.danger, 0.12)
                     Layout.alignment: Qt.AlignTop
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: 18
-                        height: 18
+                        width: Theme.scaledGeometry(18)
+                        height: Theme.scaledGeometry(18)
                         kind: "trash"
                         foreground: Theme.palette.danger
                     }
@@ -3015,7 +3063,7 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignVCenter
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     Text {
                         text: "Excluir esta conversa?"
                         color: Theme.palette.text
@@ -3036,8 +3084,8 @@ Item {
                     Layout.alignment: Qt.AlignTop
                     iconKind: "close"
                     iconSize: 10
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    implicitWidth: Theme.scaledGeometry(26)
+                    implicitHeight: Theme.scaledGeometry(26)
                     foreground: Theme.palette.mutedText
                     onClicked: conversationDeleteDialog.close()
                 }
@@ -3049,11 +3097,11 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
-                Layout.bottomMargin: 14
-                Layout.leftMargin: 20
-                Layout.rightMargin: 20
-                spacing: 10
+                Layout.topMargin: Theme.scaledGeometry(12)
+                Layout.bottomMargin: Theme.scaledGeometry(14)
+                Layout.leftMargin: Theme.scaledGeometry(20)
+                Layout.rightMargin: Theme.scaledGeometry(20)
+                spacing: Theme.scaledGeometry(10)
                 Item { Layout.fillWidth: true }
                 VrButton {
                     text: "Cancelar"
@@ -3278,10 +3326,14 @@ Item {
     function submitMessage() {
         if ((!composerInput.text.trim().length && !root.chatBridge.attachments.length) || root.chatBridge.turnRunning) return
         var value = composerInput.text
-        messageList.followTail = true
-        composerInput.clear()
-        composerAssistPopup.close()
-        root.chatBridge.sendMessage(value)
+        composerCard.submissionError = ""
+        if (root.chatBridge.sendMessage(value)) {
+            messageList.followTail = true
+            composerInput.clear()
+            composerAssistPopup.close()
+        } else {
+            composerCard.submissionError = root.chatBridge.statusText
+        }
     }
 
     function handleComposerTab(event) {

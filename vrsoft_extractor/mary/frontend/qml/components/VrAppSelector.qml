@@ -165,12 +165,12 @@ Item {
         return res
     }
 
-    implicitHeight: 52
+    implicitHeight: Theme.scaledGeometry(52)
 
     Rectangle {
         id: selectorBackground
         anchors.fill: parent
-        radius: 14
+        radius: Theme.scaledGeometry(14)
         color: control.hovered || selectorPopup.opened ? Theme.palette.codeSurface : Theme.palette.background
         border.width: 1
         border.color: selectorPopup.opened ? Theme.palette.brandOrange : (control.hovered ? Theme.palette.focus : Theme.palette.border)
@@ -196,19 +196,19 @@ Item {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            spacing: 12
+            anchors.leftMargin: Theme.scaledGeometry(12)
+            anchors.rightMargin: Theme.scaledGeometry(12)
+            spacing: Theme.scaledGeometry(12)
 
             // Left details area (visual only, clicks propagate to mainClickArea)
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 12
+                spacing: Theme.scaledGeometry(12)
 
                 Item {
-                    Layout.preferredWidth: 32
-                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: Theme.scaledGeometry(32)
+                    Layout.preferredHeight: Theme.scaledGeometry(32)
 
                     VrAppIcon {
                         visible: !!control.activeApp
@@ -229,8 +229,8 @@ Item {
 
                         VrLineIcon {
                             anchors.centerIn: parent
-                            width: 16
-                            height: 16
+                            width: Theme.scaledGeometry(16)
+                            height: Theme.scaledGeometry(16)
                             kind: "search"
                             foreground: Theme.palette.brandOrange
                         }
@@ -245,7 +245,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
 
                         Text {
                             text: control.activeApp ? (control.activeApp.name || control.activeApp.appId) : control.placeholderText
@@ -259,7 +259,7 @@ Item {
                         Rectangle {
                             visible: !!control.activeApp && !!control.activeApp.hasUnidentified
                             implicitWidth: activeUnidentText.implicitWidth + 8
-                            implicitHeight: 20
+                            implicitHeight: Theme.scaledGeometry(20)
                             radius: Theme.radiusSmall
                             color: Qt.rgba(0.9, 0.6, 0.0, 0.15)
                             border.width: 1
@@ -278,7 +278,7 @@ Item {
                         Rectangle {
                             visible: !!control.activeApp && !!control.activeApp.hasVariants
                             implicitWidth: activeVarText.implicitWidth + 8
-                            implicitHeight: 20
+                            implicitHeight: Theme.scaledGeometry(20)
                             radius: Theme.radiusSmall
                             color: Qt.rgba(0.2, 0.6, 1.0, 0.15)
                             border.width: 1
@@ -325,7 +325,7 @@ Item {
 
             // Right side buttons
             RowLayout {
-                spacing: 8
+                spacing: Theme.scaledGeometry(8)
 
                 VrButton {
                     id: viewVersionsBtn
@@ -333,7 +333,7 @@ Item {
                     visible: !!control.activeApp
                     text: "Ver versões"
                     variant: "secondary"
-                    implicitHeight: 32
+                    implicitHeight: Theme.scaledGeometry(32)
                     onClicked: {
                         selectorPopup.close()
                         if (control.activeApp) {
@@ -343,15 +343,15 @@ Item {
                 }
 
                 Rectangle {
-                    implicitWidth: 32
-                    implicitHeight: 32
+                    implicitWidth: Theme.scaledGeometry(32)
+                    implicitHeight: Theme.scaledGeometry(32)
                     radius: Theme.radiusSmall
                     color: control.hovered ? Theme.palette.chatBackground : "transparent"
 
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: 14
-                        height: 14
+                        width: Theme.scaledGeometry(14)
+                        height: Theme.scaledGeometry(14)
                         kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
                         foreground: Theme.palette.mutedText
                     }
@@ -372,7 +372,7 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
-            radius: 14
+            radius: Theme.scaledGeometry(14)
             color: Theme.palette.background
             border.width: 1
             border.color: Theme.palette.border
@@ -391,18 +391,18 @@ Item {
             // Search Bar Header
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 48
+                Layout.preferredHeight: Theme.scaledGeometry(48)
                 color: "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 8
+                    anchors.leftMargin: Theme.scaledGeometry(12)
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(8)
 
                     VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
+                        Layout.preferredWidth: Theme.scaledGeometry(16)
+                        Layout.preferredHeight: Theme.scaledGeometry(16)
                         kind: "search"
                         foreground: Theme.palette.mutedText
                     }
@@ -443,8 +443,8 @@ Item {
 
                     VrLineIcon {
                         visible: control.searchText.length > 0
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
+                        Layout.preferredWidth: Theme.scaledGeometry(14)
+                        Layout.preferredHeight: Theme.scaledGeometry(14)
                         kind: "close"
                         foreground: searchCloseMouse.containsMouse ? Theme.palette.text : Theme.palette.mutedText
 
@@ -474,14 +474,14 @@ Item {
             Rectangle {
                 id: batchToolbar
                 Layout.fillWidth: true
-                Layout.preferredHeight: 38
+                Layout.preferredHeight: Theme.scaledGeometry(38)
                 color: Theme.palette.chatControl
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 12
-                    spacing: 8
+                    anchors.leftMargin: Theme.scaledGeometry(10)
+                    anchors.rightMargin: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(8)
 
                     VrCheckBox {
                         id: selectAllBox
@@ -544,7 +544,7 @@ Item {
                 Layout.fillHeight: true
                 Layout.margins: 6
                 clip: true
-                spacing: 3
+                spacing: Theme.scaledGeometry(3)
                 model: control.filteredApps
                 visible: control.filteredApps.length > 0
                 ScrollIndicator.vertical: ScrollIndicator { }
@@ -552,7 +552,7 @@ Item {
                 delegate: Rectangle {
                     id: itemDelegate
                     width: appList.width
-                    height: 56
+                    height: Theme.scaledGeometry(56)
                     radius: Theme.radiusSmall
                     color: control.isAppSelected(modelData.appId)
                         ? Qt.rgba(1.0, 0.45, 0.0, 0.12)
@@ -564,9 +564,9 @@ Item {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 12
-                        spacing: 8
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(12)
+                        spacing: Theme.scaledGeometry(8)
 
                         VrCheckBox {
                             id: itemCheckBox
@@ -582,11 +582,11 @@ Item {
 
                             RowLayout {
                                 anchors.fill: parent
-                                spacing: 10
+                                spacing: Theme.scaledGeometry(10)
 
                                 VrAppIcon {
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
+                                    Layout.preferredWidth: Theme.scaledGeometry(32)
+                                    Layout.preferredHeight: Theme.scaledGeometry(32)
                                     appName: modelData.name || modelData.appId
                                     fallbackKind: "browser"
                                     iconSize: 22
@@ -601,7 +601,7 @@ Item {
                                     RowLayout {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        spacing: 6
+                                        spacing: Theme.scaledGeometry(6)
 
                                         Text {
                                             text: modelData.name || modelData.appId
@@ -615,7 +615,7 @@ Item {
                                         Rectangle {
                                             visible: !!modelData.hasUnidentified
                                             implicitWidth: itemUnidentText.implicitWidth + 8
-                                            implicitHeight: 20
+                                            implicitHeight: Theme.scaledGeometry(20)
                                             radius: Theme.radiusSmall
                                             color: Qt.rgba(0.9, 0.6, 0.0, 0.15)
                                             border.width: 1
@@ -634,7 +634,7 @@ Item {
                                         Rectangle {
                                             visible: !!modelData.hasVariants
                                             implicitWidth: itemVarText.implicitWidth + 8
-                                            implicitHeight: 20
+                                            implicitHeight: Theme.scaledGeometry(20)
                                             radius: Theme.radiusSmall
                                             color: Qt.rgba(0.2, 0.6, 1.0, 0.15)
                                             border.width: 1
@@ -678,7 +678,7 @@ Item {
                         // Ver versões button on the right
                         Rectangle {
                             id: verVersoesBtn
-                            implicitHeight: 28
+                            implicitHeight: Theme.scaledGeometry(28)
                             implicitWidth: verVersoesContent.implicitWidth + 12
                             radius: Theme.radiusSmall
                             color: verVersoesMouse.containsMouse ? Qt.rgba(1.0, 0.45, 0.0, 0.12) : "transparent"
@@ -688,7 +688,7 @@ Item {
                             RowLayout {
                                 id: verVersoesContent
                                 anchors.centerIn: parent
-                                spacing: 4
+                                spacing: Theme.scaledGeometry(4)
 
                                 Text {
                                     text: "Ver versões"
@@ -699,8 +699,8 @@ Item {
                                 }
 
                                 VrLineIcon {
-                                    Layout.preferredWidth: 12
-                                    Layout.preferredHeight: 12
+                                    Layout.preferredWidth: Theme.scaledGeometry(12)
+                                    Layout.preferredHeight: Theme.scaledGeometry(12)
                                     kind: "chevronRight"
                                     foreground: verVersoesMouse.containsMouse ? Theme.palette.brandOrange : Theme.palette.mutedText
                                 }
@@ -729,12 +729,12 @@ Item {
 
                 ColumnLayout {
                     anchors.centerIn: parent
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
 
                     VrLineIcon {
                         Layout.alignment: Qt.AlignHCenter
-                        width: 22
-                        height: 22
+                        width: Theme.scaledGeometry(22)
+                        height: Theme.scaledGeometry(22)
                         kind: "search"
                         foreground: Theme.palette.mutedText
                     }

@@ -28,12 +28,12 @@ Dialog {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.margins: 12
-            spacing: 6
+            anchors.margins: Theme.scaledGeometry(12)
+            spacing: Theme.scaledGeometry(6)
             VrLineIcon {
                 kind: "gauge"
-                Layout.preferredWidth: 13
-                Layout.preferredHeight: 13
+                Layout.preferredWidth: Theme.scaledGeometry(13)
+                Layout.preferredHeight: Theme.scaledGeometry(13)
                 foreground: Theme.palette.mutedText
             }
             Text {
@@ -55,8 +55,8 @@ Dialog {
                 objectName: "usageLimitsClose"
                 iconKind: "close"
                 iconSize: 10
-                implicitWidth: 20
-                implicitHeight: 20
+                implicitWidth: Theme.scaledGeometry(20)
+                implicitHeight: Theme.scaledGeometry(20)
                 foreground: Theme.palette.mutedText
                 onClicked: root.close()
             }
@@ -64,7 +64,7 @@ Dialog {
 
     }
     footer: Item { implicitHeight: 0; visible: false }
-    padding: 12
+    padding: Theme.scaledGeometry(12)
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     readonly property bool compact: availableWidth < 480 * Theme.textScale
 
@@ -132,7 +132,7 @@ Dialog {
         ColumnLayout {
             id: contentCol
             width: scroll.width - (usageScrollBar.visible ? usageScrollBar.width + 6 : 0)
-            spacing: 10
+            spacing: Theme.scaledGeometry(10)
 
             Repeater {
                 model: root.accountsList
@@ -141,7 +141,7 @@ Dialog {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.leftMargin: root.compact ? 0 : 18
-                    spacing: 5
+                    spacing: Theme.scaledGeometry(5)
                     Text {
                         objectName: "usageAccountTitle"
                         Layout.fillWidth: true
@@ -161,8 +161,8 @@ Dialog {
                             objectName: "usageWindowRow"
                             Layout.fillWidth: true
                             columns: root.compact ? 2 : 4
-                            columnSpacing: 10
-                            rowSpacing: 4
+                            columnSpacing: Theme.scaledGeometry(10)
+                            rowSpacing: Theme.scaledGeometry(4)
                             Text {
                                 Layout.row: 0
                                 Layout.column: 0
@@ -192,14 +192,14 @@ Dialog {
                                 Layout.column: root.compact ? 0 : 2
                                 Layout.columnSpan: root.compact ? 2 : 1
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 40
-                                Layout.preferredHeight: 20
+                                Layout.minimumWidth: Theme.scaledGeometry(40)
+                                Layout.preferredHeight: Theme.scaledGeometry(20)
                                 Rectangle {
                                     id: track
                                     anchors.verticalCenter: parent.verticalCenter
                                     width: parent.width
-                                    height: 10
-                                    radius: 5
+                                    height: Theme.scaledGeometry(10)
+                                    radius: Theme.scaledGeometry(5)
                                     color: Theme.palette.chatControl
                                     Rectangle {
                                         objectName: "usageFill"
@@ -214,7 +214,7 @@ Dialog {
                                         x: Math.max(0, Math.min(track.width - width, track.width * windowRow.pace))
                                         anchors.verticalCenter: parent.verticalCenter
                                         width: 1
-                                        height: 18
+                                        height: Theme.scaledGeometry(18)
                                         color: Theme.palette.mutedText
                                         opacity: 0.6
                                     }
@@ -228,12 +228,12 @@ Dialog {
                                 Layout.maximumWidth: 118 * Theme.textScale
                                 Layout.fillWidth: false
                                 Layout.alignment: Qt.AlignRight
-                                spacing: 7
+                                spacing: Theme.scaledGeometry(7)
                                 visible: Boolean(windowRow.modelData.resetInText)
                                 VrLineIcon {
                                     kind: "trendUp"
-                                    Layout.preferredWidth: 12
-                                    Layout.preferredHeight: 12
+                                    Layout.preferredWidth: Theme.scaledGeometry(12)
+                                    Layout.preferredHeight: Theme.scaledGeometry(12)
                                     foreground: Theme.palette.mutedText
                                 }
                                 Text {

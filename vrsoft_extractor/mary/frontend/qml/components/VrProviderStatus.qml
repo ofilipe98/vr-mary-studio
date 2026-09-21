@@ -13,12 +13,12 @@ RowLayout {
     readonly property color statusColor: tone === "success" ? Theme.palette.success
         : tone === "warning" ? Theme.palette.warning
         : tone === "danger" ? Theme.palette.danger : Theme.palette.subtleText
-    spacing: 8
+    spacing: Theme.scaledGeometry(8)
     Accessible.role: Accessible.StaticText
     Accessible.name: text
     Rectangle {
-        Layout.preferredWidth: 6; Layout.preferredHeight: 6
-        radius: 3; color: root.statusColor
+        Layout.preferredWidth: Theme.scaledGeometry(6); Layout.preferredHeight: Theme.scaledGeometry(6)
+        radius: Theme.scaledGeometry(3); color: root.statusColor
         opacity: root.busy ? 0.5 : 0.85
         SequentialAnimation on opacity {
             running: root.busy && root.visible && !frontend.reduceMotion

@@ -4,13 +4,13 @@ import "../../theme"
 Rectangle {
     Layout.fillWidth: true
     implicitHeight: terminal.implicitHeight + 24
-    radius: 10
+    radius: Theme.scaledGeometry(10)
     color: Theme.palette.terminalBackground || Theme.palette.background
     border.color: Theme.palette.controlBorder || Theme.palette.border
     Text {
         id: terminal
         objectName: "terminalFontPreview"
-        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 16
+        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: Theme.scaledGeometry(16)
         font.family: frontend.terminalFontFamily; font.pixelSize: Theme.terminalFontSize(12)
         color: Theme.palette.text; textFormat: Text.RichText; lineHeight: 1.1
         wrapMode: frontend.wordWrap ? Text.WrapAnywhere : Text.NoWrap; clip: true

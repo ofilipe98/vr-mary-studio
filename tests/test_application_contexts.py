@@ -1,5 +1,6 @@
 """Application scope must survive shared names, packages, refreshes and edits."""
 import hashlib
+import zipfile
 
 import pytest
 
@@ -8,11 +9,21 @@ from test_apps_catalog_audit import register
 from test_apps_catalog_bridge import bridge, wait_until  # noqa: F401
 from vrsoft_extractor.mary.application_import import preview_application_import
 from vrsoft_extractor.mary.apps_catalog import AppsCatalogError, AppsCatalogStore
-from vrsoft_extractor.mary.code_context import freeze_application_contexts, validate_application_contexts
+from vrsoft_extractor.mary.code_context import (
+    application_context_warning,
+    freeze_application_contexts,
+    master_fallback_context,
+    validate_application_contexts,
+)
 from vrsoft_extractor.mary.code_index import JavaCodeIndex
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import DecompilationBatchExecutor, DecompilationBatchPlanner
+from vrsoft_extractor.mary.jvm_toolchain import DecompileRequest, DecompileResult
 from vrsoft_extractor.mary.retrieval.code_relations import caller_evidence
+from vrsoft_extractor.mary.retrieval.code_retrieval import (
+    read_code_source,
+    retrieve_code_candidates,
+)
 
 
 def indexed_contexts(root):
@@ -228,3 +239,160 @@ def test_processing_status_follows_selected_artifact(bridge):  # noqa: F811
         wait_until(lambda: not bridge._code_processing_status_loading and bridge._apps_catalog_thread is None)
         assert bridge._code_processing_relative_jars == (context["artifacts"][0]["relative_path"],)
         assert bridge.codeProcessingTotalJars == bridge.codeProcessingCoveredJars == 1
+
+
+class _CentralSourceAdapter:
+    """Emits Outer/Shared for every JAR and Central only for the VRMaster artifact."""
+
+    name = "vineflower"
+
+    def decompile(self, request: DecompileRequest) -> DecompileResult:
+        marker = ""
+        with zipfile.ZipFile(request.input_path) as archive:
+            for entry in archive.namelist():
+                if entry.endswith("Outer.class"):
+                    marker = archive.read(entry).decode("utf-8", "replace")
+                    break
+        output = request.output_dir / "br" / "vr"
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "Outer.java").write_text(
+            "package br.vr;\npublic class Outer { public void calcular() {} }\n",
+            encoding="utf-8",
+        )
+        (output / "Shared.java").write_text(
+            "package br.vr;\npublic record Shared(String value) {}\n",
+            encoding="utf-8",
+        )
+        if "VRMaster" in marker:
+            (output / "Central.java").write_text(
+                "package br.vr;\npublic class Central { public void gerarNotaFiscal() {} }\n",
+                encoding="utf-8",
+            )
+        return DecompileResult(
+            tool=self.name,
+            status="completed",
+            duration_ms=4,
+            exit_code=0,
+            output_dir=str(request.output_dir),
+        )
+
+
+def indexed_contexts_with_master(root):
+    source = root / "incoming"
+    for name in ("VRA", "VRMaster"):
+        _jar(source / f"{name}.jar", name.encode())
+    catalog = ErpReleaseCatalog(root, expected_jar_count=2)
+    catalog.import_release("one", source)
+    plan = DecompilationBatchPlanner(root, catalog=catalog).plan("one", max_classes=20)
+    DecompilationBatchExecutor(
+        root, catalog=catalog, adapters=(_CentralSourceAdapter(),)
+    ).run(plan["plan_id"], limit=10)
+    index = JavaCodeIndex(root, catalog=catalog)
+    index.index_plan(plan["plan_id"])
+    composition = catalog.apps_store.get_package("one")["composition"]
+    selections = [{k: item[k] for k in ("app_id", "version", "variant_id")} | {"package_id": "one"}
+                  for item in composition]
+    return index, freeze_application_contexts(root, selections)
+
+
+def _contexts_by_app(contexts):
+    return {context["app_id"]: context for context in contexts}
+
+
+def test_master_fallback_context_uses_same_package_only(tmp_path):
+    _, contexts = indexed_contexts_with_master(tmp_path)
+    by_app = _contexts_by_app(contexts)
+    assert set(by_app) == {"vra", "vrmaster"}
+    fallback = master_fallback_context(tmp_path, [by_app["vra"]])
+    assert fallback is not None and fallback["app_id"] == "vrmaster"
+    assert fallback["package_id"] == by_app["vra"]["package_id"]
+    assert fallback["context_id"] == by_app["vrmaster"]["context_id"]
+    assert master_fallback_context(tmp_path, [by_app["vra"], by_app["vrmaster"]]) is None
+    assert master_fallback_context(tmp_path, None) is None
+
+
+def test_master_fallback_context_absent_from_package(tmp_path):
+    _, contexts = indexed_contexts(tmp_path)
+    assert all(context["app_id"] != "vrmaster" for context in contexts)
+    assert master_fallback_context(tmp_path, [contexts[0]]) is None
+
+
+def test_application_context_warning_defers_master_to_fallback(tmp_path):
+    _, contexts = indexed_contexts_with_master(tmp_path)
+    vra = _contexts_by_app(contexts)["vra"]
+    master_frame = "vrmaster.dao.notafiscal.AliquotaDAO.carregar(AliquotaDAO.java:14)"
+    assert application_context_warning(master_frame, [vra]) == ""
+    other_frame = "vrpdv.venda.VendaService.gerar(VendaService.java:12)"
+    assert "VRPdv" in application_context_warning(other_frame, [vra])
+
+
+def test_code_retrieval_uses_master_only_as_fallback(tmp_path, monkeypatch):
+    _, contexts = indexed_contexts_with_master(tmp_path)
+    by_app = _contexts_by_app(contexts)
+    calls = []
+    original = JavaCodeIndex.search
+
+    def search(self, query, **kwargs):
+        calls.append(kwargs)
+        return original(self, query, **kwargs)
+
+    monkeypatch.setattr(JavaCodeIndex, "search", search)
+
+    candidates, _, _ = retrieve_code_candidates(
+        tmp_path, "Central", application_contexts=[by_app["vra"]], master_fallback=True
+    )
+    assert candidates and "fallback VRMaster" in candidates[0].title
+    assert candidates[0].entities.get("fallback") == ("vrmaster",)
+    assert any(call.get("artifacts") == by_app["vrmaster"]["artifacts"] for call in calls)
+
+    calls.clear()
+    candidates, _, _ = retrieve_code_candidates(
+        tmp_path, "Outer", application_contexts=[by_app["vra"]], master_fallback=True
+    )
+    assert candidates and all("fallback VRMaster" not in item.title for item in candidates)
+    assert not any(call.get("artifacts") == by_app["vrmaster"]["artifacts"] for call in calls)
+
+    calls.clear()
+    candidates, _, _ = retrieve_code_candidates(
+        tmp_path, "Central", application_contexts=[by_app["vra"]], master_fallback=False
+    )
+    assert not candidates
+    assert not any(call.get("artifacts") == by_app["vrmaster"]["artifacts"] for call in calls)
+
+
+def test_code_retrieval_master_mention_triggers_fallback(tmp_path, monkeypatch):
+    _, contexts = indexed_contexts_with_master(tmp_path)
+    by_app = _contexts_by_app(contexts)
+    calls = []
+    original = JavaCodeIndex.search
+
+    def search(self, query, **kwargs):
+        calls.append(kwargs)
+        return original(self, query, **kwargs)
+
+    monkeypatch.setattr(JavaCodeIndex, "search", search)
+    text = "Outer vrmaster.dao.notafiscal.AliquotaDAO.carregar(AliquotaDAO.java:14)"
+    candidates, _, _ = retrieve_code_candidates(
+        tmp_path, text, application_contexts=[by_app["vra"]], master_fallback=True
+    )
+    assert any("Outer" in item.heading for item in candidates)
+    assert any("fallback VRMaster" in item.title for item in candidates)
+    assert any(call.get("artifacts") == by_app["vrmaster"]["artifacts"] for call in calls)
+
+
+def test_read_code_source_falls_back_to_master(tmp_path):
+    _, contexts = indexed_contexts_with_master(tmp_path)
+    by_app = _contexts_by_app(contexts)
+    payload = read_code_source(
+        tmp_path, "br.vr.Central", application_contexts=[by_app["vra"]], master_fallback=True
+    )
+    assert payload["state"] == "available"
+    assert payload["fallback"] == "vrmaster"
+    assert "fallback VRMaster" in payload["title"]
+    assert payload["context_id"] == by_app["vrmaster"]["context_id"]
+    assert payload["qualified_name"] == "br.vr.Central"
+    assert "class Central" in payload["content"]
+    missing = read_code_source(
+        tmp_path, "br.vr.Central", application_contexts=[by_app["vra"]], master_fallback=False
+    )
+    assert missing["state"] == "no_results"

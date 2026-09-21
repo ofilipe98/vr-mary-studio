@@ -253,6 +253,67 @@ def test_antigravity_typed_acp_failed_update_is_terminal() -> None:
     assert norm.exit_code == 1
 
 
+def test_antigravity_typed_acp_content_blocks_extract_text_output() -> None:
+    norm = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-content-1",
+                "status": "inProgress",
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "primeira linha"},
+                    },
+                    {
+                        "type": "image",
+                        "data": "aGVsbG8=",
+                        "mimeType": "image/png",
+                    },
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "segunda linha"},
+                    },
+                ],
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert norm is not None
+    assert norm.tool_id == "tool-content-1"
+    assert isinstance(norm.output, str)
+    assert norm.output == "primeira linha\nsegunda linha"
+
+
+def test_antigravity_typed_acp_non_text_content_does_not_render_python_repr() -> None:
+    norm = normalize_antigravity_event(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tool-content-2",
+                "status": "inProgress",
+                "content": [
+                    {"type": "image", "data": "aGVsbG8=", "mimeType": "image/png"},
+                    {
+                        "type": "diff",
+                        "path": "src/app.py",
+                        "oldText": "a",
+                        "newText": "b",
+                    },
+                    {"type": "content", "content": {"type": "image", "data": "eA=="}},
+                ],
+            },
+        },
+        "session/update",
+        "conv_ag",
+    )
+
+    assert norm is not None
+    assert norm.output is None
+
+
 def test_antigravity_tool_result_error():
     err_params = {
         "sessionId": "ses_ag_1",

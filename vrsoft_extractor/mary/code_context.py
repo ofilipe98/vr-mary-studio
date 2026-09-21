@@ -3,11 +3,43 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 from pathlib import Path
 from typing import Any
 
 from .apps_catalog import AppsCatalogError
 from .erp_releases import ErpReleaseCatalog
+
+LOGGER = logging.getLogger(__name__)
+MASTER_APP_ID = "vrmaster"
+
+
+def _normalized_app_id(item: dict[str, Any]) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(item.get("app_id") or "").casefold())
+
+
+def application_context_warning(text: str, contexts: list[dict[str, Any]] | None) -> str:
+    """Detect explicit product stack frames; never infer from shared library names."""
+    if not contexts:
+        return ""
+    products = {"vratacarejo": "VRAtacarejo", "vrpdv": "VRPdv",
+                "vrmaster": "VRMaster", "vrfrente": "VRFrente"}
+    mentioned = set(re.findall(
+        r"\b(vratacarejo|vrpdv|vrmaster|vrfrente)\.[\w.$]+\([^\n)]*\.java:\d+\)",
+        text, re.IGNORECASE
+    ))
+    selected = [_normalized_app_id(c) for c in contexts]
+    # VRMaster is consulted as a fallback by the code retrieval, so a Master
+    # stack frame must not discard the selected contexts.
+    missing = [products[p.lower()] for p in mentioned
+               if p.casefold() != MASTER_APP_ID
+               and not any(s.startswith(p.lower()) for s in selected)]
+    if not missing:
+        return ""
+    return ("O stack trace pertence a " + ", ".join(sorted(missing))
+            + ", mas esse aplicativo não está no contexto selecionado. "
+            "Selecione o aplicativo e a versão em Aplicativos antes de investigar esse código.")
 
 
 def freeze_application_contexts(root: Path, selections: list[dict[str, Any]], *, full_hash: bool = True) -> list[dict[str, Any]]:
@@ -52,6 +84,40 @@ def freeze_application_contexts(root: Path, selections: list[dict[str, Any]], *,
         frozen["context_id"] = hashlib.sha256(json.dumps(frozen, sort_keys=True).encode()).hexdigest()
         result.append(frozen)
     return sorted(result, key=lambda c: c["app_id"])
+
+
+def master_fallback_context(root: Path, contexts: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Resolve the central VRMaster context of the same package for fallback.
+
+    Returns ``None`` when there is no explicit scope, when VRMaster is already
+    part of it, or when no package offers an available VRMaster context.  A
+    missing Master never fails the turn; it only leaves the primary scope.
+    """
+    if not contexts:
+        return None
+    if any(_normalized_app_id(item) == MASTER_APP_ID for item in contexts):
+        return None
+    try:
+        catalog = ErpReleaseCatalog(root)
+        catalog.ensure_apps_catalog_synced()
+        packages = catalog.apps_store.load_catalog().get("packages", {})
+        for package_id in dict.fromkeys(str(item.get("package_id") or "") for item in contexts):
+            package = packages.get(package_id)
+            if not package:
+                continue
+            composition = next(
+                (entry for entry in package.get("composition", [])
+                 if _normalized_app_id(entry) == MASTER_APP_ID),
+                None,
+            )
+            if composition is None:
+                continue
+            selection = {key: composition.get(key) for key in ("app_id", "version", "variant_id")}
+            selection["package_id"] = package_id
+            return freeze_application_contexts(root, [selection], full_hash=False)[0]
+    except (AppsCatalogError, ValueError, RuntimeError, KeyError) as exc:
+        LOGGER.warning("VRMaster indisponível como fallback: %s", exc)
+    return None
 
 
 def validate_application_contexts(root: Path, contexts: list[dict[str, Any]]) -> None:

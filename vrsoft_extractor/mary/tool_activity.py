@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import hashlib
+import json
 import logging
 from typing import Any
 
@@ -52,6 +53,8 @@ class ToolType(str, Enum):
         if not val:
             return cls.UNKNOWN
         v = str(val).strip().lower()
+        if v.startswith(("mcp__", "vr-mary-studio_")):
+            return cls.MCP_TOOL_CALL
         if v in {"command", "commandexecution", "bash", "terminal", "exec", "shell", "run_command"}:
             return cls.COMMAND_EXECUTION
         if v in {"fileread", "file_read", "read", "readfile", "view_file", "view", "cat"}:
@@ -197,6 +200,12 @@ def sanitize_error_summary(raw_error: str | None) -> tuple[str, str]:
     text = str(raw_error).strip()
     if not text:
         return "", ""
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+        return payload["error"][:120], text
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -369,6 +378,18 @@ class ToolActivity:
     def duration_ms(self) -> int | None:
         if self._explicit_duration_ms is not None:
             return self._explicit_duration_ms
+        # OpenCode can send only the terminal snapshot, including both clocks.
+        # Keep this fallback for persisted events written before normalization.
+        if self.provider == "opencode":
+            part = self.metadata.get("part")
+            timing = part.get("state") if isinstance(part, dict) else None
+            if isinstance(timing, dict):
+                timing = timing.get("time", {})
+                if isinstance(timing, dict):
+                    start, end = timing.get("start"), timing.get("end")
+                    if (isinstance(start, (int, float)) and isinstance(end, (int, float))
+                            and end >= start):
+                        return int(end - start)
         if not self.started_at:
             return None
         end_str = self.finished_at or self.updated_at

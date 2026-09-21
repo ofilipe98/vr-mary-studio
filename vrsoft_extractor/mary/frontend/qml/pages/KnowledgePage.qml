@@ -7,6 +7,7 @@ import "../theme"
 Item {
     id: root
     objectName: "knowledgePage"
+    readonly property bool compact: width < Theme.scaledGeometry(760)
     property bool filtersVisible: false
     property bool documentExpanded: false
 
@@ -15,7 +16,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
-        spacing: 8
+        spacing: Theme.scaledGeometry(8)
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -25,15 +26,19 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 54
+            Layout.preferredHeight: searchActions.implicitHeight + Theme.spaceLg
             color: "transparent"
             border.width: 0
-            RowLayout {
+            GridLayout {
+                id: searchActions
+                columns: root.compact ? 2 : 4
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 8
+                anchors.margins: Theme.scaledGeometry(8)
+                columnSpacing: Theme.scaledGeometry(8)
                 VrTextField {
                     id: query
+                    Layout.columnSpan: root.compact ? 2 : 1
+                    Layout.minimumWidth: 0
                     Layout.fillWidth: true
                     placeholderText: "Ex.: configuração PIX, erro TEF, cadastro de produto"
                     background: Item { }
@@ -41,6 +46,7 @@ Item {
                 }
                 VrButton { text: (root.filtersVisible ? "▾ " : "▸ ") + "Filtros"; onClicked: root.filtersVisible = !root.filtersVisible }
                 Text {
+                    visible: !root.compact
                     text: studio.knowledgeTotal + (studio.knowledgeTotal === 1 ? " documento encontrado" : " documentos encontrados")
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
@@ -53,13 +59,15 @@ Item {
         Rectangle {
             visible: root.filtersVisible
             Layout.fillWidth: true
-            Layout.preferredHeight: 58
+            Layout.preferredHeight: filterActions.implicitHeight + Theme.spaceLg
             color: frontend.palette.chatSidebar
             border.width: 0
-            RowLayout {
+            GridLayout {
+                id: filterActions
+                columns: root.compact ? 2 : 7
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 8
+                anchors.margins: Theme.scaledGeometry(8)
+                columnSpacing: Theme.scaledGeometry(8)
                 Text { text: "Módulo:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
                 VrComboBox { id: moduleFilter; Layout.fillWidth: true; model: studio.moduleItems }
                 Text { text: "Fonte:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
@@ -76,10 +84,10 @@ Item {
         SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            orientation: Qt.Horizontal
+            orientation: root.compact ? Qt.Vertical : Qt.Horizontal
 
             handle: Rectangle {
-                implicitWidth: 9
+                implicitWidth: Theme.scaledGeometry(9)
                 color: splitHandleHover.hovered
                     ? frontend.palette.brandOrange : "transparent"
                 Rectangle {
@@ -94,8 +102,10 @@ Item {
 
             Rectangle {
                 visible: !root.documentExpanded
-                SplitView.minimumWidth: 360
-                SplitView.preferredWidth: 520
+                SplitView.minimumWidth: 0
+                SplitView.minimumHeight: root.compact ? Theme.scaledGeometry(180) : 0
+                SplitView.preferredHeight: Theme.scaledGeometry(280)
+                SplitView.preferredWidth: Theme.scaledGeometry(520)
                 color: "transparent"
                 border.width: 0
                 clip: true
@@ -105,16 +115,16 @@ Item {
                     spacing: 0
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 42
+                        Layout.preferredHeight: Theme.scaledGeometry(42)
                         color: frontend.palette.chatSidebar
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: "Título"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 130; text: "Módulo"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 62; text: "Fonte"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                            Text { Layout.preferredWidth: 74; text: "Status"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            anchors.leftMargin: Theme.scaledGeometry(8)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            Text { Layout.fillWidth: true; Layout.preferredWidth: Theme.scaledGeometry(280); text: "Título"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { visible: !root.compact; Layout.preferredWidth: Theme.scaledGeometry(130); text: "Módulo"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(62); text: "Fonte"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(74); text: "Status"; horizontalAlignment: Text.AlignHCenter; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
                         }
                     }
                     ListView {
@@ -131,19 +141,19 @@ Item {
                             required property string source
                             required property string status
                             width: knowledgeList.width
-                            height: 39
+                            height: Theme.scaledGeometry(39)
                             color: knowledgeList.currentIndex === index ? frontend.palette.selection
                                 : index % 2 ? frontend.palette.chatSidebar : "transparent"
                             border.width: 0
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
-                                spacing: 4
-                                Text { Layout.fillWidth: true; Layout.preferredWidth: 280; text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 130; text: module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 62; text: source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                                Text { Layout.preferredWidth: 74; text: status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                anchors.leftMargin: Theme.scaledGeometry(4)
+                                anchors.rightMargin: Theme.scaledGeometry(4)
+                                spacing: Theme.scaledGeometry(4)
+                                Text { Layout.fillWidth: true; Layout.preferredWidth: Theme.scaledGeometry(280); text: title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { visible: !root.compact; Layout.preferredWidth: Theme.scaledGeometry(130); text: module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { Layout.preferredWidth: Theme.scaledGeometry(62); text: source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                                Text { Layout.preferredWidth: Theme.scaledGeometry(74); text: status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
                             }
                             TapHandler { onTapped: { knowledgeList.currentIndex = index; studio.selectKnowledge(index) } }
                         }
@@ -160,8 +170,10 @@ Item {
             }
 
             Rectangle {
-                SplitView.minimumWidth: 330
-                SplitView.preferredWidth: 540
+                SplitView.minimumWidth: 0
+                SplitView.minimumHeight: root.compact ? Theme.scaledGeometry(120) : 0
+                SplitView.fillHeight: true
+                SplitView.preferredWidth: Theme.scaledGeometry(540)
                 SplitView.fillWidth: true
                 color: "transparent"
                 border.width: 0
@@ -171,9 +183,9 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 42
-                        Layout.leftMargin: 10
-                        Layout.rightMargin: 8
+                        Layout.preferredHeight: Theme.scaledGeometry(42)
+                        Layout.leftMargin: Theme.scaledGeometry(10)
+                        Layout.rightMargin: Theme.scaledGeometry(8)
                         Text { Layout.fillWidth: true; text: "Documento"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(15); font.weight: Font.DemiBold }
                         VrIconButton {
                             symbol: "↗"
@@ -195,7 +207,7 @@ Item {
                         TextEdit {
                             id: knowledgePreviewBody
                             width: parent.width
-                            padding: 16
+                            padding: Theme.scaledGeometry(16)
                             text: studio.knowledgePreview
                             textFormat: TextEdit.MarkdownText
                             readOnly: true
@@ -232,7 +244,7 @@ Item {
             Text { text: studio.knowledgePageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
             VrButton { text: "Próxima"; enabled: studio.knowledgeCanNext; onClicked: studio.nextKnowledgePage() }
             Item { Layout.fillWidth: true }
-            Text { text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+            Text { visible: !root.compact; text: "Exibindo resultados da base local"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
     }
 

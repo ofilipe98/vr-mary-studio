@@ -22,7 +22,14 @@ TextEdit {
     // Rhythm for Markdown blocks comes from frontend.styleMessageDocument
     // (QTextDocument block line-height, T3 leading-relaxed equivalent).
     height: paintedHeight
-    onLinkActivated: link => { if (studio) studio.openExternalUrl(link) }
+    onLinkActivated: link => {
+        var value = String(link)
+        if (value.indexOf("vr-file:") === 0 || value.indexOf("file:") === 0) {
+            if (typeof chat !== "undefined" && chat) chat.openFileReference(value)
+        } else if (studio) {
+            studio.openExternalUrl(value)
+        }
+    }
     function applyStyle() {
         if (applyingStyle) return
         applyingStyle = true

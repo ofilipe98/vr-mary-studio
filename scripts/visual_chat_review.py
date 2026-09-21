@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QSettings, QObject
+from PySide6.QtCore import QPointF, QSettings, QObject
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary.config import MarySettings
@@ -35,6 +35,13 @@ def repaint_icons(item):
         item.requestPaint()
     for child in item.childItems():
         repaint_icons(child)
+
+
+def reveal_in_flickable(flickable, item, top_margin=24):
+    """Scroll an already-instantiated delegate into the visible viewport."""
+    mapped = item.mapToItem(flickable, QPointF(0, 0))
+    current_y = float(flickable.property("contentY") or 0)
+    flickable.setProperty("contentY", max(0, current_y + mapped.y() - top_margin))
 
 
 def main():
@@ -77,6 +84,8 @@ WHERE codigo = 113;
 ```
 
 Consulte também a [documentação do projeto](https://example.com/docs) para complementar a análise.
+
+O fluxo fica em `mary/frontend/file_links.py:12` e o método `calcularImpostoItem` permanece inline code.
 
 Fontes consultadas:
 - [MAPA DE FUNÇÕES](https://example.com/funcoes)
@@ -138,6 +147,113 @@ Fontes consultadas:
                 QTest.qWait(150)
                 name = "working" if running else "expanded" if expanded else "error" if state == "Erro" else "cancelled"
                 window.grabWindow().save(str(output / f"activity-{name}.png"))
+            captures = []
+            toolcalling_items = [
+                {
+                    "id": "tool-call-command",
+                    "kind": "tool",
+                    "itemType": "commandExecution",
+                    "state": "running",
+                    "text": "Executando testes do contrato ACP",
+                    "command": "python -m pytest tests/test_antigravity_acp.py",
+                    "durationLabel": "2.1s",
+                },
+                {
+                    "id": "tool-call-reference",
+                    "kind": "tool",
+                    "itemType": "fileRead",
+                    "state": "completed",
+                    "text": "Leu a implementação de referência do ACP",
+                    "subtitle": "AcpRuntimeModel.ts",
+                },
+                {
+                    "id": "tool-call-normalizer",
+                    "kind": "file_changes",
+                    "itemType": "fileChange",
+                    "state": "completed",
+                    "text": "Atualizou a normalização do toolCallId",
+                    "files": [
+                        {
+                            "path": "vrsoft_extractor/mary/provider_adapters/tool_normalizer.py",
+                            "name": "tool_normalizer.py",
+                        },
+                        {
+                            "path": "tests/test_provider_adapters_normalization.py",
+                            "name": "test_provider_adapters_normalization.py",
+                        },
+                    ],
+                    "fileCount": 2,
+                    "additions": 24,
+                    "deletions": 6,
+                    "folderSummary": "vrsoft_extractor/mary · tests",
+                },
+                {
+                    "id": "tool-call-lifecycle",
+                    "kind": "tool",
+                    "itemType": "mcpToolCall",
+                    "state": "running",
+                    "text": "Validando o lifecycle terminal",
+                    "subtitle": "Antigravity ACP",
+                },
+            ]
+            card_names = ("toolCard", "commandCard", "toolGroupCard", "changedFilesCard")
+
+            activity.setProperty("items", toolcalling_items)
+            activity.setProperty("statusText", "Executando uma ação…")
+            activity.setProperty("running", True)
+            activity.setProperty("expanded", False)
+            QTest.qWait(200)
+            reveal_in_flickable(timeline, activity)
+            QTest.qWait(100)
+            live_cards = sum(len(find_items(activity, name)) for name in card_names)
+            live_titles = [
+                str(card.property("titleText") or card.property("commandText") or "")
+                for name in card_names
+                for card in find_items(activity, name)
+            ]
+            live_capture = "activity-toolcalling-live.png"
+            window.grabWindow().save(str(output / live_capture))
+            captures.append(live_capture)
+
+            settled_items = [dict(item, state="completed") for item in toolcalling_items]
+            activity.setProperty("items", settled_items)
+            activity.setProperty("statusText", "Concluído")
+            activity.setProperty("running", False)
+            activity.setProperty("expanded", False)
+            QTest.qWait(200)
+            reveal_in_flickable(timeline, activity)
+            QTest.qWait(100)
+            settled_cards = sum(len(find_items(activity, name)) for name in card_names)
+            settled_header = str(activity.property("headerLabel") or "")
+            settled_capture = "activity-toolcalling-settled.png"
+            window.grabWindow().save(str(output / settled_capture))
+            captures.append(settled_capture)
+
+            activity.setProperty("expanded", True)
+            QTest.qWait(200)
+            reveal_in_flickable(timeline, activity)
+            QTest.qWait(100)
+            expanded_cards = sum(len(find_items(activity, name)) for name in card_names)
+            expanded_capture = "activity-toolcalling-settled-expanded.png"
+            window.grabWindow().save(str(output / expanded_capture))
+            captures.append(expanded_capture)
+
+            anonymous_titles = [title for title in live_titles if "anon:exec:noid:" in title]
+            settled_disclosure_only = settled_cards == 0 and settled_header == "Concluído em 13s"
+            if live_cards != len(toolcalling_items):
+                raise RuntimeError(f"Live tool trace rendered {live_cards} of {len(toolcalling_items)} cards")
+            if not settled_disclosure_only:
+                raise RuntimeError(
+                    f"Settled tool trace must contain only its disclosure; "
+                    f"header={settled_header!r}, cards={settled_cards}"
+                )
+            if expanded_cards != len(toolcalling_items):
+                raise RuntimeError(
+                    f"Expanded settled trace rendered {expanded_cards} of {len(toolcalling_items)} cards"
+                )
+            if anonymous_titles:
+                raise RuntimeError(f"Anonymous tool titles rendered: {anonymous_titles}")
+
             # Exercise the reference's two central output shapes: comparative
             # tables and a long, copyable plain-text implementation prompt.
             reference_markdown = """Recomendo separar **VR Ultra** e **Aplicativos e versões**, deixando o processamento de código dentro de cada versão.
@@ -203,7 +319,6 @@ Entregue o resultado e as evidências de validação.
             # full 100/125/150 scale range. Filenames sort alphabetically so a
             # reviewer can compare scale steps side by side (or against T3
             # Code captures taken at the same sizes).
-            captures = []
             matrix = []
             for theme, width, height, scale in [
                 (theme, width, height, scale)
@@ -242,8 +357,20 @@ Entregue o resultado e as evidências de validação.
             (output / "results.json").write_text(json.dumps({
                 "captures": captures,
                 "density_matrix": matrix,
+                "activity_toolcalling": {
+                    "live_visible_cards": live_cards,
+                    "settled_visible_cards": settled_cards,
+                    "settled_expanded_visible_cards": expanded_cards,
+                    "settled_disclosure_only": settled_disclosure_only,
+                    "anonymous_title_count": len(anonymous_titles),
+                },
                 "qml_warnings": len(errors),
             }, indent=2), encoding="utf-8")
+            print("Tool-calling live visible cards:", live_cards)
+            print("Tool-calling settled visible cards:", settled_cards)
+            print("Tool-calling settled expanded visible cards:", expanded_cards)
+            print("Tool-calling settled disclosure only:", settled_disclosure_only)
+            print("Tool-calling anon:exec:noid titles:", len(anonymous_titles))
             print("QML warnings:", len(errors))
             print("Evidence:", output.resolve())
             window.close()

@@ -3,10 +3,10 @@ import QtQuick.Layouts
 import "../../theme"
 
 ColumnLayout {
-    spacing: 36
+    spacing: Theme.scaledGeometry(36)
     ColumnLayout {
-        Layout.fillWidth: true; spacing: 14
-        Text { text: "Interface"; Layout.leftMargin: 16; color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
+        Layout.fillWidth: true; spacing: Theme.scaledGeometry(14)
+        Text { text: "Interface"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
         AppearanceGroup {
             Layout.fillWidth: true
             AppearanceRow {
@@ -39,15 +39,15 @@ ColumnLayout {
         }
     }
     ColumnLayout {
-        Layout.fillWidth: true; spacing: 14
-        Text { text: "Movimento"; Layout.leftMargin: 16; color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
+        Layout.fillWidth: true; spacing: Theme.scaledGeometry(14)
+        Text { text: "Movimento"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
         AppearanceGroup {
             Layout.fillWidth: true
             AppearanceRow {
                 id: motionRow
                 title: "Animações dos painéis"; description: "Defina a velocidade de abertura e fechamento dos painéis."
                 resetKey: "motion"; resetVisible: frontend.rawPanelAnimationDurationMs !== 0; divider: false
-                PanelAnimationsPreview { Layout.preferredWidth: motionRow.compact ? 80 : 112; Layout.rightMargin: 8 }
+                PanelAnimationsPreview { Layout.preferredWidth: motionRow.compact ? 80 : 112; Layout.rightMargin: Theme.scaledGeometry(8) }
                 AppearanceRange {
                     settingName: "motion"; from: 0; to: 400; stepSize: 25; suffix: " ms"
                     value: frontend.rawPanelAnimationDurationMs; onMoved: value => frontend.setPanelAnimationDurationMs(value)

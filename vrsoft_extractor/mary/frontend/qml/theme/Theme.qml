@@ -5,6 +5,10 @@ import QtQuick
 QtObject {
     // Convert the Python QVariantMap once per theme change, not per hover.
     readonly property var palette: frontend.palette
+    // Identidade fixa dos modos VR (VR e VR Ultra): anel, halo e realces do
+    // composer mantêm o laranja da marca mesmo quando o tema remapeia o acento
+    // (temas T3 levam brandOrange/accessibleOrange para messageAction).
+    readonly property color vrAccent: "#FF7200"
     readonly property string fontFamily: (frontend && frontend.effectiveInterfaceFontFamily) ? frontend.effectiveInterfaceFontFamily : ((frontend && frontend.interfaceFontFamily) ? frontend.interfaceFontFamily : "Segoe UI")
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property string promptFontFamily: frontend.promptFontFamily
@@ -25,31 +29,31 @@ QtObject {
     readonly property int automaticScalePercent: 100
     readonly property real selectedScale: frontend.uiScale === "auto"
         ? 1.0 : frontend.uiScaleFactor
-    readonly property real textScale: baseTextScale * selectedScale
-        * (frontend.interfaceFontSize / 16.0)
+    readonly property real interfaceScale: frontend.interfaceFontSize / 16.0
+    readonly property real textScale: baseTextScale * selectedScale * interfaceScale
 
     function automaticScaleForSize(width, height) {
         return 1.0
     }
 
     // Semantic root scale: interfaceFontSize drives textScale (nominal 16px baseline).
-    // Prompt/code/mono/terminal stay in absolute pixels from their own settings.
+    // Prompt/code/mono/terminal use their own sizes, multiplied only by app zoom.
     function fontSize(pixelSize) {
         return Math.max(1, Number(pixelSize) * textScale)
     }
 
     function monospaceFontSize(pixelSize) {
-        return Math.max(1, Number(pixelSize) * baseTextScale
+        return Math.max(1, Number(pixelSize) * baseTextScale * selectedScale
             * (frontend.monospaceFontSize / 12.0))
     }
 
     function promptFontSize(pixelSize) {
-        return Math.max(1, Number(pixelSize) * baseTextScale
+        return Math.max(1, Number(pixelSize) * baseTextScale * selectedScale
             * (frontend.promptFontSize / 14.0))
     }
 
     function terminalFontSize(pixelSize) {
-        return Math.max(1, Number(pixelSize) * baseTextScale
+        return Math.max(1, Number(pixelSize) * baseTextScale * selectedScale
             * (frontend.terminalFontSize / 12.0))
     }
 
@@ -94,9 +98,10 @@ QtObject {
     readonly property int rawPanelAnimationDuration: frontend.rawPanelAnimationDurationMs
     readonly property int panelAnimationDuration: frontend.panelAnimationDurationMs
 
-    // Layout follows selectedScale (T3 rem behavior) with integer snapping
+    // T3 root font size scales rem dimensions as well as interface text.
+    // App zoom additionally scales prompt/code/terminal, independently of DPI.
     function scaledGeometry(base) {
-        return Math.max(1, Math.round(Number(base) * selectedScale))
+        return Math.round(Number(base) * selectedScale * interfaceScale)
     }
 
     readonly property int spaceXs: scaledGeometry(4)
@@ -108,9 +113,9 @@ QtObject {
 
     readonly property int radiusXs: scaledGeometry(4)
     readonly property int radiusSmall: scaledGeometry(8)
-    readonly property int radiusControl: scaledGeometry(10)
+    readonly property int radiusControl: scaledGeometry(8)
     readonly property int radiusPopup: scaledGeometry(12)
-    readonly property int radiusCard: scaledGeometry(14)
+    readonly property int radiusCard: scaledGeometry(12)
     readonly property int radiusLg: scaledGeometry(16)
 
     // Standardized control heights (aligned with T3 Code)
@@ -141,7 +146,7 @@ QtObject {
     readonly property int iconSmall: scaledGeometry(16)
     readonly property int iconMedium: scaledGeometry(18)
     readonly property int iconSize: scaledGeometry(20)
-    readonly property int pageMargin: scaledGeometry(22)
+    readonly property int pageMargin: scaledGeometry(viewportWidth < 600 ? 16 : 24)
     readonly property int pageSpacing: scaledGeometry(12)
 
     // Motion tokens

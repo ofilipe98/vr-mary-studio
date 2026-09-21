@@ -9,7 +9,7 @@ AbstractButton {
     property color accentColor: "#1c1c1f"
     property color actionColor: Theme.palette.brandOrange
     property bool isActive: false
-    implicitWidth: 68; implicitHeight: 68
+    implicitWidth: Theme.scaledGeometry(68); implicitHeight: Theme.scaledGeometry(68)
     hoverEnabled: true
     Accessible.name: mode === "light" ? "Usar variante clara" : "Usar variante escura"
     Accessible.checkable: true; Accessible.checked: isActive
@@ -20,7 +20,7 @@ AbstractButton {
     contentItem: Item {
         Canvas {
             id: orb
-            anchors.centerIn: parent; width: 52; height: 52
+            anchors.centerIn: parent; width: Theme.scaledGeometry(52); height: Theme.scaledGeometry(52)
             renderTarget: Canvas.Image
             onPaint: {
                 var c = getContext("2d"); c.reset(); c.save()
@@ -39,10 +39,10 @@ AbstractButton {
         Rectangle {
             visible: root.isActive
             anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 2
-            width: 20; height: 20; radius: 10
+            width: Theme.scaledGeometry(20); height: Theme.scaledGeometry(20); radius: Theme.scaledGeometry(10)
             color: Theme.palette.background; border.color: Theme.palette.border
             VrLineIcon {
-                anchors.centerIn: parent; width: 12; height: 12
+                anchors.centerIn: parent; width: Theme.scaledGeometry(12); height: Theme.scaledGeometry(12)
                 kind: root.mode === "light" ? "sun" : "moon"; foreground: Theme.palette.text
             }
         }

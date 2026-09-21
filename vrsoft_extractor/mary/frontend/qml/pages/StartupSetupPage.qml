@@ -22,18 +22,18 @@ Rectangle {
             // Tuned for the ~760 px bootstrap window (content ~600 px).
             width: Math.min(600, scroller.width - 64)
             anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 16
+            spacing: Theme.scaledGeometry(16)
 
-            Item { Layout.preferredHeight: 12 }
+            Item { Layout.preferredHeight: Theme.scaledGeometry(12) }
 
             // Header
             RowLayout {
-                spacing: 12
+                spacing: Theme.scaledGeometry(12)
                 Layout.fillWidth: true
 
                 Image {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
+                    Layout.preferredWidth: Theme.scaledGeometry(36)
+                    Layout.preferredHeight: Theme.scaledGeometry(36)
                     source: (typeof frontend !== "undefined" && frontend && frontend.brandSymbolUrl) ? frontend.brandSymbolUrl : ""
                     sourceSize.width: 72
                     sourceSize.height: 72
@@ -72,7 +72,7 @@ Rectangle {
                 visible: typeof bootstrap !== "undefined" && bootstrap && bootstrap.errorMessage.length > 0
                 Layout.fillWidth: true
                 implicitHeight: errorLayout.implicitHeight + 16
-                radius: 8
+                radius: Theme.scaledGeometry(8)
                 color: Qt.alpha(Theme.palette.danger, 0.12)
                 border.width: 1
                 border.color: Theme.palette.danger
@@ -80,12 +80,12 @@ Rectangle {
                 RowLayout {
                     id: errorLayout
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 8
+                    anchors.margins: Theme.scaledGeometry(10)
+                    spacing: Theme.scaledGeometry(8)
 
                     VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
+                        Layout.preferredWidth: Theme.scaledGeometry(16)
+                        Layout.preferredHeight: Theme.scaledGeometry(16)
                         kind: "warning"
                         foreground: Theme.palette.danger
                     }
@@ -105,7 +105,7 @@ Rectangle {
             // Section 1: Local Root
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.scaledGeometry(6)
 
                 Text {
                     text: "Repositório local de documentação VR"
@@ -124,13 +124,13 @@ Rectangle {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
 
                     VrTextField {
                         id: rootField
                         objectName: "setupRootField"
                         Layout.fillWidth: true
-                        implicitHeight: 34
+                        implicitHeight: Theme.scaledGeometry(34)
                         placeholderText: "Ex: D:\\Codex\\VRProject"
                         text: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues) ? (bootstrap.settingsValues.root || "") : ""
                     }
@@ -138,7 +138,7 @@ Rectangle {
                     VrButton {
                         text: "Procurar…"
                         variant: "secondary"
-                        implicitHeight: 34
+                        implicitHeight: Theme.scaledGeometry(34)
                         onClicked: {
                             if (typeof bootstrap !== "undefined" && bootstrap) {
                                 var chosen = bootstrap.chooseKnowledgeRoot();
@@ -154,7 +154,7 @@ Rectangle {
             // Section 2: Credenciais
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                spacing: Theme.scaledGeometry(12)
 
                 Text {
                     text: "Credenciais de sincronização"
@@ -168,7 +168,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: movideskCol.implicitHeight + 20
-                    radius: 10
+                    radius: Theme.scaledGeometry(10)
                     color: Theme.palette.surfaceRaised
                     border.width: 1
                     border.color: Theme.palette.border
@@ -176,8 +176,8 @@ Rectangle {
                     ColumnLayout {
                         id: movideskCol
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
+                        anchors.margins: Theme.scaledGeometry(12)
+                        spacing: Theme.scaledGeometry(8)
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -201,14 +201,14 @@ Rectangle {
                         GridLayout {
                             Layout.fillWidth: true
                             columns: root.width < 500 ? 1 : 2
-                            columnSpacing: 8
-                            rowSpacing: 8
+                            columnSpacing: Theme.scaledGeometry(8)
+                            rowSpacing: Theme.scaledGeometry(8)
 
                             VrTextField {
                                 id: movideskEmail
                                 objectName: "setupMovideskEmail"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 placeholderText: "Email Movidesk"
                                 text: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues) ? (bootstrap.settingsValues.movideskEmail || "") : ""
                             }
@@ -217,7 +217,7 @@ Rectangle {
                                 id: movideskPassword
                                 objectName: "setupMovideskPassword"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 echoMode: TextInput.Password
                                 placeholderText: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues && bootstrap.settingsValues.movideskPasswordConfigured) ? "Senha configurada" : "Senha Movidesk"
                                 text: ""
@@ -230,7 +230,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: endooCol.implicitHeight + 20
-                    radius: 10
+                    radius: Theme.scaledGeometry(10)
                     color: Theme.palette.surfaceRaised
                     border.width: 1
                     border.color: Theme.palette.border
@@ -238,8 +238,8 @@ Rectangle {
                     ColumnLayout {
                         id: endooCol
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
+                        anchors.margins: Theme.scaledGeometry(12)
+                        spacing: Theme.scaledGeometry(8)
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -263,14 +263,14 @@ Rectangle {
                         GridLayout {
                             Layout.fillWidth: true
                             columns: root.width < 500 ? 1 : 2
-                            columnSpacing: 8
-                            rowSpacing: 8
+                            columnSpacing: Theme.scaledGeometry(8)
+                            rowSpacing: Theme.scaledGeometry(8)
 
                             VrTextField {
                                 id: endooEmail
                                 objectName: "setupEndooEmail"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 placeholderText: "Email Wiki Endoo"
                                 text: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues) ? (bootstrap.settingsValues.endooEmail || "") : ""
                             }
@@ -279,7 +279,7 @@ Rectangle {
                                 id: endooPassword
                                 objectName: "setupEndooPassword"
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                implicitHeight: Theme.scaledGeometry(34)
                                 echoMode: TextInput.Password
                                 placeholderText: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues && bootstrap.settingsValues.endooPasswordConfigured) ? "Senha configurada" : "Senha Wiki Endoo"
                                 text: ""
@@ -292,7 +292,7 @@ Rectangle {
             // Section 3: Sync & Diagnostic
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.scaledGeometry(8)
 
                 Text {
                     text: "Sincronização e diagnóstico"
@@ -304,7 +304,7 @@ Rectangle {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: Theme.scaledGeometry(12)
 
                     Text {
                         text: "Frequência de sincronização:"
@@ -316,8 +316,8 @@ Rectangle {
                     VrComboBox {
                         id: interval
                         objectName: "setupInterval"
-                        Layout.preferredWidth: 210
-                        implicitHeight: 34
+                        Layout.preferredWidth: Theme.scaledGeometry(210)
+                        implicitHeight: Theme.scaledGeometry(34)
                         model: ["A cada 15 minutos", "A cada 30 minutos", "A cada 1 hora", "A cada 2 horas", "A cada 4 horas", "A cada 8 horas", "A cada 24 horas"]
                         property var values: ["15", "30", "60", "120", "240", "480", "1440"]
                         Component.onCompleted: {
@@ -331,7 +331,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: diagText.implicitHeight + 16
-                    radius: 8
+                    radius: Theme.scaledGeometry(8)
                     color: Theme.palette.surfaceRaised
                     border.width: 1
                     border.color: Theme.palette.border
@@ -339,7 +339,7 @@ Rectangle {
                     Text {
                         id: diagText
                         anchors.fill: parent
-                        anchors.margins: 8
+                        anchors.margins: Theme.scaledGeometry(8)
                         text: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.settingsValues) ? (bootstrap.settingsValues.diagnostic || "") : ""
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
@@ -352,8 +352,8 @@ Rectangle {
             // Footer Action
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 12
+                Layout.topMargin: Theme.scaledGeometry(8)
+                spacing: Theme.scaledGeometry(12)
 
                 Item { Layout.fillWidth: true }
 
@@ -362,8 +362,8 @@ Rectangle {
                     objectName: "setupSaveButton"
                     text: (typeof bootstrap !== "undefined" && bootstrap && bootstrap.isBusy) ? "Salvando…" : "Salvar e Continuar"
                     variant: "primary"
-                    implicitHeight: 36
-                    implicitWidth: 160
+                    implicitHeight: Theme.scaledGeometry(36)
+                    implicitWidth: Theme.scaledGeometry(160)
                     enabled: rootField.text.trim().length > 0 && !(typeof bootstrap !== "undefined" && bootstrap && bootstrap.isBusy)
                     onClicked: {
                         if (typeof bootstrap !== "undefined" && bootstrap) {
@@ -381,7 +381,7 @@ Rectangle {
                 }
             }
 
-            Item { Layout.preferredHeight: 20 }
+            Item { Layout.preferredHeight: Theme.scaledGeometry(20) }
         }
     }
 }

@@ -11,13 +11,13 @@ ColumnLayout {
     signal action()
 
     width: Math.min(parent ? parent.width - 40 : 520, 560)
-    spacing: 12
+    spacing: Theme.scaledGeometry(12)
 
     Rectangle {
         Layout.alignment: Qt.AlignHCenter
-        width: 42
-        height: 42
-        radius: 21
+        width: Theme.scaledGeometry(42)
+        height: Theme.scaledGeometry(42)
+        radius: Theme.scaledGeometry(21)
         color: Theme.palette.selection
         Text {
             anchors.centerIn: parent
@@ -35,6 +35,7 @@ ColumnLayout {
         font.weight: Font.DemiBold
         lineHeight: Theme.headingLineHeight
         horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
     }
     Text {
         Layout.fillWidth: true

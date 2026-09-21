@@ -475,12 +475,13 @@ def test_researchers_cycle_through_model_pool(tmp_path: Path) -> None:
         ("Fiscal", "PDV"),
     )
 
-    models = [
-        (e.payload.get("model") or {}).get("model")
+    # Workers emit concurrently; verify assignment, not thread scheduling.
+    models = {
+        e.payload["module"]: (e.payload.get("model") or {}).get("model")
         for e in events
         if e.kind == "agent_started"
-    ]
-    assert models == ["sol", "opus"], "pesquisadores deveriam alternar o pool"
+    }
+    assert models == {"Fiscal": "sol", "PDV": "opus"}, "pesquisadores deveriam alternar o pool"
 
 
 def test_researcher_retry_recovers_transient_failure(tmp_path: Path) -> None:
