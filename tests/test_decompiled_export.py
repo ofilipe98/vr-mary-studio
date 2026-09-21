@@ -289,6 +289,24 @@ def test_export_materializes_imported_vridx_body_without_physical_file(tmp_path)
     assert (Path(result["destination"]) / "br/Importada.java").read_text(encoding="utf-8") == body
 
 
+def test_export_reports_progress_for_selected_source(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {},
+        {"source_key": "second", "source_relative_path": "br/Outra.java",
+         "body": "class Outra {}"},
+    ])
+    events = []
+
+    result = _export(workspace, destination, progress=events.append)
+
+    assert result["file_count"] == 2
+    assert events[0] == {"current": 0, "total": 2}
+    assert events[-1] == {"current": 2, "total": 2}
+    assert all(event["total"] == 2 for event in events)
+
+
 def test_export_rejects_invalid_body_hash_and_removes_staging(tmp_path):
     workspace, destination = tmp_path / "workspace", tmp_path / "exports"
     destination.mkdir()
@@ -314,6 +332,31 @@ def test_export_rejects_conflicting_contents_for_same_relative_path(tmp_path):
         _export(workspace, destination)
 
     assert list(destination.iterdir()) == []
+
+
+def test_export_keeps_multi_release_variants_under_versioned_paths(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {"source_key": "base", "class_version": 0, "output_reference": "",
+         "source_relative_path": "module-info.java", "body": "module base {}\n"},
+        {"source_key": "java9", "class_version": 9, "output_reference": "",
+         "source_relative_path": "module-info.java", "body": "module java9 {}\n"},
+        {"source_key": "java11", "class_version": 11, "output_reference": "",
+         "source_relative_path": "module-info.java", "body": "module java11 {}\n"},
+    ])
+
+    result = _export(workspace, destination)
+
+    exported = Path(result["destination"])
+    assert (exported / "module-info.java").read_text(encoding="utf-8") == "module base {}\n"
+    assert (exported / "META-INF/versions/9/module-info.java").read_text(
+        encoding="utf-8"
+    ) == "module java9 {}\n"
+    assert (exported / "META-INF/versions/11/module-info.java").read_text(
+        encoding="utf-8"
+    ) == "module java11 {}\n"
+    assert result["file_count"] == 3
 
 
 @pytest.mark.parametrize("bodies", [
@@ -358,6 +401,9 @@ def test_export_iterates_index_rows_without_fetchall(tmp_path, monkeypatch):
 
         def __iter__(self):
             return iter(self._cursor)
+
+        def fetchone(self):
+            return self._cursor.fetchone()
 
         def fetchall(self):
             raise AssertionError("exportação não deve carregar todas as linhas")
@@ -567,6 +613,48 @@ def test_export_decompiled_package_contains_all_release_sources_and_manifest(tmp
         )
 
 
+def test_export_decompiled_package_reports_progress(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, _portable_records(), catalog=_portable_catalog())
+    events = []
+
+    export_decompiled_package(
+        workspace, destination / "Pacote.zip", package_id="release-a",
+        progress=events.append,
+    )
+
+    assert events[0] == {"current": 0, "total": 3}
+    assert events[-1] == {"current": 3, "total": 3}
+    assert all(event["total"] == 3 for event in events)
+    assert [event["current"] for event in events] == sorted(
+        event["current"] for event in events
+    )
+
+
+def test_export_decompiled_package_reports_throttled_progress(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    _prepare(workspace, [
+        {"source_key": f"bulk-{number}", "artifact_sha256": "a" * 64,
+         "jar_relative_path": "VRMaster.jar", "output_reference": "",
+         "source_relative_path": f"bulk/File{number}.java",
+         "body": f"class File{number} {{}}"}
+        for number in range(600)
+    ], catalog=_portable_catalog())
+    events = []
+
+    export_decompiled_package(
+        workspace, destination / "Pacote.zip", package_id="release-a",
+        progress=events.append,
+    )
+
+    currents = [event["current"] for event in events]
+    assert currents[0] == 0
+    assert 250 in currents and 500 in currents
+    assert currents[-1] == 600
+
+
 def test_export_decompiled_package_is_non_destructive(tmp_path):
     workspace, destination = tmp_path / "workspace", tmp_path / "exports"
     destination.mkdir()
@@ -629,6 +717,51 @@ def test_export_decompiled_package_rejects_conflicting_duplicate_source(tmp_path
         )
 
     assert list(destination.iterdir()) == []
+
+
+def test_export_decompiled_package_keeps_multi_release_variants(tmp_path):
+    workspace, destination = tmp_path / "workspace", tmp_path / "exports"
+    destination.mkdir()
+    records = _portable_records()
+    records.append({
+        "source_key": "master-mr9", "artifact_sha256": "a" * 64,
+        "jar_relative_path": "VRMaster.jar", "output_reference": "",
+        "source_relative_path": "module-info.java", "class_version": 9,
+        "body": "module java9 {}\n",
+    })
+    records.append({
+        "source_key": "master-mr-base", "artifact_sha256": "a" * 64,
+        "jar_relative_path": "VRMaster.jar", "output_reference": "",
+        "source_relative_path": "module-info.java", "class_version": 0,
+        "body": "module base {}\n",
+    })
+    _prepare(workspace, records, catalog=_portable_catalog())
+
+    archive = destination / "Pacote.zip"
+    export_decompiled_package(workspace, archive, package_id="release-a")
+
+    with zipfile.ZipFile(archive) as bundle:
+        manifest = json.loads(
+            bundle.read("vrstudio-package-export.json").decode("utf-8")
+        )
+        master = next(
+            item for item in manifest["artifacts"]
+            if item["jar_relative_path"] == "VRMaster.jar"
+        )
+        exported = {
+            source["source_relative_path"]: bundle.read(source["archive_path"])
+            for source in master["sources"]
+        }
+    assert exported["module-info.java"] == b"module base {}\n"
+    assert exported["META-INF/versions/9/module-info.java"] == b"module java9 {}\n"
+    assert manifest["file_count"] == 5
+
+    workspace_b = tmp_path / "workspace-b"
+    workspace_b.mkdir()
+    imported = import_decompiled_package_archive(workspace_b, archive)
+
+    assert imported["success"]
+    assert imported["total_indexed_sources"] == 5
 
 
 def test_export_decompiled_package_keeps_dependencies_without_sources_after_import(

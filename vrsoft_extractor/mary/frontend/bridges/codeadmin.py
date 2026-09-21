@@ -1519,6 +1519,23 @@ class CodeAdminDomain:
         return True
 
 
+    def _apply_decompiled_export_progress(self, current: Any, total: Any) -> None:
+        total_value = max(0, int(total or 0))
+        current_value = max(0, int(current or 0))
+        if total_value:
+            current_value = min(current_value, total_value)
+            percent = round(100.0 * current_value / total_value, 1)
+            self._release_snapshot_status = (
+                f"Exportando código descompilado — {current_value:,}/{total_value:,} arquivos"
+            ).replace(",", ".")
+        else:
+            percent = 0.0
+            self._release_snapshot_status = "Exportando código descompilado…"
+        self._decompiled_export_progress = percent
+        self._decompiled_export_processed = current_value
+        self._decompiled_export_total = total_value
+
+
     def _poll_release_snapshot(self) -> None:
         if self._closed:
             return
@@ -1547,9 +1564,13 @@ class CodeAdminDomain:
                 return
             if latest_progress.get("workspace", self._settings.root) != self._settings.root:
                 return
-            stage = str(latest_progress.get("stage") or "")
             current = latest_progress.get("current", 0)
             total = latest_progress.get("total", 0)
+            if str(latest_progress.get("operation") or "") == "export_decompiled":
+                self._apply_decompiled_export_progress(current, total)
+                self.stateChanged.emit()
+                return
+            stage = str(latest_progress.get("stage") or "")
             filename = str(latest_progress.get("file") or "")
             stage_labels = {
                 "scan": "Localizando JARs",
@@ -2443,7 +2464,9 @@ class CodeAdminDomain:
         workspace = self._settings.root
         self._start_package_task(
             "export_decompiled",
-            lambda: export_decompiled_source(workspace, target_dir, **selection),
+            lambda progress=None: export_decompiled_source(
+                workspace, target_dir, progress=progress, **selection
+            ),
         )
         return {"pending": True}
 
@@ -2505,8 +2528,8 @@ class CodeAdminDomain:
         workspace = self._settings.root
         self._start_package_task(
             "export_decompiled",
-            lambda: export_decompiled_package(
-                workspace, target_file, package_id=selected_package,
+            lambda progress=None: export_decompiled_package(
+                workspace, target_file, package_id=selected_package, progress=progress,
             ),
         )
         return {"pending": True}
@@ -2524,13 +2547,27 @@ class CodeAdminDomain:
         }[operation]
         if operation == "export_decompiled":
             self._decompiled_export_running = True
+            self._decompiled_export_progress = 0.0
+            self._decompiled_export_processed = 0
+            self._decompiled_export_total = 0
         if operation != "export_decompiled":
             self._apps_catalog_error = ""
+
+        def progress_cb(event: dict[str, Any]) -> None:
+            results.put({
+                "event": "progress",
+                "operation": operation,
+                "workspace": workspace,
+                **dict(event),
+            })
 
         def worker() -> None:
             result = {"operation": operation, "workspace": workspace}
             try:
-                result.update(ok=True, result=task())
+                if operation == "export_decompiled":
+                    result.update(ok=True, result=task(progress_cb))
+                else:
+                    result.update(ok=True, result=task())
             except Exception as exc:
                 result.update(ok=False, error=str(exc))
             results.put(result)

@@ -5384,7 +5384,7 @@ class QmlFrontendTest(unittest.TestCase):
 
                 export_calls = []
 
-                def fake_package_export(workspace, destination, *, package_id):
+                def fake_package_export(workspace, destination, *, package_id, progress=None):
                     export_calls.append((str(destination), package_id))
                     return {
                         "success": True,
@@ -5416,6 +5416,35 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertEqual(export_calls[0][1], "release-a")
                 self.assertTrue(export_calls[0][0].endswith(".zip"))
                 self.assertFalse(chat_bridge.releaseSnapshotRunning)
+
+                export_progress_card = find_by_name(
+                    window.contentItem(), "decompiledExportProgressCard"
+                )
+                export_progress_bar = find_by_name(
+                    window.contentItem(), "decompiledExportProgressBar"
+                )
+                self.assertIsNotNone(export_progress_card)
+                self.assertIsNotNone(export_progress_bar)
+                self.assertFalse(export_progress_card.property("visible"))
+                chat_bridge._decompiled_export_running = True
+                chat_bridge._decompiled_export_progress = 42.5
+                chat_bridge._decompiled_export_processed = 425
+                chat_bridge._decompiled_export_total = 1000
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertTrue(export_progress_card.property("visible"))
+                self.assertAlmostEqual(
+                    float(export_progress_bar.property("value")), 42.5, places=1
+                )
+                self.assertFalse(bool(export_progress_bar.property("indeterminate")))
+                chat_bridge._decompiled_export_running = False
+                chat_bridge._decompiled_export_progress = 0.0
+                chat_bridge._decompiled_export_processed = 0
+                chat_bridge._decompiled_export_total = 0
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(export_progress_card.property("visible"))
+
                 packages_toggle.clicked.emit()
                 self.application.processEvents()
 

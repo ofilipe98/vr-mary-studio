@@ -19,7 +19,7 @@ import zipfile
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from .apps_catalog import AppsCatalogStore
@@ -29,6 +29,7 @@ SUPPORTED_SOURCE_SUFFIXES = frozenset({".java", ".kt"})
 PORTABLE_PACKAGE_FORMAT = "vrstudio-decompiled-package"
 PORTABLE_PACKAGE_SCHEMA_VERSION = 1
 PORTABLE_PACKAGE_MANIFEST = "vrstudio-package-export.json"
+_PROGRESS_REPORT_INTERVAL = 250
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
@@ -118,6 +119,48 @@ def _resolve_indexed_content(
     return content
 
 
+def _indexed_path_collisions(
+    connection: sqlite3.Connection,
+    release_id: str,
+    artifact_sha256: str,
+    jar_relative_path: str,
+) -> dict[str, int]:
+    """Map colliding artifact paths to their lowest indexed class version.
+
+    A multi-release or shaded JAR keeps several bytecode entries that decompile
+    to the same relative path.  The lowest class version stays at the logical
+    path; the remaining variants move under ``META-INF/versions/<v>`` so every
+    indexed source can be exported without losing provenance.
+    """
+    collisions: dict[str, int] = {}
+    for row in connection.execute(
+        """SELECT replace(source_relative_path, '\\', '/') AS path_key,
+                  min(class_version) AS base_version
+             FROM code_sources
+            WHERE release_id = ? AND artifact_sha256 = ? AND jar_relative_path = ?
+            GROUP BY path_key
+           HAVING count(*) > 1""",
+        (release_id, artifact_sha256, jar_relative_path),
+    ):
+        collisions[str(row["path_key"])] = int(row["base_version"] or 0)
+    return collisions
+
+
+def _multi_release_source_path(
+    relative: Path,
+    class_version: int,
+    base_version: int,
+) -> Path:
+    """Move a non-base multi-release variant under its ``META-INF/versions`` path."""
+    if class_version <= base_version:
+        return relative
+    parts = relative.parts
+    if (len(parts) >= 2 and parts[0].upper() == "META-INF"
+            and parts[1].casefold() == "versions"):
+        return relative
+    return Path("META-INF", "versions", str(class_version), *parts)
+
+
 def _available_destination(parent: Path, base_name: str) -> Path:
     candidate = parent / base_name
     number = 2
@@ -136,8 +179,13 @@ def export_decompiled_source(
     variant_id: str,
     origin_id: str,
     apps_store: AppsCatalogStore | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Export exactly one catalog application/version/variant/origin selection."""
+    """Export exactly one catalog application/version/variant/origin selection.
+
+    ``progress`` receives ``{"current": int, "total": int}`` while indexed
+    sources are written so callers can render a determinate progress bar.
+    """
     workspace_root = Path(workspace).resolve(strict=True)
     parent = Path(destination_parent).resolve(strict=True)
     if not parent.is_dir():
@@ -181,18 +229,39 @@ def export_decompiled_source(
         uri = f"{database.as_uri()}?mode=ro"
         with closing(sqlite3.connect(uri, uri=True)) as connection:
             connection.row_factory = sqlite3.Row
+            collisions = _indexed_path_collisions(
+                connection, origin_id, artifact_sha256, jar_relative_path
+            )
+            total_sources = int(connection.execute(
+                """SELECT count(*) FROM code_sources
+                    WHERE release_id = ? AND artifact_sha256 = ? AND jar_relative_path = ?""",
+                (origin_id, artifact_sha256, jar_relative_path),
+            ).fetchone()[0])
+            if progress is not None:
+                progress({"current": 0, "total": total_sources})
             rows = connection.execute(
-                """SELECT output_reference, source_relative_path, source_sha256, body
+                """SELECT output_reference, source_relative_path, source_sha256, body,
+                          class_version
                      FROM code_sources
                     WHERE release_id = ? AND artifact_sha256 = ? AND jar_relative_path = ?
                     ORDER BY source_relative_path, id""",
                 (origin_id, artifact_sha256, jar_relative_path),
             )
             found_source = False
+            processed = 0
             for row in rows:
                 found_source = True
-                relative = _relative_source_path(row["source_relative_path"])
+                processed += 1
+                if progress is not None and processed % _PROGRESS_REPORT_INTERVAL == 0:
+                    progress({"current": processed, "total": total_sources})
+                raw_relative = str(row["source_relative_path"] or "").replace("\\", "/")
+                relative = _relative_source_path(raw_relative)
                 content = _resolve_indexed_content(workspace_root, row, relative)
+                base_version = collisions.get(raw_relative)
+                if base_version is not None:
+                    relative = _multi_release_source_path(
+                        relative, int(row["class_version"] or 0), base_version
+                    )
 
                 content_hash = hashlib.sha256(content).hexdigest()
                 key = relative.as_posix().casefold()
@@ -223,6 +292,8 @@ def export_decompiled_source(
                 file_count += 1
                 total_bytes += len(content)
 
+            if progress is not None and total_sources > 0:
+                progress({"current": total_sources, "total": total_sources})
             if not found_source:
                 raise ValueError("Nenhum código decompilado disponível para esta versão e origem.")
 
@@ -287,12 +358,16 @@ def export_decompiled_package(
     *,
     package_id: str,
     apps_store: AppsCatalogStore | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Export every indexed source of one catalog package as a portable ZIP.
 
     The archive carries a single ``vrstudio-package-export.json`` manifest at
     its root plus one entry per indexed source.  Dependencies indexed for the
     release are exported as dependencies, not converted into applications.
+
+    ``progress`` receives ``{"current": int, "total": int}`` while indexed
+    sources are written so callers can render a determinate progress bar.
     """
     workspace_root = Path(workspace).resolve(strict=True)
     selected_package = str(package_id or "").strip()
@@ -417,15 +492,24 @@ def export_decompiled_package(
                         "_source_bytes": 0,
                     })
 
+                total_sources = int(connection.execute(
+                    "SELECT count(*) FROM code_sources WHERE release_id = ?",
+                    (selected_package,),
+                ).fetchone()[0])
+                if progress is not None:
+                    progress({"current": 0, "total": total_sources})
+
                 current_key: tuple[str, str] | None = None
                 current_artifact: dict[str, Any] | None = None
                 exported_paths: dict[str, str] = {}
                 exported_spellings: dict[str, str] = {}
+                collisions: dict[str, int] = {}
+                processed = 0
 
                 rows = connection.execute(
                     """SELECT id, jar_relative_path, artifact_sha256,
                               source_relative_path, source_sha256,
-                              output_reference, body
+                              output_reference, body, class_version
                          FROM code_sources
                         WHERE release_id = ?
                         ORDER BY jar_relative_path, artifact_sha256,
@@ -433,6 +517,9 @@ def export_decompiled_package(
                     (selected_package,),
                 )
                 for row in rows:
+                    processed += 1
+                    if progress is not None and processed % _PROGRESS_REPORT_INTERVAL == 0:
+                        progress({"current": processed, "total": total_sources})
                     artifact_key = (
                         str(row["artifact_sha256"] or ""),
                         str(row["jar_relative_path"] or ""),
@@ -442,13 +529,23 @@ def export_decompiled_package(
                         current_artifact = artifact_by_key.get(artifact_key)
                         exported_paths = {}
                         exported_spellings = {}
+                        collisions = _indexed_path_collisions(
+                            connection, selected_package, *artifact_key
+                        )
                     if current_artifact is None:
                         raise ValueError(
                             "O índice mudou durante a exportação; gere o pacote novamente."
                         )
 
-                    relative = _relative_source_path(row["source_relative_path"])
+                    raw_relative = str(row["source_relative_path"] or "").replace("\\", "/")
+                    relative = _relative_source_path(raw_relative)
                     content = _resolve_indexed_content(workspace_root, row, relative)
+                    base_version = collisions.get(raw_relative)
+                    if base_version is not None:
+                        relative = _multi_release_source_path(
+                            relative, int(row["class_version"] or 0), base_version
+                        )
+
                     content_hash = hashlib.sha256(content).hexdigest()
                     key = relative.as_posix().casefold()
                     previous_hash = exported_paths.get(key)
@@ -481,6 +578,8 @@ def export_decompiled_package(
                     file_count += 1
                     total_bytes += len(content)
 
+            if progress is not None and total_sources > 0:
+                progress({"current": total_sources, "total": total_sources})
             if file_count == 0:
                 raise ValueError("Nenhum código decompilado disponível para este pacote.")
 

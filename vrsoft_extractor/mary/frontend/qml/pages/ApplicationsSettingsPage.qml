@@ -61,6 +61,10 @@ Item {
     property string pendingDeleteJarsPackageName: ""
     property var decompiledDetectionResult: null
 
+    function formatCount(value) {
+        return String(Math.round(Number(value) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
+    }
+
     function sumCatalogCount(role) {
         var total = 0
         var items = chat.applicationsCatalog || []
@@ -134,6 +138,55 @@ Item {
                     visible: text.length > 0
                     color: Theme.palette.danger
                     wrapMode: Text.Wrap
+                }
+
+                Rectangle {
+                    objectName: "decompiledExportProgressCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: chat.decompiledExportRunning
+                    implicitHeight: exportProgressLayout.implicitHeight + Theme.spaceMd
+                    radius: Theme.radiusSmall
+                    color: Theme.palette.codeSurface
+                    border.width: 1
+                    border.color: Theme.palette.chatBorder
+
+                    ColumnLayout {
+                        id: exportProgressLayout
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceSm
+                        spacing: Theme.spaceXs
+
+                        Text {
+                            objectName: "decompiledExportProgressLabel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: chat.decompiledExportTotal > 0
+                                ? "Exportando código descompilado — "
+                                  + root.formatCount(chat.decompiledExportProcessed) + "/"
+                                  + root.formatCount(chat.decompiledExportTotal) + " arquivos ("
+                                  + Number(chat.decompiledExportProgress).toFixed(1) + "%)"
+                                : "Exportando código descompilado…"
+                            color: Theme.palette.headingText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.weight: Theme.weightMedium
+                            elide: Text.ElideRight
+                            renderType: Theme.textRenderType
+                        }
+
+                        VrProgressBar {
+                            objectName: "decompiledExportProgressBar"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            barHeight: 6
+                            accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.decompiledExportProgress
+                            indeterminate: chat.decompiledExportRunning && chat.decompiledExportTotal === 0
+                        }
+                    }
                 }
 
                 ColumnLayout {

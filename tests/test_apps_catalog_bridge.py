@@ -609,6 +609,41 @@ def test_package_export_runs_off_qt_thread_rejects_overlap_and_clears_busy(
     assert "7 arquivos exportados" in bridge.releaseSnapshotStatus
 
 
+def test_package_export_reports_progress_through_poll_timer(bridge, tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(*args, progress=None, **kwargs):
+        entered.set()
+        progress({"current": 0, "total": 2000})
+        progress({"current": 250, "total": 2000})
+        release.wait(5)
+        progress({"current": 2000, "total": 2000})
+        return {
+            "success": True,
+            "destination": str(tmp_path / "Pacote.zip"),
+            "file_count": 2000,
+            "total_bytes": 10,
+            "artifact_count": 1,
+        }
+
+    monkeypatch.setattr(codeadmin, "export_decompiled_package", blocked)
+    try:
+        assert bridge.exportDecompiledPackage(
+            "release-a", str(tmp_path / "Pacote.zip")
+        )["pending"]
+        assert entered.wait(2)
+        wait_until(lambda: bridge.decompiledExportProgress == 12.5)
+        assert bridge.decompiledExportRunning is True
+        assert bridge.decompiledExportProcessed == 250
+        assert bridge.decompiledExportTotal == 2000
+        assert bridge.releaseSnapshotStatus.startswith("Exportando código descompilado")
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert bridge.decompiledExportRunning is False
+    assert "2.000 arquivos exportados" in bridge.releaseSnapshotStatus
+
+
 def test_package_import_runs_off_qt_thread_and_rejects_overlap(bridge, tmp_path, monkeypatch):
     entered, release, heartbeat = (threading.Event() for _ in range(3))
     worker_threads = []
