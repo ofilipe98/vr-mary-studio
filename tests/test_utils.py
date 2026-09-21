@@ -43,6 +43,9 @@ class UtilsTest(unittest.TestCase):
             r"(\d+)\.(\d+)(?:-(\d+))?", project_version
         )
         patch_version = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", project_version)
+        patch_revision_version = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)-(\d+)", project_version
+        )
         beta_version = re.fullmatch(
             r"(\d+)\.(\d+)\.(\d+)b(\d+)", project_version
         )
@@ -54,7 +57,9 @@ class UtilsTest(unittest.TestCase):
         product_fixed_match = re.search(r"prodvers=\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)", executable_version)
         self.assertIsNotNone(product_fixed_match)
         self.assertEqual(product_fixed_match.groups(), fixed_match.groups())
-        self.assertTrue(revision_version or patch_version or beta_version)
+        self.assertTrue(
+            revision_version or patch_version or patch_revision_version or beta_version
+        )
         self.assertEqual(project_version, __version__)
         self.assertEqual(match.group(1), __version__)
         self.assertEqual(product_match.group(1), __version__)
@@ -62,6 +67,9 @@ class UtilsTest(unittest.TestCase):
         if beta_version:
             major, minor, patch, beta = beta_version.groups()
             expected_fixed = (int(major), int(minor), int(patch), int(beta))
+        elif patch_revision_version:
+            major, minor, patch, revision = patch_revision_version.groups()
+            expected_fixed = (int(major), int(minor), int(patch), int(revision))
         elif patch_version:
             major, minor, patch = patch_version.groups()
             expected_fixed = (int(major), int(minor), int(patch), 0)
