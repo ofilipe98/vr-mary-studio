@@ -61,10 +61,10 @@ Column {
     }
     Item {
         width: root.width
-        height: 26
+        height: Theme.scaledGeometry(26)
         VrIconButton {
             objectName: "tableExpandButton"
-            width: 26; height: 26
+            width: Theme.scaledGeometry(26); height: Theme.scaledGeometry(26)
             symbol: root.expanded ? "↙" : "↗"
             foreground: Theme.palette.mutedText
             checkable: true
@@ -76,7 +76,7 @@ Column {
             id: copyButton
             objectName: "tableCopyButton"
             anchors.right: parent.right
-            width: 26; height: 26; iconSize: Theme.iconSmall
+            width: Theme.scaledGeometry(26); height: Theme.scaledGeometry(26); iconSize: Theme.iconSmall
             iconKind: root.copied ? "check" : "copy"
             foreground: Theme.palette.mutedText
             Accessible.name: root.copied ? "Copiado" : "Copiar tabela"

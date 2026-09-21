@@ -16,7 +16,7 @@ Column {
     signal toggled(bool expanded, real heightDelta)
     signal anchorRequested()
     signal transitionFinished()
-    spacing: 12
+    spacing: Theme.scaledGeometry(12)
     // Update existing rows in place: completed blocks keep selection and code wrap.
     function syncBlocks() {
         layoutChanging()
@@ -80,9 +80,9 @@ Column {
     VrSources { width: root.width; sources: root.sources }
     Item {
         width: parent.width
-        height: 26
+        height: Theme.scaledGeometry(26)
         Rectangle {
-            width: 5; height: 5; radius: 3
+            width: Theme.scaledGeometry(5); height: Theme.scaledGeometry(5); radius: Theme.scaledGeometry(3)
             anchors.verticalCenter: parent.verticalCenter
             color: Theme.palette.mutedText
             visible: root.streaming
@@ -91,7 +91,7 @@ Column {
             id: copy
             objectName: "messageCopyButton"
             anchors.left: parent.left
-            width: 28; height: 26; iconSize: Theme.iconSmall
+            width: Theme.scaledGeometry(28); height: Theme.scaledGeometry(26); iconSize: Theme.iconSmall
             iconKind: root.copied ? "check" : "copy"
             opacity: hover.hovered || hovered || activeFocus || root.copied ? 1 : 0
             Accessible.name: root.copied ? "Copiado" : "Copiar resposta"

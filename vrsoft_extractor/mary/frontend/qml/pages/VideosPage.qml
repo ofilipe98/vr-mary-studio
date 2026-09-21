@@ -79,7 +79,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
-        spacing: 7
+        spacing: Theme.scaledGeometry(7)
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -89,12 +89,12 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 54
+            Layout.preferredHeight: Theme.scaledGeometry(54)
             color: "transparent"
             border.width: 0
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.scaledGeometry(8)
                 VrTextField {
                     id: videoSearch
                     Layout.fillWidth: true
@@ -112,8 +112,8 @@ Item {
         GridLayout {
             Layout.fillWidth: true
             columns: 5
-            columnSpacing: 8
-            rowSpacing: 7
+            columnSpacing: Theme.scaledGeometry(8)
+            rowSpacing: Theme.scaledGeometry(7)
             VrButton { Layout.fillWidth: true; text: "Login"; onClicked: studio.runVideoAction("login") }
             VrButton { Layout.fillWidth: true; text: "Atualizar cursos"; onClicked: studio.runVideoAction("courses") }
             VrButton { Layout.fillWidth: true; text: "Inventariar"; onClicked: studio.runVideoAction("scan") }
@@ -128,12 +128,12 @@ Item {
         Rectangle {
             visible: root.filtersVisible
             Layout.fillWidth: true
-            Layout.preferredHeight: 54
+            Layout.preferredHeight: Theme.scaledGeometry(54)
             color: "transparent"
             border.width: 0
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 7
+                anchors.margins: Theme.scaledGeometry(7)
                 VrComboBox {
                     id: sourceFilter
                     Layout.fillWidth: true
@@ -156,7 +156,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Text { text: "Classificar seleção como:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
-            VrComboBox { id: videoModule; Layout.preferredWidth: 180; model: ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"] }
+            VrComboBox { id: videoModule; Layout.preferredWidth: Theme.scaledGeometry(180); model: ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"] }
             VrButton { text: "Aplicar módulo"; onClicked: studio.applyVideoModule(root.selectedIds, videoModule.currentText) }
             Item { Layout.fillWidth: true }
             Text { text: root.selectedIds.length ? root.selectedIds.length + " item(ns) selecionado(s)" : ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
@@ -164,25 +164,25 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 32
-            radius: 7
+            Layout.preferredHeight: Theme.scaledGeometry(32)
+            radius: Theme.scaledGeometry(7)
             color: frontend.palette.chatSidebar
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 5
-                spacing: 3
+                anchors.leftMargin: Theme.scaledGeometry(12)
+                anchors.rightMargin: Theme.scaledGeometry(5)
+                spacing: Theme.scaledGeometry(3)
                 Text { Layout.fillWidth: true; text: studio.videoSummary; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                 VrIconButton {
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    implicitWidth: Theme.scaledGeometry(26)
+                    implicitHeight: Theme.scaledGeometry(26)
                     iconKind: "chevronRight"
                     Accessible.name: "Recolher todas as pastas"
                     onClicked: root.collapsedNodeIds = studio.videoExpandableNodeIds.slice()
                 }
                 VrIconButton {
-                    implicitWidth: 26
-                    implicitHeight: 26
+                    implicitWidth: Theme.scaledGeometry(26)
+                    implicitHeight: Theme.scaledGeometry(26)
                     iconKind: "chevronDown"
                     Accessible.name: "Expandir todas as pastas"
                     onClicked: root.collapsedNodeIds = []
@@ -202,20 +202,20 @@ Item {
                 spacing: 0
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 42
+                    Layout.preferredHeight: Theme.scaledGeometry(42)
                     color: frontend.palette.chatSidebar
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        Item { Layout.preferredWidth: 28 }
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
+                        Item { Layout.preferredWidth: Theme.scaledGeometry(28) }
                         Text { Layout.fillWidth: true; text: "Curso, pasta ou vídeo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 110; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 150; text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 105; text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 92; text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 72; text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: 72; text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
                     }
                 }
                 ListView {
@@ -249,16 +249,16 @@ Item {
                             : index % 2 ? frontend.palette.surfaceRaised : frontend.palette.surface
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
+                            anchors.leftMargin: Theme.scaledGeometry(8)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(6)
                             Item {
-                                Layout.preferredWidth: 28
+                                Layout.preferredWidth: Theme.scaledGeometry(28)
                                 Layout.fillHeight: true
                                 VrIconButton {
                                     anchors.centerIn: parent
-                                    implicitWidth: 24
-                                    implicitHeight: 24
+                                    implicitWidth: Theme.scaledGeometry(24)
+                                    implicitHeight: Theme.scaledGeometry(24)
                                     visible: videoRow.expandable
                                     iconKind: root.nodeCollapsed(videoRow.nodeId)
                                         ? "chevronRight" : "chevronDown"
@@ -270,7 +270,7 @@ Item {
                                 }
                                 VrCheckBox {
                                     anchors.centerIn: parent
-                                    implicitWidth: 24
+                                    implicitWidth: Theme.scaledGeometry(24)
                                     visible: videoRow.selectable
                                     checked: videoRow.selected
                                     onToggled: {
@@ -296,21 +296,21 @@ Item {
                                     onTapped: root.toggleNode(videoRow.nodeId)
                                 }
                             }
-                            Text { Layout.preferredWidth: 110; text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 150; text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 105; text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 92; text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                            Text { Layout.preferredWidth: 72; text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                            Text { Layout.preferredWidth: 72; text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                         }
                     }
                     Row {
                         anchors.centerIn: parent
                         visible: studio.videoLoading
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            width: 16
-                            height: 16
+                            width: Theme.scaledGeometry(16)
+                            height: Theme.scaledGeometry(16)
                             kind: "auto"
                             foreground: frontend.palette.brandOrange
                         }
@@ -335,12 +335,12 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 74
+            Layout.preferredHeight: Theme.scaledGeometry(74)
             color: "transparent"
             border.width: 0
             ScrollView {
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.margins: Theme.scaledGeometry(10)
                 TextArea {
                     readOnly: true
                     text: studio.videoLog.length ? studio.videoLog : "O inventário, as inscrições, os downloads e eventuais falhas aparecerão aqui."

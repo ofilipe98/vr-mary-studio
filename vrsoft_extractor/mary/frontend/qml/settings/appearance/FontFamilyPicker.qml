@@ -27,12 +27,12 @@ Popup {
     parent: Overlay.overlay
     width: Math.min(320,parent ? parent.width-16 : 320)
     height: Math.min(380,parent ? parent.height-32 : 380)
-    padding: 8; modal: false; focus: true
+    padding: Theme.scaledGeometry(8); modal: false; focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: { searchField.text=""; fontList.currentIndex=Math.max(0,filteredFonts.indexOf(selectedFamily)); searchField.forceActiveFocus() }
-    background: Rectangle { radius: 10; color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity); border.color: Theme.palette.border }
+    background: Rectangle { radius: Theme.scaledGeometry(10); color: Qt.alpha(Theme.palette.surface, Theme.glassOpacity); border.color: Theme.palette.border }
     contentItem: ColumnLayout {
-        spacing: 8
+        spacing: Theme.scaledGeometry(8)
         VrTextField {
             id: searchField; objectName: "fontSearchField"
             Layout.fillWidth: true; placeholderText: "Buscar fontes..."
@@ -50,10 +50,10 @@ Popup {
             delegate: ItemDelegate {
                 required property string modelData
                 required property int index
-                width: fontList.width; height: 34
+                width: fontList.width; height: Theme.scaledGeometry(34)
                 text: modelData
                 highlighted: fontList.currentIndex===index
-                background: Rectangle { radius: 6; color: parent.highlighted || parent.hovered ? Theme.palette.hover : "transparent" }
+                background: Rectangle { radius: Theme.scaledGeometry(6); color: parent.highlighted || parent.hovered ? Theme.palette.hover : "transparent" }
                 contentItem: Text {
                     text: parent.text; font.family: parent.text; font.pixelSize: Theme.fontSize(13)
                     color: picker.selectedFamily===parent.text ? Theme.palette.accessibleOrange : Theme.palette.text

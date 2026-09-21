@@ -162,7 +162,7 @@ Column {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: 44
+            height: Theme.scaledGeometry(44)
             visible: root.collapseEnabled && root.overflows && !root.effectiveExpanded
             gradient: Gradient {
                 orientation: Gradient.Vertical
@@ -186,11 +186,11 @@ Column {
         visible: root.collapseEnabled && root.overflows && !root.streaming
         text: root.effectiveExpanded ? "Mostrar menos" : "Mostrar mais"
         focusPolicy: Qt.StrongFocus
-        leftPadding: 8
-        rightPadding: 8
-        topPadding: 4
-        bottomPadding: 4
-        implicitHeight: 28
+        leftPadding: Theme.scaledGeometry(8)
+        rightPadding: Theme.scaledGeometry(8)
+        topPadding: Theme.scaledGeometry(4)
+        bottomPadding: Theme.scaledGeometry(4)
+        implicitHeight: Theme.scaledGeometry(28)
         Accessible.role: Accessible.Button
         Accessible.name: toggleButton.text
         Accessible.description: root.effectiveExpanded ? "Recolher mensagem" : "Expandir mensagem completa"

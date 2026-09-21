@@ -6,13 +6,13 @@ Rectangle {
     id: root
     Layout.fillWidth: true
     implicitHeight: Math.max(66, flow.implicitHeight + 20)
-    radius: 10
+    radius: Theme.scaledGeometry(10)
     color: Theme.palette.background
     border.color: Theme.palette.controlBorder || Theme.palette.border
     Flow {
         id: flow
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-        anchors.margins: 12
+        anchors.margins: Theme.scaledGeometry(12)
         Repeater {
             model: [
                 {text:"Use"}, {text:"Design de interface",icon:"◇",kind:"skill"},
@@ -41,7 +41,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: chipLabel.implicitWidth + 12
                     height: chipLabel.implicitHeight + 2
-                    radius: 5
+                    radius: Theme.scaledGeometry(5)
                     color: token.modelData.kind === "skill" ? (frontend.resolvedAppearance === "dark" ? "#352341" : "#f3e8fa") : Theme.palette.mutedSurface || Theme.palette.surfaceRaised
                     border.color: token.modelData.kind === "skill" ? "#75408d" : Theme.palette.border
                     Text {

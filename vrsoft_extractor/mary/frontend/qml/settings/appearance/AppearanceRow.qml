@@ -18,13 +18,13 @@ Item {
     GridLayout {
         id: grid
         anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: 16; anchors.rightMargin: 16
-        columns: root.compact ? 1 : 2; columnSpacing: 16; rowSpacing: 10
+        anchors.leftMargin: Theme.scaledGeometry(16); anchors.rightMargin: Theme.scaledGeometry(16)
+        columns: root.compact ? 1 : 2; columnSpacing: Theme.scaledGeometry(16); rowSpacing: Theme.scaledGeometry(10)
         ColumnLayout {
             Layout.fillWidth: true; Layout.minimumWidth: 0
-            spacing: 4
+            spacing: Theme.scaledGeometry(4)
             RowLayout {
-                spacing: 4; Layout.fillWidth: true
+                spacing: Theme.scaledGeometry(4); Layout.fillWidth: true
                 Text {
                     text: root.title; color: Theme.palette.text
                     font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold
@@ -33,7 +33,7 @@ Item {
                 AppearanceAction {
                     objectName: root.resetKey + "Reset"
                     visible: root.resetVisible; quiet: true; iconKind: "reset"
-                    implicitHeight: 18; Accessible.name: "Restaurar " + root.title.toLowerCase()
+                    implicitHeight: Theme.scaledGeometry(18); Accessible.name: "Restaurar " + root.title.toLowerCase()
                     onClicked: frontend.resetAppearanceSetting(root.resetKey)
                 }
             }
@@ -51,7 +51,7 @@ Item {
             Layout.minimumWidth: 0
             Layout.preferredWidth: implicitWidth
             Layout.maximumWidth: Math.min(implicitWidth, grid.width)
-            spacing: 8
+            spacing: Theme.scaledGeometry(8)
         }
     }
     Rectangle {

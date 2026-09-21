@@ -11,7 +11,7 @@ Item {
     property bool compact: false
     signal activated()
 
-    implicitHeight: 34
+    implicitHeight: Theme.scaledGeometry(34)
     implicitWidth: compact ? 34 : navLabel.implicitWidth + 50
     focus: false
     activeFocusOnTab: true
@@ -30,7 +30,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 6
+        radius: Theme.scaledGeometry(6)
         color: root.selected
             ? Theme.palette.chatControl
             : (pointer.hovered || root.activeFocus ? Theme.palette.navHover : "transparent")
@@ -49,7 +49,7 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: root.compact ? 0 : 10
         anchors.rightMargin: root.compact ? 0 : 10
-        spacing: 9
+        spacing: Theme.scaledGeometry(9)
 
         Item {
             width: root.compact ? parent.width : 18
@@ -59,8 +59,8 @@ Item {
                 id: navIcon
                 visible: root.iconSource ? true : false
                 anchors.centerIn: parent
-                width: 16
-                height: 16
+                width: Theme.scaledGeometry(16)
+                height: Theme.scaledGeometry(16)
                 source: root.iconSource
                 sourceSize.width: 32
                 sourceSize.height: 32

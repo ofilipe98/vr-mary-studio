@@ -13,7 +13,7 @@ Item {
     // Adaptive layout: desktop keeps horizontal SplitView; narrow/tablet
     // stacks list above detail so 390x844 and 768x1024 remain usable.
     // Never solved by shrinking fonts below the micro token.
-    property bool isNarrow: root.width < 900
+    property bool isNarrow: root.width < Theme.scaledGeometry(900)
 
     function registerFilter(key, control) {
         filterControls[key] = control
@@ -68,7 +68,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
-        spacing: 8
+        spacing: Theme.scaledGeometry(8)
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -78,14 +78,18 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
+            Layout.preferredHeight: reviewSearchActions.implicitHeight + Theme.spaceLg
             color: "transparent"
             border.width: 0
-            RowLayout {
+            GridLayout {
+                id: reviewSearchActions
+                columns: root.isNarrow ? 2 : 3
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.scaledGeometry(8)
                 VrTextField {
                     id: reviewSearch
+                    Layout.columnSpan: root.isNarrow ? 2 : 1
+                    Layout.minimumWidth: 0
                     Layout.fillWidth: true
                     placeholderText: "Buscar título, ID, produto, categoria, motivo ou conteúdo"
                     background: Item { }
@@ -104,13 +108,13 @@ Item {
             border.width: 0
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 5
+                anchors.margins: Theme.scaledGeometry(8)
+                spacing: Theme.scaledGeometry(5)
                 GridLayout {
                     Layout.fillWidth: true
                     columns: root.isNarrow ? 2 : (root.width < 1200 ? 3 : 6)
-                    columnSpacing: 7
-                    rowSpacing: 5
+                    columnSpacing: Theme.scaledGeometry(7)
+                    rowSpacing: Theme.scaledGeometry(5)
                     Repeater {
                         model: [
                             ["Fonte", [{text:"Todas",value:""},{text:"Wiki",value:"wiki"},{text:"KB",value:"kb"}], "source"],
@@ -134,7 +138,7 @@ Item {
                             VrComboBox {
                                 id: filterCombo
                                 Layout.fillWidth: true
-                                implicitHeight: 31
+                                implicitHeight: Theme.scaledGeometry(31)
                                 model: modelData[1]
                                 textRole: modelData[1].length && typeof modelData[1][0] === "object" ? "text" : ""
                                 onActivated: filterDelay.restart()
@@ -146,21 +150,22 @@ Item {
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: Theme.scaledGeometry(6)
                     Text { text: "Atalhos:"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
-                    VrButton { text: "Maior risco"; implicitHeight: 28; onClicked: root.applyPreset("risk") }
-                    VrButton { text: "Aprovação simples"; implicitHeight: 28; onClicked: root.applyPreset("simple") }
-                    VrButton { text: "Sem produto"; implicitHeight: 28; onClicked: root.applyPreset("no_product") }
-                    VrButton { text: "Adiados"; implicitHeight: 28; onClicked: root.applyPreset("deferred") }
-                    VrButton { text: "Limpar filtros"; implicitHeight: 28; onClicked: root.clearFilters() }
+                    VrButton { text: "Maior risco"; implicitHeight: Theme.scaledGeometry(28); onClicked: root.applyPreset("risk") }
+                    VrButton { text: "Aprovação simples"; implicitHeight: Theme.scaledGeometry(28); onClicked: root.applyPreset("simple") }
+                    VrButton { text: "Sem produto"; implicitHeight: Theme.scaledGeometry(28); onClicked: root.applyPreset("no_product") }
+                    VrButton { text: "Adiados"; implicitHeight: Theme.scaledGeometry(28); onClicked: root.applyPreset("deferred") }
+                    VrButton { text: "Limpar filtros"; implicitHeight: Theme.scaledGeometry(28); onClicked: root.clearFilters() }
                     Item { Layout.fillWidth: true }
                 }
             }
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 8
+            columns: root.width < Theme.scaledGeometry(480) ? 1 : (root.isNarrow ? 2 : 4)
+            columnSpacing: Theme.spaceSm
             VrButton {
                 text: "Selecionar todos"
                 enabled: studio.reviewTotal > 0
@@ -177,7 +182,7 @@ Item {
             orientation: root.isNarrow ? Qt.Vertical : Qt.Horizontal
 
             handle: Rectangle {
-                implicitWidth: 9
+                implicitWidth: Theme.scaledGeometry(9)
                 color: reviewHandleHover.hovered
                     ? frontend.palette.brandOrange : "transparent"
                 Rectangle {
@@ -207,22 +212,22 @@ Item {
                     Rectangle {
                         visible: studio.reviewTotal > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 38
+                        Layout.preferredHeight: Theme.scaledGeometry(38)
                         color: frontend.palette.chatSidebar
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
-                            Item { Layout.preferredWidth: 25 }
+                            anchors.leftMargin: Theme.scaledGeometry(8)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(6)
+                            Item { Layout.preferredWidth: Theme.scaledGeometry(25) }
                             Text { Layout.fillWidth: true; text: "Título"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 85 : 0; text: "Atual"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 85; text: "Sugestão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(85); text: "Sugestão"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: "Conf."; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: "Produto"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: "Categoria"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
-                            Text { Layout.preferredWidth: 110; text: "Risco / motivo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: "Risco / motivo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 80 : 0; text: "Atualização"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Theme.weightMedium }
                         }
                     }
@@ -247,15 +252,15 @@ Item {
                         required property string risk
                         required property string updatedAt
                         width: reviewList.width
-                        height: 52
+                        height: Theme.scaledGeometry(52)
                         color: index % 2 ? frontend.palette.surfaceRaised : frontend.palette.surface
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
+                            anchors.leftMargin: Theme.scaledGeometry(8)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(6)
                             VrCheckBox {
-                                implicitWidth: 25
+                                implicitWidth: Theme.scaledGeometry(25)
                                 checked: studio.reviewSelectionCount >= 0
                                     && studio.isReviewSelected(reviewRow.reviewId)
                                 onToggled: studio.setReviewSelected(reviewRow.reviewId, checked)
@@ -263,11 +268,11 @@ Item {
                             Text { Layout.fillWidth: true; text: reviewRow.title; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCompact; elide: Text.ElideRight }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: reviewRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 85 : 0; text: reviewRow.currentModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 85; text: reviewRow.suggestedModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(85); text: reviewRow.suggestedModule; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 48 : 0; text: reviewRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: reviewRow.product; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 75 : 0; text: reviewRow.category; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: 110; text: reviewRow.risk; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: reviewRow.risk; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
                             Text { visible: !root.isNarrow; Layout.preferredWidth: visible ? 80 : 0; text: reviewRow.updatedAt; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; elide: Text.ElideRight }
                         }
                         TapHandler { onTapped: studio.selectReview(reviewRow.index) }
@@ -298,8 +303,8 @@ Item {
                 clip: true
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 8
+                    anchors.margins: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(8)
                     Text { Layout.fillWidth: true; text: studio.reviewTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(16); font.weight: Font.DemiBold; elide: Text.ElideRight }
                     // Narrow mode hides secondary table columns; the detail
                     // preview markdown already carries fonte/produto/categoria/
@@ -315,7 +320,7 @@ Item {
                         VrButton { text: "Abrir local"; enabled: studio.reviewLocalPath.length > 0; onClicked: studio.openLocalPath(studio.reviewLocalPath) }
                         VrButton { text: "Copiar citação"; onClicked: studio.copyText(studio.reviewCitation) }
                     }
-                    VrTextArea { id: reviewNote; Layout.fillWidth: true; Layout.preferredHeight: 72; placeholderText: "Observação da revisão" }
+                    VrTextArea { id: reviewNote; Layout.fillWidth: true; Layout.preferredHeight: Theme.scaledGeometry(72); placeholderText: "Observação da revisão" }
                     RowLayout {
                         Layout.fillWidth: true
                         Text { text: "Destino:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
@@ -339,7 +344,7 @@ Item {
             Text { text: studio.reviewPageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
             VrButton { text: "Próxima >"; enabled: studio.reviewCanNext; onClicked: studio.nextReviewPage() }
             Item { Layout.fillWidth: true }
-            Text { text: studio.reviewTotal ? studio.reviewTotal + " itens" : "Nenhum item"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+            Text { visible: !root.isNarrow; text: studio.reviewTotal ? studio.reviewTotal + " itens" : "Nenhum item"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
     }
 
@@ -368,7 +373,7 @@ Item {
         title: "Confirmar ação nos selecionados"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.scaledGeometry(10)
             Text {
                 Layout.fillWidth: true
                 text: "A ação será aplicada a " + root.pendingReviewIds.length + " revisão(ões) selecionada(s) e ficará registrada no histórico. Destino: " + destinationModule.currentText + "."

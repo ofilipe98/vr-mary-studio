@@ -8,6 +8,7 @@ Item {
     id: root
     objectName: "vrSkillsSettings"
     required property var studio
+    readonly property bool compact: width < Theme.scaledGeometry(600)
 
     property var skillsList: []
     property string searchQuery: ""
@@ -25,23 +26,26 @@ Item {
 
     Item {
         anchors.fill: parent
-        anchors.margins: 24
+        anchors.margins: Theme.scaledGeometry(24)
 
         ColumnLayout {
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(848, parent.width)
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            spacing: 16
+            spacing: Theme.scaledGeometry(16)
 
             // Page Header
-            RowLayout {
+            GridLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                columns: root.compact ? 2 : 3
+                columnSpacing: Theme.spaceMd
 
                 Text {
+                    Layout.columnSpan: root.compact ? 2 : 1
+                    wrapMode: Text.WordWrap
                     text: "Gerenciador de skills"
-                    Layout.leftMargin: 16
+                    Layout.leftMargin: Theme.scaledGeometry(16)
                     Layout.fillWidth: true
                     color: Theme.palette.text
                     opacity: 0.7
@@ -52,7 +56,7 @@ Item {
                 VrButton {
                     text: "Atualizar"
                     variant: "ghost"
-                    implicitHeight: 28
+                    implicitHeight: Theme.scaledGeometry(28)
                     onClicked: root.refresh()
                 }
 
@@ -60,7 +64,7 @@ Item {
                     objectName: "openNewSkillButton"
                     text: "+ Nova Skill"
                     variant: "primary"
-                    implicitHeight: 28
+                    implicitHeight: Theme.scaledGeometry(28)
                     onClicked: newSkillDialog.open()
                 }
             }
@@ -68,8 +72,8 @@ Item {
         // Feedback Banner
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 36
-            radius: 8
+            implicitHeight: Theme.scaledGeometry(36)
+            radius: Theme.scaledGeometry(8)
             visible: root.feedbackMessage.length > 0
             color: root.feedbackIsError ? Qt.rgba(0.9, 0.2, 0.2, 0.15) : Qt.rgba(0.2, 0.8, 0.3, 0.15)
             border.width: 1
@@ -77,7 +81,7 @@ Item {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.margins: Theme.scaledGeometry(10)
                 Text {
                     Layout.fillWidth: true
                     text: root.feedbackMessage
@@ -95,17 +99,18 @@ Item {
         }
 
         // Filter and Search Toolbar
-        RowLayout {
+        GridLayout {
+            columns: root.compact ? 1 : 2
             Layout.fillWidth: true
-            spacing: 10
+            columnSpacing: Theme.spaceMd
 
             VrTextField {
                 id: searchInput
                 Layout.fillWidth: true
-                implicitHeight: 38
+                implicitHeight: Theme.scaledGeometry(38)
                 placeholderText: "Filtrar skills por nome ou descrição…"
                 background: Rectangle {
-                    radius: 10
+                    radius: Theme.scaledGeometry(10)
                     color: Theme.palette.background
                     border.width: searchInput.activeFocus ? 2 : 1
                     border.color: searchInput.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -115,7 +120,8 @@ Item {
 
             VrComboBox {
                 id: providerFilter
-                Layout.preferredWidth: 150
+                Layout.fillWidth: root.compact
+                Layout.preferredWidth: Theme.scaledGeometry(150)
                 model: [
                     {label: "Todos", value: "all"},
                     {label: "Codex", value: "codex"},
@@ -134,7 +140,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 14
+            radius: Theme.scaledGeometry(14)
             color: Theme.palette.background
             border.width: 1
             border.color: Theme.palette.border
@@ -142,8 +148,8 @@ Item {
             ListView {
                 id: skillsListView
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 6
+                anchors.margins: Theme.scaledGeometry(8)
+                spacing: Theme.scaledGeometry(6)
                 clip: true
                 model: {
                     var filtered = []
@@ -167,7 +173,7 @@ Item {
                     required property var modelData
                     width: skillsListView.width
                     implicitHeight: itemCol.implicitHeight + 16
-                    radius: 10
+                    radius: Theme.scaledGeometry(10)
                     color: Theme.palette.codeSurface
                     border.width: 1
                     border.color: Theme.palette.border
@@ -175,15 +181,15 @@ Item {
                     RowLayout {
                         id: itemCol
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 12
+                        anchors.margins: Theme.scaledGeometry(12)
+                        spacing: Theme.scaledGeometry(12)
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 4
+                            spacing: Theme.scaledGeometry(4)
 
                             RowLayout {
-                                spacing: 8
+                                spacing: Theme.scaledGeometry(8)
                                 Text {
                                     text: "$" + (skillItemRow.modelData.name || "")
                                     color: Theme.palette.brandOrange
@@ -193,10 +199,10 @@ Item {
                                 }
 
                                 Rectangle {
-                                    radius: 4
+                                    radius: Theme.scaledGeometry(4)
                                     color: Theme.palette.chatControl
                                     implicitWidth: provText.implicitWidth + 8
-                                    implicitHeight: 20
+                                    implicitHeight: Theme.scaledGeometry(20)
                                     Text {
                                         id: provText
                                         anchors.centerIn: parent
@@ -208,10 +214,10 @@ Item {
                                 }
 
                                 Rectangle {
-                                    radius: 4
+                                    radius: Theme.scaledGeometry(4)
                                     color: Theme.palette.chatControl
                                     implicitWidth: scopeText.implicitWidth + 8
-                                    implicitHeight: 20
+                                    implicitHeight: Theme.scaledGeometry(20)
                                     Text {
                                         id: scopeText
                                         anchors.centerIn: parent
@@ -275,9 +281,9 @@ Item {
         height: Math.min(560, root.height - 32)
         modal: true
         standardButtons: Dialog.NoButton
-        padding: 20
-        topPadding: 12
-        bottomPadding: 16
+        padding: Theme.scaledGeometry(20)
+        topPadding: Theme.scaledGeometry(12)
+        bottomPadding: Theme.scaledGeometry(16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         onClosed: {
@@ -287,13 +293,13 @@ Item {
         }
 
         header: Item {
-            implicitHeight: 48
+            implicitHeight: Theme.scaledGeometry(48)
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 20
-                anchors.rightMargin: 16
-                anchors.topMargin: 12
-                spacing: 8
+                anchors.leftMargin: Theme.scaledGeometry(20)
+                anchors.rightMargin: Theme.scaledGeometry(16)
+                anchors.topMargin: Theme.scaledGeometry(12)
+                spacing: Theme.scaledGeometry(8)
 
                 Text {
                     Layout.fillWidth: true
@@ -307,8 +313,8 @@ Item {
                 VrIconButton {
                     iconKind: "close"
                     iconSize: 11
-                    implicitWidth: 28
-                    implicitHeight: 28
+                    implicitWidth: Theme.scaledGeometry(28)
+                    implicitHeight: Theme.scaledGeometry(28)
                     foreground: Theme.palette.mutedText
                     onClicked: newSkillDialog.close()
                 }
@@ -323,15 +329,15 @@ Item {
         }
 
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.scaledGeometry(12)
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 10
+                spacing: Theme.scaledGeometry(10)
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
 
                     Text {
                         text: "Nome da Skill (sem espaços):"
@@ -349,8 +355,8 @@ Item {
                 }
 
                 ColumnLayout {
-                    Layout.preferredWidth: 140
-                    spacing: 4
+                    Layout.preferredWidth: Theme.scaledGeometry(140)
+                    spacing: Theme.scaledGeometry(4)
 
                     Text {
                         text: "Provedor:"
@@ -376,7 +382,7 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
 
                 Text {
                     text: "Descrição resumida:"
@@ -396,7 +402,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
 
                 Text {
                     text: "Instruções / SKILL.md (Markdown):"
@@ -417,7 +423,7 @@ Item {
 
                     ScrollView {
                         anchors.fill: parent
-                        anchors.margins: 4
+                        anchors.margins: Theme.scaledGeometry(4)
                         clip: true
 
                         VrTextArea {
@@ -431,8 +437,8 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
+                Layout.topMargin: Theme.scaledGeometry(4)
+                spacing: Theme.scaledGeometry(8)
 
                 Item { Layout.fillWidth: true }
 
@@ -480,23 +486,23 @@ Item {
         height: Math.min(560, root.height - 32)
         modal: true
         standardButtons: Dialog.NoButton
-        padding: 20
-        topPadding: 12
-        bottomPadding: 16
+        padding: Theme.scaledGeometry(20)
+        topPadding: Theme.scaledGeometry(12)
+        bottomPadding: Theme.scaledGeometry(16)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         header: Item {
-            implicitHeight: 48
+            implicitHeight: Theme.scaledGeometry(48)
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 20
-                anchors.rightMargin: 16
-                anchors.topMargin: 12
-                spacing: 8
+                anchors.leftMargin: Theme.scaledGeometry(20)
+                anchors.rightMargin: Theme.scaledGeometry(16)
+                anchors.topMargin: Theme.scaledGeometry(12)
+                spacing: Theme.scaledGeometry(8)
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.scaledGeometry(8)
 
                     Text {
                         text: "Editar Skill"
@@ -518,8 +524,8 @@ Item {
                 VrIconButton {
                     iconKind: "close"
                     iconSize: 11
-                    implicitWidth: 28
-                    implicitHeight: 28
+                    implicitWidth: Theme.scaledGeometry(28)
+                    implicitHeight: Theme.scaledGeometry(28)
                     foreground: Theme.palette.mutedText
                     onClicked: editSkillDialog.close()
                 }
@@ -534,11 +540,11 @@ Item {
         }
 
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.scaledGeometry(12)
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
 
                 Text {
                     text: "Descrição resumida:"
@@ -557,7 +563,7 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
 
                 Text {
                     text: "Instruções (Markdown):"
@@ -578,7 +584,7 @@ Item {
 
                     ScrollView {
                         anchors.fill: parent
-                        anchors.margins: 4
+                        anchors.margins: Theme.scaledGeometry(4)
                         clip: true
 
                         VrTextArea {
@@ -591,8 +597,8 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
+                Layout.topMargin: Theme.scaledGeometry(4)
+                spacing: Theme.scaledGeometry(8)
 
                 Item { Layout.fillWidth: true }
 

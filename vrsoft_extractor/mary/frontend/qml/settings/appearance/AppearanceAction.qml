@@ -15,18 +15,18 @@ Button {
     focusPolicy: Qt.StrongFocus
     Accessible.name: text
     background: Rectangle {
-        radius: 7
+        radius: Theme.scaledGeometry(7)
         color: control.hovered ? Theme.palette.hover : control.quiet ? "transparent" : Theme.palette.chatControl
         border.width: control.visualFocus || !control.quiet ? 1 : 0
         border.color: control.visualFocus ? Theme.palette.focus : (Theme.palette.controlBorder || Theme.palette.border)
     }
     contentItem: RowLayout {
         id: content
-        spacing: 3
+        spacing: Theme.scaledGeometry(3)
         VrLineIcon {
             visible: control.iconKind !== ""
             kind: control.iconKind
-            Layout.preferredWidth: 14; Layout.preferredHeight: 14
+            Layout.preferredWidth: Theme.scaledGeometry(14); Layout.preferredHeight: Theme.scaledGeometry(14)
             foreground: Theme.palette.mutedText
         }
         Text {

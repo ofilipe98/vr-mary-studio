@@ -12,10 +12,10 @@ TextArea {
         editor: control
     }
 
-    leftPadding: 13
-    rightPadding: 13
-    topPadding: 11
-    bottomPadding: 11
+    leftPadding: Theme.scaledGeometry(13)
+    rightPadding: Theme.scaledGeometry(13)
+    topPadding: Theme.scaledGeometry(11)
+    bottomPadding: Theme.scaledGeometry(11)
     color: Theme.palette.text
     placeholderTextColor: Theme.palette.mutedText
     selectionColor: Theme.palette.selection

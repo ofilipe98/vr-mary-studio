@@ -27,7 +27,7 @@ Item {
         AppearanceCombo {
             id: familyButton
             objectName: root.settingKey + "Family"
-            Layout.preferredWidth: Math.min(176, (root.width - 42) * .55); Layout.minimumWidth: 80
+            Layout.preferredWidth: Math.min(176, (root.width - 42) * .55); Layout.minimumWidth: Theme.scaledGeometry(80)
             model: [root.family]; currentIndex: 0
             Accessible.name: root.title
             onPressedChanged: if(pressed) { popup.close(); picker.openAt(familyButton) }
@@ -37,7 +37,7 @@ Item {
         }
         AppearanceCombo {
             objectName: root.settingKey + "Size"
-            Layout.preferredWidth: Math.min(144, (root.width - 42) * .45); Layout.minimumWidth: 70
+            Layout.preferredWidth: Math.min(144, (root.width - 42) * .45); Layout.minimumWidth: Theme.scaledGeometry(70)
             model: {
                 var values=[]
                 for(var i=root.minSize;i<=root.maxSize;i++) values.push(i+" px")
@@ -51,8 +51,8 @@ Item {
     ColumnLayout {
         id: previewColumn
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: header.bottom
-        anchors.leftMargin: 16; anchors.rightMargin: 16
-        spacing: 8
+        anchors.leftMargin: Theme.scaledGeometry(16); anchors.rightMargin: Theme.scaledGeometry(16)
+        spacing: Theme.scaledGeometry(8)
     }
     Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.palette.border }
     FontFamilyPicker {

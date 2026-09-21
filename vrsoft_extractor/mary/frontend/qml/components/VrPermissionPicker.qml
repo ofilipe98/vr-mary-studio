@@ -84,15 +84,15 @@ Button {
         x: 0
         y: -height - 7
         width: Math.min(372, Theme.viewportWidth - 24)
-        height: 250
-        padding: 5
+        height: Theme.scaledGeometry(250)
+        padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
             color: Theme.palette.chatComposer
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 11
+            radius: Theme.scaledGeometry(11)
         }
 
         contentItem: ColumnLayout {
@@ -104,7 +104,7 @@ Button {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: 7
+                    radius: Theme.scaledGeometry(7)
                     color: control.currentIndex === index
                         ? Theme.palette.chatControl : permissionHover.hovered
                             ? Theme.palette.surfaceRaised : "transparent"
@@ -113,14 +113,14 @@ Button {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 8
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
+                        spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            Layout.preferredWidth: 17
-                            Layout.preferredHeight: 17
+                            Layout.preferredWidth: Theme.scaledGeometry(17)
+                            Layout.preferredHeight: Theme.scaledGeometry(17)
                             Layout.alignment: Qt.AlignTop
-                            Layout.topMargin: 5
+                            Layout.topMargin: Theme.scaledGeometry(5)
                             kind: control.permissionIconKind(modelData.value)
                             foreground: control.currentIndex === index
                                 ? Theme.palette.text : Theme.palette.mutedText

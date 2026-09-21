@@ -36,7 +36,7 @@ def apply_ui_scale_environment(preferences: QSettings) -> None:
 
     QT_SCALE_FACTOR enlarged the complete window geometry and made the Studio
     disproportionate to T3 Code. The saved preference is now consumed by the
-    Theme singleton, so changing it updates typography without a restart.
+    Theme singleton, so changing it updates text and layout without a restart.
     """
     del preferences
 

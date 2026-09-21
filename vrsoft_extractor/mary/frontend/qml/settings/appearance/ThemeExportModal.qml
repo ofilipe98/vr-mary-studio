@@ -35,7 +35,7 @@ Popup {
         // Header
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 52
+            implicitHeight: Theme.scaledGeometry(52)
             color: Theme.palette.surfaceRaised
             radius: Theme.radiusCard
 
@@ -43,7 +43,7 @@ Popup {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: 10
+                height: Theme.scaledGeometry(10)
                 color: Theme.palette.surfaceRaised
             }
 
@@ -114,7 +114,7 @@ Popup {
         // Footer Actions
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 56
+            implicitHeight: Theme.scaledGeometry(56)
             color: Theme.palette.surfaceRaised
             radius: Theme.radiusCard
 
@@ -122,7 +122,7 @@ Popup {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: 10
+                height: Theme.scaledGeometry(10)
                 color: Theme.palette.surfaceRaised
             }
 

@@ -9,10 +9,15 @@ Item {
 
     Rectangle { anchors.fill: parent; color: frontend.palette.chatBackground }
 
-    ColumnLayout {
+    ScrollView {
+        id: dashboardScroll
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
-        spacing: 8
+        contentWidth: availableWidth
+        clip: true
+        ColumnLayout {
+        width: dashboardScroll.availableWidth
+        spacing: Theme.spaceLg
 
         VrPageHeader {
             Layout.fillWidth: true
@@ -22,25 +27,26 @@ Item {
 
         GridLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
             columns: width < 820 ? 1 : 2
-            rows: width < 820 ? 4 : 2
-            columnSpacing: 10
-            rowSpacing: 6
+            columnSpacing: Theme.spaceMd
+            rowSpacing: Theme.spaceMd
 
             Repeater {
                 model: studio.dashboardSources
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 150
-                    color: "transparent"
+                    Layout.preferredHeight: Math.max(Theme.scaledGeometry(210), sourceContent.implicitHeight + Theme.space2Xl)
+                    color: Theme.palette.surface
+                    radius: Theme.radiusCard
+                    border.width: 1
+                    border.color: Theme.palette.border
 
                     ColumnLayout {
+                        id: sourceContent
                         anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 5
+                        anchors.margins: Theme.scaledGeometry(16)
+                        spacing: Theme.scaledGeometry(5)
                         Text {
                             text: modelData.name
                             color: frontend.palette.text
@@ -88,6 +94,7 @@ Item {
                     }
 
                     Rectangle {
+                        visible: false
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
@@ -106,9 +113,10 @@ Item {
             font.weight: Font.DemiBold
         }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 6
+            columns: width < Theme.scaledGeometry(480) ? 2 : 4
+            columnSpacing: Theme.scaledGeometry(6)
             Repeater {
                 model: [
                     { label: "Documentos", value: studio.dashboardMetrics.documents || "0" },
@@ -119,12 +127,12 @@ Item {
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 80
+                    Layout.preferredHeight: Theme.scaledGeometry(80)
                     color: "transparent"
                     Column {
                         anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 6
+                        anchors.margins: Theme.scaledGeometry(10)
+                        spacing: Theme.scaledGeometry(6)
                         Text { text: modelData.label; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
                         Text { text: modelData.value; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(26); font.weight: Font.DemiBold }
                     }
@@ -134,18 +142,20 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 62
+            Layout.preferredHeight: dashboardActions.implicitHeight + Theme.spaceLg
             color: "transparent"
-            RowLayout {
+            GridLayout {
+                id: dashboardActions
+                columns: width < Theme.scaledGeometry(800) ? (width < Theme.scaledGeometry(480) ? 1 : 2) : 4
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 8
+                anchors.margins: Theme.scaledGeometry(10)
+                columnSpacing: Theme.scaledGeometry(8)
                 VrButton { text: "Sincronizar Wikis + KB"; variant: "primary"; onClicked: studio.runSync("wiki_kb") }
                 VrButton { text: "Nova conversa VR"; onClicked: { chat.startNewChat(); frontend.setCurrentPage(1) } }
                 VrButton { text: "Revisar classificações"; onClicked: frontend.setCurrentPage(4) }
                 VrButton { text: "Abrir VR no Codex"; onClicked: studio.openVrInCodex() }
-                Item { Layout.fillWidth: true }
             }
+        }
         }
     }
 }

@@ -9,7 +9,7 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin
-        spacing: 12
+        spacing: Theme.scaledGeometry(12)
         VrPageHeader {
             Layout.fillWidth: true
             title: "Logs"
@@ -24,7 +24,7 @@ Item {
                 id: logList
                 objectName: "logList"
                 anchors.fill: parent
-                anchors.margins: 14
+                anchors.margins: Theme.scaledGeometry(14)
                 clip: true
                 reuseItems: true
                 cacheBuffer: 240

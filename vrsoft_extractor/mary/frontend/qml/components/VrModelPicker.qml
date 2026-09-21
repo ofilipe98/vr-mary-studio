@@ -90,7 +90,7 @@ Button {
         x: 0
         y: control.popupAbove ? -height - 8 : control.height + 8
         width: Math.min(420, Theme.viewportWidth - 24)
-        height: 400
+        height: Theme.scaledGeometry(400)
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {
@@ -105,7 +105,7 @@ Button {
             color: Theme.palette.chatComposer
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 12
+            radius: Theme.scaledGeometry(12)
         }
 
         contentItem: RowLayout {
@@ -113,9 +113,9 @@ Button {
 
             Rectangle {
                 Layout.fillHeight: true
-                Layout.preferredWidth: 48
+                Layout.preferredWidth: Theme.scaledGeometry(48)
                 color: Theme.palette.chatSidebar
-                radius: 14
+                radius: Theme.scaledGeometry(14)
                 Rectangle {
                     anchors.right: parent.right
                     anchors.top: parent.top
@@ -127,15 +127,15 @@ Button {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.topMargin: 8
-                    spacing: 4
+                    anchors.topMargin: Theme.scaledGeometry(8)
+                    spacing: Theme.scaledGeometry(4)
                     Repeater {
                         model: control.providerTabs()
                         delegate: Button {
                             id: providerTabButton
                             required property var modelData
-                            width: 48
-                            height: 42
+                            width: Theme.scaledGeometry(48)
+                            height: Theme.scaledGeometry(42)
                             padding: 0
                             hoverEnabled: true
                             Accessible.name: modelData.label
@@ -148,15 +148,15 @@ Button {
                                 VrProviderIcon {
                                     visible: modelData.key === "codex" || modelData.key === "claude" || modelData.key === "opencode" || modelData.key === "antigravity"
                                     anchors.centerIn: parent
-                                    width: 19
-                                    height: 19
+                                    width: Theme.scaledGeometry(19)
+                                    height: Theme.scaledGeometry(19)
                                     provider: modelData.key
                                 }
                                 VrLineIcon {
                                     visible: modelData.kind.length > 0
                                     anchors.centerIn: parent
-                                    width: 18
-                                    height: 18
+                                    width: Theme.scaledGeometry(18)
+                                    height: Theme.scaledGeometry(18)
                                     kind: modelData.kind
                                     foreground: modelData.key === "favorites" && control.providerFilter === "favorites"
                                         ? Theme.palette.brandOrange : Theme.palette.text
@@ -170,8 +170,8 @@ Button {
                                     visible: control.providerFilter === modelData.key
                                     anchors.left: parent.left
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: 3
-                                    height: 26
+                                    width: Theme.scaledGeometry(3)
+                                    height: Theme.scaledGeometry(26)
                                     radius: 2
                                     color: Theme.palette.brandOrange
                                 }
@@ -188,16 +188,16 @@ Button {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 52
+                    Layout.preferredHeight: Theme.scaledGeometry(52)
                     color: "transparent"
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 10
-                        spacing: 7
+                        anchors.leftMargin: Theme.scaledGeometry(12)
+                        anchors.rightMargin: Theme.scaledGeometry(10)
+                        spacing: Theme.scaledGeometry(7)
                         VrLineIcon {
-                            Layout.preferredWidth: 18
-                            Layout.preferredHeight: 18
+                            Layout.preferredWidth: Theme.scaledGeometry(18)
+                            Layout.preferredHeight: Theme.scaledGeometry(18)
                             kind: "search"
                             foreground: Theme.palette.mutedText
                         }
@@ -219,8 +219,8 @@ Button {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 10
+                        anchors.leftMargin: Theme.scaledGeometry(12)
+                        anchors.rightMargin: Theme.scaledGeometry(10)
                         height: 1
                         color: searchField.activeFocus ? Theme.palette.brandOrange : Theme.palette.chatBorder
                     }
@@ -229,9 +229,9 @@ Button {
                 Button {
                     objectName: "modelPickerBack"
                     Layout.fillWidth: true
-                    Layout.leftMargin: 8
-                    Layout.rightMargin: 8
-                    Layout.preferredHeight: 36
+                    Layout.leftMargin: Theme.scaledGeometry(8)
+                    Layout.rightMargin: Theme.scaledGeometry(8)
+                    Layout.preferredHeight: Theme.scaledGeometry(36)
                     visible: control.showingLegacy
                     text: "‹  Modelos legado"
                     Accessible.name: "Voltar aos modelos de fronteira"
@@ -247,7 +247,7 @@ Button {
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        radius: 8
+                        radius: Theme.scaledGeometry(8)
                         color: parent.hovered ? Theme.palette.chatControl : "transparent"
                     }
                 }
@@ -259,7 +259,7 @@ Button {
                     Layout.fillHeight: true
                     Layout.margins: 8
                     clip: true
-                    spacing: 3
+                    spacing: Theme.scaledGeometry(3)
                     model: control.visibleItems
                     ScrollIndicator.vertical: ScrollIndicator { }
 
@@ -268,7 +268,7 @@ Button {
                         width: modelList.width
                         height: visible ? 58 : 0
                         visible: !control.showingLegacy && control.legacyItems.length > 0
-                        padding: 10
+                        padding: Theme.scaledGeometry(10)
                         Accessible.name: "Modelos legado, " + control.legacyItems.length + " modelos"
                         onClicked: {
                             control.showingLegacy = true
@@ -277,7 +277,7 @@ Button {
                         contentItem: RowLayout {
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 4
+                                spacing: Theme.scaledGeometry(4)
                                 Text {
                                     text: "Modelos legado"
                                     color: Theme.palette.text
@@ -293,13 +293,13 @@ Button {
                                 }
                             }
                             VrLineIcon {
-                                Layout.preferredWidth: 16
-                                Layout.preferredHeight: 16
+                                Layout.preferredWidth: Theme.scaledGeometry(16)
+                                Layout.preferredHeight: Theme.scaledGeometry(16)
                                 kind: "chevronRight"
                             }
                         }
                         background: Rectangle {
-                            radius: 10
+                            radius: Theme.scaledGeometry(10)
                             color: parent.hovered ? Theme.palette.chatControl : "transparent"
                         }
                     }
@@ -311,8 +311,8 @@ Button {
                         required property var modelData
                         readonly property int sourceIndex: modelData.sourceIndex
                         width: modelList.width
-                        height: 56
-                        radius: 10
+                        height: Theme.scaledGeometry(56)
+                        radius: Theme.scaledGeometry(10)
                         color: control.currentIndex === sourceIndex
                             ? Qt.rgba(1.0, 0.45, 0.0, 0.14)
                             : modelHover.hovered ? Theme.palette.chatControl : "transparent"
@@ -320,20 +320,20 @@ Button {
                             visible: control.currentIndex === modelRow.sourceIndex
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 3
-                            height: 34
+                            width: Theme.scaledGeometry(3)
+                            height: Theme.scaledGeometry(34)
                             radius: 2
                             color: Theme.palette.brandOrange
                         }
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 7
-                            spacing: 9
+                            anchors.leftMargin: Theme.scaledGeometry(10)
+                            anchors.rightMargin: Theme.scaledGeometry(7)
+                            spacing: Theme.scaledGeometry(9)
                             VrProviderIcon {
-                                Layout.preferredWidth: 22
-                                Layout.preferredHeight: 22
+                                Layout.preferredWidth: Theme.scaledGeometry(22)
+                                Layout.preferredHeight: Theme.scaledGeometry(22)
                                 provider: modelData.provider || "codex"
                             }
                             ColumnLayout {
@@ -359,9 +359,9 @@ Button {
                             }
                             Rectangle {
                                 visible: modelRow.sourceIndex < 4
-                                Layout.preferredWidth: 42
-                                Layout.preferredHeight: 22
-                                radius: 6
+                                Layout.preferredWidth: Theme.scaledGeometry(42)
+                                Layout.preferredHeight: Theme.scaledGeometry(22)
+                                radius: Theme.scaledGeometry(6)
                                 color: Theme.palette.chatControl
                                 Text {
                                     anchors.centerIn: parent
@@ -372,8 +372,8 @@ Button {
                                 }
                             }
                             VrIconButton {
-                                implicitWidth: 30
-                                implicitHeight: 30
+                                implicitWidth: Theme.scaledGeometry(30)
+                                implicitHeight: Theme.scaledGeometry(30)
                                 symbol: modelData.favorite ? "★" : "☆"
                                 foreground: modelData.favorite
                                     ? Theme.palette.brandOrange : Theme.palette.mutedText

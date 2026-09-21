@@ -70,7 +70,9 @@ def find_items(item, name):
 
 
 def is_in_scrollable(item):
-    parent = item.parent()
+    # Qt Quick's visual hierarchy differs from QObject ownership (notably
+    # Flickable.contentItem and reparented overlays). Follow the rendered tree.
+    parent = item.parentItem()
     while parent is not None:
         try:
             class_name = parent.metaObject().className()
@@ -79,7 +81,7 @@ def is_in_scrollable(item):
         if any(key in class_name for key in ("Flickable", "ScrollView", "ListView", "GridView", "ScrollBar")):
             return True
         try:
-            parent = parent.parent()
+            parent = parent.parentItem()
         except Exception:
             break
     return False
@@ -323,6 +325,7 @@ def main():
             print("Geometry issues:", len(issues))
             for msg in issues[:30]:
                 print("ISSUE:", msg)
+            assert not issues, issues[:5]
             print("Evidence:", out_dir.resolve())
             window.close()
         studio.close()

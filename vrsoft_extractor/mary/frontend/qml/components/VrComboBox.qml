@@ -12,8 +12,8 @@ ComboBox {
     signal itemSettingsRequested(int index)
 
     implicitHeight: Theme.controlHeightCompact
-    leftPadding: 13
-    rightPadding: 34
+    leftPadding: Theme.scaledGeometry(13)
+    rightPadding: Theme.scaledGeometry(34)
     focusPolicy: Qt.StrongFocus
     font.family: Theme.fontFamily
     font.pixelSize: Theme.controlSize
@@ -56,11 +56,11 @@ ComboBox {
         highlighted: control.highlightedIndex === index
 
         contentItem: RowLayout {
-            spacing: 8
+            spacing: Theme.scaledGeometry(8)
             VrLineIcon {
                 visible: control.showSettingsAction
                 Layout.preferredWidth: visible ? 14 : 0
-                Layout.preferredHeight: 14
+                Layout.preferredHeight: Theme.scaledGeometry(14)
                 kind: "folder"
                 foreground: Theme.palette.mutedText
             }
@@ -81,11 +81,11 @@ ComboBox {
                 visible: control.showSettingsAction
                     && String(optionDelegate.modelData[control.settingsPathRole] || "").length > 0
                 Layout.preferredWidth: visible ? 22 : 0
-                Layout.preferredHeight: 30
+                Layout.preferredHeight: Theme.scaledGeometry(30)
                 VrLineIcon {
                     anchors.centerIn: parent
-                    width: 14
-                    height: 14
+                    width: Theme.scaledGeometry(14)
+                    height: Theme.scaledGeometry(14)
                     kind: "settings"
                     foreground: settingsMouse.containsMouse
                         ? Theme.palette.text : Theme.palette.mutedText

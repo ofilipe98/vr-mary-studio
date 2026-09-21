@@ -22,17 +22,17 @@ Rectangle {
         ColumnLayout {
             id: contentCol
             anchors.fill: parent
-            spacing: 16
+            spacing: Theme.scaledGeometry(16)
 
             // Brand Header
             ColumnLayout {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 8
+                spacing: Theme.scaledGeometry(8)
 
                 Image {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: Theme.scaledGeometry(48)
+                    Layout.preferredHeight: Theme.scaledGeometry(48)
                     source: (typeof frontend !== "undefined" && frontend && frontend.brandSymbolUrl) ? frontend.brandSymbolUrl : ""
                     sourceSize.width: 96
                     sourceSize.height: 96
@@ -55,7 +55,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 4
+                spacing: Theme.scaledGeometry(4)
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
@@ -95,7 +95,7 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: stepsCol.implicitHeight + 20
-                radius: 12
+                radius: Theme.scaledGeometry(12)
                 color: Theme.palette.surfaceRaised
                 border.width: 1
                 border.color: Theme.palette.border
@@ -103,8 +103,8 @@ Rectangle {
                 ColumnLayout {
                     id: stepsCol
                     anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 10
+                    anchors.margins: Theme.scaledGeometry(12)
+                    spacing: Theme.scaledGeometry(10)
 
                     // Step 1: Apps
                     RowLayout {
@@ -184,7 +184,7 @@ Rectangle {
                 visible: typeof bootstrap !== "undefined" && bootstrap && bootstrap.state === "error"
                 Layout.fillWidth: true
                 implicitHeight: errRetryButton.y + errRetryButton.height + 12
-                radius: 12
+                radius: Theme.scaledGeometry(12)
                 color: Qt.alpha(Theme.palette.danger, 0.08)
                 border.width: 1
                 border.color: Theme.palette.danger
@@ -193,8 +193,8 @@ Rectangle {
                     id: errIcon
                     x: 12
                     y: 12
-                    width: 18
-                    height: 18
+                    width: Theme.scaledGeometry(18)
+                    height: Theme.scaledGeometry(18)
                     kind: "warning"
                     foreground: Theme.palette.danger
                 }
@@ -231,7 +231,7 @@ Rectangle {
                     x: 12
                     y: errMessage.y + errMessage.height + 12
                     width: (parent.width - 24 - 8) / 2
-                    implicitHeight: 32
+                    implicitHeight: Theme.scaledGeometry(32)
                     text: "Tentar novamente"
                     variant: "primary"
                     onClicked: {
@@ -245,7 +245,7 @@ Rectangle {
                     x: errRetryButton.x + errRetryButton.width + 8
                     y: errRetryButton.y
                     width: errRetryButton.width
-                    implicitHeight: 32
+                    implicitHeight: Theme.scaledGeometry(32)
                     text: "Revisar configurações"
                     variant: "secondary"
                     onClicked: {

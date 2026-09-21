@@ -3,7 +3,7 @@ import "../theme"
 
 VrButton {
     id: control
-    implicitHeight: 34
+    implicitHeight: Theme.scaledGeometry(34)
     background: Rectangle {
         radius: Theme.radiusSmall
         color: control.variant === "primary" && control.enabled ? Theme.palette.accessibleOrange
