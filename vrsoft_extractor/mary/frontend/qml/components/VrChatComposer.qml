@@ -25,9 +25,6 @@ Item {
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
     property alias modelSelectorItem: modelSelector
-    // Bandeja de controles exposta para o glow desenhar a silhueta retraída
-    // (ombros e cantos inferiores alinhados ao recuo/raio reais da bandeja).
-    readonly property alias controlsBoxItem: composerControlsBox
     // Compatibilidade: consumidores externos ainda leem radius/color do componente.
     readonly property alias color: composerSurface.color
     readonly property alias radius: composerSurface.radius

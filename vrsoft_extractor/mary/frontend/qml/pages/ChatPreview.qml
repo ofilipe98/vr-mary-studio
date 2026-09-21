@@ -18,11 +18,6 @@ Item {
     readonly property var composerInput: composerCard.composerInputItem
     readonly property var effortSelector: composerCard.effortSelectorItem
     readonly property var modelSelector: composerCard.modelSelectorItem
-    // Retraído: a bandeja de controles é mais estreita que o campo, então o
-    // glow usa essa mesma folga para fechar a silhueta nos ombros e nos cantos
-    // de baixo (campo em largura total + bandeja recuada).
-    readonly property real compactGlowInset: composerCard.isCompact
-        ? composerCard.controlsBoxItem.compactInset : 0
     objectName: "chatPage"
     required property var chatBridge
     required property var studioBridge
@@ -1420,23 +1415,20 @@ Item {
                 }
             }
 
-            // Contorno contínuo do VR Ultra: no modo expandido acompanha o card
-            // inteiro; no retraído segue a silhueta real (campo em largura total
-            // + bandeja recuada), fechando nos ombros e nos cantos da bandeja.
+            // Contorno do VR Ultra: o anel só existe no composer expandido —
+            // no modo retraído ele sai de cena e a bandeja fica limpa.
             Canvas {
                 id: ultraArc
                 objectName: "chatUltraBorder"
-                visible: root.chatBridge.vrMode === "ultra"
+                visible: root.chatBridge.vrMode === "ultra" && !composerCard.isCompact
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 anchors.verticalCenter: composerCard.verticalCenter
                 width: composerCard.width + 8
                 height: composerCard.height + 8
                 property real sweep: 0
-                property bool compact: composerCard.isCompact
                 property real strokeWidth: root.chatBridge.turnRunning ? 2 : 1.6
                 onStrokeWidthChanged: requestPaint()
                 onSweepChanged: requestPaint()
-                onCompactChanged: requestPaint()
                 onVisibleChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
@@ -1448,41 +1440,17 @@ Item {
                     var inset = 3.5
                     var left = inset, top = inset
                     var right = width - inset, bottom = height - inset
-                    var rTop = composerCard.radius
+                    var r = Math.min(composerCard.radius + 0.5, (bottom - top) / 2)
                     ctx.beginPath()
-                    if (composerCard.isCompact) {
-                        // Só a metade externa do traço aparece: o card opaco
-                        // cobre a metade interna.
-                        var shoulder = top + composerCard.compactSurfaceHeight
-                        var trayInset = root.compactGlowInset
-                        var trayRadius = Math.min(Theme.radiusControl, (bottom - shoulder) / 2)
-                        ctx.moveTo(left + rTop, top)
-                        ctx.lineTo(right - rTop, top)
-                        ctx.arcTo(right, top, right, top + rTop, rTop)
-                        ctx.lineTo(right, shoulder - rTop)
-                        ctx.arcTo(right, shoulder, right - rTop, shoulder, rTop)
-                        if (trayInset > rTop) ctx.lineTo(right - trayInset, shoulder)
-                        ctx.lineTo(right - trayInset, bottom - trayRadius)
-                        ctx.arcTo(right - trayInset, bottom, right - trayInset - trayRadius, bottom, trayRadius)
-                        ctx.lineTo(left + trayInset + trayRadius, bottom)
-                        ctx.arcTo(left + trayInset, bottom, left + trayInset, bottom - trayRadius, trayRadius)
-                        ctx.lineTo(left + trayInset, shoulder)
-                        if (trayInset > rTop) ctx.lineTo(left + rTop, shoulder)
-                        ctx.arcTo(left + rTop, shoulder - rTop, left, shoulder - rTop, rTop)
-                        ctx.lineTo(left, top + rTop)
-                        ctx.arcTo(left, top, left + rTop, top, rTop)
-                    } else {
-                        var r = Math.min(rTop + 0.5, (bottom - top) / 2)
-                        ctx.moveTo(left + r, top)
-                        ctx.lineTo(right - r, top)
-                        ctx.arcTo(right, top, right, top + r, r)
-                        ctx.lineTo(right, bottom - r)
-                        ctx.arcTo(right, bottom, right - r, bottom, r)
-                        ctx.lineTo(left + r, bottom)
-                        ctx.arcTo(left, bottom, left, bottom - r, r)
-                        ctx.lineTo(left, top + r)
-                        ctx.arcTo(left, top, left + r, top, r)
-                    }
+                    ctx.moveTo(left + r, top)
+                    ctx.lineTo(right - r, top)
+                    ctx.arcTo(right, top, right, top + r, r)
+                    ctx.lineTo(right, bottom - r)
+                    ctx.arcTo(right, bottom, right - r, bottom, r)
+                    ctx.lineTo(left + r, bottom)
+                    ctx.arcTo(left, bottom, left, bottom - r, r)
+                    ctx.lineTo(left, top + r)
+                    ctx.arcTo(left, top, left + r, top, r)
                     ctx.closePath()
                     ctx.strokeStyle = Qt.alpha(Theme.ultraAccent, 0.12)
                     ctx.lineWidth = 6

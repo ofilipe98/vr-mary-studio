@@ -80,6 +80,13 @@ Os transportes concretos ficam em `mary/provider_adapters/`; `mary/providers.py`
 preserva imports existentes. O fan-out e seus checkpoints ficam em
 `mary/execution/`; busca e ranking ficam em `mary/retrieval/`.
 
+Em VR e Ultra, o código do VRMaster (app central) é fallback do escopo
+selecionado: `code_context.master_fallback_context` resolve o contexto do mesmo
+pacote e a busca o consulta quando o escopo não retorna trechos, quando o texto
+menciona `vrmaster.` ou quando `vr_read` não encontra a referência. Os trechos
+do fallback são marcados com `· fallback VRMaster`; a seleção do usuário e o
+modo OFF não mudam.
+
 O output do chat usa `frontend/text_rendering.py` para reconhecer cercas de
 código, tabelas e fontes; a normalização em `bridges/presentation.py` compartilha
 as mesmas cercas para preservar o conteúdo do código durante streaming.

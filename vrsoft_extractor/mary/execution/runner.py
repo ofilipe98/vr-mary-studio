@@ -653,6 +653,7 @@ class ExecutionRunner:
                     module=bundle.profile.module,
                     product=bundle.profile.product,
                     budget_remaining=context.budget.time_remaining(),
+                    master_fallback=application_contexts is not None,
                 )
 
                 fallback_report = WorkerReport(
@@ -673,6 +674,7 @@ class ExecutionRunner:
                             for warning in (
                                 item.get("freshness_warning"),
                                 item.get("classpath_warning"),
+                                item.get("fallback_warning"),
                             )
                             if warning
                         )

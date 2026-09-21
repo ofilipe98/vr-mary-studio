@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from test_application_contexts import indexed_contexts
+from test_application_contexts import indexed_contexts, indexed_contexts_with_master
 from test_unified_access_modes import _setup_test_env
 from vrsoft_extractor.mary.chat_tools import run_vr_read, run_vr_search, run_vr_sources
 from vrsoft_extractor.mary.models import KnowledgeDocument
@@ -143,8 +143,41 @@ def test_turn_freezes_ui_selection_in_all_modes(tmp_path, mode):
             use_vr=mode != "off", vr_mode=mode, application_contexts=selections)
         assert done.wait(20)
         assert captured and captured[0]["application_contexts"] == [contexts[0]]
+        assert captured[0]["master_fallback"] == (mode != "off")
         if mode == "vr":
             assert "class Outer" in provider.sent[0]["message"]
+    finally:
+        orchestrator.close()
+
+
+def test_master_fallback_reaches_vr_prompt_only_when_needed(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    _, contexts = indexed_contexts_with_master(settings.root / "isolated")
+    settings = replace(settings, root=settings.root / "isolated")
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta local")
+    orchestrator.providers["codex"] = provider
+    captured = []
+    original_send = provider.send_message
+    from vrsoft_extractor.mary.knowledge_access import load_scope
+    def send(*args, **kwargs):
+        captured.append(load_scope(args[7].knowledge_context_path))
+        return original_send(*args, **kwargs)
+    provider.send_message = send
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=True)
+    vra = next(context for context in contexts if context["app_id"] == "vra")
+    selections = [{k: vra[k] for k in ("app_id", "version", "variant_id", "package_id")}]
+    try:
+        done = threading.Event()
+        orchestrator.send(cid, "Central", lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=True, vr_mode="vr", application_contexts=selections)
+        assert done.wait(20)
+        message = provider.sent[0]["message"]
+        assert "fallback VRMaster" in message
+        assert "class Central" in message
+        # The persisted scope stays the user selection; VRMaster is only a fallback.
+        assert captured and captured[0]["application_contexts"] == [vra]
+        assert captured[0]["master_fallback"] is True
     finally:
         orchestrator.close()
 

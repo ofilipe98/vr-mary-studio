@@ -4043,6 +4043,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("readonly property bool ultraActive", composer_qml)
             self.assertIn("Theme.ultraAccent", composer_qml)
             self.assertIn("Qt.alpha(Theme.ultraAccent, 0.12)", chat_preview_qml)
+            # O anel do Ultra só existe no composer expandido.
+            self.assertIn(
+                'visible: root.chatBridge.vrMode === "ultra" && !composerCard.isCompact',
+                chat_preview_qml,
+            )
 
     def test_vr_mode_tag_stays_fixed_until_question_sent_with_different_mode(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as temporary:

@@ -149,11 +149,9 @@ def main():
                 timeline.setProperty('contentY', 0)
                 QTest.qWait(250)
                 assert card.property('isCompact')
-                assert arc.property('visible')
-                assert abs(arc.width() - (card.width() + 8)) < 1
-                assert abs(arc.height() - (card.height() + 8)) < 1
-                # O realce do Ultra não pode herdar o acento do tema (ocean usa
-                # messageAction teal); captura os dois temas para inspeção.
+                # Retraído: o anel do Ultra não é desenhado sobre a bandeja.
+                assert not arc.property('visible')
+                # Captura os dois temas para confirmar o composer retraído limpo.
                 for theme in ('dark_orange', 'ocean'):
                     frontend.setTheme(theme)
                     QTest.qWait(120)

@@ -658,6 +658,8 @@ class ChatOrchestrator:
                             "application_contexts": application_contexts,
                             "code_analysis_release": code_analysis_release,
                             "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+                            # VR/Ultra consult the central VRMaster as fallback only.
+                            "master_fallback": bool(use_vr and application_contexts),
                         })
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None

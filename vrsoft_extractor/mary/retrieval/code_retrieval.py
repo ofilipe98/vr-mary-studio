@@ -90,6 +90,17 @@ def _has_stack_trace_elements(text: str) -> bool:
     )
 
 
+_MASTER_MENTION_RE = re.compile(r"(?i)\bvrmaster\s*[.:$]")
+FALLBACK_WARNING = (
+    "Trecho obtido no VRMaster central como fallback do escopo selecionado."
+)
+
+
+def _mentions_master(text: str) -> bool:
+    """True when the text points at a Master frame/FQCN, never a loose word."""
+    return bool(_MASTER_MENTION_RE.search(str(text or "")))
+
+
 
 def check_code_availability(
     root: Path,
@@ -159,8 +170,13 @@ def retrieve_code_candidates(
     product: str = "",
     budget_remaining: float | None = None,
     max_excerpt_chars: int = 24000,
+    master_fallback: bool = False,
 ) -> tuple[list[EvidenceCandidate], list[EvidenceClaim], list[dict[str, Any]]]:
-    """Deterministic Java code candidate retrieval across configured application contexts."""
+    """Deterministic Java code candidate retrieval across configured application contexts.
+
+    With ``master_fallback`` the central VRMaster of the same package is searched
+    only when the selected scopes return nothing or the text mentions Master.
+    """
     from ..code_index import JavaCodeIndex
     from ..erp_releases import ErpReleaseCatalog
     from .code_relations import caller_evidence
@@ -187,32 +203,52 @@ def retrieve_code_candidates(
 
     code_results: list[dict[str, Any]] = []
     seen_code: set[str] = set()
+    fallback_keys: set[str] = set()
     scopes = application_contexts if application_contexts is not None else [None]
 
-    for app_context in scopes:
-        scope_release = app_context["package_id"] if app_context else code_analysis_release
-        scope_hash = app_context["manifest_sha256"] if app_context else expected_release_hash
+    def _collect(scope_context: dict[str, Any] | None, *, fallback: bool) -> int:
+        scope_release = scope_context["package_id"] if scope_context else code_analysis_release
+        scope_hash = scope_context["manifest_sha256"] if scope_context else expected_release_hash
+        scope_id = scope_context["context_id"] if scope_context else ""
         scoped_count = 0
         for code_query in _code_scope_queries(scoped_text):
             for res in JavaCodeIndex(root).search(
                 code_query,
                 release_id=scope_release,
                 limit=limit_per_query,
-                **({"artifacts": app_context["artifacts"], "manifest_hash": scope_hash} if app_context else {}),
+                **({"artifacts": scope_context["artifacts"], "manifest_hash": scope_hash} if scope_context else {}),
             ):
                 if scope_hash and str(res.get("release_hash") or "") != scope_hash:
                     continue
                 key = str(res.get("source_key") or "")
-                identity = (app_context["context_id"] if app_context else "") + key
-                if key and identity not in seen_code:
-                    seen_code.add(identity)
-                    res["application_context"] = app_context or {}
-                    code_results.append(res)
-                    scoped_count += 1
+                identity = scope_id + key
+                if not key or identity in seen_code:
+                    continue
+                seen_code.add(identity)
+                res["application_context"] = scope_context or {}
+                if fallback:
+                    fallback_keys.add(key)
+                    res["fallback"] = True
+                    res["fallback_warning"] = FALLBACK_WARNING
+                code_results.append(res)
+                scoped_count += 1
                 if scoped_count >= limit_per_scope:
                     break
             if scoped_count >= limit_per_scope:
                 break
+        return scoped_count
+
+    for app_context in scopes:
+        _collect(app_context, fallback=False)
+
+    # VRMaster is a fallback: only when the selected scopes return nothing or
+    # the request explicitly points at a Master frame/FQCN.
+    if master_fallback and application_contexts:
+        if not code_results or _mentions_master(scoped_text):
+            from ..code_context import master_fallback_context
+            fallback_context = master_fallback_context(root, application_contexts)
+            if fallback_context is not None:
+                _collect(fallback_context, fallback=True)
 
     # If stack-trace classes exist outside the selected app_context,
     # search across the release as fallback:
@@ -231,7 +267,7 @@ def retrieve_code_candidates(
                 if expected_release_hash and str(res.get("release_hash") or "") != expected_release_hash:
                     continue
                 key = str(res.get("source_key") or "")
-                if key and key not in seen_code:
+                if key and key not in seen_code and key not in fallback_keys:
                     seen_code.add(key)
                     jar_path = str(res.get("jar_relative_path") or "")
                     app_name = jar_path.split("/")[0] if "/" in jar_path else "Código"
@@ -259,9 +295,11 @@ def retrieve_code_candidates(
         app_context = result.get("application_context", {})
         context_prefix = app_context.get("context_id", "")
         evidence_id = f"code:{context_prefix + ':' if context_prefix else ''}{str(result['source_key'])}"
+        fallback = bool(result.get("fallback"))
         title = (
             f"{app_context.get('label', 'Código')} · {result['release_id']} · {result['jar_relative_path']} · "
             f"{result['qualified_name']} · linhas {result['line_start']}-{result['line_end']}"
+            + (" · fallback VRMaster" if fallback else "")
         )
         code_candidates.append(
             EvidenceCandidate(
@@ -287,12 +325,16 @@ def retrieve_code_candidates(
                     "release_id": (str(result["release_id"]),),
                     "release_manifest_sha256": (str(result.get("release_hash") or ""),),
                     "jar_relative_path": (str(result["jar_relative_path"]),),
+                    **({"fallback": ("vrmaster",)} if fallback else {}),
                 },
             )
         )
         code_claims.append(
             EvidenceClaim(
-                text=f"{result['qualified_name']}: {result['excerpt']}",
+                text=(
+                    ("[fallback VRMaster] " if fallback else "")
+                    + f"{result['qualified_name']}: {result['excerpt']}"
+                ),
                 evidence_ids=(evidence_id,),
                 kind="fact",
                 confidence=code_confidence,
@@ -417,7 +459,8 @@ def code_reference(row: dict, context: dict | None = None) -> str:
 def read_code_source(root: Path, reference: str, *, application_contexts: list[dict[str, Any]] | None = None,
                      code_analysis_release: str = "current", code_analysis_manifest_sha256: str = "",
                      start_line: int | None = None, end_line: int | None = None,
-                     cursor: int = 0, limit: int = 8000) -> dict[str, Any]:
+                     cursor: int = 0, limit: int = 8000,
+                     master_fallback: bool = False) -> dict[str, Any]:
     from ..code_index import JavaCodeIndex
     from ..erp_releases import ErpReleaseCatalog
     try:
@@ -433,12 +476,29 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
                     "error": "Nenhum aplicativo/versão selecionado para busca em código. "
                              "Confira o aplicativo e a versão em Aplicativos."}
         contexts = resolve_code_contexts(root, application_contexts, context)
-        predicate, params = _source_scope(contexts, _resolve_release_id(root, code_analysis_release))
         index = JavaCodeIndex(root)
         index.initialize()
-        with index.store.connect() as conn:
-            rows = conn.execute("SELECT s.* FROM code_sources s WHERE (" + predicate +
-                ") AND (s.source_key=? OR s.qualified_name=?) LIMIT 2", [*params, key, key]).fetchall()
+
+        def _lookup(scope_contexts: list[dict[str, Any]] | None) -> list[Any]:
+            predicate, params = _source_scope(
+                scope_contexts, _resolve_release_id(root, code_analysis_release)
+            )
+            with index.store.connect() as conn:
+                return conn.execute(
+                    "SELECT s.* FROM code_sources s WHERE (" + predicate +
+                    ") AND (s.source_key=? OR s.qualified_name=?) LIMIT 2",
+                    [*params, key, key],
+                ).fetchall()
+
+        rows = _lookup(contexts)
+        fallback_context: dict[str, Any] | None = None
+        fallback_used = False
+        if not rows and master_fallback and application_contexts:
+            from ..code_context import master_fallback_context
+            fallback_context = master_fallback_context(root, application_contexts)
+            if fallback_context is not None:
+                rows = _lookup([fallback_context])
+                fallback_used = bool(rows)
         if len(rows) != 1:
             selected = [str(c.get("label") or c.get("app_id") or "") for c in contexts or []]
             message = ("Referência ambígua; use a referência exata retornada por vr_search."
@@ -461,11 +521,12 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
         content = selected[offset:offset + size]
         first = start + selected[:offset].count("\n")
         last = first + content.count("\n")
-        ctx = _row_context(row, contexts)
+        ctx = _row_context(row, contexts) or (fallback_context if fallback_used else {}) or {}
         canonical = code_reference(row, ctx)
         return {"state": "available", "reference": reference, "evidence_id": canonical,
                 "source": "code", "source_id": row["source_key"], "document_id": 0,
-                "title": f"{ctx.get('label', 'Código')} · {row['release_id']} · {row['jar_relative_path']} · {row['qualified_name']} · linhas {first}-{last}",
+                "title": f"{ctx.get('label', 'Código')} · {row['release_id']} · {row['jar_relative_path']} · {row['qualified_name']} · linhas {first}-{last}"
+                + (" · fallback VRMaster" if fallback_used else ""),
                 "heading": row["qualified_name"], "qualified_name": row["qualified_name"],
                 "release_id": row["release_id"], "jar_relative_path": row["jar_relative_path"],
                 "source_sha256": row["source_sha256"], "release_manifest_sha256": row["release_hash"],
@@ -474,6 +535,7 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
                 "total_lines": len(lines), "total_chars": len(body), "cursor": offset, "limit": size,
                 "has_more": offset + len(content) < len(selected),
                 "next_cursor": offset + len(content) if offset + len(content) < len(selected) else None,
+                **({"fallback": "vrmaster"} if fallback_used else {}),
                 "content": content}
     except (ValueError, RuntimeError) as exc:
         return {"state": "unavailable", "reference": reference, "error": str(exc)}
