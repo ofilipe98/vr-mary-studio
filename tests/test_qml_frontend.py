@@ -1252,6 +1252,35 @@ class QmlFrontendTest(unittest.TestCase):
             )
             self.assertEqual(bridge._orchestrator._research_max_parallel, 1)
 
+    def test_research_parallelism_allows_four_ultra_lanes(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertIsNone(preferences.value("research/max_parallel"))
+            self.assertEqual(bridge.researchMaxParallel, 4)
+            self.assertEqual(bridge._orchestrator._research_max_parallel, 4)
+
+            bridge.setResearchMaxParallel(4)
+            self.assertEqual(bridge.researchMaxParallel, 4)
+            self.assertEqual(
+                int(preferences.value("research/max_parallel")), 4
+            )
+            self.assertEqual(bridge._orchestrator._research_max_parallel, 4)
+
+            bridge.setResearchMaxParallel(9)
+            self.assertEqual(bridge.researchMaxParallel, 4)
+            self.assertEqual(bridge._orchestrator._research_max_parallel, 4)
+
     def test_code_analysis_config_is_opt_in_and_persisted(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

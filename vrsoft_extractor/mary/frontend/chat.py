@@ -32,6 +32,7 @@ from ..db import MaryDatabase
 from ..models import RuntimeEvent
 from ..task_plan import TaskPlan, derive_task_progress
 from ..orchestrator import ChatOrchestrator
+from ..research_fanout import ULTRA_MAX_PARALLEL_RESEARCHERS
 from ..tool_activity import ToolLifecycleReducer, ToolStatus
 from ..tool_presentation import DEFAULT_PRESENTATION_REGISTRY
 from ..workspace import is_managed_conversation_workspace
@@ -239,7 +240,7 @@ class ChatBridge(QObject):
             self._approval_profile = "full_access"
         self._vr_mode = "vr"
         self._research_model_keys: list[str] = []
-        self._research_max_parallel = 3
+        self._research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items: list[dict[str, Any]] = []
@@ -2203,7 +2204,7 @@ class ChatBridge(QObject):
         self._app_sources = {}
         self._app_comparison_generation += 1
         self._research_model_keys: list[str] = []
-        self._research_max_parallel = 3
+        self._research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items = []

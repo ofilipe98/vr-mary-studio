@@ -6,6 +6,7 @@ import threading
 from typing import Any
 from ...erp_releases import ErpReleaseCatalog, ErpReleaseError
 from ...models import ModelRef
+from ...research_fanout import ULTRA_MAX_PARALLEL_RESEARCHERS
 
 from .presentation import (PROVIDER_LABELS, EFFORT_LABELS, ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS, DEFAULT_CODE_PROCESSING_HEAP_MB, DEFAULT_CODE_PROCESSING_TIMEOUT_SECONDS, DEFAULT_CODE_PROCESSING_CPU_CORES, DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER, DEFAULT_CODE_PROCESSING_WINDOW, CODE_PROCESSING_HARDWARE_PROFILE_VERSION)
 
@@ -633,10 +634,16 @@ class ProviderSettingsDomain:
             str(item) for item in values if str(item or "").strip()
         ][:1]
         try:
-            parallel = int(self._preferences.value("research/max_parallel", 3))
+            parallel = int(
+                self._preferences.value(
+                    "research/max_parallel", ULTRA_MAX_PARALLEL_RESEARCHERS
+                )
+            )
         except (TypeError, ValueError):
-            parallel = 3
-        self._research_max_parallel = max(1, min(3, parallel))
+            parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
+        self._research_max_parallel = max(
+            1, min(ULTRA_MAX_PARALLEL_RESEARCHERS, parallel)
+        )
         self._code_analysis_enabled = self._stored_bool(
             self._preferences.value("research/code_analysis_enabled", False),
             False,
@@ -924,7 +931,9 @@ class ProviderSettingsDomain:
             parallel = int(value)
         except (TypeError, ValueError):
             return
-        self._research_max_parallel = max(1, min(3, parallel))
+        self._research_max_parallel = max(
+            1, min(ULTRA_MAX_PARALLEL_RESEARCHERS, parallel)
+        )
         self._preferences.setValue("research/max_parallel", self._research_max_parallel)
         self._preferences.sync()
         self._apply_research_config()

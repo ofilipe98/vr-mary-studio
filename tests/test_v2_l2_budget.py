@@ -34,8 +34,13 @@ from vrsoft_extractor.mary.models import (
     ConversationOptions,
     EvidenceBundle,
     EvidenceCandidate,
+    ModelRef,
     QueryProfile,
     SourceSearchReport,
+)
+from vrsoft_extractor.mary.research_fanout import (
+    MAX_PARALLEL_RESEARCHERS,
+    ULTRA_MAX_PARALLEL_RESEARCHERS,
 )
 from vrsoft_extractor.mary.supervision import (
     ResponseIntent,
@@ -366,6 +371,7 @@ class TestUltraSourceFanoutBudget:
         *,
         run_id: str,
         budget: ExecutionBudget,
+        code_analysis_enabled: bool = False,
     ):
         intent = ResponseIntent(topic="", user_goal="answer_question")
         context = ExecutionContext(
@@ -383,6 +389,7 @@ class TestUltraSourceFanoutBudget:
             skills=[],
             intent=intent,
             contract=build_response_contract(intent),
+            code_analysis_enabled=code_analysis_enabled,
             request="pergunta",
         )
 
@@ -418,6 +425,100 @@ class TestUltraSourceFanoutBudget:
         assert result.draft is not None
         assert peak == 2, "o executor deve limitar a concorrência ao orçamento"
         assert budget.calls_in_flight == 0
+
+    def test_ultra_executor_runs_four_workers_when_budget_permits(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        barrier = threading.Barrier(4, timeout=5)
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def fake_ephemeral(*args, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                barrier.wait()
+            finally:
+                with lock:
+                    active -= 1
+            return self._report()
+
+        def fake_code(root, query, **kwargs):
+            candidate = EvidenceCandidate(
+                evidence_id="code:doc-1:1",
+                source="code",
+                source_id="doc-1",
+                document_id=1,
+                chunk_id=1,
+                title="Trecho Java",
+                heading="H",
+                content_type="section",
+                module="",
+                product="",
+                excerpt="codigo",
+                url="",
+            )
+            return ([candidate], [], [])
+
+        monkeypatch.setattr(
+            "vrsoft_extractor.mary.execution.runner.retrieve_code_candidates",
+            fake_code,
+        )
+        runner, _events = self._runner(
+            tmp_path, ephemeral=fake_ephemeral, buffered=self._buffered
+        )
+        runner.research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
+        budget = ExecutionBudget(
+            max_active_seconds=60.0,
+            max_calls=15,
+            max_parallel=ULTRA_MAX_PARALLEL_RESEARCHERS,
+            reserved_synthesis_calls=2,
+        )
+
+        result = self._execute(
+            runner,
+            tmp_path,
+            run_id="run-ultra-four-workers",
+            budget=budget,
+            code_analysis_enabled=True,
+        )
+
+        assert result.draft is not None
+        assert not barrier.broken, "as quatro frentes precisam coexistir"
+        assert peak == ULTRA_MAX_PARALLEL_RESEARCHERS
+        assert budget.calls_in_flight == 0
+
+    def test_modular_fanout_keeps_legacy_cap_with_ultra_parallelism(
+        self, tmp_path: Path
+    ) -> None:
+        runner, _events = self._runner(
+            tmp_path, ephemeral=self._report, buffered=self._buffered
+        )
+        runner.research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
+        main_model = ModelRef(provider="codex", model="gpt-5")
+
+        modular = runner.plan_fanout(
+            run_id="run-legacy-cap",
+            modules=("Fiscal", "PDV", "Multimodulo", "Schema"),
+            main_model=main_model,
+            synthesis_effort="medium",
+            code_analysis_enabled=True,
+        )
+        assert modular.max_parallel == MAX_PARALLEL_RESEARCHERS
+        assert modular.max_parallel <= 3, (
+            "o fan-out modular legado do /pesquisa continua limitado a três"
+        )
+
+        ultra = runner.plan_ultra_source_fanout(
+            "run-ultra-cap",
+            main_model,
+            "medium",
+            code_analysis_enabled=True,
+        )
+        assert ultra.max_parallel == ULTRA_MAX_PARALLEL_RESEARCHERS
 
     def test_ultra_executor_preserves_synthesis_reservation(
         self, tmp_path: Path

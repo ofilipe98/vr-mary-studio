@@ -777,6 +777,10 @@ def test_ultra_source_fanout_starts_dev_with_documental_lanes(
         ephemeral_turn_runner=fake_ephemeral,
         buffered_turn_runner=fake_buffered,
         looks_like_final_envelope=lambda _text: False,
+        research_max_parallel=4,
+    )
+    assert runner.research_max_parallel == 4, (
+        "a barreira das quatro frentes depende do limite Ultra explícito"
     )
 
     result = runner.execute_ultra_source_fanout(

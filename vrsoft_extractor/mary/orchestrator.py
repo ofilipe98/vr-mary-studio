@@ -3559,7 +3559,7 @@ class ChatOrchestrator:
     def set_research_config(
         self,
         pool: Iterable[ModelRef] = (),
-        max_parallel: int = MAX_PARALLEL_RESEARCHERS,
+        max_parallel: int = ULTRA_MAX_PARALLEL_RESEARCHERS,
     ) -> None:
         """Apply the global VR Ultra research configuration (UI-owned)."""
         unique: dict[tuple[str, str], ModelRef] = {}
@@ -3571,8 +3571,10 @@ class ChatOrchestrator:
         try:
             parallel = int(max_parallel)
         except (TypeError, ValueError):
-            parallel = MAX_PARALLEL_RESEARCHERS
-        self._research_max_parallel = max(1, min(MAX_PARALLEL_RESEARCHERS, parallel))
+            parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
+        self._research_max_parallel = max(
+            1, min(ULTRA_MAX_PARALLEL_RESEARCHERS, parallel)
+        )
 
     @staticmethod
     def _native_column(use_vr: bool) -> str:
