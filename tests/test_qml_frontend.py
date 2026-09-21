@@ -3261,7 +3261,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
-        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(54", composer_qml)
+        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54)", composer_qml)
         self.assertIn(
             'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
             composer_qml,

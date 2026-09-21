@@ -10,7 +10,7 @@ Item {
 
     VrCard {
         width: Math.min(parent.width, 720)
-        height: 220
+        height: Theme.scaledGeometry(220)
         anchors.centerIn: parent
 
         VrStatusBadge {

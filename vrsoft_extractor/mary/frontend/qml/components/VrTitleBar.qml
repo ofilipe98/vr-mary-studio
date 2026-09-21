@@ -88,6 +88,7 @@ Item {
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
         spacing: 6
+        width: Math.min(implicitWidth, Math.max(0, rightActionsRow.x - x - 12))
 
         // Sidebar toggle button (Chat page)
         VrIconButton {
@@ -132,6 +133,9 @@ Item {
         }
 
         Text {
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            elide: Text.ElideRight
             text: (typeof frontend !== "undefined" && frontend && frontend.appName) ? frontend.appName : "VR Norte Studio"
             color: Theme.palette.text
             font.family: Theme.fontFamily
@@ -142,7 +146,7 @@ Item {
 
         Rectangle {
             objectName: "environmentVersionPill"
-            visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
+            visible: root.width >= Theme.scaledGeometry(600) && typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
             implicitWidth: stageLabel.implicitWidth + 8
             implicitHeight: 20
             radius: 4
@@ -161,7 +165,7 @@ Item {
         }
 
         Rectangle {
-            visible: !(typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill")
+            visible: root.width >= Theme.scaledGeometry(600) && !(typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill")
             implicitWidth: defaultBadge.implicitWidth + 10
             implicitHeight: 20
             radius: 10
@@ -185,7 +189,7 @@ Item {
     // Center breadcrumb row (Chat page)
     RowLayout {
         id: breadcrumbRow
-        visible: root.isChatPage && root.chatPage !== null
+        visible: root.isChatPage && root.chatPage !== null && root.width >= Theme.scaledGeometry(900)
         anchors.left: root.hasSidebar ? sidebarBg.right : brandRow.right
         anchors.leftMargin: 16
         anchors.verticalCenter: parent.verticalCenter

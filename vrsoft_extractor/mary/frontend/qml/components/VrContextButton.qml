@@ -17,8 +17,8 @@ Button {
         detailsPopup.open()
     }
 
-    implicitWidth: 30
-    implicitHeight: 30
+    implicitWidth: Theme.scaledGeometry(30)
+    implicitHeight: Theme.scaledGeometry(30)
     padding: 0
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
@@ -51,8 +51,8 @@ Button {
     contentItem: Canvas {
         id: meter
         anchors.centerIn: parent
-        width: 18
-        height: 18
+        width: Theme.scaledGeometry(18)
+        height: Theme.scaledGeometry(18)
 
         onPaint: {
             var context = getContext("2d")
@@ -88,7 +88,7 @@ Button {
     }
 
     background: Rectangle {
-        radius: 8
+        radius: Theme.scaledGeometry(8)
         color: control.down || control.hovered || detailsPopup.opened
             ? Theme.palette.chatControl : "transparent"
         border.width: control.activeFocus ? 1 : 0
@@ -114,9 +114,9 @@ Button {
         parent: control
         x: control.width - width
         y: -height - 7
-        width: 286
-        height: 126
-        padding: 12
+        width: Theme.scaledGeometry(286)
+        height: Theme.scaledGeometry(126)
+        padding: Theme.scaledGeometry(12)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: control.detailsPinned = false
 
@@ -132,11 +132,11 @@ Button {
             color: Theme.palette.chatComposer
             border.width: 1
             border.color: Theme.palette.chatBorder
-            radius: 11
+            radius: Theme.scaledGeometry(11)
         }
 
         contentItem: ColumnLayout {
-            spacing: 7
+            spacing: Theme.scaledGeometry(7)
 
             RowLayout {
                 Layout.fillWidth: true

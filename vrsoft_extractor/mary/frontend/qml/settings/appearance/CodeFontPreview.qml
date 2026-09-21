@@ -11,7 +11,7 @@ Rectangle {
     readonly property string valueColor: frontend.resolvedAppearance === "dark" ? "#e7b77c" : "#986801"
     RowLayout {
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-        anchors.margins: 14; spacing: 8
+        anchors.margins: Theme.scaledGeometry(14); spacing: Theme.scaledGeometry(8)
         Text { text: "▣"; color: Theme.palette.focus; font.pixelSize: Theme.fontSize(16) }
         Text { text: "src/formatUser.ts"; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); Layout.fillWidth: true }
         Text { text: "-1"; color: Theme.palette.danger; font.family: frontend.codeFontFamily; font.pixelSize: Theme.fontSize(12) }
@@ -19,7 +19,7 @@ Rectangle {
     }
     ColumnLayout {
         id: lines
-        anchors.top: parent.top; anchors.topMargin: 44; anchors.left: parent.left; anchors.right: parent.right
+        anchors.top: parent.top; anchors.topMargin: Theme.scaledGeometry(44); anchors.left: parent.left; anchors.right: parent.right
         spacing: 0
         Repeater {
             model: [
@@ -34,7 +34,7 @@ Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: Math.max(20,code.implicitHeight+2)
                 color: modelData.change < 0 ? Qt.alpha(Theme.palette.danger,.19) : modelData.change > 0 ? Qt.alpha(Theme.palette.success,.19) : "transparent"
-                Rectangle { width: 3; height: parent.height; color: line.modelData.change < 0 ? Theme.palette.danger : Theme.palette.success; visible: line.modelData.change !== 0 }
+                Rectangle { width: Theme.scaledGeometry(3); height: parent.height; color: line.modelData.change < 0 ? Theme.palette.danger : Theme.palette.success; visible: line.modelData.change !== 0 }
                 Text {
                     x: 14; y: 1; text: line.modelData.n
                     color: line.modelData.change < 0 ? Theme.palette.danger : line.modelData.change > 0 ? Theme.palette.success : Theme.palette.mutedText

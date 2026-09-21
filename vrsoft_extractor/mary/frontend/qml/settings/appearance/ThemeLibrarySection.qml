@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import "../../theme"
 ColumnLayout {
     id: root
-    spacing: 12
+    spacing: Theme.scaledGeometry(12)
     function themeById(id) {
         var themes = frontend.availableThemes
         for(var i=0;i<themes.length;i++) if(themes[i].id===id) return themes[i]
@@ -51,9 +51,9 @@ ColumnLayout {
         for(var i=0;i<ids.length;i++) frontend.deleteCustomTheme(ids[i])
     }
     GridLayout {
-        Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+        Layout.fillWidth: true; Layout.leftMargin: Theme.scaledGeometry(16); Layout.rightMargin: Theme.scaledGeometry(16)
         columns: root.width < 460 * Theme.textScale ? 2 : 3
-        columnSpacing: 8; rowSpacing: 10
+        columnSpacing: Theme.scaledGeometry(8); rowSpacing: Theme.scaledGeometry(10)
         Text { text: "Temas"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); Layout.fillWidth: true; Layout.columnSpan: parent.columns === 2 ? 2 : 1 }
         AppearanceAction {
             objectName: "createThemeButton"; text: "Criar tema"; iconKind: "paintbrush"
@@ -64,7 +64,7 @@ ColumnLayout {
     GridLayout {
         Layout.fillWidth: true
         columns: root.width >= 700 ? 3 : root.width >= 460 ? 2 : 1
-        rowSpacing: 8; columnSpacing: 8
+        rowSpacing: Theme.scaledGeometry(8); columnSpacing: Theme.scaledGeometry(8)
         Repeater {
             model: root.cards
             ThemeCard {

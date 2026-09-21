@@ -13,7 +13,7 @@ Item {
     property bool idlePagesPreloaded: false
     readonly property bool settingsActive: frontend.currentPage === 7
     readonly property SettingsPage loadedSettings: settingsPageLoader.item as SettingsPage
-    readonly property bool compactSettings: settingsActive && root.width < 980
+    readonly property bool compactSettings: root.width < Theme.scaledGeometry(980)
     readonly property real sidebarBorderOffset: (!compactSettings && settingsNavigation && settingsNavigation.visible)
         ? (settingsNavigation.width + 4)
         : 0
@@ -125,13 +125,34 @@ Item {
 
     Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
 
+    RowLayout {
+        id: compactNavigation
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: visible ? Theme.spaceSm : 0
+        visible: root.compactSettings
+        height: visible ? Theme.controlHeightCompact : 0
+        VrComboBox {
+            objectName: "compactPageNavigation"
+            Layout.fillWidth: true
+            model: ["Dashboard", "Chat VR", "Conhecimento", "Sincronizações", "Revisão", "Vídeos", "Logs", "Configurações"]
+            currentIndex: frontend.currentPage
+            onActivated: index => frontend.setCurrentPage(index)
+        }
+    }
+
     SplitView {
-        anchors.fill: parent
+        anchors.top: compactNavigation.bottom
+        anchors.topMargin: compactNavigation.visible ? Theme.spaceSm : 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         orientation: Qt.Horizontal
 
         handle: Rectangle {
             id: splitHandle
-            implicitWidth: 7
+            implicitWidth: Theme.scaledGeometry(7)
             color: "transparent"
 
             // Left slice matches navigation background
@@ -157,7 +178,7 @@ Item {
                 anchors.left: centerLine.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: 3
+                width: Theme.scaledGeometry(3)
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
                     GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.14) }
@@ -193,8 +214,8 @@ Item {
             // Interactive grip indicator pill on hover/press
             Rectangle {
                 anchors.centerIn: parent
-                width: 3
-                height: 36
+                width: Theme.scaledGeometry(3)
+                height: Theme.scaledGeometry(36)
                 radius: 1.5
                 visible: SplitHandle.hovered || SplitHandle.pressed
                 color: SplitHandle.pressed ? Theme.palette.brandOrange : Theme.palette.focus
@@ -211,27 +232,27 @@ Item {
             id: settingsNavigation
             objectName: "settingsNavigation"
             visible: !root.compactSettings
-            SplitView.minimumWidth: 220
-            SplitView.preferredWidth: 260
-            SplitView.maximumWidth: 430
+            SplitView.minimumWidth: Theme.scaledGeometry(220)
+            SplitView.preferredWidth: Theme.scaledGeometry(260)
+            SplitView.maximumWidth: Theme.scaledGeometry(430)
             color: Theme.palette.navigationBackground
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 4
+                anchors.margins: Theme.scaledGeometry(12)
+                spacing: Theme.scaledGeometry(4)
 
                 Item {
                     id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 34
+                    Layout.preferredHeight: Theme.scaledGeometry(34)
 
                     VrTextField {
                         id: settingsConversationSearch
                         objectName: "settingsConversationSearch"
                         anchors.fill: parent
-                        leftPadding: 35
-                        rightPadding: 32
+                        leftPadding: Theme.scaledGeometry(35)
+                        rightPadding: Theme.scaledGeometry(32)
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSize(13)
                         placeholderText: root.settingsActive
@@ -239,7 +260,7 @@ Item {
                         placeholderTextColor: Theme.palette.navMuted
                         color: Theme.palette.navText
                         background: Rectangle {
-                            radius: 6
+                            radius: Theme.scaledGeometry(6)
                             color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.chatControl
                                 : (settingsConversationSearch.hovered ? Theme.palette.navHover : "transparent")
@@ -280,10 +301,10 @@ Item {
 
                     VrLineIcon {
                         anchors.left: parent.left
-                        anchors.leftMargin: 10
+                        anchors.leftMargin: Theme.scaledGeometry(10)
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 16
-                        height: 16
+                        width: Theme.scaledGeometry(16)
+                        height: Theme.scaledGeometry(16)
                         kind: "search"
                         foreground: settingsConversationSearch.activeFocus
                             ? Theme.palette.navText : Theme.palette.navMuted
@@ -291,12 +312,12 @@ Item {
 
                     Rectangle {
                         anchors.right: parent.right
-                        anchors.rightMargin: 8
+                        anchors.rightMargin: Theme.scaledGeometry(8)
                         anchors.verticalCenter: parent.verticalCenter
                         visible: settingsConversationSearch.text.length === 0
-                        width: 18
-                        height: 18
-                        radius: 4
+                        width: Theme.scaledGeometry(18)
+                        height: Theme.scaledGeometry(18)
+                        radius: Theme.scaledGeometry(4)
                         color: Qt.rgba(255, 255, 255, 0.06)
                         border.width: 1
                         border.color: Qt.rgba(255, 255, 255, 0.1)
@@ -320,11 +341,11 @@ Item {
 
                     VrIconButton {
                         anchors.right: parent.right
-                        anchors.rightMargin: 4
+                        anchors.rightMargin: Theme.scaledGeometry(4)
                         anchors.verticalCenter: parent.verticalCenter
                         visible: settingsConversationSearch.text.length > 0
-                        width: 26
-                        height: 26
+                        width: Theme.scaledGeometry(26)
+                        height: Theme.scaledGeometry(26)
                         iconKind: "close"
                         iconSize: 11
                         foreground: Theme.palette.mutedText
@@ -362,25 +383,25 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
                     model: root.filteredSettings
                     delegate: Rectangle {
                         id: settingResult
                         required property int index
                         required property var modelData
                         width: settingsSearchResults.width
-                        height: 54
+                        height: Theme.scaledGeometry(54)
                         radius: Theme.radiusSmall
                         color: resultHover.hovered
                             ? Theme.palette.chatControl : "transparent"
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 8
-                            spacing: 9
+                            anchors.leftMargin: Theme.scaledGeometry(10)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(9)
                             VrLineIcon {
-                                Layout.preferredWidth: 16
-                                Layout.preferredHeight: 16
+                                Layout.preferredWidth: Theme.scaledGeometry(16)
+                                Layout.preferredHeight: Theme.scaledGeometry(16)
                                 kind: settingResult.modelData.icon
                                 foreground: Theme.palette.navMuted
                             }
@@ -431,16 +452,16 @@ Item {
                     id: settingsReturnButton
                     objectName: "settingsReturnButton"
                     Layout.fillWidth: true
-                    implicitHeight: 38
-                    padding: 8
+                    implicitHeight: Theme.scaledGeometry(38)
+                    padding: Theme.scaledGeometry(8)
                     hoverEnabled: true
                     Accessible.name: "Retornar ao Chat VR"
                     onClicked: frontend.setCurrentPage(1)
                     contentItem: RowLayout {
-                        spacing: 8
+                        spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
+                            Layout.preferredWidth: Theme.scaledGeometry(16)
+                            Layout.preferredHeight: Theme.scaledGeometry(16)
                             kind: "back"
                             foreground: settingsReturnButton.hovered
                                 ? Theme.palette.navText : Theme.palette.navMuted
@@ -467,7 +488,7 @@ Item {
 
         Item {
             id: pageViewport
-            SplitView.minimumWidth: root.compactSettings ? 0 : 720
+            SplitView.minimumWidth: 0
             SplitView.fillWidth: true
 
             transform: Translate { id: pageShift; y: 0 }

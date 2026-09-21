@@ -13,8 +13,8 @@ TextField {
     }
 
     implicitHeight: Theme.controlHeightCompact
-    leftPadding: 13
-    rightPadding: 13
+    leftPadding: Theme.scaledGeometry(13)
+    rightPadding: Theme.scaledGeometry(13)
     color: Theme.palette.text
     placeholderTextColor: Theme.palette.mutedText
     selectionColor: Theme.palette.selection

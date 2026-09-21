@@ -26,9 +26,9 @@ Item {
         anchors.fill: parent
         clip: true
         contentWidth: availableWidth
-        topPadding: 4
-        rightPadding: 12
-        bottomPadding: 24
+        topPadding: Theme.scaledGeometry(4)
+        rightPadding: Theme.scaledGeometry(12)
+        bottomPadding: Theme.scaledGeometry(24)
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -40,7 +40,7 @@ Item {
                 id: vrUltraColumn
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: Math.min(848, parent.width)
-                spacing: 24
+                spacing: Theme.scaledGeometry(24)
 
                 VrRetrievalSettings {
                     Layout.fillWidth: true
@@ -50,21 +50,21 @@ Item {
                 // Orchestrator banner
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: 46
-                    radius: 14
+                    implicitHeight: Theme.scaledGeometry(46)
+                    radius: Theme.scaledGeometry(14)
                     color: Theme.palette.background
                     border.width: 1
                     border.color: Theme.palette.border
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 12
+                        anchors.leftMargin: Theme.scaledGeometry(16)
+                        anchors.rightMargin: Theme.scaledGeometry(16)
+                        spacing: Theme.scaledGeometry(12)
 
                         VrLineIcon {
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
+                            Layout.preferredWidth: Theme.scaledGeometry(16)
+                            Layout.preferredHeight: Theme.scaledGeometry(16)
                             kind: "models"
                             foreground: Theme.palette.brandOrange
                         }
@@ -84,7 +84,7 @@ Item {
                 // Section 1: Perfil especialista sênior
                 Text {
                     text: "Perfil especialista sênior"
-                    Layout.leftMargin: 16
+                    Layout.leftMargin: Theme.scaledGeometry(16)
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
@@ -96,7 +96,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     implicitHeight: vrUltraSeniorProfileCardContent.implicitHeight + 2
-                    radius: 14
+                    radius: Theme.scaledGeometry(14)
                     color: Theme.palette.background
                     border.width: 1
                     border.color: Theme.palette.border
@@ -131,8 +131,8 @@ Item {
                             VrComboBox {
                                 id: vrResponseModePicker
                                 objectName: "vrUltraResponseModePicker"
-                                Layout.preferredWidth: 320
-                                implicitHeight: 34
+                                Layout.preferredWidth: Theme.scaledGeometry(320)
+                                implicitHeight: Theme.scaledGeometry(34)
                                 enabled: chat.seniorProfileEnabled
                                 model: [
                                     { "label": "Automático — detecta a melhor abordagem pelo contexto", "value": "auto" },
@@ -153,7 +153,7 @@ Item {
                                         chat.setVrResponseMode(model[index].value)
                                 }
                                 background: Rectangle {
-                                    radius: 8
+                                    radius: Theme.scaledGeometry(8)
                                     color: Theme.palette.codeSurface
                                     border.width: vrResponseModePicker.activeFocus ? 2 : 1
                                     border.color: vrResponseModePicker.activeFocus ? Theme.palette.focus : Theme.palette.border
@@ -166,7 +166,7 @@ Item {
                 // Section 2: Pool de pesquisadores
                 Text {
                     text: "Pool de pesquisadores"
-                    Layout.leftMargin: 16
+                    Layout.leftMargin: Theme.scaledGeometry(16)
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
@@ -178,7 +178,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     implicitHeight: vrUltraAgentPoolContent.implicitHeight + 2
-                    radius: 14
+                    radius: Theme.scaledGeometry(14)
                     color: Theme.palette.background
                     border.width: 1
                     border.color: Theme.palette.border
@@ -199,13 +199,13 @@ Item {
                             divider: false
 
                             RowLayout {
-                                spacing: 8
+                                spacing: Theme.scaledGeometry(8)
                                 Layout.alignment: Qt.AlignRight
 
                                 Rectangle {
-                                    Layout.preferredWidth: 84
-                                    Layout.preferredHeight: 28
-                                    radius: 8
+                                    Layout.preferredWidth: Theme.scaledGeometry(84)
+                                    Layout.preferredHeight: Theme.scaledGeometry(28)
+                                    radius: Theme.scaledGeometry(8)
                                     color: Qt.rgba(1.0, 0.45, 0.0, 0.12)
                                     border.width: 1
                                     border.color: Qt.rgba(1.0, 0.45, 0.0, 0.3)
@@ -223,8 +223,8 @@ Item {
                                 VrModelPicker {
                                     id: agentModelPicker
                                     objectName: "vrUltraAgentModelPicker"
-                                    Layout.preferredWidth: 260
-                                    implicitHeight: 34
+                                    Layout.preferredWidth: Theme.scaledGeometry(260)
+                                    implicitHeight: Theme.scaledGeometry(34)
                                     outlined: true
                                     popupAbove: false
                                     model: chat.modelItems
@@ -240,7 +240,7 @@ Item {
                 // Section 3: Contexto de Código e Aplicativo no VR Ultra
                 Text {
                     text: "Contexto de código no VR Ultra"
-                    Layout.leftMargin: 16
+                    Layout.leftMargin: Theme.scaledGeometry(16)
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
@@ -252,7 +252,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     implicitHeight: vrUltraCodeAnalysisCardContent.implicitHeight + 2
-                    radius: 14
+                    radius: Theme.scaledGeometry(14)
                     color: Theme.palette.background
                     border.width: 1
                     border.color: Theme.palette.border
@@ -287,11 +287,11 @@ Item {
                             ColumnLayout {
                                 id: contextCol
                                 anchors.fill: parent
-                                anchors.leftMargin: 16
-                                anchors.rightMargin: 16
-                                anchors.topMargin: 12
-                                anchors.bottomMargin: 12
-                                spacing: 12
+                                anchors.leftMargin: Theme.scaledGeometry(16)
+                                anchors.rightMargin: Theme.scaledGeometry(16)
+                                anchors.topMargin: Theme.scaledGeometry(12)
+                                anchors.bottomMargin: Theme.scaledGeometry(12)
+                                spacing: Theme.scaledGeometry(12)
 
                                 Text {
                                     Layout.fillWidth: true
@@ -307,7 +307,7 @@ Item {
                                     delegate: RowLayout {
                                         required property var modelData
                                         Layout.fillWidth: true
-                                        spacing: 10
+                                        spacing: Theme.scaledGeometry(10)
 
                                         ColumnLayout {
                                             Layout.fillWidth: true
@@ -335,7 +335,7 @@ Item {
                                         VrButton {
                                             text: "Remover"
                                             variant: "ghost"
-                                            implicitHeight: 28
+                                            implicitHeight: Theme.scaledGeometry(28)
                                             onClicked: chat.removeApplicationContext(modelData.app_id)
                                         }
                                     }
@@ -345,7 +345,7 @@ Item {
                                     objectName: "vrUltraManageAppsButton"
                                     text: "Gerenciar aplicativos…"
                                     variant: "secondary"
-                                    implicitHeight: 32
+                                    implicitHeight: Theme.scaledGeometry(32)
                                     onClicked: {
                                         root.openApplicationsRequested()
                                         var p = root.parent
@@ -363,7 +363,7 @@ Item {
                     }
                 }
 
-                Item { Layout.preferredHeight: 16 }
+                Item { Layout.preferredHeight: Theme.scaledGeometry(16) }
             }
         }
     }

@@ -5,7 +5,7 @@ import "../../theme"
 Rectangle {
     default property alias rows: column.data
     implicitHeight: column.implicitHeight + 2
-    radius: 14
+    radius: Theme.scaledGeometry(14)
     color: Theme.palette.background
     border.color: Theme.palette.border
     ColumnLayout {

@@ -54,6 +54,7 @@ def _stored_bool(value: object, default: bool = False) -> bool:
 
 UI_SCALE_OPTIONS = (
     "auto",
+    "90",
     "100",
     "101",
     "102",
@@ -684,6 +685,18 @@ class FrontendBridge(QObject):
         )
         self._preferences.sync()
         self.uiScaleChanged.emit()
+
+    @Slot(int)
+    def stepUiScale(self, direction: int) -> None:  # noqa: N802
+        """Zoom presentation without changing browser or user font preferences."""
+        if direction == 0:
+            self.setUiScale("100")
+            return
+        stops = (90, 100, 110, 125, 150)
+        current = round(self.uiScaleFactor * 100)
+        candidates = [value for value in stops if (value - current) * direction > 0]
+        if candidates:
+            self.setUiScale(str(min(candidates) if direction > 0 else max(candidates)))
 
     @Slot(bool)
     def setHardwareAcceleration(self, enabled: bool) -> None:  # noqa: N802

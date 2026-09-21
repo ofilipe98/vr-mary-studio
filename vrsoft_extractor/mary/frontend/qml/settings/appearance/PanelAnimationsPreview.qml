@@ -9,9 +9,9 @@ Rectangle {
     property bool panelsOpen: true
     property int animDuration: frontend.reduceMotion ? 0 : frontend.rawPanelAnimationDurationMs
 
-    implicitWidth: 112
-    implicitHeight: 40
-    radius: 10
+    implicitWidth: Theme.scaledGeometry(112)
+    implicitHeight: Theme.scaledGeometry(40)
+    radius: Theme.scaledGeometry(10)
     color: previewArea.containsMouse ? Theme.palette.hover : Theme.palette.background
     border.width: 1
     border.color: Theme.palette.controlBorder || Theme.palette.border
@@ -27,15 +27,15 @@ Rectangle {
 
     Row {
         anchors.fill: parent
-        anchors.margins: 4
-        spacing: 3
+        anchors.margins: Theme.scaledGeometry(4)
+        spacing: Theme.scaledGeometry(3)
 
         // Left sidebar
         Rectangle {
             id: leftBar
             height: parent.height
             width: root.panelsOpen ? 16 : 0
-            radius: 3
+            radius: Theme.scaledGeometry(3)
             color: Theme.palette.previewSidebar || Theme.palette.surface
             clip: true
 
@@ -54,8 +54,8 @@ Rectangle {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.topMargin: 3
-                spacing: 3
+                anchors.topMargin: Theme.scaledGeometry(3)
+                spacing: Theme.scaledGeometry(3)
 
                 Rectangle {
                     width: parent.width
@@ -98,7 +98,7 @@ Rectangle {
             id: rightBar
             height: parent.height
             width: root.panelsOpen ? 20 : 0
-            radius: 3
+            radius: Theme.scaledGeometry(3)
             color: Theme.palette.mutedSurface || Theme.palette.surfaceRaised
             clip: true
 

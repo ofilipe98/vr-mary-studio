@@ -9,10 +9,10 @@ Button {
     property int textAlignment: Text.AlignHCenter
     property bool showFocusRing: true
 
-    implicitHeight: Theme.controlHeightCompact
-    implicitWidth: Math.max(96, contentItem.implicitWidth + 28)
-    leftPadding: 14
-    rightPadding: 14
+    implicitHeight: Math.max(Theme.controlHeightCompact, contentItem.implicitHeight + Theme.spaceSm)
+    implicitWidth: Math.max(Theme.scaledGeometry(80), contentItem.implicitWidth + leftPadding + rightPadding)
+    leftPadding: Theme.scaledGeometry(14)
+    rightPadding: Theme.scaledGeometry(14)
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down && control.enabled ? 0.965 : 1

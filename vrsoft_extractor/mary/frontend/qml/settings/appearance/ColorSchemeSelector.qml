@@ -3,10 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../../theme"
 ColumnLayout {
-    spacing: 14
-    Text { text: "Esquema de cores"; Layout.leftMargin: 16; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); color: Theme.palette.text; opacity: .7 }
+    spacing: Theme.scaledGeometry(14)
+    Text { text: "Esquema de cores"; Layout.leftMargin: Theme.scaledGeometry(16); font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); color: Theme.palette.text; opacity: .7 }
     RowLayout {
-        Layout.fillWidth: true; spacing: 12
+        Layout.fillWidth: true; spacing: Theme.scaledGeometry(12)
         Repeater {
             model: ["system", "light", "dark"]
             Button {
@@ -16,16 +16,16 @@ ColumnLayout {
                 readonly property bool selected: frontend.appearanceMode === modelData
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 1
                 implicitHeight: Math.max(116, Math.min(180, width * .655))
-                padding: 8; hoverEnabled: true
+                padding: Theme.scaledGeometry(8); hoverEnabled: true
                 Accessible.name: ({system: "Sistema", light: "Claro", dark: "Escuro"})[modelData]
                 onClicked: frontend.setAppearanceMode(modelData)
                 background: Rectangle {
-                    radius: 14
+                    radius: Theme.scaledGeometry(14)
                     color: card.selected || card.hovered ? Qt.tint(Theme.palette.background, Qt.alpha(Theme.palette.accentSoft, .35)) : Theme.palette.background
                     border.color: card.selected || card.visualFocus ? Theme.palette.focus : Theme.palette.border
                 }
                 contentItem: ColumnLayout {
-                    spacing: 6
+                    spacing: Theme.scaledGeometry(6)
                     Item {
                         id: preview
                         Layout.fillWidth: true; Layout.fillHeight: true

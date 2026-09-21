@@ -16,7 +16,7 @@ Rectangle {
     signal deleteRequested()
     objectName: "themeCard_" + themeId
     Layout.fillWidth: true; Layout.minimumWidth: 0
-    implicitHeight: 112 + Theme.fontSize(14); radius: 14
+    implicitHeight: 112 + Theme.fontSize(14); radius: Theme.scaledGeometry(14)
     color: cardArea.containsMouse ? Theme.palette.hover : Theme.palette.background
     border.color: Theme.palette.border
     MouseArea {
@@ -27,7 +27,7 @@ Rectangle {
         }
     }
     Row {
-        anchors.horizontalCenter: parent.horizontalCenter; y: 12; spacing: 10
+        anchors.horizontalCenter: parent.horizontalCenter; y: 12; spacing: Theme.scaledGeometry(10)
         Repeater {
             model: [root.lightTheme, root.darkTheme].filter(t => t !== null)
             ThemePreviewCircle {
@@ -44,7 +44,7 @@ Rectangle {
     }
     RowLayout {
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.margins: 12; spacing: 2
+        anchors.margins: Theme.scaledGeometry(12); spacing: 2
         Text {
             text: root.themeName; color: Theme.palette.text
             font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold

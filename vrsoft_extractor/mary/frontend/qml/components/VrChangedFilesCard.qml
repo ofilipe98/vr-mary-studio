@@ -29,16 +29,16 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.margins: 12
-        spacing: 9
+        anchors.margins: Theme.scaledGeometry(12)
+        spacing: Theme.scaledGeometry(9)
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 7
+            spacing: Theme.scaledGeometry(7)
 
             VrLineIcon {
-                Layout.preferredWidth: 12
-                Layout.preferredHeight: 12
+                Layout.preferredWidth: Theme.scaledGeometry(12)
+                Layout.preferredHeight: Theme.scaledGeometry(12)
                 kind: root.filesExpanded ? "chevronDown" : "chevronRight"
                 foreground: Theme.palette.mutedText
             }
@@ -77,7 +77,7 @@ Rectangle {
                 objectName: "changedFilesDiffButton"
                 visible: root.hasDiff
                 Layout.preferredWidth: diffButtonLabel.implicitWidth + 24
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: Theme.scaledGeometry(28)
                 radius: Theme.radiusSmall
                 color: diffHover.hovered
                     ? Theme.palette.hover : Theme.palette.chatControl
@@ -86,10 +86,10 @@ Rectangle {
 
                 RowLayout {
                     anchors.centerIn: parent
-                    spacing: 5
+                    spacing: Theme.scaledGeometry(5)
                     VrLineIcon {
-                        Layout.preferredWidth: 12
-                        Layout.preferredHeight: 12
+                        Layout.preferredWidth: Theme.scaledGeometry(12)
+                        Layout.preferredHeight: Theme.scaledGeometry(12)
                         kind: "edit"
                         foreground: Theme.palette.mutedText
                     }
@@ -128,7 +128,7 @@ Rectangle {
             id: fileFlow
             Layout.fillWidth: true
             Layout.preferredHeight: childrenRect.height
-            spacing: 6
+            spacing: Theme.scaledGeometry(6)
 
             Repeater {
                 model: root.visibleFiles
@@ -136,19 +136,19 @@ Rectangle {
                 Rectangle {
                     required property var modelData
                     width: Math.min(fileChipText.implicitWidth + 20, fileFlow.width)
-                    height: 26
+                    height: Theme.scaledGeometry(26)
                     radius: Theme.radiusSmall
                     color: Theme.palette.chatControl
 
                     Row {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
+                        spacing: Theme.scaledGeometry(6)
                         VrLineIcon {
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 12
-                            height: 12
+                            width: Theme.scaledGeometry(12)
+                            height: Theme.scaledGeometry(12)
                             kind: "files"
                             foreground: Theme.palette.mutedText
                         }
@@ -185,7 +185,7 @@ Rectangle {
             objectName: "changedFilesDiffBody"
             visible: root.diffExpanded && root.hasDiff
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.scaledGeometry(8)
 
             Repeater {
                 model: root.files
@@ -194,7 +194,7 @@ Rectangle {
                     required property var modelData
                     visible: String(modelData.diff || "").length > 0
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.scaledGeometry(4)
 
                     Text {
                         Layout.fillWidth: true
@@ -218,7 +218,7 @@ Rectangle {
                         TextEdit {
                             id: diffText
                             anchors.fill: parent
-                            anchors.margins: 8
+                            anchors.margins: Theme.scaledGeometry(8)
                             text: String(modelData.diff || "")
                             textFormat: TextEdit.PlainText
                             readOnly: true

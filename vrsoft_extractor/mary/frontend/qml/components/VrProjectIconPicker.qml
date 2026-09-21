@@ -111,11 +111,11 @@ Popup {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.rightMargin: 12
-            Layout.topMargin: 14
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.rightMargin: Theme.scaledGeometry(12)
+            Layout.topMargin: Theme.scaledGeometry(14)
             Layout.bottomMargin: 2
-            spacing: 8
+            spacing: Theme.scaledGeometry(8)
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
@@ -138,8 +138,8 @@ Popup {
                 Layout.alignment: Qt.AlignTop
                 iconKind: "close"
                 iconSize: 11
-                implicitWidth: 28
-                implicitHeight: 28
+                implicitWidth: Theme.scaledGeometry(28)
+                implicitHeight: Theme.scaledGeometry(28)
                 foreground: Theme.palette.mutedText
                 Accessible.name: "Fechar"
                 onClicked: root.close()
@@ -148,17 +148,17 @@ Popup {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.topMargin: 12
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.topMargin: Theme.scaledGeometry(12)
             Layout.preferredWidth: tabPills.implicitWidth
-            Layout.maximumWidth: 320
-            Layout.preferredHeight: 32
-            radius: 8
+            Layout.maximumWidth: Theme.scaledGeometry(320)
+            Layout.preferredHeight: Theme.scaledGeometry(32)
+            radius: Theme.scaledGeometry(8)
             color: Theme.palette.chatControl
             RowLayout {
                 id: tabPills
                 anchors.fill: parent
-                anchors.margins: 3
+                anchors.margins: Theme.scaledGeometry(3)
                 spacing: 2
                 Repeater {
                     model: [
@@ -173,7 +173,7 @@ Popup {
                         objectName: "iconPickerTab" + modelData.key.charAt(0).toUpperCase() + modelData.key.slice(1)
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: 6
+                        radius: Theme.scaledGeometry(6)
                         color: tabPill.selected ? Theme.palette.chatComposer
                             : (tabHover.hovered ? Qt.rgba(255, 255, 255, 0.05) : "transparent")
                         border.width: tabPill.selected ? 1 : 0
@@ -195,10 +195,10 @@ Popup {
 
         Text {
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.rightMargin: 18
-            Layout.topMargin: 12
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.rightMargin: Theme.scaledGeometry(18)
+            Layout.topMargin: Theme.scaledGeometry(12)
+            Layout.bottomMargin: Theme.scaledGeometry(6)
             text: "Color"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
@@ -210,11 +210,11 @@ Popup {
             id: colorGrid
             objectName: "iconPickerColors"
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.rightMargin: 18
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.rightMargin: Theme.scaledGeometry(18)
             columns: 9
-            columnSpacing: 8
-            rowSpacing: 8
+            columnSpacing: Theme.scaledGeometry(8)
+            rowSpacing: Theme.scaledGeometry(8)
             Repeater {
                 model: [
                     "#6B7280", "#EF4444", "#F97316", "#F59E0B", "#EAB308",
@@ -227,9 +227,9 @@ Popup {
                     required property var modelData
                     readonly property string dotColor: String(modelData)
                     readonly property bool selected: root.selColor.toLowerCase() === dotColor.toLowerCase()
-                    Layout.preferredWidth: 24
-                    Layout.preferredHeight: 24
-                    radius: 12
+                    Layout.preferredWidth: Theme.scaledGeometry(24)
+                    Layout.preferredHeight: Theme.scaledGeometry(24)
+                    radius: Theme.scaledGeometry(12)
                     color: dotColor
                     border.width: colorDot.selected ? 2 : 0
                     border.color: "#FFFFFF"
@@ -240,7 +240,7 @@ Popup {
                         visible: colorDot.selected
                         anchors.fill: parent
                         anchors.margins: -4
-                        radius: 16
+                        radius: Theme.scaledGeometry(16)
                         color: "transparent"
                         border.width: 1
                         border.color: Qt.alpha("#FFFFFF", 0.45)
@@ -254,11 +254,11 @@ Popup {
             objectName: "iconPickerSearch"
             visible: root.pickerTab === "icons"
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.rightMargin: 18
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.rightMargin: Theme.scaledGeometry(18)
             Layout.topMargin: visible ? 12 : 0
             Layout.preferredHeight: visible ? 36 : 0
-            leftPadding: 30
+            leftPadding: Theme.scaledGeometry(30)
             placeholderText: "Search all Lucide icons"
             text: root.searchText
             font.pixelSize: Theme.fontSize(12)
@@ -271,10 +271,10 @@ Popup {
             }
             VrLineIcon {
                 anchors.left: parent.left
-                anchors.leftMargin: 8
+                anchors.leftMargin: Theme.scaledGeometry(8)
                 anchors.verticalCenter: parent.verticalCenter
-                width: 14
-                height: 14
+                width: Theme.scaledGeometry(14)
+                height: Theme.scaledGeometry(14)
                 kind: "search"
                 foreground: Theme.palette.mutedText
             }
@@ -283,10 +283,10 @@ Popup {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 10
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.scaledGeometry(12)
+            Layout.rightMargin: Theme.scaledGeometry(12)
+            Layout.topMargin: Theme.scaledGeometry(10)
+            Layout.bottomMargin: Theme.scaledGeometry(6)
             currentIndex: root.pickerTab === "emoji" ? 1 : (root.pickerTab === "monogram" ? 2 : 0)
 
             GridView {
@@ -301,17 +301,17 @@ Popup {
                     id: iconCell
                     required property var modelData
                     readonly property bool selected: root.selKind === modelData.kind
-                    width: 48
-                    height: 48
-                    radius: 9
+                    width: Theme.scaledGeometry(48)
+                    height: Theme.scaledGeometry(48)
+                    radius: Theme.scaledGeometry(9)
                     color: iconCell.selected ? Qt.alpha(root.selColor, 0.20)
                         : (cellHover.hovered ? Theme.palette.chatControl : "transparent")
                     border.width: iconCell.selected ? 1 : 0
                     border.color: root.selColor
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: 24
-                        height: 24
+                        width: Theme.scaledGeometry(24)
+                        height: Theme.scaledGeometry(24)
                         kind: iconCell.modelData.kind
                         foreground: iconCell.selected ? root.selColor : Theme.palette.mutedText
                     }
@@ -342,9 +342,9 @@ Popup {
                     required property var modelData
                     readonly property string glyph: String(modelData)
                     readonly property bool selected: root.selEmoji === glyph
-                    width: 42
-                    height: 42
-                    radius: 9
+                    width: Theme.scaledGeometry(42)
+                    height: Theme.scaledGeometry(42)
+                    radius: Theme.scaledGeometry(9)
                     color: emojiCell.selected ? Theme.palette.chatControl : "transparent"
                     border.width: emojiCell.selected ? 1 : 0
                     border.color: Theme.palette.focus
@@ -359,8 +359,8 @@ Popup {
             }
 
             ColumnLayout {
-                spacing: 12
-                Item { Layout.fillWidth: true; Layout.preferredHeight: 6 }
+                spacing: Theme.scaledGeometry(12)
+                Item { Layout.fillWidth: true; Layout.preferredHeight: Theme.scaledGeometry(6) }
                 VrProjectIcon {
                     Layout.alignment: Qt.AlignHCenter
                     boxSize: 64
@@ -375,8 +375,8 @@ Popup {
                     id: monogramField
                     objectName: "iconPickerMonogramField"
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 120
-                    Layout.preferredHeight: 40
+                    Layout.preferredWidth: Theme.scaledGeometry(120)
+                    Layout.preferredHeight: Theme.scaledGeometry(40)
                     text: root.selText
                     placeholderText: "AB"
                     horizontalAlignment: Text.AlignHCenter
@@ -396,8 +396,8 @@ Popup {
                 }
                 Text {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 24
-                    Layout.rightMargin: 24
+                    Layout.leftMargin: Theme.scaledGeometry(24)
+                    Layout.rightMargin: Theme.scaledGeometry(24)
                     text: "One or two characters. Leave empty to use the project initials."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
@@ -417,31 +417,31 @@ Popup {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 18
-            Layout.rightMargin: 18
-            Layout.topMargin: 10
-            Layout.bottomMargin: 12
-            spacing: 10
+            Layout.leftMargin: Theme.scaledGeometry(18)
+            Layout.rightMargin: Theme.scaledGeometry(18)
+            Layout.topMargin: Theme.scaledGeometry(10)
+            Layout.bottomMargin: Theme.scaledGeometry(12)
+            spacing: Theme.scaledGeometry(10)
             Item { Layout.fillWidth: true }
             VrButton {
                 objectName: "iconPickerCancel"
                 text: "Cancel"
                 variant: "secondary"
-                implicitHeight: 32
+                implicitHeight: Theme.scaledGeometry(32)
                 onClicked: root.close()
             }
             VrButton {
                 objectName: "iconPickerSave"
                 text: "Save icon"
                 variant: "primary"
-                implicitHeight: 32
+                implicitHeight: Theme.scaledGeometry(32)
                 onClicked: root.saveCurrent()
             }
         }
     }
 
     background: Rectangle {
-        radius: 14
+        radius: Theme.scaledGeometry(14)
         color: Theme.palette.chatSidebar
         border.width: 1
         border.color: Theme.palette.chatBorder

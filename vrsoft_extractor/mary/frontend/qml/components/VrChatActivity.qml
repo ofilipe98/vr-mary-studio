@@ -29,7 +29,7 @@ Rectangle {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: 4
+        spacing: Theme.scaledGeometry(4)
 
         Rectangle {
             id: activityHeader
@@ -42,17 +42,17 @@ Rectangle {
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
-            radius: 7
+            Layout.preferredHeight: Theme.scaledGeometry(30)
+            radius: Theme.scaledGeometry(7)
             color: "transparent"
 
             RowLayout {
                 anchors.fill: parent
-                spacing: 6
+                spacing: Theme.scaledGeometry(6)
 
                 VrLineIcon {
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
+                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                    Layout.preferredHeight: Theme.scaledGeometry(16)
                     kind: root.headerIcon()
                     foreground: Theme.palette.mutedText
                 }
@@ -67,6 +67,12 @@ Rectangle {
                     font.weight: Font.Normal
                     horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
+                }
+                VrLineIcon {
+                    Layout.preferredWidth: Theme.iconSmall
+                    Layout.preferredHeight: Theme.iconSmall
+                    kind: root.expanded ? "chevronDown" : "chevronRight"
+                    foreground: Theme.palette.mutedText
                 }
             }
 
@@ -87,7 +93,7 @@ Rectangle {
             visible: root.expanded || root.visibleItems().length > 0
             Layout.fillWidth: true
             Layout.leftMargin: 0
-            spacing: 3
+            spacing: Theme.scaledGeometry(3)
 
             TextEdit {
                 visible: !root.items.some(function(item) { return item.itemType === "reasoning" })

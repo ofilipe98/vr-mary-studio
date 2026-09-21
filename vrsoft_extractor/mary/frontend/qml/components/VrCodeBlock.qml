@@ -38,7 +38,7 @@ Rectangle {
         onTriggered: root.copied = false
     }
 
-    radius: 12
+    radius: Theme.scaledGeometry(12)
     clip: true
     color: Theme.palette.codeSurface
     border.width: 1
@@ -54,7 +54,7 @@ Rectangle {
         Rectangle {
             id: headerRow
             width: parent.width
-            height: 32
+            height: Theme.scaledGeometry(32)
             radius: root.radius
             color: Theme.palette.appearance === "light"
                 ? Qt.darker(Theme.palette.codeSurface, 1.05)
@@ -82,9 +82,9 @@ Rectangle {
             Text {
                 id: badgeLabel
                 anchors.left: parent.left
-                anchors.leftMargin: 12
+                anchors.leftMargin: Theme.scaledGeometry(12)
                 anchors.right: wrapButton.left
-                anchors.rightMargin: 8
+                anchors.rightMargin: Theme.scaledGeometry(8)
                 anchors.verticalCenter: parent.verticalCenter
                 elide: Text.ElideRight
                 text: root.language
@@ -100,10 +100,10 @@ Rectangle {
                 id: wrapButton
                 objectName: "codeBlockWrap"
                 anchors.right: copyButton.left
-                anchors.rightMargin: 4
+                anchors.rightMargin: Theme.scaledGeometry(4)
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: 26
-                implicitHeight: 26
+                implicitWidth: Theme.scaledGeometry(26)
+                implicitHeight: Theme.scaledGeometry(26)
                 iconSize: 14
                 iconKind: "wrapText"
                 checkable: true
@@ -118,10 +118,10 @@ Rectangle {
                 id: copyButton
                 objectName: "codeBlockCopy"
                 anchors.right: parent.right
-                anchors.rightMargin: 8
+                anchors.rightMargin: Theme.scaledGeometry(8)
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: 26
-                implicitHeight: 26
+                implicitWidth: Theme.scaledGeometry(26)
+                implicitHeight: Theme.scaledGeometry(26)
                 iconSize: 14
                 iconKind: root.copied ? "check" : "copy"
                 foreground: root.copied
@@ -147,10 +147,10 @@ Rectangle {
                 id: codeBody
                 objectName: "codeBlockBody"
                 width: codeViewport.width
-                leftPadding: 14
-                rightPadding: 14
-                topPadding: 10
-                bottomPadding: 10
+                leftPadding: Theme.scaledGeometry(14)
+                rightPadding: Theme.scaledGeometry(14)
+                topPadding: Theme.scaledGeometry(10)
+                bottomPadding: Theme.scaledGeometry(10)
                 text: root.code
                 textFormat: TextEdit.PlainText
                 readOnly: true

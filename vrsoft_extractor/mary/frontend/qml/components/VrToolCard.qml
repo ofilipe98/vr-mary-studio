@@ -35,13 +35,13 @@ Item {
         id: mainColumn
         anchors.left: parent.left
         anchors.right: parent.right
-        spacing: 4
+        spacing: Theme.scaledGeometry(4)
         Rectangle {
             id: header
             objectName: "toolHeader"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.max(28, title.implicitHeight + 8)
-            radius: 5
+            radius: Theme.scaledGeometry(5)
             color: "transparent"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
@@ -53,12 +53,12 @@ Item {
             Keys.onSpacePressed: root.detailExpanded = !root.detailExpanded
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 6
-                spacing: 7
+                anchors.leftMargin: Theme.scaledGeometry(4)
+                anchors.rightMargin: Theme.scaledGeometry(6)
+                spacing: Theme.scaledGeometry(7)
                 VrLineIcon {
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
+                    Layout.preferredWidth: Theme.scaledGeometry(16)
+                    Layout.preferredHeight: Theme.scaledGeometry(16)
                     kind: root.isError ? "close" : (root.isWaitingApproval ? "lock" : "hammer")
                     foreground: root.isError ? Theme.palette.danger : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText)
                     opacity: root.isError ? 0.65 : 1
@@ -82,8 +82,8 @@ Item {
                     color: Theme.palette.mutedText
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: 10
-                    Layout.preferredHeight: 10
+                    Layout.preferredWidth: Theme.scaledGeometry(10)
+                    Layout.preferredHeight: Theme.scaledGeometry(10)
                     kind: root.detailExpanded ? "chevronDown" : "chevronRight"
                     foreground: Theme.palette.mutedText
                 }
@@ -94,9 +94,9 @@ Item {
         Rectangle {
             visible: root.detailExpanded
             Layout.fillWidth: true
-            Layout.leftMargin: 26
+            Layout.leftMargin: Theme.scaledGeometry(26)
             Layout.preferredHeight: body.implicitHeight + 20
-            radius: 6
+            radius: Theme.scaledGeometry(6)
             color: Theme.palette.chatBackground
             border.width: 1
             border.color: Theme.palette.chatBorder
@@ -105,8 +105,8 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.margins: 10
-                spacing: 8
+                anchors.margins: Theme.scaledGeometry(10)
+                spacing: Theme.scaledGeometry(8)
                 RowLayout {
                     Layout.fillWidth: true
                     Text {
@@ -132,7 +132,7 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                         }
                         background: Rectangle {
-                            radius: 4
+                            radius: Theme.scaledGeometry(4)
                             color: copyButton.hovered ? Theme.palette.hover : "transparent"
                             border.width: copyButton.activeFocus ? 1 : 0
                             border.color: Theme.palette.focus

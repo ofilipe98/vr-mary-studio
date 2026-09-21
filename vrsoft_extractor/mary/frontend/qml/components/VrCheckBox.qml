@@ -5,15 +5,15 @@ import "../theme"
 CheckBox {
     id: control
 
-    spacing: 8
+    spacing: Theme.scaledGeometry(8)
     focusPolicy: Qt.StrongFocus
 
     indicator: Rectangle {
-        implicitWidth: 20
-        implicitHeight: 20
+        implicitWidth: Theme.scaledGeometry(20)
+        implicitHeight: Theme.scaledGeometry(20)
         x: control.leftPadding
         y: parent.height / 2 - height / 2
-        radius: 5
+        radius: Theme.scaledGeometry(5)
         color: control.checked ? Theme.palette.accessibleOrange : Theme.palette.surfaceRaised
         border.width: control.activeFocus ? 2 : 1
         border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.border
