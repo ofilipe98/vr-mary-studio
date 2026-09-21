@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -624,7 +625,7 @@ class ChatOrchestrator:
             handle_turn_event = self._guarded_turn_callback(conversation_id)
 
             def run() -> None:
-                nonlocal application_contexts, code_analysis_manifest_sha256, orchestration_request
+                nonlocal application_contexts, code_analysis_release, code_analysis_manifest_sha256, orchestration_request
                 self._execution_context.owner = message_id
                 try:
                     from .knowledge_access import publish_scope
@@ -635,10 +636,13 @@ class ChatOrchestrator:
                         from .code_context import application_context_warning
                         code_scope_warning = application_context_warning(text, application_contexts)
                         if code_scope_warning:
-                            application_contexts = []
+                            application_contexts = None
                     except (ValueError, RuntimeError) as exc:
-                        application_contexts = []
+                        application_contexts = None
                         code_scope_warning = f"O contexto de codigo selecionado esta indisponivel: {exc}"
+                    if code_scope_warning:
+                        code_analysis_release = "current"
+                        code_analysis_manifest_sha256 = ""
                     if application_contexts is not None:
                         code_analysis_manifest_sha256 = ""
                     from .workspace import is_managed_conversation_workspace
@@ -1873,6 +1877,13 @@ class ChatOrchestrator:
         # Stable prefix first: identical across turns so provider prompt
         # caching applies. Variable context comes next; the user request
         # always closes the prompt.
+        environment_note = ""
+        if os.name == "nt":
+            environment_note = (
+                " AMBIENTE: terminal Windows PowerShell; comandos nativos que escrevem em stderr "
+                "(ex.: `java -version`) retornam código 1 quando a saída é redirecionada com `2>&1` — "
+                'para checar versões use `cmd /c "java -version"`.'
+            )
         prefix = (
             "MODO VR ATIVO — CONTRATO DE IDENTIDADE:\n"
             + VRMASTER_DIRECT_RESPONSE_POLICY
@@ -1882,6 +1893,7 @@ class ChatOrchestrator:
             + f"Para uma busca estruturada, use `{search_tool}`. "
             + pull_hint
             + "A pasta de trabalho da conversa é o projeto atual e é independente da fonte VR."
+            + environment_note
         )
         middle_parts: list[str] = []
         if has_images:

@@ -63,11 +63,12 @@ Item {
                     foreground: root.isError ? Theme.palette.danger : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText)
                     opacity: root.isError ? 0.65 : 1
                 }
-                Text {
+                VrShimmerText {
                     id: title
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     text: root.titleText
+                    running: root.isRunning
                     color: root.isRunning ? Theme.palette.text : Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(13)
@@ -87,6 +88,7 @@ Item {
                     foreground: Theme.palette.mutedText
                 }
             }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.detailExpanded = !root.detailExpanded }
         }
         Rectangle {

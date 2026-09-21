@@ -76,9 +76,10 @@ Item {
                             : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
                 }
 
-                Text {
+                VrShimmerText {
                     Layout.fillWidth: true
                     text: root.commandText
+                    running: root.isRunning
                     color: root.isError
                         ? Theme.palette.danger
                         : (root.isWaitingApproval
@@ -139,40 +140,7 @@ Item {
                 }
             }
 
-            // Specular highlight shimmer animation on running tool call (disabled when reduceMotion is set)
-            Rectangle {
-                id: specularShimmer
-                anchors.fill: parent
-                radius: parent.radius
-                clip: true
-                color: "transparent"
-                visible: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
-
-                Rectangle {
-                    id: shimmerBeam
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: Math.max(120, parent.width * 0.4)
-                    x: -width
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: "transparent" }
-                        GradientStop { position: 0.35; color: Qt.rgba(255, 255, 255, 0.0) }
-                        GradientStop { position: 0.5; color: Qt.rgba(255, 255, 255, 0.28) }
-                        GradientStop { position: 0.65; color: Qt.rgba(255, 255, 255, 0.0) }
-                        GradientStop { position: 1.0; color: "transparent" }
-                    }
-                    NumberAnimation on x {
-                        running: root.isRunning && !(typeof frontend !== "undefined" && frontend.reduceMotion)
-                        from: -shimmerBeam.width
-                        to: specularShimmer.width + shimmerBeam.width
-                        duration: 1500
-                        loops: Animation.Infinite
-                        easing.type: Easing.Linear
-                    }
-                }
-            }
-
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler {
                 onTapped: root.detailExpanded = !root.detailExpanded
             }

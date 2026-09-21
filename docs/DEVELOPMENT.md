@@ -83,13 +83,17 @@ preserva imports existentes. O fan-out e seus checkpoints ficam em
 O output do chat usa `frontend/text_rendering.py` para reconhecer cercas de
 código, tabelas e fontes; a normalização em `bridges/presentation.py` compartilha
 as mesmas cercas para preservar o conteúdo do código durante streaming.
+`frontend/file_links.py` reconhece caminhos de arquivo em inline code e os
+converte em links `vr-file:`; o clique chama `ChatBridge.openFileReference`, que
+abre o arquivo na superfície Arquivos pelo sinal `filePreviewRequested`.
 `VrAssistantMessage.qml` atualiza os blocos existentes, preservando os controles
 de quebra de linha e ampliação. `VrTableBlock.qml` mantém seleção nativa, rolagem
 horizontal e cópia em Markdown, CSV ou TSV; as divisórias seguem as posições
-reais das linhas no documento Qt. Os testes `test_chat_output_rendering.py` e
-`test_chat_presentation.py` cobrem conteúdo, clipboard, tema e posição de leitura.
-O script `visual_chat_review.py` também captura tabelas e prompts longos nos
-temas claro/escuro, janela estreita e escala de 150%.
+reais das linhas no documento Qt. Os testes `test_chat_output_rendering.py`,
+`test_file_links.py` e `test_chat_presentation.py` cobrem conteúdo, clipboard,
+tema, posição de leitura e os chips de arquivo.
+O script `visual_chat_review.py` também captura tabelas, chips de arquivo e
+prompts longos nos temas claro/escuro, janela estreita e escala de 150%.
 
 A cobertura das releases é consultada por um worker em `bridges/codeadmin.py`.
 O worker devolve dados pelo sinal Qt; somente a thread da interface altera o

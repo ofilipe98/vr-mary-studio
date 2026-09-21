@@ -182,6 +182,23 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             assert all(a >= b for a, b in zip(heights, heights[1:]))
             assert abs(timeline.property('contentY') - (max_y - 60)) < 1
 
+            # Contorno do VR Ultra: cobre o card inteiro, inclusive a silhueta
+            # campo + bandeja do modo retraído, sem recuo lateral.
+            chat.setVrMode('ultra')
+            QTest.qWait(80)
+            ultra_border = window.findChild(QObject, 'chatUltraBorder')
+            assert ultra_border is not None
+            assert ultra_border.property('visible')
+            assert abs(ultra_border.width() - (composer.width() + 8)) < 1
+            assert abs(ultra_border.height() - (composer.height() + 8)) < 1
+            assert abs((ultra_border.x() + ultra_border.width() / 2)
+                       - (composer.x() + composer.width() / 2)) < 1
+            assert abs((ultra_border.y() + ultra_border.height() / 2)
+                       - (composer.y() + composer.height() / 2)) < 1
+            chat.setVrMode('off')
+            QTest.qWait(80)
+            assert not ultra_border.property('visible')
+
             heights.clear()
             timeline.positionViewAtEnd()
             timeline.setProperty('followTail', True)

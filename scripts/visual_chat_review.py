@@ -85,6 +85,8 @@ WHERE codigo = 113;
 
 Consulte também a [documentação do projeto](https://example.com/docs) para complementar a análise.
 
+O fluxo fica em `mary/frontend/file_links.py:12` e o método `calcularImpostoItem` permanece inline code.
+
 Fontes consultadas:
 - [MAPA DE FUNÇÕES](https://example.com/funcoes)
 - [Manual do PDV · permissões de operação](https://example.com/pdv)
@@ -237,7 +239,7 @@ Fontes consultadas:
             captures.append(expanded_capture)
 
             anonymous_titles = [title for title in live_titles if "anon:exec:noid:" in title]
-            settled_disclosure_only = settled_cards == 0 and settled_header == "Worked for 13s"
+            settled_disclosure_only = settled_cards == 0 and settled_header == "Concluído em 13s"
             if live_cards != len(toolcalling_items):
                 raise RuntimeError(f"Live tool trace rendered {live_cards} of {len(toolcalling_items)} cards")
             if not settled_disclosure_only:

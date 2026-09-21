@@ -5,6 +5,10 @@ import QtQuick
 QtObject {
     // Convert the Python QVariantMap once per theme change, not per hover.
     readonly property var palette: frontend.palette
+    // Identidade fixa do VR Ultra: anel, halo e realces do composer mantêm o
+    // laranja da marca mesmo quando o tema remapeia o acento (temas T3 levam
+    // brandOrange/accessibleOrange para messageAction).
+    readonly property color ultraAccent: "#FF7200"
     readonly property string fontFamily: (frontend && frontend.effectiveInterfaceFontFamily) ? frontend.effectiveInterfaceFontFamily : ((frontend && frontend.interfaceFontFamily) ? frontend.interfaceFontFamily : "Segoe UI")
     readonly property string monospaceFontFamily: frontend.monospaceFontFamily
     readonly property string promptFontFamily: frontend.promptFontFamily

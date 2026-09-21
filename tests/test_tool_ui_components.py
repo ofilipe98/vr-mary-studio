@@ -234,7 +234,7 @@ def test_vr_chat_activity_renders_mixed_tools_without_warnings(qml_env):
         item.setProperty("elapsedLabel", "3s")
         app.processEvents()
 
-        assert item.property("headerLabel") == "Worked for 3s"
+        assert item.property("headerLabel") == "Concluído em 3s"
         assert len(item.property("items")) == 3
     finally:
         item.deleteLater()
@@ -284,7 +284,7 @@ def test_vr_chat_activity_settled_success_folds_tools_behind_worked_for(qml_env)
         item.setProperty("elapsedLabel", "42s")
         app.processEvents()
 
-        assert item.property("headerLabel") == "Worked for 42s"
+        assert item.property("headerLabel") == "Concluído em 42s"
         assert _activity_cards(item) == []
 
         item.setProperty("expanded", True)
@@ -341,7 +341,7 @@ def test_vr_chat_activity_settled_file_changes_fold_behind_worked_for(qml_env) -
         item.setProperty("elapsedLabel", "42s")
         app.processEvents()
 
-        assert item.property("headerLabel") == "Worked for 42s"
+        assert item.property("headerLabel") == "Concluído em 42s"
         cards = _activity_cards(item)
         for name in ("toolCard", "commandCard", "toolGroupCard", "changedFilesCard"):
             assert not any(card.objectName() == name for card in cards), name

@@ -1,9 +1,16 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Templates as T
 import "../theme"
 
 TextArea {
     id: control
+
+    // Substitui o menu nativo do Qt 6.11 (Undo/Redo/Delete em inglês e sem
+    // atalhos) pelo menu temático do app.
+    T.ContextMenu.menu: VrEditContextMenu {
+        editor: control
+    }
 
     leftPadding: 13
     rightPadding: 13

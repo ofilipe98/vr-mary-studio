@@ -9,9 +9,9 @@ import time
 from visual_chat_review import (
     QApplication, QSettings, QObject, QTest, MarySettings, MaryDatabase,
     FrontendBridge, ChatBridge, StudioBridge, create_engine,
-    _apply_application_font, repaint_icons, find_items, Qt,
+    _apply_application_font, repaint_icons, find_items,
 )
-from PySide6.QtCore import QPointF, QPoint
+from PySide6.QtCore import QPointF, QPoint, Qt
 
 
 def main():
@@ -135,6 +135,33 @@ def main():
                 QTest.keyClick(window, Qt.Key_Escape)
                 QTest.qWait(80)
                 assert not dialog.property('visible')
+                # Retraído com VR Ultra: o contorno segue a silhueta campo +
+                # bandeja, sem recuo lateral e sem sobra sob os cantos da bandeja.
+                for _ in range(12):
+                    db.add_message(cid, 'user', 'Mensagem para rolagem.\n\n' * 3)
+                    db.add_message(cid, 'assistant', 'Resposta para rolagem.\n\n' * 3)
+                chat.refresh()
+                chat.selectConversationId(cid)
+                QTest.qWait(120)
+                chat.setVrMode('ultra')
+                timeline = window.findChild(QObject, 'messageList')
+                timeline.setProperty('followTail', False)
+                timeline.setProperty('contentY', 0)
+                QTest.qWait(250)
+                assert card.property('isCompact')
+                assert arc.property('visible')
+                assert abs(arc.width() - (card.width() + 8)) < 1
+                assert abs(arc.height() - (card.height() + 8)) < 1
+                # O realce do Ultra não pode herdar o acento do tema (ocean usa
+                # messageAction teal); captura os dois temas para inspeção.
+                for theme in ('dark_orange', 'ocean'):
+                    frontend.setTheme(theme)
+                    QTest.qWait(120)
+                    repaint_icons(window.contentItem())
+                    QTest.qWait(40)
+                    name = f'border-compact-{theme}.png'
+                    window.grabWindow().save(str(output / name))
+                    results.append(name)
                 warnings = [w.toString() for w in engine._qml_warnings]
                 assert not warnings, warnings
                 (output / 'results.json').write_text(json.dumps(dict(captures=results, warnings=warnings), indent=2), encoding='utf-8')

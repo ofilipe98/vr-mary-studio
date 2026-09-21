@@ -110,6 +110,7 @@ def check_code_availability(
 
     try:
         application_contexts = resolve_code_contexts(root, application_contexts)
+        release_id = _resolve_release_id(root, release_id)
         index = JavaCodeIndex(root)
         if application_contexts:
             predicate, params = _source_scope(application_contexts, release_id)

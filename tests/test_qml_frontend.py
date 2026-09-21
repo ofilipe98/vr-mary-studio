@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, Qt, QUrl, QMetaObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QContextMenuEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -631,6 +631,54 @@ class QmlFrontendTest(unittest.TestCase):
                 settings_navigation.property("color"),
                 QColor(bridge.palette["navigationBackground"]),
             )
+            window.close()
+            engine.deleteLater()
+            self.application.processEvents()
+
+    def test_text_fields_expose_themed_edit_context_menu(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+
+            composer_input = window.findChild(QObject, "chatComposerInput")
+            self.assertIsNotNone(composer_input)
+            # The themed menu is created lazily on the first context-menu
+            # request, so the control must receive one before it can be found.
+            composer_input.forceActiveFocus()
+            self.application.processEvents()
+            context_event = QContextMenuEvent(
+                QContextMenuEvent.Mouse, QPoint(10, 10), QPoint(10, 10)
+            )
+            self.application.sendEvent(composer_input, context_event)
+            self.application.processEvents()
+            menu = composer_input.findChild(QObject, "textEditContextMenu")
+            self.assertIsNotNone(menu)
+
+            expected = {
+                "textEditContextCut": "Recortar",
+                "textEditContextCopy": "Copiar",
+                "textEditContextPaste": "Colar",
+                "textEditContextSelectAll": "Selecionar tudo",
+            }
+            for object_name, label in expected.items():
+                entry = menu.findChild(QObject, object_name)
+                self.assertIsNotNone(entry, object_name)
+                self.assertEqual(entry.property("text"), label)
+
             window.close()
             engine.deleteLater()
             self.application.processEvents()
@@ -3983,6 +4031,18 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIn("required property bool vrEnabled", chat_preview_qml)
             self.assertIn('text: conversationItem.vrMode === "ultra" ? "VR Ultra" : "VR"', chat_preview_qml)
             self.assertIn("Theme.palette.accessibleOrange", chat_preview_qml)
+            composer_qml = (
+                MAIN_QML.parent / "components" / "VrChatComposer.qml"
+            ).read_text(encoding="utf-8")
+            theme_qml = (
+                MAIN_QML.parent / "theme" / "Theme.qml"
+            ).read_text(encoding="utf-8")
+            # VR Ultra keeps the fixed orange identity (ring/halo/border/label)
+            # instead of inheriting the theme's remapped accent.
+            self.assertIn("readonly property color ultraAccent", theme_qml)
+            self.assertIn("readonly property bool ultraActive", composer_qml)
+            self.assertIn("Theme.ultraAccent", composer_qml)
+            self.assertIn("Qt.alpha(Theme.ultraAccent, 0.12)", chat_preview_qml)
 
     def test_vr_mode_tag_stays_fixed_until_question_sent_with_different_mode(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as temporary:

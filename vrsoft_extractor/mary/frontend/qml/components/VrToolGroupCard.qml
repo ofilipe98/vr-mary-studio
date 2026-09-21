@@ -74,9 +74,10 @@ Item {
                             : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
                 }
 
-                Text {
+                VrShimmerText {
                     Layout.fillWidth: true
                     text: root.titleText
+                    running: root.isRunning
                     color: root.isError
                         ? Theme.palette.danger
                         : (root.isRunning ? Theme.palette.text : Theme.palette.mutedText)
@@ -135,6 +136,7 @@ Item {
                 }
             }
 
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler {
                 onTapped: root.groupExpanded = !root.groupExpanded
             }

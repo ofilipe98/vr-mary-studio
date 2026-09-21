@@ -109,6 +109,16 @@ class CodeSyntaxHighlighter(QSyntaxHighlighter):
 
 FENCE_START_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
 
+# Kept local to avoid a circular import with file_links (which reuses fences).
+_FILE_REFERENCE_SCHEMES = ("vr-file:", "file:")
+
+
+def _is_file_reference_anchor(fragment_format: QTextCharFormat) -> bool:
+    if not fragment_format.isAnchor():
+        return False
+    href = str(fragment_format.anchorHref() or "").strip().casefold()
+    return href.startswith(_FILE_REFERENCE_SCHEMES)
+
 
 def fenced_blocks(markdown: str) -> list[dict[str, str]]:
     """Share fence boundaries between display normalization and QML cards."""
@@ -320,11 +330,10 @@ def _count_horizontal_rules(markdown: str) -> int:
 
 def _style_document_tables(
     document: QTextDocument,
-    dark: bool,
+    palette: dict[str, str],
     ranges: list[tuple[int, int]],
 ) -> None:
     """Style tables with quiet horizontal rules and record their extents."""
-    palette = brand_palette("dark_orange" if dark else "light")
     border = QColor(palette["chatBorder"])
 
     def visit(frame) -> None:
@@ -377,12 +386,13 @@ def apply_message_document_style(
     markdown: str = "",
     dark: bool | None = None,
     monospace_family: str = "Consolas",
+    palette: dict[str, str] | None = None,
 ) -> None:
     """Commit formatting once instead of laying out after every fragment."""
     cursor = QTextCursor(document)
     cursor.beginEditBlock()
     try:
-        _apply_message_document_style(document, markdown, dark, monospace_family)
+        _apply_message_document_style(document, markdown, dark, monospace_family, palette)
     finally:
         cursor.endEditBlock()
 
@@ -392,15 +402,17 @@ def _apply_message_document_style(
     markdown: str = "",
     dark: bool | None = None,
     monospace_family: str = "Consolas",
+    palette: dict[str, str] | None = None,
 ) -> None:
     """Apply the T3-like rhythm that Qt's Markdown importer omits."""
-    if dark is None:
-        application = QApplication.instance()
-        dark = bool(
-            application
-            and application.property("vr_theme") == "dark_orange"
-        )
-    palette = brand_palette("dark_orange" if dark else "light")
+    if palette is None:
+        if dark is None:
+            application = QApplication.instance()
+            dark = bool(
+                application
+                and application.property("vr_theme") == "dark_orange"
+            )
+        palette = brand_palette("dark_orange" if dark else "light")
     text_color = QColor(palette["text"])
     heading_color = QColor(palette["headingText"])
     muted_color = QColor(palette["mutedText"])
@@ -416,7 +428,7 @@ def _apply_message_document_style(
         base_px = document.defaultFont().pointSizeF() * 96 / 72
 
     table_ranges: list[tuple[int, int]] = []
-    _style_document_tables(document, dark, table_ranges)
+    _style_document_tables(document, palette, table_ranges)
     rule_budget = _count_horizontal_rules(markdown)
 
     def inside_table(position: int) -> bool:
@@ -534,6 +546,14 @@ def _apply_message_document_style(
                 fragment_format.setProperty(QTextFormat.FontPixelSize, round(base_px * 0.9))
                 fragment_format.setForeground(code_text)
                 fragment_format.setBackground(code_background)
+            elif _is_file_reference_anchor(fragment_format):
+                # t3code parity: the chip reads like inline code and follows the
+                # active theme foreground instead of the fixed link accent.
+                fragment_format.setFontFamilies([monospace_family])
+                fragment_format.setProperty(QTextFormat.FontPixelSize, round(base_px * 0.9))
+                fragment_format.setForeground(code_text)
+                fragment_format.setBackground(code_background)
+                fragment_format.setFontUnderline(False)
             elif heading_level:
                 fragment_format.setProperty(QTextFormat.FontPixelSize,
                     round(base_px * {1: 1.5, 2: 1.28, 3: 1.1}.get(heading_level, 1.0)))

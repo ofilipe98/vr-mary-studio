@@ -12,7 +12,11 @@ from test_unified_access_modes import _setup_test_env
 from vrsoft_extractor.mary.chat_tools import run_vr_read, run_vr_search, run_vr_sources
 from vrsoft_extractor.mary.models import KnowledgeDocument
 from vrsoft_extractor.mary.provider_adapters.base import _opencode_environment
-from vrsoft_extractor.mary.retrieval.code_retrieval import read_code_source, list_code_sources
+from vrsoft_extractor.mary.retrieval.code_retrieval import (
+    check_code_availability,
+    list_code_sources,
+    read_code_source,
+)
 from vrsoft_extractor.mary.knowledge_access import create_scope, publish_scope, close_scope, mcp_command
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.models import RuntimeEvent
@@ -25,6 +29,12 @@ def test_java_search_reference_can_be_read(tmp_path):
     hit = run_vr_search({"query": "SpedFiscalManager", "source": "code"}, service).parsed["results"][0]
     page = run_vr_read({"reference": hit.get("reference", hit["evidence_id"])}, service).parsed
     assert "gerarSpedFiscal" in page.get("content", "")
+
+
+def test_code_availability_reports_indexed_release_without_selection(tmp_path):
+    indexed_contexts(tmp_path)
+    result = check_code_availability(tmp_path, application_contexts=None)
+    assert result["state"] == "available", result
 
 
 def test_java_read_rejects_foreign_artifact_and_empty_scope(tmp_path):
@@ -135,6 +145,38 @@ def test_turn_freezes_ui_selection_in_all_modes(tmp_path, mode):
         assert captured and captured[0]["application_contexts"] == [contexts[0]]
         if mode == "vr":
             assert "class Outer" in provider.sent[0]["message"]
+    finally:
+        orchestrator.close()
+
+
+def test_mismatched_stack_trace_falls_back_to_available_release(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    _, contexts = indexed_contexts(settings.root / "isolated")
+    settings = replace(settings, root=settings.root / "isolated")
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta local")
+    orchestrator.providers["codex"] = provider
+    captured = []
+    original_send = provider.send_message
+    from vrsoft_extractor.mary.knowledge_access import load_scope
+    def send(*args, **kwargs):
+        captured.append(load_scope(args[7].knowledge_context_path))
+        return original_send(*args, **kwargs)
+    provider.send_message = send
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=True)
+    done = threading.Event()
+    selections = [{k: contexts[0][k] for k in ("app_id", "version", "variant_id", "package_id")}]
+    try:
+        orchestrator.send(
+            cid,
+            "vratacarejo.service.notasaida.NotaSaidaFiscalService.calcular(NotaSaidaFiscalService.java:374)",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=True,
+            vr_mode="vr",
+            application_contexts=selections,
+        )
+        assert done.wait(20)
+        assert captured and captured[0]["application_contexts"] is None
     finally:
         orchestrator.close()
 

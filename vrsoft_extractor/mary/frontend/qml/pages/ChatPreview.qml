@@ -18,6 +18,11 @@ Item {
     readonly property var composerInput: composerCard.composerInputItem
     readonly property var effortSelector: composerCard.effortSelectorItem
     readonly property var modelSelector: composerCard.modelSelectorItem
+    // Retraído: a bandeja de controles é mais estreita que o campo, então o
+    // glow usa essa mesma folga para fechar a silhueta nos ombros e nos cantos
+    // de baixo (campo em largura total + bandeja recuada).
+    readonly property real compactGlowInset: composerCard.isCompact
+        ? composerCard.controlsBoxItem.compactInset : 0
     objectName: "chatPage"
     required property var chatBridge
     required property var studioBridge
@@ -121,6 +126,8 @@ Item {
     property var expandedFileFolders: ({})
     property string surfaceFilePath: ""
     property string surfaceFilePreview: ""
+    property int surfaceFileLine: 0
+    property int surfaceFileColumn: 0
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
@@ -222,6 +229,9 @@ Item {
                 return
             root.openSurface(1)
             root.navigateBrowser(address)
+        }
+        function onFilePreviewRequested(path, line, column) {
+            root.openFileSurface(path, line, column)
         }
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
@@ -1410,29 +1420,23 @@ Item {
                 }
             }
 
-            // One continuous gradient stroke: no overlapping dashes or seam at the loop.
-            Rectangle {
-                id: ultraGlowOuter
-                visible: root.chatBridge.vrMode === "ultra"
-                anchors.centerIn: composerCard
-                width: composerCard.width + 6
-                height: composerCard.height + 6
-                radius: composerCard.radius + 3
-                color: "transparent"
-                border.width: 3
-                border.color: Qt.alpha(Theme.palette.accessibleOrange, 0.12)
-            }
+            // Contorno contínuo do VR Ultra: no modo expandido acompanha o card
+            // inteiro; no retraído segue a silhueta real (campo em largura total
+            // + bandeja recuada), fechando nos ombros e nos cantos da bandeja.
             Canvas {
                 id: ultraArc
                 objectName: "chatUltraBorder"
                 visible: root.chatBridge.vrMode === "ultra"
-                anchors.centerIn: composerCard
+                anchors.horizontalCenter: composerCard.horizontalCenter
+                anchors.verticalCenter: composerCard.verticalCenter
                 width: composerCard.width + 8
                 height: composerCard.height + 8
                 property real sweep: 0
+                property bool compact: composerCard.isCompact
                 property real strokeWidth: root.chatBridge.turnRunning ? 2 : 1.6
                 onStrokeWidthChanged: requestPaint()
                 onSweepChanged: requestPaint()
+                onCompactChanged: requestPaint()
                 onVisibleChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
@@ -1444,7 +1448,45 @@ Item {
                     var inset = 3.5
                     var left = inset, top = inset
                     var right = width - inset, bottom = height - inset
-                    var r = Math.min(composerCard.radius + 0.5, (bottom - top) / 2)
+                    var rTop = composerCard.radius
+                    ctx.beginPath()
+                    if (composerCard.isCompact) {
+                        // Só a metade externa do traço aparece: o card opaco
+                        // cobre a metade interna.
+                        var shoulder = top + composerCard.compactSurfaceHeight
+                        var trayInset = root.compactGlowInset
+                        var trayRadius = Math.min(Theme.radiusControl, (bottom - shoulder) / 2)
+                        ctx.moveTo(left + rTop, top)
+                        ctx.lineTo(right - rTop, top)
+                        ctx.arcTo(right, top, right, top + rTop, rTop)
+                        ctx.lineTo(right, shoulder - rTop)
+                        ctx.arcTo(right, shoulder, right - rTop, shoulder, rTop)
+                        if (trayInset > rTop) ctx.lineTo(right - trayInset, shoulder)
+                        ctx.lineTo(right - trayInset, bottom - trayRadius)
+                        ctx.arcTo(right - trayInset, bottom, right - trayInset - trayRadius, bottom, trayRadius)
+                        ctx.lineTo(left + trayInset + trayRadius, bottom)
+                        ctx.arcTo(left + trayInset, bottom, left + trayInset, bottom - trayRadius, trayRadius)
+                        ctx.lineTo(left + trayInset, shoulder)
+                        if (trayInset > rTop) ctx.lineTo(left + rTop, shoulder)
+                        ctx.arcTo(left + rTop, shoulder - rTop, left, shoulder - rTop, rTop)
+                        ctx.lineTo(left, top + rTop)
+                        ctx.arcTo(left, top, left + rTop, top, rTop)
+                    } else {
+                        var r = Math.min(rTop + 0.5, (bottom - top) / 2)
+                        ctx.moveTo(left + r, top)
+                        ctx.lineTo(right - r, top)
+                        ctx.arcTo(right, top, right, top + r, r)
+                        ctx.lineTo(right, bottom - r)
+                        ctx.arcTo(right, bottom, right - r, bottom, r)
+                        ctx.lineTo(left + r, bottom)
+                        ctx.arcTo(left, bottom, left, bottom - r, r)
+                        ctx.lineTo(left, top + r)
+                        ctx.arcTo(left, top, left + r, top, r)
+                    }
+                    ctx.closePath()
+                    ctx.strokeStyle = Qt.alpha(Theme.ultraAccent, 0.12)
+                    ctx.lineWidth = 6
+                    ctx.stroke()
                     var angle = sweep * Math.PI * 2
                     var dx = Math.cos(angle) * width / 2
                     var dy = Math.sin(angle) * height / 2
@@ -1454,17 +1496,6 @@ Item {
                     gradient.addColorStop(0.35, "#F57616")
                     gradient.addColorStop(0.7, "#EFB825")
                     gradient.addColorStop(1, "#F7D85C")
-                    ctx.beginPath()
-                    ctx.moveTo(left + r, top)
-                    ctx.lineTo(right - r, top)
-                    ctx.arcTo(right, top, right, top + r, r)
-                    ctx.lineTo(right, bottom - r)
-                    ctx.arcTo(right, bottom, right - r, bottom, r)
-                    ctx.lineTo(left + r, bottom)
-                    ctx.arcTo(left, bottom, left, bottom - r, r)
-                    ctx.lineTo(left, top + r)
-                    ctx.arcTo(left, top, left + r, top, r)
-                    ctx.closePath()
                     ctx.strokeStyle = gradient
                     ctx.lineWidth = strokeWidth
                     ctx.stroke()
@@ -2038,6 +2069,8 @@ Item {
                                             root.toggleFileFolder(fileTreeRow.modelData.label)
                                             return
                                         }
+                                        root.surfaceFileLine = 0
+                                        root.surfaceFileColumn = 0
                                         root.surfaceFilePath = fileTreeRow.modelData.path
                                         root.surfaceFilePreview = root.chatBridge.readFilePreview(fileTreeRow.modelData.path)
                                     }
@@ -2060,12 +2093,16 @@ Item {
                             VrButton { text: "Abrir"; enabled: root.surfaceFilePath.length > 0; onClicked: root.studioBridge.openLocalPath(root.surfaceFilePath) }
                         }
                         ScrollView {
+                            id: filePreviewScroll
+                            objectName: "filePreviewScroll"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             Layout.bottomMargin: 8
                             TextArea {
+                                id: filePreviewArea
+                                objectName: "filePreviewArea"
                                 width: parent.width
                                 readOnly: true
                                 selectByMouse: true
@@ -2226,6 +2263,8 @@ Item {
         function onFileSuggestionsChanged() {
             root.surfaceFiles = root.chatBridge.fileSuggestions(fileSearch.text)
             root.updateComposerSuggestions()
+            if (root.surfaceVisible && root.surfaceIndex === 3 && root.surfaceFilePath.length)
+                root.revealFileFolder(root.surfaceFilePath)
         }
     }
 
@@ -2302,7 +2341,7 @@ Item {
         anchors.centerIn: parent
         width: Math.min(560, parent.width - 48)
         height: Math.min(parent.height - 80,
-            Math.max(264, 163 + Math.min(6,
+            Math.max(264, 117 + Math.min(6,
                 root.filteredProjects(newChatProjectSearch.text).length) * 56))
         padding: 0
         modal: true
@@ -2476,50 +2515,6 @@ Item {
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                 }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                Layout.leftMargin: 8
-                Layout.rightMargin: 8
-                Layout.topMargin: 4
-                Layout.bottomMargin: 2
-                radius: 7
-                color: newChatNewHover.hovered ? Theme.palette.chatControl : "transparent"
-                border.width: 1
-                border.color: Theme.palette.chatBorder
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 9
-                    VrLineIcon {
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
-                        kind: "folderPlus"
-                        foreground: Theme.palette.brandOrange
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: "New project"
-                        color: Theme.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        font.weight: Font.DemiBold
-                    }
-                }
-                HoverHandler { id: newChatNewHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler {
-                    onTapped: {
-                        newChatProjectPopup.close()
-                        root.addProjectView = "sources"
-                        addProjectSearch.clear()
-                        addProjectPopup.open()
-                    }
-                }
-                Accessible.role: Accessible.Button
-                Accessible.name: "New project"
             }
 
             Rectangle {
@@ -2965,6 +2960,58 @@ Item {
         }
         if (page === 5 && root.selectedAgentIndex < 0 && root.chatBridge.agentItems.length)
             root.selectedAgentIndex = 0
+    }
+
+    // Open a chat file reference in the Arquivos surface and reveal its line.
+    function openFileSurface(path, line, column) {
+        var target = String(path || "")
+        if (!target.length) return
+        root.openSurface(3)
+        root.revealFileFolder(target)
+        root.surfaceFilePath = target
+        root.surfaceFileLine = Math.max(0, Number(line || 0))
+        root.surfaceFileColumn = Math.max(0, Number(column || 0))
+        root.surfaceFilePreview = root.chatBridge.readFilePreview(target)
+        Qt.callLater(root.scrollFilePreviewToLine)
+    }
+
+    function revealFileFolder(path) {
+        var target = String(path || "").replace(/\\/g, "/").toLowerCase()
+        var next = {}
+        for (var key in root.expandedFileFolders)
+            next[key] = root.expandedFileFolders[key]
+        var files = root.surfaceFiles || []
+        for (var index = 0; index < files.length; ++index) {
+            var item = files[index]
+            if (item.isDirectory !== true) continue
+            var folder = String(item.path || "").replace(/\\/g, "/").toLowerCase()
+            if (!folder.length) continue
+            if (target === folder || target.indexOf(folder + "/") === 0)
+                next[item.label] = true
+        }
+        root.expandedFileFolders = next
+    }
+
+    function scrollFilePreviewToLine() {
+        if (!filePreviewScroll.contentItem) return
+        var area = filePreviewArea
+        var text = String(area.text || "")
+        var line = Math.max(0, root.surfaceFileLine)
+        if (line <= 0 || !text.length) {
+            filePreviewScroll.contentItem.contentY = 0
+            return
+        }
+        var lines = text.split("\n")
+        var offset = 0
+        for (var index = 0; index < Math.min(line - 1, lines.length); ++index)
+            offset += lines[index].length + 1
+        var lineText = lines[line - 1] !== undefined ? lines[line - 1] : ""
+        if (area.select)
+            area.select(offset, offset + lineText.length)
+        var lineHeight = area.contentHeight / Math.max(1, area.lineCount)
+        var maxY = Math.max(0, area.contentHeight - filePreviewScroll.height)
+        var targetY = (line - 1) * lineHeight - filePreviewScroll.height * 0.3
+        filePreviewScroll.contentItem.contentY = Math.max(0, Math.min(targetY, maxY))
     }
 
     Dialog {

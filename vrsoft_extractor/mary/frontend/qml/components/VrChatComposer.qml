@@ -25,6 +25,9 @@ Item {
     property alias composerInputItem: composerInput
     property alias effortSelectorItem: effortSelector
     property alias modelSelectorItem: modelSelector
+    // Bandeja de controles exposta para o glow desenhar a silhueta retraída
+    // (ombros e cantos inferiores alinhados ao recuo/raio reais da bandeja).
+    readonly property alias controlsBoxItem: composerControlsBox
     // Compatibilidade: consumidores externos ainda leem radius/color do componente.
     readonly property alias color: composerSurface.color
     readonly property alias radius: composerSurface.radius
@@ -109,6 +112,7 @@ Item {
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: isCompact ? compactHeight : normalHeight
     readonly property bool vrActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode !== "off")
+    readonly property bool ultraActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode === "ultra")
 
     Behavior on height {
         enabled: !composerCard.page.frontendBridge.reduceMotion
@@ -141,9 +145,11 @@ Item {
         color: Theme.palette.chatComposer
         border.width: 1
         border.color: composerCard.page.composerDropActive
-            ? Theme.palette.brandOrange
+            ? (composerCard.ultraActive ? Theme.ultraAccent : Theme.palette.brandOrange)
             : composerCard.vrActive
-                ? (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45))
+                ? (composerCard.ultraActive
+                    ? (composerInput.activeFocus ? Theme.ultraAccent : Qt.alpha(Theme.ultraAccent, 0.45))
+                    : (composerInput.activeFocus ? Theme.palette.focus : Qt.alpha(Theme.palette.brandOrange, 0.45)))
                 : (composerInput.activeFocus
                     ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
                     : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
@@ -535,9 +541,11 @@ Item {
                 anchors.centerIn: parent
                 Text {
                     text: composerCard.page.chatBridge.vrMode === "ultra" ? "VR Ultra" : "VR"
-                    color: composerCard.page.chatBridge.vrMode !== "off"
-                        ? (Theme.palette.brandOrange || "#f59e0b")
-                        : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+                    color: composerCard.page.chatBridge.vrMode === "ultra"
+                        ? Theme.ultraAccent
+                        : composerCard.page.chatBridge.vrMode !== "off"
+                            ? (Theme.palette.brandOrange || "#f59e0b")
+                            : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12.5)
                     font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
@@ -559,12 +567,16 @@ Item {
     Rectangle {
         id: composerControlsBox
         objectName: "chatComposerControlsBox"
-        x: composerCard.isCompact ? Theme.spaceXl : Theme.spaceXs
+        // Retraído: bandeja mais estreita, ancorada nas laterais do composer e
+        // sobreposta ao campo logo acima, de modo que só os cantos inferiores
+        // arredondados apareçam — sem uma segunda curva solta no meio.
+        readonly property real compactInset: Theme.spaceLg
+        x: composerCard.isCompact ? compactInset : Theme.spaceXs
         y: composerCard.isCompact
             ? composerCard.compactSurfaceHeight - Theme.spaceXs
             : composerCard.normalHeight - height - 8
         width: composerCard.isCompact
-            ? composerCard.width - 2 * Theme.spaceXl
+            ? composerCard.width - 2 * compactInset
             : Math.max(0, vrModeButton.x - 2 * Theme.spaceXs)
         height: Theme.compactControlHeight
         radius: composerCard.isCompact ? Theme.radiusControl : 0

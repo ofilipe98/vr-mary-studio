@@ -83,6 +83,7 @@ from .bridges.presentation import (
     DEFAULT_CODE_PROCESSING_DISK_MULTIPLIER,
     DEFAULT_CODE_PROCESSING_WINDOW,
 )
+from .file_links import parse_file_reference, resolve_markdown_file_link
 from .bridges.codeadmin import CodeAdminDomain
 from .bridges.providersettings import ProviderSettingsDomain
 from .bridges.activity import ActivityDomain
@@ -117,6 +118,7 @@ class ChatBridge(QObject):
     decompiledDirectoryDetected = Signal("QVariantMap")
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
+    filePreviewRequested = Signal(str, int, int)
     conversationArchived = Signal(str)
     draftRestored = Signal(str)
     browserNavigationRequested = Signal(str)
@@ -1852,6 +1854,38 @@ class ChatBridge(QObject):
         except OSError as exc:
             return f"Não foi possível ler o arquivo: {exc}"
 
+    @Slot(str)
+    def openFileReference(self, value: str) -> None:  # noqa: N802
+        """Resolve a chat file reference and request its in-app preview."""
+        parsed = parse_file_reference(str(value or ""))
+        if parsed is not None:
+            path, line, column = parsed
+        else:
+            meta = resolve_markdown_file_link(str(value or ""))
+            if meta is None:
+                return
+            path, line, column = meta.path, meta.line, meta.column
+        resolved = self._resolve_file_reference(path)
+        self.filePreviewRequested.emit(str(resolved), int(line or 0), int(column or 0))
+
+    def _resolve_file_reference(self, path: str) -> Path:
+        candidate = Path(path).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve(strict=False)
+        roots = [
+            (self._project_scope or self._settings.root).resolve(strict=False),
+            self._settings.root.resolve(strict=False),
+        ]
+        seen: set[Path] = set()
+        for root in roots:
+            if root in seen:
+                continue
+            seen.add(root)
+            resolved = (root / candidate).resolve(strict=False)
+            if resolved.is_file():
+                return resolved
+        return (roots[0] / candidate).resolve(strict=False)
+
     @Slot(str, result="QVariantList")
     def contextSuggestions(self, query: str) -> list[dict[str, str]]:  # noqa: N802
         value = str(query or "").strip()
@@ -2940,7 +2974,11 @@ class ChatBridge(QObject):
                     self._code_analysis_enabled
                     and bool(self._ultra_application_contexts)
                 ),
-                application_contexts=json.loads(json.dumps(self._ultra_application_contexts)),
+                application_contexts=(
+                    json.loads(json.dumps(self._ultra_application_contexts))
+                    if self._ultra_application_contexts
+                    else None
+                ),
                 code_analysis_release=self._code_analysis_release,
                 code_analysis_manifest_sha256=(
                     str(selected_code_release.get("manifestSha256") or "")

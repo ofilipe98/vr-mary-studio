@@ -9,6 +9,7 @@ from PySide6.QtCore import (
     Qt,
 )
 from ..text_rendering import fenced_blocks, code_language_badge
+from ..file_links import linkify_file_references
 from ...code_processing_hardware import detect_code_processing_hardware
 
 """Read-only presentation models for the first QML Chat VR migration slice."""
@@ -117,7 +118,11 @@ CODE_PROCESSING_HARDWARE_PROFILE_VERSION = 2
 
 
 def markdown_for_display(markdown: str) -> str:
-    """Repair provider spacing without changing inline code or URLs."""
+    """Repair provider spacing without changing inline code or URLs.
+
+    Recognized inline-code file references are rewritten as ``vr-file:`` links
+    so the QML chat can render them as clickable chips (t3code parity).
+    """
 
     result = []
     for block in fenced_blocks(str(markdown or "")):
@@ -125,10 +130,11 @@ def markdown_for_display(markdown: str) -> str:
             result.append(block["raw"])
         else:
             parts = _CODE_OR_URL_RE.split(block["content"])
-            result.append("".join(
+            repaired = "".join(
                 part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
                 for index, part in enumerate(parts)
-            ))
+            )
+            result.append(linkify_file_references(repaired))
     return "".join(result)
 
 

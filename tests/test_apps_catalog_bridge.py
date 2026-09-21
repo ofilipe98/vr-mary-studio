@@ -2,6 +2,7 @@
 import os
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QSettings, QTimer
@@ -662,3 +663,28 @@ def test_package_export_failure_preserves_catalog_error(bridge, tmp_path, monkey
     assert bridge.releaseSnapshotStatus == (
         "Não foi possível exportar o código descompilado: pacote ausente"
     )
+
+
+def test_chat_turn_without_application_selection_sends_no_explicit_scope(bridge):
+    """Sem seleção em Aplicativos, o turno usa a release disponível (None)."""
+    without_scope = bridge._database.create_conversation(
+        "Sem seleção", "codex", "test", bridge._settings.root
+    )
+    with_scope = bridge._database.create_conversation(
+        "Com seleção", "codex", "test", bridge._settings.root
+    )
+    bridge.refresh()
+    bridge.selectConversationId(without_scope)
+    with patch.object(bridge._orchestrator, "send") as send:
+        bridge.sendMessage("Pergunta sem aplicativo")
+    assert send.call_args.kwargs["application_contexts"] is None
+    assert send.call_args.kwargs["code_analysis_enabled"] is False
+
+    bridge._ultra_application_contexts = [{
+        "app_id": "vrmaster", "version": "4.1.0",
+        "variant_id": "sha-master", "package_id": "release-a",
+    }]
+    bridge.selectConversationId(with_scope)
+    with patch.object(bridge._orchestrator, "send") as send:
+        bridge.sendMessage("Pergunta com aplicativo")
+    assert send.call_args.kwargs["application_contexts"][0]["app_id"] == "vrmaster"
