@@ -355,15 +355,16 @@ class KnowledgeRouter:
 
         self._ensure_index_ready()
         profile = self.classify(query)
+        origin_errors: dict[str, str] = {}
         if normalized_source == "wiki":
             rows: list[dict[str, Any]] = []
             executed_queries: tuple[str, ...] = ()
             errors: list[str] = []
-            origins = tuple(
-                origin
-                for origin in WIKI_SOURCE_ORIGINS
-                if origin.casefold() not in self.disabled_origins
-            )
+            # The Wiki agent always validates both origins, even when one is
+            # globally disabled. That exception belongs exclusively to the
+            # Ultra per-source fan-out; _enabled_origins and route() keep
+            # honoring the global origin configuration.
+            origins = WIKI_SOURCE_ORIGINS
             for origin in origins:
                 try:
                     origin_rows, executed_queries = self._search_lane_origin(
@@ -373,11 +374,16 @@ class KnowledgeRouter:
                     )
                     rows.extend(origin_rows)
                 except Exception as exc:
+                    origin_errors[origin] = str(exc)
                     errors.append(f"{origin}: {exc}")
             lane_results = {normalized_source: rows}
             lane_queries = {normalized_source: executed_queries}
+            # One failed origin cannot mark the whole Wiki lane unavailable;
+            # only a total failure does, and each origin reports its own error.
             lane_errors = (
-                {normalized_source: "; ".join(errors)} if errors else {}
+                {normalized_source: "; ".join(errors)}
+                if errors and len(errors) == len(origins)
+                else {}
             )
             warnings = [
                 f"Falha na trilha {normalized_source.upper()}: {error}"
@@ -400,6 +406,7 @@ class KnowledgeRouter:
             selected,
             sources=(normalized_source,),
             reported_origins=origins if normalized_source == "wiki" else (),
+            origin_errors=origin_errors if normalized_source == "wiki" else None,
         )
         missing = tuple(
             report.source for report in reports if report.status != "found"
@@ -762,6 +769,7 @@ class KnowledgeRouter:
         *,
         sources: tuple[str, ...] = KNOWLEDGE_SOURCES,
         reported_origins: tuple[str, ...] = (),
+        origin_errors: dict[str, str] | None = None,
     ) -> list[SourceSearchReport]:
         reports: list[SourceSearchReport] = []
         for source in sources:
@@ -813,8 +821,17 @@ class KnowledgeRouter:
                     for item in source_candidates
                     if (item.source_origin or item.source) == origin
                 ]
+                origin_error = (
+                    origin_errors.get(origin, "")
+                    if origin_errors is not None
+                    else error
+                )
                 origin_status = (
-                    "found" if origin_selected else "unavailable" if error else "exhausted"
+                    "found"
+                    if origin_selected
+                    else "unavailable"
+                    if origin_error
+                    else "exhausted"
                 )
                 origin_reason = ""
                 if origin_status == "exhausted":
@@ -841,7 +858,7 @@ class KnowledgeRouter:
                             item.evidence_id for item in origin_selected
                         ),
                         exhaustion_reason=origin_reason,
-                        error=error,
+                        error=origin_error,
                     )
                 )
             reports.append(

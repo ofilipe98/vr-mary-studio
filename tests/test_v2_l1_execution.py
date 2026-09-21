@@ -265,6 +265,56 @@ class TestRetrievalServiceContract:
         with pytest.raises(ValueError, match="Fonte inválida"):
             service.route_source("consulta", "code")
 
+    def test_route_source_wiki_reports_exhausted_origin_and_keeps_bundle(
+        self, setup_retrieval
+    ) -> None:
+        service, _router = setup_retrieval
+
+        bundle = service.route_source("apuração de ICMS e SPED Fiscal", "wiki")
+
+        assert bundle.candidates
+        assert {item.source_origin for item in bundle.candidates} == {"vrwiki"}
+        report = bundle.source_report("wiki")
+        assert report is not None
+        assert report.status == "found"
+        statuses = {
+            item.source_origin: item.status for item in report.origin_reports
+        }
+        assert statuses == {"vrwiki": "found", "endoo": "exhausted"}
+
+    def test_route_source_wiki_isolates_origin_failure(
+        self, setup_retrieval, monkeypatch
+    ) -> None:
+        service, router = setup_retrieval
+        original = router._search_lane_origin
+
+        def flaky(profile, source, *, module="", source_origin=""):
+            if source_origin == "endoo":
+                raise RuntimeError("endoo fora do ar")
+            return original(
+                profile, source, module=module, source_origin=source_origin
+            )
+
+        monkeypatch.setattr(router, "_search_lane_origin", flaky)
+
+        bundle = service.route_source("escopo global Ultra", "wiki")
+
+        assert bundle.candidates
+        assert all(
+            item.source_origin == "vrwiki" for item in bundle.candidates
+        )
+        report = bundle.source_report("wiki")
+        assert report is not None
+        assert report.status == "found"
+        statuses = {
+            item.source_origin: (item.status, item.error)
+            for item in report.origin_reports
+        }
+        assert statuses["vrwiki"] == ("found", "")
+        assert statuses["endoo"][0] == "unavailable"
+        assert "endoo" in statuses["endoo"][1]
+        assert any("endoo" in warning for warning in bundle.warnings)
+
 
 # ---------------------------------------------------------------------------
 # 4. ExecutionRunner Planning and Stage Coordination
@@ -381,6 +431,58 @@ class TestExecutionRunnerContract:
             "ultra_code",
             "ultra_synthesis",
         ]
+
+        expected = {
+            "ultra_wiki": {
+                "agent_id": "ultra_wiki",
+                "worker_id": "ultra_wiki",
+                "parent_id": "vr_ultra_fanout",
+                "role": "source_research",
+                "source": "wiki",
+                "required": True,
+                "final": False,
+            },
+            "ultra_kb": {
+                "agent_id": "ultra_kb",
+                "worker_id": "ultra_kb",
+                "parent_id": "vr_ultra_fanout",
+                "role": "source_research",
+                "source": "kb",
+                "required": True,
+                "final": False,
+            },
+            "ultra_schema": {
+                "agent_id": "ultra_schema",
+                "worker_id": "ultra_schema",
+                "parent_id": "vr_ultra_fanout",
+                "role": "source_research",
+                "source": "schema",
+                "required": True,
+                "final": False,
+            },
+            "ultra_code": {
+                "agent_id": "ultra_code",
+                "worker_id": "ultra_code",
+                "parent_id": "vr_ultra_fanout",
+                "role": "code_research",
+                "source": "code",
+                "required": False,
+                "final": False,
+            },
+            "ultra_synthesis": {
+                "agent_id": "ultra_synthesis",
+                "worker_id": "ultra_synthesis",
+                "parent_id": "vr_ultra_fanout",
+                "role": "final_synthesis",
+                "source": "",
+                "required": True,
+                "final": True,
+            },
+        }
+        assert len(with_code.runtime_stages) == len(expected)
+        for stage in with_code.runtime_stages:
+            for key, value in expected[stage["id"]].items():
+                assert stage[key] == value, (stage["id"], key)
 
 
 class TestEvidenceCollectedBeforeParse:

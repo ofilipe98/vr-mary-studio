@@ -42,6 +42,8 @@ public class SpedFiscalManager {
 import json
 import subprocess
 import sys
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -436,3 +438,150 @@ def test_provider_adapters_mcp_configurations(tmp_path: Path):
     ws = tmp_path / "claude_ws"
     ws.mkdir()
     assert claude.available() or not claude.available()
+
+
+# --------------------------------------------------- fronteiras de modo/VR
+
+
+def _run_mode(orchestrator, conversation_id, events, *, use_vr, **kwargs):
+    done = threading.Event()
+
+    def callback(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+
+    orchestrator.send(
+        conversation_id,
+        "como emitir NF no Fiscal E fechar o caixa no PDV",
+        callback,
+        use_vr=use_vr,
+        **kwargs,
+    )
+    assert done.wait(30), "turno não concluiu"
+
+
+def _fanout_calls(orchestrator):
+    calls = {"route": 0, "route_source": [], "ultra": 0, "module": 0}
+    service = orchestrator.retrieval_service
+    original_route = service.route
+
+    def route(query, **kwargs):
+        calls["route"] += 1
+        return original_route(query, **kwargs)
+
+    service.route = route
+    original_route_source = service.route_source
+
+    def route_source(query, source):
+        calls["route_source"].append(source)
+        return original_route_source(query, source)
+
+    service.route_source = route_source
+    original_ultra = orchestrator._run_ultra_source_fanout
+
+    def ultra(*args, **kwargs):
+        calls["ultra"] += 1
+        return original_ultra(*args, **kwargs)
+
+    orchestrator._run_ultra_source_fanout = ultra
+    original_module = orchestrator._run_module_fanout
+
+    def module(*args, **kwargs):
+        calls["module"] += 1
+        return original_module(*args, **kwargs)
+
+    orchestrator._run_module_fanout = module
+    return calls
+
+
+def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
+    from test_mary_vr_ultra import _orchestrator
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "off"
+    )
+    calls = _fanout_calls(orchestrator)
+
+    _run_mode(orchestrator, cid, events, use_vr=False)
+
+    assert calls == {"route": 0, "route_source": [], "ultra": 0, "module": 0}
+    assert "research_started" not in [event.kind for event in events]
+
+
+def test_vr_without_research_uses_direct_route_only(tmp_path: Path):
+    from test_mary_vr_ultra import _orchestrator
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "vr"
+    )
+    calls = _fanout_calls(orchestrator)
+
+    _run_mode(orchestrator, cid, events, use_vr=True)
+
+    assert calls["route"] >= 1
+    assert calls["route_source"] == []
+    assert calls["ultra"] == 0
+    assert calls["module"] == 0
+    assert "research_started" not in [event.kind for event in events]
+
+
+def test_vr_research_command_uses_legacy_module_fanout(tmp_path: Path):
+    from test_mary_vr_ultra import _orchestrator
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "vr"
+    )
+    calls = _fanout_calls(orchestrator)
+
+    _run_mode(orchestrator, cid, events, use_vr=True, force_research=True)
+
+    assert calls["module"] >= 1
+    assert calls["ultra"] == 0
+    assert calls["route_source"] == []
+    research = next(event for event in events if event.kind == "research_started")
+    assert "modules" in research.payload
+    assert "sources" not in research.payload
+
+
+def test_ultra_mode_uses_source_fanout_when_flag_active(tmp_path: Path):
+    from test_mary_vr_ultra import _orchestrator
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    calls = _fanout_calls(orchestrator)
+
+    _run_mode(orchestrator, cid, events, use_vr=True)
+
+    assert calls["ultra"] == 1
+    assert sorted(calls["route_source"]) == ["kb", "schema", "wiki"]
+    assert calls["module"] == 0
+    research = next(event for event in events if event.kind == "research_started")
+    assert research.payload["sources"] == ["wiki", "kb", "schema"]
+
+
+def test_ultra_mode_falls_back_to_direct_path_when_flag_disabled(
+    tmp_path: Path,
+):
+    from test_mary_vr_ultra import _orchestrator
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+    calls = _fanout_calls(orchestrator)
+
+    _run_mode(orchestrator, cid, events, use_vr=True)
+
+    assert calls["ultra"] == 0
+    assert calls["module"] == 0
+    assert calls["route_source"] == []
+    assert calls["route"] >= 1
+    assert "research_started" not in [event.kind for event in events]
+    assistant = [
+        row for row in database.messages(cid) if row["role"] == "assistant"
+    ]
+    assert assistant and "Resposta Ultra" in assistant[-1]["content"]

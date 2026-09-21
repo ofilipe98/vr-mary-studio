@@ -12,6 +12,7 @@ Valida os requisitos especificados em PLANO_V2_ULTRA_BUSCA_ARQUITETURA.md:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +33,9 @@ from vrsoft_extractor.mary.execution import (
 from vrsoft_extractor.mary.models import (
     ConversationOptions,
     EvidenceBundle,
+    EvidenceCandidate,
     QueryProfile,
+    SourceSearchReport,
 )
 from vrsoft_extractor.mary.supervision import (
     ResponseIntent,
@@ -266,3 +269,215 @@ class TestExecutionRunnerBudgetIntegration:
         assert "Resultado final" in result.draft.answer_markdown
         # Verify synthesis consumed the reserved slots
         assert budget.remaining_calls() < 2
+
+
+# ---------------------------------------------------------------------------
+# 6. Ultra Source Fanout: parallelism and synthesis reservation
+# ---------------------------------------------------------------------------
+
+
+class TestUltraSourceFanoutBudget:
+    def _runner(
+        self,
+        tmp_path: Path,
+        *,
+        ephemeral,
+        buffered,
+    ) -> tuple[ExecutionRunner, list[tuple[str, str, dict]]]:
+        settings = MarySettings(
+            app_dir=(tmp_path / "app").resolve(),
+            root=(tmp_path / "mary").resolve(),
+            old_root=(tmp_path / "old").resolve(),
+        )
+        settings.ensure_dirs()
+        profile = QueryProfile(query="pergunta", intents={})
+        retrieval = MagicMock()
+        retrieval.classify.return_value = profile
+        retrieval.prompt_for_role.return_value = "contexto"
+
+        def bundle_for(source: str) -> EvidenceBundle:
+            candidate = EvidenceCandidate(
+                evidence_id=f"{source}:doc-1:1",
+                source=source,
+                source_id="doc-1",
+                document_id=1,
+                chunk_id=1,
+                title=f"Doc {source}",
+                heading="H",
+                content_type="section",
+                module="Fiscal",
+                product="",
+                excerpt="conteudo",
+                url="",
+            )
+            return EvidenceBundle(
+                profile=profile,
+                candidates=(candidate,),
+                source_reports=(
+                    SourceSearchReport(
+                        source=source,
+                        status="found",
+                        selected_evidence_ids=(candidate.evidence_id,),
+                    ),
+                ),
+            )
+
+        retrieval.route_source.side_effect = (
+            lambda query, source: bundle_for(source)
+        )
+        events: list[tuple[str, str, dict]] = []
+        runner = ExecutionRunner(
+            settings=settings,
+            providers={},
+            retrieval=retrieval,
+            event_emitter=(
+                lambda cid, kind, text, payload: events.append(
+                    (kind, text, payload)
+                )
+            ),
+            ephemeral_turn_runner=ephemeral,
+            buffered_turn_runner=buffered,
+            looks_like_final_envelope=lambda _text: False,
+        )
+        return runner, events
+
+    @staticmethod
+    def _buffered(*args, **kwargs):
+        return (
+            json.dumps(
+                {
+                    "answer_markdown": "Resultado final do Ultra.",
+                    "used_evidence_ids": [],
+                    "answer_status": "insufficient_evidence",
+                }
+            ),
+            {},
+            {},
+        )
+
+    @staticmethod
+    def _report(*args, **kwargs) -> str:
+        return json.dumps({"source_status": "found", "findings": []})
+
+    def _execute(
+        self,
+        runner: ExecutionRunner,
+        tmp_path: Path,
+        *,
+        run_id: str,
+        budget: ExecutionBudget,
+    ):
+        intent = ResponseIntent(topic="", user_goal="answer_question")
+        context = ExecutionContext(
+            conversation_id=f"conv-{run_id}",
+            run_id=run_id,
+            workspace=tmp_path,
+            budget=budget,
+        )
+        return runner.execute_ultra_source_fanout(
+            context=context,
+            conversation={"provider": "codex", "model": "gpt-5"},
+            native_id=f"native-{run_id}",
+            provider=MagicMock(),
+            options=ConversationOptions(vr_mode="ultra"),
+            skills=[],
+            intent=intent,
+            contract=build_response_contract(intent),
+            request="pergunta",
+        )
+
+    def test_ultra_executor_limits_parallelism_to_budget(self, tmp_path: Path) -> None:
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def fake_ephemeral(*args, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.1)
+            with lock:
+                active -= 1
+            return self._report()
+
+        runner, _events = self._runner(
+            tmp_path, ephemeral=fake_ephemeral, buffered=self._buffered
+        )
+        budget = ExecutionBudget(
+            max_active_seconds=60.0,
+            max_calls=15,
+            max_parallel=2,
+            reserved_synthesis_calls=2,
+        )
+
+        result = self._execute(
+            runner, tmp_path, run_id="run-ultra-parallel", budget=budget
+        )
+
+        assert result.draft is not None
+        assert peak == 2, "o executor deve limitar a concorrência ao orçamento"
+        assert budget.calls_in_flight == 0
+
+    def test_ultra_executor_preserves_synthesis_reservation(
+        self, tmp_path: Path
+    ) -> None:
+        runner, events = self._runner(
+            tmp_path, ephemeral=self._report, buffered=self._buffered
+        )
+        # 3 calls total, 2 reserved for synthesis -> exactly one researcher runs.
+        budget = ExecutionBudget(
+            max_active_seconds=60.0,
+            max_calls=3,
+            max_parallel=4,
+            reserved_synthesis_calls=2,
+        )
+
+        result = self._execute(
+            runner, tmp_path, run_id="run-ultra-reserved", budget=budget
+        )
+
+        assert result.draft is not None
+        assert budget.remaining_calls() == 1
+        failures = [
+            payload for kind, _text, payload in events if kind == "agent_failed"
+        ]
+        assert len(failures) == 2
+        assert all(
+            "reservada" in str(payload.get("error")) for payload in failures
+        )
+
+    def test_ultra_executor_cancellation_prevents_synthesis(
+        self, tmp_path: Path
+    ) -> None:
+        buffered_calls: list[str] = []
+
+        def fake_buffered(*args, **kwargs):
+            buffered_calls.append("synthesis")
+            return self._buffered()
+
+        runner, _events = self._runner(
+            tmp_path, ephemeral=self._report, buffered=fake_buffered
+        )
+        intent = ResponseIntent(topic="", user_goal="answer_question")
+        context = ExecutionContext(
+            conversation_id="conv-ultra-cancel",
+            run_id="run-ultra-cancel",
+            workspace=tmp_path,
+            budget=ExecutionBudget(max_active_seconds=60.0, max_calls=15),
+        )
+        context.cancellation.cancel("user_stop")
+
+        with pytest.raises(ExecutionCancelledError, match="user_stop"):
+            runner.execute_ultra_source_fanout(
+                context=context,
+                conversation={"provider": "codex", "model": "gpt-5"},
+                native_id="native-cancel",
+                provider=MagicMock(),
+                options=ConversationOptions(vr_mode="ultra"),
+                skills=[],
+                intent=intent,
+                contract=build_response_contract(intent),
+                request="pergunta",
+            )
+        assert buffered_calls == []

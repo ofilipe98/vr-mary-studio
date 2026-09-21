@@ -261,6 +261,7 @@ class ExecutionRunner:
                 final=False,
                 required=True,
                 priority=90,
+                parent_id="vr_ultra_fanout",
                 worker_id=f"ultra_{source}",
                 worker_name=labels[source],
             ).to_dict()
@@ -282,7 +283,8 @@ class ExecutionRunner:
                     final=False,
                     required=False,
                     priority=95,
-                    worker_id="fanout_codigo",
+                    parent_id="vr_ultra_fanout",
+                    worker_id="ultra_code",
                     worker_name="Agente DEV Java",
                     metadata={
                         "run_id": run_id,
@@ -1424,16 +1426,10 @@ Retorne somente JSON:
                 return SourceResearch(source=source, report=report)
 
             evidence_ids = tuple(item.evidence_id for item in bundle.candidates)
-            origins = tuple(
-                item.source_origin
-                for item in source_report.origin_reports
-                if item.source_origin
-            )
             prompt = build_source_researcher_prompt(
                 source,
                 request,
                 self.retrieval.prompt_for_role(bundle, f"source_{source}"),
-                origins=origins,
             )
             outcome: SourceResearch | None = None
             attempts = min(RESEARCH_ATTEMPTS, context.budget.max_retries_per_worker + 1)
@@ -2052,7 +2048,9 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                 release_call()
 
             if violations or draft.answer_status == "insufficient_evidence":
-                continue
+                # Same repair policy as the legacy fan-out: one rewrite is
+                # validated; a still-invalid rewrite is not retried again.
+                break
             if self.operational_reviewer is not None:
                 try:
                     review_timeout = acquire_call(

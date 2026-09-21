@@ -210,7 +210,7 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert "research_started" in kinds
     assert "research_completed" in kinds
     assert not any(
-        event.payload.get("worker_id") == "fanout_codigo" for event in events
+        event.payload.get("worker_id") == "ultra_code" for event in events
     )
     row = [r for r in database.messages(cid) if r["role"] == "assistant"]
     assert row and "Resposta Ultra" in row[-1]["content"]
@@ -287,6 +287,61 @@ def test_vr_mode_never_triggers_fanout(tmp_path: Path) -> None:
     assert row and "Resposta Ultra" in row[-1]["content"]  # resposta direta
 
 
+def test_ultra_single_module_question_keeps_fixed_sources(tmp_path: Path) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    fanout_module_calls: list[Any] = []
+
+    def spy_fanout_modules(*args, **kwargs):
+        fanout_module_calls.append((args, kwargs))
+        return None
+
+    orchestrator._fanout_modules = spy_fanout_modules
+    done = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+
+    orchestrator.send(
+        cid,
+        "Como emitir NF no Fiscal?",
+        callback,
+        use_vr=True,
+    )
+    assert done.wait(30), "turno não concluiu"
+
+    assert fanout_module_calls == [], "Ultra não depende do fan-out por módulo"
+    research_started = next(e for e in events if e.kind == "research_started")
+    assert research_started.payload["sources"] == ["wiki", "kb", "schema"]
+    plan = next(e for e in events if e.kind == "plan_created")
+    stages = {stage["id"]: stage for stage in plan.payload["runtime_stages"]}
+    assert set(stages) == {
+        "ultra_wiki",
+        "ultra_kb",
+        "ultra_schema",
+        "ultra_synthesis",
+    }
+    assert {stage["source"] for stage in stages.values() if not stage["final"]} == {
+        "wiki",
+        "kb",
+        "schema",
+    }
+    started = {e.payload["agent_id"] for e in events if e.kind == "agent_started"}
+    completed = {
+        e.payload["agent_id"] for e in events if e.kind == "agent_completed"
+    }
+    assert {"ultra_wiki", "ultra_kb", "ultra_schema"} <= started
+    assert {"ultra_wiki", "ultra_kb", "ultra_schema"} <= completed
+    assert all(
+        event.payload.get("parent_id") == "vr_ultra_fanout"
+        for event in events
+        if event.kind in {"agent_started", "agent_completed", "agent_failed"}
+    )
+
+
 def test_force_research_on_plain_vr(tmp_path: Path) -> None:
     settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "vr")
     _run_send(
@@ -355,9 +410,13 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
     code_started = [
         event for event in events
         if event.kind == "agent_started"
-        and event.payload.get("worker_id") == "fanout_codigo"
+        and event.payload.get("worker_id") == "ultra_code"
     ]
     assert code_started
+    assert all(
+        event.payload.get("parent_id") == "vr_ultra_fanout"
+        for event in code_started
+    )
     research_run_id = [
         event.payload["run_id"]
         for event in events
@@ -368,9 +427,10 @@ def test_opt_in_code_agent_runs_after_scope_and_preserves_citation(
     completed = [event for event in events if event.kind == "research_completed"][-1]
     assert completed.payload["code_agent"] == "found"
     code_completed = [
-        event for event in events
+        event
+        for event in events
         if event.kind == "agent_completed"
-        and event.payload.get("worker_id") == "fanout_codigo"
+        and event.payload.get("worker_id") == "ultra_code"
     ][-1]
     assert "VRPdv.jar" in code_completed.payload["citations"][0]
 
@@ -414,8 +474,9 @@ def test_code_agent_rejects_stale_frozen_release_and_fanout_continues(
         event
         for event in events
         if event.kind == "agent_failed"
-        and event.payload.get("worker_id") == "fanout_codigo"
+        and event.payload.get("worker_id") == "ultra_code"
     ][-1]
+    assert failed.payload["parent_id"] == "vr_ultra_fanout"
     assert failed.payload["release_id"] == "2026.08.29"
     assert failed.payload["release_manifest_sha256"] == "b" * 64
     assert "mudaram" in failed.payload["error"]
@@ -439,7 +500,7 @@ def test_code_agent_failure_degrades_without_stopping_synthesis(
 
     assert any(
         event.kind == "agent_failed"
-        and event.payload.get("worker_id") == "fanout_codigo"
+        and event.payload.get("worker_id") == "ultra_code"
         for event in events
     )
     assert any(event.kind == "turn_completed" for event in events)

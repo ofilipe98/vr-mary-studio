@@ -1111,6 +1111,57 @@ def test_wiki_route_preserves_relevant_vrwiki_and_endoo_origins(
     assert "Wiki autenticada Endoo" in prompt
 
 
+def test_disabled_endoo_keeps_legacy_route_off_and_ultra_wiki_on(
+    tmp_path: Path,
+) -> None:
+    from vrsoft_extractor.mary.retrieval import RetrievalService
+
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    for origin, source_id in (
+        ("vrwiki", "publica-102"),
+        ("endoo", "endoo-102"),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_origin=origin,
+                source_id=source_id,
+                title="Função 102 no PDV",
+                url=f"https://wiki.example/{source_id}",
+                markdown="A função 102 permite a entrada do operador no PDV.",
+                module="PDV",
+                review_status="approved",
+                content_hash=source_id,
+                local_path=f"conhecimento/PDV/Wiki/{source_id}.md",
+            )
+        )
+    service = RetrievalService(
+        KnowledgeRouter(
+            database,
+            settings.root,
+            disabled_origins=("endoo",),
+        )
+    )
+
+    legacy = service.route("Para que serve a função 102 no PDV?")
+    assert not any(item.source_origin == "endoo" for item in legacy.candidates)
+    assert "endoo" not in service.enabled_origins("wiki")
+
+    ultra = service.route_source("Para que serve a função 102 no PDV?", "wiki")
+    assert {item.source_origin for item in ultra.candidates} == {
+        "vrwiki",
+        "endoo",
+    }
+    report = ultra.source_report("wiki")
+    assert report is not None
+    assert {item.source_origin for item in report.origin_reports} == {
+        "vrwiki",
+        "endoo",
+    }
+    assert all(item.status == "found" for item in report.origin_reports)
+
+
 def test_codex_process_exit_terminates_registered_async_turn() -> None:
     class DeadProcess:
         def __init__(self):

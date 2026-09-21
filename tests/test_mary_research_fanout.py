@@ -5,9 +5,14 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.execution import (
+    ExecutionContext,
+    ExecutionRunner,
+)
 from vrsoft_extractor.mary.models import (
     ConversationOptions,
     EvidenceBundle,
@@ -16,6 +21,7 @@ from vrsoft_extractor.mary.models import (
     ModuleRoutingDecision,
     QueryProfile,
     RuntimeEvent,
+    SourceSearchReport,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.research_fanout import (
@@ -167,11 +173,11 @@ class TestResearcherPromptAndParsing:
             "wiki",
             "Como funciona?",
             "evidências",
-            origins=("vrwiki", "endoo"),
         )
         assert "exclusivo da fonte WIKI" in prompt
         assert "qualquer módulo" in prompt
-        assert "vrwiki, endoo" in prompt
+        assert "vrwiki e endoo" in prompt
+        assert "efetivamente habilitadas" not in prompt
         raw = json.dumps({
             "source_status": "found",
             "findings": [{
@@ -666,3 +672,147 @@ def test_run_module_fanout_is_provider_agnostic(tmp_path: Path) -> None:
     ]
     assert assistant_rows and "Resposta" in assistant_rows[-1]["content"]
     assert any(event.kind == "research_started" for event in events)
+
+
+# ------------------------------------------------- Ultra: coordenação real
+
+
+def test_ultra_source_fanout_starts_dev_with_documental_lanes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path)
+    profile = QueryProfile(query="fluxo fiscal", intents={"functional": 1.0})
+    barrier = threading.Barrier(4, timeout=5)
+    reached: list[str] = []
+    lock = threading.Lock()
+
+    def bundle_for(source: str) -> EvidenceBundle:
+        candidate = EvidenceCandidate(
+            evidence_id=f"{source}:doc-1:1",
+            source=source,
+            source_id="doc-1",
+            document_id=1,
+            chunk_id=1,
+            title=f"Doc {source}",
+            heading="H",
+            content_type="section",
+            module="Fiscal",
+            product="",
+            excerpt="conteudo relevante",
+            url="",
+        )
+        report = SourceSearchReport(
+            source=source,
+            status="found",
+            selected_evidence_ids=(candidate.evidence_id,),
+        )
+        return EvidenceBundle(
+            profile=profile,
+            candidates=(candidate,),
+            source_reports=(report,),
+        )
+
+    retrieval = MagicMock()
+    retrieval.classify.return_value = profile
+    retrieval.prompt_for_role.return_value = "contexto"
+
+    def route_source(query, source):
+        with lock:
+            reached.append(source)
+        barrier.wait()
+        return bundle_for(source)
+
+    retrieval.route_source.side_effect = route_source
+
+    def fake_code(root, query, **kwargs):
+        with lock:
+            reached.append("code")
+        barrier.wait()
+        return ([], [], [])
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.execution.runner.retrieve_code_candidates",
+        fake_code,
+    )
+
+    events: list[tuple[str, str, dict]] = []
+
+    def fake_ephemeral(cid, run_id, agent_id, *args, **kwargs):
+        source = agent_id.rsplit("_", 1)[-1]
+        return json.dumps(
+            {
+                "source_status": "found",
+                "findings": [
+                    {
+                        "claim": f"achado {source}",
+                        "evidence_ids": [f"{source}:doc-1:1"],
+                        "kind": "fact",
+                        "confidence": 0.9,
+                    }
+                ],
+                "sources": [],
+            }
+        )
+
+    def fake_buffered(*args, **kwargs):
+        return (
+            json.dumps(
+                {
+                    "answer_markdown": "Resposta coordenada.",
+                    "used_evidence_ids": ["wiki:doc-1:1"],
+                    "answer_status": "partially_answered",
+                }
+            ),
+            {},
+            {},
+        )
+
+    runner = ExecutionRunner(
+        settings=settings,
+        providers={},
+        retrieval=retrieval,
+        event_emitter=(
+            lambda cid, kind, text, payload: events.append((kind, text, payload))
+        ),
+        ephemeral_turn_runner=fake_ephemeral,
+        buffered_turn_runner=fake_buffered,
+        looks_like_final_envelope=lambda _text: False,
+    )
+
+    result = runner.execute_ultra_source_fanout(
+        context=ExecutionContext(
+            conversation_id="conv-coord",
+            run_id="run-coord",
+            workspace=tmp_path,
+        ),
+        conversation={"provider": "codex", "model": "gpt-5"},
+        native_id="native-coord",
+        provider=MagicMock(),
+        options=ConversationOptions(effort="medium", vr_mode="ultra"),
+        skills=[],
+        intent=_intent(),
+        contract=_contract(),
+        code_analysis_enabled=True,
+        request="fluxo fiscal",
+    )
+
+    assert not barrier.broken, "as quatro frentes precisam coexistir"
+    assert set(reached) == {"wiki", "kb", "schema", "code"}
+    assert result.draft is not None
+    started = {
+        payload["agent_id"]: payload
+        for kind, _text, payload in events
+        if kind == "agent_started"
+    }
+    assert {"ultra_wiki", "ultra_kb", "ultra_schema", "ultra_code"} <= set(
+        started
+    )
+    assert all(
+        payload["parent_id"] == "vr_ultra_fanout"
+        for payload in started.values()
+    )
+    assert all(
+        report.report.parent_id == "vr_ultra_fanout"
+        for report in result.reports
+        if report.report is not None
+    )

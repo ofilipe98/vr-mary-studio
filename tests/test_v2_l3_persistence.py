@@ -28,6 +28,7 @@ from vrsoft_extractor.mary.execution import (
 from vrsoft_extractor.mary.models import (
     ConversationOptions,
     EvidenceBundle,
+    ModelRef,
     QueryProfile,
 )
 from vrsoft_extractor.mary.supervision import (
@@ -269,3 +270,94 @@ class TestSafeResumption:
         # Lookup with modified contract version produces different hash -> rejects reuse
         hash_v3 = compute_step_input_hash("Fiscal", "prompt A", {"model": "gpt-5"}, contract_version="3.0.0")
         assert repo.find_reusable_step(hash_v3, run_id="run-old") is None
+
+
+class TestUltraStageIdentityPersistence:
+    def test_ultra_dev_java_step_keeps_ultra_identity_and_legacy_keeps_fanout(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        settings = MarySettings(
+            app_dir=(tmp_path / "app").resolve(),
+            root=(tmp_path / "mary").resolve(),
+            old_root=(tmp_path / "old").resolve(),
+        )
+        settings.ensure_dirs()
+        repo = ResearchRepository(settings.database_path)
+        monkeypatch.setattr(
+            "vrsoft_extractor.mary.execution.runner.retrieve_code_candidates",
+            lambda *args, **kwargs: ([], [], []),
+        )
+
+        retrieval = MagicMock()
+        profile = QueryProfile(query="pergunta", intents={})
+        retrieval.classify.return_value = profile
+        retrieval.prompt_for_role.return_value = "contexto"
+        retrieval.route_source.side_effect = (
+            lambda query, source: EvidenceBundle(profile=profile)
+        )
+
+        def fake_buffered(*args, **kwargs):
+            return (
+                json.dumps(
+                    {
+                        "answer_markdown": "Sem evidência suficiente.",
+                        "used_evidence_ids": [],
+                        "answer_status": "insufficient_evidence",
+                    }
+                ),
+                {},
+                {},
+            )
+
+        runner = ExecutionRunner(
+            settings=settings,
+            providers={},
+            retrieval=retrieval,
+            event_emitter=lambda *args: None,
+            ephemeral_turn_runner=lambda *args, **kwargs: json.dumps(
+                {"source_status": "found", "findings": []}
+            ),
+            buffered_turn_runner=fake_buffered,
+            looks_like_final_envelope=lambda _text: False,
+            repository=repo,
+        )
+        intent = ResponseIntent(topic="", user_goal="answer_question")
+        result = runner.execute_ultra_source_fanout(
+            context=ExecutionContext(
+                conversation_id="conv-ultra",
+                run_id="run-ultra-1",
+                workspace=tmp_path,
+            ),
+            conversation={"provider": "codex", "model": "gpt-5"},
+            native_id="native-ultra",
+            provider=MagicMock(),
+            options=ConversationOptions(effort="medium", vr_mode="ultra"),
+            skills=[],
+            intent=intent,
+            contract=build_response_contract(intent),
+            code_analysis_enabled=True,
+            request="pergunta",
+        )
+
+        assert result.draft is not None
+        steps = repo.get_steps_for_run("run-ultra-1")
+        code_step = next(step for step in steps if step["stage_id"] == "ultra_code")
+        assert code_step["worker_id"] == "ultra_code"
+        assert code_step["role"] == "code_research"
+        assert code_step["module"] == "code"
+        assert not any(step["worker_id"] == "fanout_codigo" for step in steps)
+
+        legacy_plan = runner.plan_fanout(
+            "run-legacy",
+            ("Fiscal",),
+            ModelRef(provider="codex", model="gpt-5"),
+            "medium",
+            code_analysis_enabled=True,
+        )
+        legacy_code = next(
+            stage
+            for stage in legacy_plan.runtime_stages
+            if stage["id"] == "fanout_codigo"
+        )
+        assert legacy_code["worker_id"] == "fanout_codigo"
+        assert legacy_code["parent_id"] == "vr_fanout"

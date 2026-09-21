@@ -177,7 +177,7 @@ def test_ultra_execution_freezes_multiple_contexts_and_labels_evidence(tmp_path,
     assert {tuple(a["relative_path"] for a in call["artifacts"]) for call in calls} == {
         tuple(a["relative_path"] for a in c["artifacts"]) for c in contexts}
     completed = [event for event in events if event.kind == "agent_completed"
-                 and event.payload.get("worker_id") == "fanout_codigo"]
+                 and event.payload.get("worker_id") == "ultra_code"]
     assert completed and completed[-1].payload["status"] == "found"
     titles = completed[-1].payload["citations"]
     assert all(any(context["label"] in title for context in contexts) for title in titles)
@@ -194,7 +194,107 @@ def test_ultra_empty_explicit_context_never_searches_package(tmp_path, monkeypat
     monkeypatch.setattr(JavaCodeIndex, "search", lambda *args, **kwargs: calls.append(kwargs) or [])
     _run_send(orchestrator, cid, events, code_analysis_enabled=True, application_contexts=[])
     assert not calls
-    assert any(event.kind == "agent_failed" and event.payload.get("worker_id") == "fanout_codigo" for event in events)
+    assert any(event.kind == "agent_failed" and event.payload.get("worker_id") == "ultra_code" for event in events)
+
+
+def test_ultra_dev_java_toggle_off_skips_code_and_keeps_documental_flow(
+    tmp_path, monkeypatch
+):
+    from test_mary_vr_ultra import _orchestrator, _run_send
+    settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "ultra")
+    search_calls = []
+    monkeypatch.setattr(
+        JavaCodeIndex, "search", lambda *args, **kwargs: search_calls.append(kwargs) or []
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    assert search_calls == []
+    assert not any(
+        event.payload.get("worker_id") == "ultra_code" for event in events
+    )
+    for source in ("wiki", "kb", "schema"):
+        assert any(
+            event.kind == "agent_completed"
+            and event.payload.get("worker_id") == f"ultra_{source}"
+            for event in events
+        )
+    assert any(event.kind == "synthesis_started" for event in events)
+
+
+def test_ultra_dev_java_unavailability_does_not_block_documental_synthesis(
+    tmp_path, monkeypatch
+):
+    from test_mary_vr_ultra import _orchestrator, _run_send
+    settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "ultra")
+
+    def fail_search(*_args, **_kwargs):
+        raise RuntimeError("índice indisponível")
+
+    monkeypatch.setattr(JavaCodeIndex, "search", fail_search)
+
+    _run_send(orchestrator, cid, events, code_analysis_enabled=True)
+
+    assert any(
+        event.kind == "agent_failed"
+        and event.payload.get("worker_id") == "ultra_code"
+        for event in events
+    )
+    for source in ("wiki", "kb", "schema"):
+        assert any(
+            event.kind == "agent_completed"
+            and event.payload.get("worker_id") == f"ultra_{source}"
+            for event in events
+        )
+    completed = [event for event in events if event.kind == "research_completed"][-1]
+    assert completed.payload["code_agent"] == "failed"
+    assistant = [
+        row for row in database.messages(cid) if row["role"] == "assistant"
+    ]
+    assert assistant and "Resposta Ultra" in assistant[-1]["content"]
+
+
+def test_ultra_dev_java_does_not_widen_selected_application_scope(
+    tmp_path, monkeypatch
+):
+    from test_mary_vr_ultra import _orchestrator, _run_send
+    settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "ultra")
+    _, contexts = indexed_contexts(settings.root)
+    selected, foreign = contexts[0], contexts[1]
+    calls = []
+    original = JavaCodeIndex.search
+
+    def search(self, query, **kwargs):
+        calls.append(kwargs)
+        return original(self, query, **kwargs)
+
+    monkeypatch.setattr(JavaCodeIndex, "search", search)
+
+    _run_send(
+        orchestrator,
+        cid,
+        events,
+        code_analysis_enabled=True,
+        application_contexts=[selected],
+    )
+
+    assert calls
+    selected_artifacts = tuple(
+        item["relative_path"] for item in selected["artifacts"]
+    )
+    foreign_artifacts = tuple(
+        item["relative_path"] for item in foreign["artifacts"]
+    )
+    assert {
+        tuple(item["relative_path"] for item in call["artifacts"])
+        for call in calls
+    } == {selected_artifacts}
+    assert all(
+        tuple(item["relative_path"] for item in call["artifacts"])
+        != foreign_artifacts
+        for call in calls
+    )
+    assert all(call["release_id"] == selected["package_id"] for call in calls)
 
 
 def test_native_read_expansion_cannot_cross_application(tmp_path):

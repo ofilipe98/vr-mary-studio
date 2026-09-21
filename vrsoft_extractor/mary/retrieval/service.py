@@ -72,7 +72,13 @@ class RetrievalService:
             else None
         )
 
-    def resolve_document(self, doc_id: str, *, require_review: bool = False) -> KnowledgeDocument | None:
+    def resolve_document(
+        self,
+        doc_id: str,
+        *,
+        require_review: bool = False,
+        enforce_enabled_origin: bool = True,
+    ) -> KnowledgeDocument | None:
         """Resolve active, enabled knowledge documents, rejecting ambiguous legacy IDs."""
         source, separator, source_id = str(doc_id).partition(":")
         with self._router.database.connect() as conn:
@@ -88,7 +94,7 @@ class RetrievalService:
         revision = self._router.retrieval_revision.get()
         if revision and row.get("revision") != revision:
             return None
-        if row["source_origin"] not in self.enabled_origins(row["source"]):
+        if enforce_enabled_origin and row["source_origin"] not in self.enabled_origins(row["source"]):
             return None
         allowed = {f.name for f in fields(KnowledgeDocument)}
         return KnowledgeDocument(**{k: v for k, v in row.items() if k in allowed})
@@ -311,8 +317,13 @@ class RetrievalService:
     def route_source(self, query: str, source: str) -> EvidenceBundle:
         """Route a single documentary source through the shared router."""
         self._prepare_search()
-        bundle = self._finalize_bundle(self._router.route_source(query, source))
         normalized_source = str(source or "").strip().casefold()
+        # The Wiki agent always validates vrwiki and endoo; a globally disabled
+        # origin cannot erase valid candidates found by the Ultra lane.
+        bundle = self._finalize_bundle(
+            self._router.route_source(query, source),
+            enforce_enabled_origin=normalized_source != "wiki",
+        )
         return replace(
             bundle,
             candidates=tuple(
@@ -336,10 +347,19 @@ class RetrievalService:
                         self._scheduled = False
                 threading.Thread(target=update, name="semantic-reindex", daemon=True).start()
 
-    def _finalize_bundle(self, bundle: EvidenceBundle) -> EvidenceBundle:
+    def _finalize_bundle(
+        self,
+        bundle: EvidenceBundle,
+        *,
+        enforce_enabled_origin: bool = True,
+    ) -> EvidenceBundle:
         # Final permission/version check closes the window between candidate search and context assembly.
         bundle = replace(bundle, candidates=tuple(c for c in bundle.candidates
-            if c.source == "code" or self.resolve_document(f"{c.source}:{c.source_id}", require_review=True) is not None))
+            if c.source == "code" or self.resolve_document(
+                f"{c.source}:{c.source_id}",
+                require_review=True,
+                enforce_enabled_origin=enforce_enabled_origin,
+            ) is not None))
         if self._configuration.get("relations"):
             if self.scope_signature() != self._relation_signature:
                 self.rebuild_relations()
