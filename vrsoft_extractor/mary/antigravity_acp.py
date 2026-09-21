@@ -969,7 +969,7 @@ class AcpClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def start(self, timeout: float = INIT_TIMEOUT_SECONDS):
+    def start(self, timeout: float = INIT_TIMEOUT_SECONDS) -> dict[str, Any]:
         with self._lock:
             if self._closed:
                 raise AcpError("initialize")
@@ -1133,7 +1133,7 @@ class AcpClient:
                 if not future.done():
                     future.set_exception(error or AcpError(method))
 
-    def __del__(self):
+    def __del__(self) -> None:
         # Best-effort only: close() owns the termination check, so the
         # destructor can never delete a temporary directory that a still
         # running ACP process may be using.
@@ -1142,7 +1142,7 @@ class AcpClient:
         except Exception:
             pass
 
-    def close(self):
+    def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
