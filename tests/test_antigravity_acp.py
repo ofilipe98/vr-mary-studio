@@ -1,7 +1,9 @@
 import json
+import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -176,11 +178,12 @@ def test_profile_is_shared_and_environment_is_sanitized(monkeypatch, tmp_path):
     assert "untrusted-browser" not in first["BROWSER"]
 
 
-def test_login_authenticate_response_confirms_account_without_session_new():
+def test_login_authenticate_response_confirms_account_without_session_new(tmp_path):
     changed = threading.Event()
     manager = AntigravityAuthManager(lambda: "acp", lambda: {})
     manager._on_state_changed = lambda: changed.set() if manager.account_state == "authenticated" else None
-    with patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", FakeClient):
+    with patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", FakeClient), \
+            patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path / "profile"):
         manager.start_login()
         assert changed.wait(2)
     assert manager.active_attempt.state == "succeeded"
@@ -387,7 +390,8 @@ for line in sys.stdin:
         return popen([sys.executable, "-u", str(script)], **kwargs)
     client = AcpClient(command="fixture")
     try:
-        with patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
+        with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=tmp_path / "profile"), \
+                patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
             assert client.start()["protocolVersion"] == 1
             assert client.request("session/new", {})["sessionId"] == "fixture"
     finally:
@@ -398,7 +402,10 @@ for line in sys.stdin:
 
 def test_acp_client_isolates_and_cleans_temporary_directory(tmp_path, monkeypatch):
     import subprocess
+
+    from vrsoft_extractor.mary.antigravity_acp import ACP_TEMP_OWNER_LOCK, prepare_profile
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    profile = tmp_path / "profile"
     other_client_dir = tmp_path / "vr-acp-other-client"
     other_client_dir.mkdir()
     (other_client_dir / "runtime.dll").write_text("active runtime")
@@ -421,13 +428,24 @@ for line in sys.stdin:
 
     client = AcpClient(command="fixture", env={})
     assert client._temp_dir is None
-    with patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile), \
+            patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
         client.start()
         temp_dir = client._temp_dir
         assert temp_dir is not None
         assert os.path.isdir(temp_dir)
+        assert Path(temp_dir).parent == profile / "antigravity-acp" / "tmp"
+        assert Path(temp_dir).name.startswith("proc-")
         assert captured_env.get("TEMP") == temp_dir
         assert captured_env.get("TMP") == temp_dir
+        assert captured_env.get("TMPDIR") == temp_dir
+        owner_lock = Path(temp_dir) / ACP_TEMP_OWNER_LOCK
+        assert owner_lock.is_file(), "the owner lock must exist while the client is active"
+        # Reconciling orphans while this client is alive must never remove the
+        # directory it still owns: the held lock proves active ownership.
+        prepare_profile(profile)
+        assert os.path.isdir(temp_dir)
+        assert owner_lock.is_file()
         # Create a dummy file inside to simulate PyInstaller _MEI extraction
         dummy_mei = Path(temp_dir) / "_MEI12345"
         dummy_mei.mkdir()
@@ -436,6 +454,7 @@ for line in sys.stdin:
         client.close()
 
     assert not os.path.exists(temp_dir), "Temporary directory must be cleaned up on close()"
+    assert list((profile / "antigravity-acp" / "tmp").glob("proc-*")) == []
     assert (other_client_dir / "runtime.dll").read_text() == "active runtime"
 
 
@@ -449,6 +468,138 @@ def test_failed_acp_launch_cleans_owned_directory(tmp_path, monkeypatch):
             client.start()
     assert list((profile / "antigravity-acp" / "tmp").glob("proc-*")) == []
     assert list(tmp_path.glob("proc-*")) == []
+
+
+def test_close_retries_transient_temp_cleanup_failure(tmp_path, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    temp_dir = tmp_path / "proc-transient"
+    temp_dir.mkdir()
+    (temp_dir / "runtime.dll").write_text("mapped")
+    client = AcpClient(command="test", env={})
+    client._temp_dir = str(temp_dir)
+    client._temp_lock = None
+    real_rmtree = acp_module.shutil.rmtree
+    attempts = []
+    def flaky_rmtree(path, *args, **kwargs):
+        attempts.append(path)
+        if len(attempts) < 3:
+            raise PermissionError("file still mapped")
+        return real_rmtree(path, *args, **kwargs)
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.shutil.rmtree", side_effect=flaky_rmtree), \
+            patch("vrsoft_extractor.mary.antigravity_acp.time.sleep") as sleep, \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        client.close()
+
+    assert not temp_dir.exists()
+    assert len(attempts) == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [0.05, 0.1]
+    warnings = [r for r in caplog.records
+                if r.name == "vrsoft_extractor.mary.antigravity_acp" and r.levelno >= logging.WARNING]
+    assert warnings == [], "a retry that succeeds must not emit a final warning"
+
+
+def test_prepare_profile_reclaims_unlocked_owned_temp_dir(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.antigravity_acp import prepare_profile
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    assert Path(temp_dir, acp_module.ACP_TEMP_OWNER_LOCK).is_file()
+    # A previous process died or crashed after creating the directory: the
+    # owner lock is free, but the directory is still on disk.
+    acp_module._release_temp_lock(handle)
+
+    prepare_profile(profile)
+    assert not Path(temp_dir).exists()
+
+
+def test_prepare_profile_preserves_locked_temp_dir(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.antigravity_acp import prepare_profile
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    try:
+        prepare_profile(profile)
+        assert Path(temp_dir).is_dir()
+        assert Path(temp_dir, acp_module.ACP_TEMP_OWNER_LOCK).is_file()
+    finally:
+        acp_module._release_temp_lock(handle)
+
+    prepare_profile(profile)
+    assert not Path(temp_dir).exists()
+
+
+def test_stale_cleanup_uses_grace_only_for_legacy_dirs(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    profile = tmp_path / "profile"
+    profile_tmp = profile / "antigravity-acp" / "tmp"
+    system_tmp = tmp_path / "system-tmp"
+    profile_tmp.mkdir(parents=True)
+    system_tmp.mkdir()
+
+    now = time.time()
+    stale_age = now - acp_module.LEGACY_ACP_TEMP_GRACE_SECONDS - 3600
+    fresh_age = now - 60
+    expired = [profile_tmp / "proc-expired", system_tmp / "vr-acp-expired"]
+    preserved = [
+        profile_tmp / "proc-recent",
+        system_tmp / "vr-acp-recent",
+        profile_tmp / "proc",
+        profile_tmp / "unrelated",
+        system_tmp / "vr-acp",
+        system_tmp / "unrelated",
+    ]
+    for directory in expired:
+        directory.mkdir()
+        os.utime(directory, (stale_age, stale_age))
+    for directory in preserved:
+        directory.mkdir()
+        os.utime(directory, (fresh_age, fresh_age))
+
+    removed = acp_module._cleanup_stale_acp_temp_dirs(profile_dir=profile, now=now)
+    assert removed == 2
+    assert all(not directory.exists() for directory in expired)
+    assert all(directory.exists() for directory in preserved)
+
+
+def test_stale_cleanup_failure_does_not_abort_profile_preparation(tmp_path, monkeypatch, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.antigravity_acp import prepare_profile
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    acp_module._release_temp_lock(handle)
+    token = profile / "antigravity-acp" / "acp_token.json"
+    token.write_text('{"token": "saved"}', encoding="utf-8")
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.shutil.rmtree", side_effect=PermissionError("in use")), \
+            patch("vrsoft_extractor.mary.antigravity_acp.time.sleep"), \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        prepare_profile(profile)
+
+    assert Path(temp_dir).exists(), "an orphan that cannot be removed must be preserved"
+    assert token.read_text(encoding="utf-8") == '{"token": "saved"}'
+    settings = profile / "antigravity-acp" / "settings.json"
+    assert json.loads(settings.read_text(encoding="utf-8"))["auth"]["type"] == "oauth-personal"
+    assert any(
+        record.name == "vrsoft_extractor.mary.antigravity_acp" and record.levelno >= logging.WARNING
+        for record in caplog.records
+    ), "the failed reclaim must be reported as a warning"
 
 
 # --- Discovery: %LOCALAPPDATA%/agy/bin/acp/<version>/ layout ---------------

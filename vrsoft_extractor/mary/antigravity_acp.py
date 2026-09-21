@@ -13,10 +13,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from .. import __version__
 from .antigravity_auth import AuthStreamParser, normalize_browser_url, try_validate_authorization_url
@@ -29,6 +30,16 @@ HEALTH_TIMEOUT = 60.0
 AUTH_TIMEOUT = 300.0
 SESSION_TIMEOUT = 90.0
 MAX_PROTOCOL_LINE = 8 * 1024 * 1024
+
+# Every AcpClient owns one exclusive temporary directory. A lock file kept open
+# inside it proves live ownership across processes, so a reconciliation pass
+# never removes a directory that another active ACP process (possibly from
+# another VRStudio instance) is still using.
+ACP_TEMP_OWNER_LOCK = ".vrstudio-owner.lock"
+
+# Directories created before the owner lock existed cannot prove liveness;
+# they are only reclaimed after this grace period.
+LEGACY_ACP_TEMP_GRACE_SECONDS = 24 * 60 * 60
 
 REMOVED_ENVIRONMENT_KEYS = {
     "GEMINI_API_KEY",
@@ -536,6 +547,13 @@ def prepare_profile(profile_dir: Path | str | None = None) -> Path:
         }
     }
     settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+
+    # Reclaim only temporary directories owned by dead ACP processes. A live
+    # owner lock (this process or another VRStudio instance) is never removed.
+    try:
+        _cleanup_stale_acp_temp_dirs(profile_dir=base)
+    except Exception:
+        logger.warning("Falha ao reconciliar diretórios temporários ACP órfãos.", exc_info=True)
     return base
 
 
@@ -665,6 +683,170 @@ def stop_process_tree(process) -> None:
             pass
 
 
+def _remove_acp_temp_dir(path: Path, *, attempts: int = 4, initial_delay: float = 0.05) -> bool:
+    """Removes an owned ACP temporary directory with bounded retries.
+
+    ``shutil.rmtree(..., ignore_errors=True)`` masks ``PermissionError`` and
+    loses the reference even when the directory survives, so transient
+    failures are retried with a short backoff instead. ``True`` is returned
+    only when the path no longer exists.
+    """
+    target = Path(path)
+    delay = initial_delay
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt == attempts - 1:
+                break
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if not target.exists():
+            return True
+    logger.warning("Could not remove owned ACP temporary directory: %s", target)
+    return not target.exists()
+
+
+def _try_acquire_temp_lock(lock_path: Path) -> BinaryIO | None:
+    """Acquires the exclusive owner lock of one ACP temporary directory.
+
+    Lock contention means the directory belongs to an active client and
+    returns ``None`` without touching it. Unexpected I/O errors also return
+    ``None``: such a directory is preserved as not eligible for removal.
+    """
+    try:
+        handle = open(lock_path, "a+b")
+    except OSError:
+        return None
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ValueError):
+        try:
+            handle.close()
+        except OSError:
+            pass
+        return None
+    return handle
+
+
+def _release_temp_lock(handle: BinaryIO | None) -> None:
+    """Unlocks and closes an owner lock handle, idempotently and best-effort."""
+    if handle is None:
+        return
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
+def _create_owned_temp_dir(parent: Path, *, prefix: str) -> tuple[str, BinaryIO]:
+    """Creates an exclusive ACP temporary directory and keeps its owner lock.
+
+    The returned handle must stay open (owned by the client) for the whole
+    lifetime of the directory; releasing it allows the directory to be
+    reclaimed later as an orphan.
+    """
+    temp_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=str(parent)))
+    handle = _try_acquire_temp_lock(temp_dir / ACP_TEMP_OWNER_LOCK)
+    if handle is None:
+        _remove_acp_temp_dir(temp_dir)
+        raise OSError(f"Não foi possível adquirir o lock do diretório temporário ACP: {temp_dir}")
+    return str(temp_dir), handle
+
+
+def _cleanup_stale_acp_temp_dirs(profile_dir: Path | str | None = None, *, now: float | None = None) -> int:
+    """Reclaims orphaned ACP temporary directories left by previous processes.
+
+    Only the two owned locations are inspected: ``<profile>/antigravity-acp/tmp/proc-*``
+    and ``<tempfile.gettempdir()>/vr-acp-*``. A new-format directory is removed
+    only when its owner lock can be acquired; a locked directory belongs to a
+    live client (possibly from another VRStudio instance) and is preserved.
+    Legacy directories without the lock file are removed only after
+    :data:`LEGACY_ACP_TEMP_GRACE_SECONDS`. Failures are logged per entry and
+    never stop the remaining reclaims or the caller's profile preparation.
+    """
+    base = Path(profile_dir) if profile_dir else profile_path()
+    roots: list[tuple[Path, list[str]]] = []
+    prefixes_by_key: dict[str, list[str]] = {}
+    for root, prefix in ((base / "antigravity-acp" / "tmp", "proc-"), (Path(tempfile.gettempdir()), "vr-acp-")):
+        try:
+            key = os.path.normcase(str(root.resolve()))
+        except OSError:
+            key = os.path.normcase(str(root))
+        if key in prefixes_by_key:
+            prefixes_by_key[key].append(prefix)
+        else:
+            prefixes_by_key[key] = [prefix]
+            roots.append((root, prefixes_by_key[key]))
+    reference = time.time() if now is None else now
+    removed = 0
+    for root, prefixes in roots:
+        try:
+            if not root.is_dir():
+                continue
+            entries = list(root.iterdir())
+        except OSError:
+            logger.warning("Falha ao inspecionar temporários ACP em %s", root)
+            continue
+        for entry in entries:
+            try:
+                if not any(entry.name.startswith(prefix) for prefix in prefixes):
+                    continue
+                if entry.is_symlink() or not entry.is_dir():
+                    continue
+                lock_path = entry / ACP_TEMP_OWNER_LOCK
+                if lock_path.is_file():
+                    handle = _try_acquire_temp_lock(lock_path)
+                    if handle is None:
+                        # Contention or I/O error: the directory may still be
+                        # in use, so it must not be removed here.
+                        continue
+                    _release_temp_lock(handle)
+                    if _remove_acp_temp_dir(entry):
+                        removed += 1
+                    continue
+                try:
+                    modified = entry.stat().st_mtime
+                except OSError:
+                    logger.warning("Falha ao inspecionar temporário ACP órfão: %s", entry)
+                    continue
+                if reference - modified < LEGACY_ACP_TEMP_GRACE_SECONDS:
+                    continue
+                if _remove_acp_temp_dir(entry):
+                    removed += 1
+            except OSError:
+                logger.warning("Falha ao reconciliar temporário ACP órfão: %s", entry)
+    return removed
+
+
 def extract_acp_models(session: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Extracts available models and default flag from an ACP session response.
 
@@ -779,6 +961,7 @@ class AcpClient:
         # never in __init__, so a constructed-but-never-started client owns
         # nothing on disk.
         self._temp_dir = None
+        self._temp_lock: BinaryIO | None = None
 
     def __enter__(self):
         return self
@@ -803,9 +986,11 @@ class AcpClient:
                 prof_tmp = profile_path() / "antigravity-acp" / "tmp"
                 try:
                     prof_tmp.mkdir(parents=True, exist_ok=True)
-                    self._temp_dir = tempfile.mkdtemp(prefix="proc-", dir=str(prof_tmp))
+                    self._temp_dir, self._temp_lock = _create_owned_temp_dir(prof_tmp, prefix="proc-")
                 except Exception:
-                    self._temp_dir = tempfile.mkdtemp(prefix="vr-acp-")
+                    self._temp_dir, self._temp_lock = _create_owned_temp_dir(
+                        Path(tempfile.gettempdir()), prefix="vr-acp-"
+                    )
 
             env = dict(self.env)
             env.update(TEMP=self._temp_dir, TMP=self._temp_dir, TMPDIR=self._temp_dir)
@@ -949,8 +1134,13 @@ class AcpClient:
                     future.set_exception(error or AcpError(method))
 
     def __del__(self):
-        if getattr(self, "_temp_dir", None) and Path(self._temp_dir).is_dir():
-            shutil.rmtree(self._temp_dir, ignore_errors=True)
+        # Best-effort only: close() owns the termination check, so the
+        # destructor can never delete a temporary directory that a still
+        # running ACP process may be using.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def close(self):
         with self._lock:
@@ -959,7 +1149,9 @@ class AcpClient:
             self._closed = True
             process = self.process
             temp_dir = self._temp_dir
+            temp_lock = self._temp_lock
             self._temp_dir = None
+            self._temp_lock = None
         self._fail_pending()
         if process and process.stdin:
             try:
@@ -981,8 +1173,13 @@ class AcpClient:
                         stream.close()
                     except Exception:
                         pass
-        if temp_dir and (process is None or process.poll() is not None):
-            try:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except OSError:
-                logger.warning("Could not remove owned ACP temporary directory: %s", temp_dir)
+        if not temp_dir:
+            return
+        if process is not None and process.poll() is None:
+            # The process survived the shutdown routine: keep the owner lock
+            # and the directory so nothing reclaims what it is still using.
+            self._temp_lock = temp_lock
+            logger.warning("Diretório temporário ACP preservado; processo ainda ativo: %s", temp_dir)
+            return
+        _release_temp_lock(temp_lock)
+        _remove_acp_temp_dir(temp_dir)
