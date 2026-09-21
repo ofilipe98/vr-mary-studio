@@ -1452,7 +1452,7 @@ Item {
                     ctx.lineTo(left, top + r)
                     ctx.arcTo(left, top, left + r, top, r)
                     ctx.closePath()
-                    ctx.strokeStyle = Qt.alpha(Theme.ultraAccent, 0.12)
+                    ctx.strokeStyle = Qt.alpha(Theme.vrAccent, 0.12)
                     ctx.lineWidth = 6
                     ctx.stroke()
                     var angle = sweep * Math.PI * 2

@@ -120,6 +120,19 @@ def main():
                 phase = arc.property('sweep')
                 QTest.qWait(100)
                 assert arc.property('sweep') == phase
+                # VR ativo no expandido: sem anel e sem herdar o azul do tema.
+                chat.setVrMode('vr')
+                for theme in ('dark_orange', 'ocean'):
+                    frontend.setTheme(theme)
+                    QTest.qWait(120)
+                    repaint_icons(window.contentItem())
+                    QTest.qWait(40)
+                    name = f'border-vr-expanded-{theme}.png'
+                    window.grabWindow().save(str(output / name))
+                    results.append(name)
+                chat.setVrMode('ultra')
+                frontend.setTheme('dark_orange')
+                QTest.qWait(80)
                 # Existing conversation placement uses the same composer anchor.
                 cid = db.create_conversation('Usage review', 'codex', 'gpt-6-astra', settings.root)
                 db.add_message(cid, 'user', 'Mensagem de teste visual')
@@ -151,15 +164,18 @@ def main():
                 assert card.property('isCompact')
                 # Retraído: o anel do Ultra não é desenhado sobre a bandeja.
                 assert not arc.property('visible')
-                # Captura os dois temas para confirmar o composer retraído limpo.
-                for theme in ('dark_orange', 'ocean'):
-                    frontend.setTheme(theme)
-                    QTest.qWait(120)
-                    repaint_icons(window.contentItem())
-                    QTest.qWait(40)
-                    name = f'border-compact-{theme}.png'
-                    window.grabWindow().save(str(output / name))
-                    results.append(name)
+                # Captura VR e Ultra nos dois temas para confirmar o composer
+                # retraído sem anel e sem realce laranja no contorno.
+                for mode in ('vr', 'ultra'):
+                    chat.setVrMode(mode)
+                    for theme in ('dark_orange', 'ocean'):
+                        frontend.setTheme(theme)
+                        QTest.qWait(120)
+                        repaint_icons(window.contentItem())
+                        QTest.qWait(40)
+                        name = f'border-compact-{mode}-{theme}.png'
+                        window.grabWindow().save(str(output / name))
+                        results.append(name)
                 warnings = [w.toString() for w in engine._qml_warnings]
                 assert not warnings, warnings
                 (output / 'results.json').write_text(json.dumps(dict(captures=results, warnings=warnings), indent=2), encoding='utf-8')
