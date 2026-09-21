@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.execution import (
@@ -118,6 +119,23 @@ class TestResearchRepositorySchemaAndCrud:
 
 
 class TestSafeResumption:
+    def test_contract_20_run_cannot_be_resumed_under_contract_21(
+        self, tmp_path: Path
+    ) -> None:
+        repo = ResearchRepository(tmp_path / "old-contract.db")
+        repo.create_run(
+            "run-contract-20",
+            "conv-contract",
+            {},
+            "pergunta",
+            {},
+            contract_version="2.0.0",
+        )
+        repo.update_run_status("run-contract-20", "failed")
+
+        with pytest.raises(ValueError, match="incompatível"):
+            repo.claim_resume("run-contract-20", "conv-contract")
+
     def test_safe_resumption_reuses_completed_stage_without_calling_model(self, tmp_path: Path) -> None:
         settings = MarySettings(
             app_dir=(tmp_path / "app").resolve(),

@@ -23,7 +23,7 @@ from .ownership import process_identity
 
 LOGGER = logging.getLogger(__name__)
 
-CONTRACT_VERSION = "2.0.0"
+CONTRACT_VERSION = "2.1.0"
 
 
 def utc_now_iso() -> str:

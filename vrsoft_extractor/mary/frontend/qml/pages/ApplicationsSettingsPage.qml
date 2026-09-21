@@ -189,6 +189,55 @@ Item {
                     }
                 }
 
+                Rectangle {
+                    objectName: "decompiledImportProgressCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: chat.decompiledImportRunning
+                    implicitHeight: importProgressLayout.implicitHeight + Theme.spaceMd
+                    radius: Theme.radiusSmall
+                    color: Theme.palette.codeSurface
+                    border.width: 1
+                    border.color: Theme.palette.chatBorder
+
+                    ColumnLayout {
+                        id: importProgressLayout
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceSm
+                        spacing: Theme.spaceXs
+
+                        Text {
+                            objectName: "decompiledImportProgressLabel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: chat.decompiledImportTotal > 0
+                                ? "Importando código descompilado — "
+                                  + root.formatCount(chat.decompiledImportProcessed) + "/"
+                                  + root.formatCount(chat.decompiledImportTotal) + " arquivos ("
+                                  + Number(chat.decompiledImportProgress).toFixed(1) + "%)"
+                                : "Importando código descompilado…"
+                            color: Theme.palette.headingText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.weight: Theme.weightMedium
+                            elide: Text.ElideRight
+                            renderType: Theme.textRenderType
+                        }
+
+                        VrProgressBar {
+                            objectName: "decompiledImportProgressBar"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            barHeight: 6
+                            accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.decompiledImportProgress
+                            indeterminate: chat.decompiledImportRunning && chat.decompiledImportTotal === 0
+                        }
+                    }
+                }
+
                 ColumnLayout {
                     objectName: "applicationsCatalogHeader"
                     Layout.fillWidth: true

@@ -41,6 +41,7 @@ SOURCE_INTENT_PRIORS: dict[str, dict[str, float]] = {
     "schema": {"functional": 0.20, "process": 0.34, "technical_schema": 1.0},
 }
 KNOWLEDGE_SOURCES = ("wiki", "kb", "schema")
+WIKI_SOURCE_ORIGINS = ("vrwiki", "endoo")
 MODULE_KNOWLEDGE_SOURCES = ("wiki", "kb")
 KNOWLEDGE_MODULES = ("Fiscal", "ADM_FIN_ESTOQUE", "PDV")
 QUERY_PRESENTATION_TERMS = frozenset(
@@ -340,6 +341,79 @@ class KnowledgeRouter:
             conflicts=tuple(conflicts),
             source_reports=tuple(reports),
             module_routing=module_routing,
+            missing_sources=missing,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
+
+    def route_source(self, query: str, source: str) -> EvidenceBundle:
+        """Route one complete documentary source without module narrowing."""
+        normalized_source = str(source or "").strip().casefold()
+        if normalized_source not in KNOWLEDGE_SOURCES:
+            raise ValueError(
+                "Fonte inválida; use somente 'wiki', 'kb' ou 'schema'."
+            )
+
+        self._ensure_index_ready()
+        profile = self.classify(query)
+        if normalized_source == "wiki":
+            rows: list[dict[str, Any]] = []
+            executed_queries: tuple[str, ...] = ()
+            errors: list[str] = []
+            origins = tuple(
+                origin
+                for origin in WIKI_SOURCE_ORIGINS
+                if origin.casefold() not in self.disabled_origins
+            )
+            for origin in origins:
+                try:
+                    origin_rows, executed_queries = self._search_lane_origin(
+                        profile,
+                        normalized_source,
+                        source_origin=origin,
+                    )
+                    rows.extend(origin_rows)
+                except Exception as exc:
+                    errors.append(f"{origin}: {exc}")
+            lane_results = {normalized_source: rows}
+            lane_queries = {normalized_source: executed_queries}
+            lane_errors = (
+                {normalized_source: "; ".join(errors)} if errors else {}
+            )
+            warnings = [
+                f"Falha na trilha {normalized_source.upper()}: {error}"
+                for error in errors
+            ]
+        else:
+            lane_results, lane_queries, lane_errors, warnings = (
+                self._collect_lanes(profile, sources=(normalized_source,))
+            )
+
+        candidates = self._rerank(profile, lane_results)
+        selected, groups, conflicts = self._deduplicate_and_group(candidates)
+        selected = self._restore_source_coverage(selected, candidates)
+        selected = self._expand_selected_documents(profile, selected)
+        reports = self._build_source_reports(
+            "",
+            lane_results,
+            lane_queries,
+            lane_errors,
+            selected,
+            sources=(normalized_source,),
+            reported_origins=origins if normalized_source == "wiki" else (),
+        )
+        missing = tuple(
+            report.source for report in reports if report.status != "found"
+        )
+        return EvidenceBundle(
+            profile=profile,
+            candidates=tuple(
+                item
+                for item in selected[: self.total_limit]
+                if item.source == normalized_source
+            ),
+            groups=tuple(groups),
+            conflicts=tuple(conflicts),
+            source_reports=tuple(reports),
             missing_sources=missing,
             warnings=tuple(dict.fromkeys(warnings)),
         )
@@ -687,6 +761,7 @@ class KnowledgeRouter:
         selected: list[EvidenceCandidate],
         *,
         sources: tuple[str, ...] = KNOWLEDGE_SOURCES,
+        reported_origins: tuple[str, ...] = (),
     ) -> list[SourceSearchReport]:
         reports: list[SourceSearchReport] = []
         for source in sources:
@@ -725,7 +800,7 @@ class KnowledgeRouter:
                 item.source_origin or item.source for item in source_candidates
             )
             if source == "wiki":
-                origins.update(self._enabled_origins(source))
+                origins.update(reported_origins or self._enabled_origins(source))
             origin_reports: list[OriginSearchReport] = []
             for origin in sorted(origins):
                 origin_rows = [

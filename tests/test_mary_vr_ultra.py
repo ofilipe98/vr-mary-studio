@@ -495,7 +495,7 @@ def test_research_pool_models_cycle(tmp_path: Path) -> None:
 # ---------------------------------------------------- paridade VR <-> VR Ultra
 
 
-def test_contract_and_routing_parity_between_vr_and_ultra(tmp_path: Path) -> None:
+def test_contract_parity_and_deferred_ultra_source_routing(tmp_path: Path) -> None:
     payloads_by_mode: dict[str, dict[str, Any]] = {}
     for mode in ("vr", "ultra"):
         settings, database, orchestrator, provider, cid, events = _orchestrator(
@@ -513,4 +513,5 @@ def test_contract_and_routing_parity_between_vr_and_ultra(tmp_path: Path) -> Non
     vr = payloads_by_mode["vr"]
     ultra = payloads_by_mode["ultra"]
     assert vr["response_contract_created"] == ultra["response_contract_created"]
-    assert vr["knowledge_routed"] == ultra["knowledge_routed"]
+    assert "knowledge_routed" in vr
+    assert "knowledge_routed" not in ultra

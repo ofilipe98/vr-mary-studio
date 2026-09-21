@@ -58,6 +58,7 @@ from .research_fanout import (
     GLOBAL_MODULE_LABEL,
     MAX_PARALLEL_RESEARCHERS,
     SCHEMA_MODULE_LABEL,
+    ULTRA_MAX_PARALLEL_RESEARCHERS,
     resolve_model_ref,
 )
 from .personality import VRMASTER_DIRECT_RESPONSE_POLICY
@@ -237,7 +238,7 @@ class ChatOrchestrator:
         self._pending_used_evidence_ids: dict[str, tuple[str, ...]] = {}
         self._pending_response_contracts: dict[str, ResponseContract] = {}
         self._research_pool: tuple[ModelRef, ...] = ()
-        self._research_max_parallel: int = MAX_PARALLEL_RESEARCHERS
+        self._research_max_parallel: int = ULTRA_MAX_PARALLEL_RESEARCHERS
         self._pending_dynamic_tools: dict[str, tuple[RuntimeEvent, dict]] = {}
         self._active_agent_runs: dict[
             str, dict[str, tuple[AgentProvider, str]]
@@ -486,6 +487,11 @@ class ChatOrchestrator:
             self._conversation_options(conversation_id, use_vr=use_vr),
             vr_mode=resolved_vr_mode,
         )
+        ultra_source_fanout = bool(
+            resolved_vr_mode == "ultra"
+            and use_vr
+            and getattr(self.settings, "vr_research_fanout", False)
+        )
         message_id = self.database.begin_user_turn(conversation_id, stored_text, skills=skills)
         native_column = self._native_column(use_vr)
         native_id = str(conversation[native_column] or "")
@@ -665,25 +671,26 @@ class ChatOrchestrator:
                     response_intent: ResponseIntent | None = None
                     response_contract: ResponseContract | None = None
                     if use_vr:
-                        try:
-                            evidence_bundle = self.retrieval_service.route(
-                                local_query, **({
-                                    "application_contexts": application_contexts,
-                                    "code_analysis_release": code_analysis_release,
-                                    "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
-                                } if application_contexts is not None or code_analysis_release != "current"
-                                   or code_analysis_manifest_sha256 else {})
-                            )
-                        except Exception:
-                            LOGGER.exception(
-                                "Falha ao rotear as fontes de conhecimento VR"
-                            )
+                        if not ultra_source_fanout:
+                            try:
+                                evidence_bundle = self.retrieval_service.route(
+                                    local_query, **({
+                                        "application_contexts": application_contexts,
+                                        "code_analysis_release": code_analysis_release,
+                                        "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+                                    } if application_contexts is not None or code_analysis_release != "current"
+                                       or code_analysis_manifest_sha256 else {})
+                                )
+                            except Exception:
+                                LOGGER.exception(
+                                    "Falha ao rotear as fontes de conhecimento VR"
+                                )
                         with self._agent_run_lock:
                             if (self._pending_user_messages.get(conversation_id) != message_id
                                     or conversation_id in self._cancelled_conversations
                                     or conversation_id in self._finalized_turns):
                                 return
-                        evidence_degraded = (
+                        evidence_degraded = not ultra_source_fanout and (
                             evidence_bundle is None
                             or not evidence_bundle.candidates
                         )
@@ -723,7 +730,7 @@ class ChatOrchestrator:
                         response_contract = build_response_contract(
                             response_intent
                         )
-                        if not (
+                        if not ultra_source_fanout and not (
                             evidence_bundle is not None
                             and evidence_bundle.candidates
                         ):
@@ -817,9 +824,9 @@ class ChatOrchestrator:
                         response_intent,
                         evidence_bundle,
                     )
-                    # The composer mode is authoritative: VR Ultra enables the
-                    # modular fan-out, while /pesquisa can request it in VR.
-                    fanout_allowed = force_research or resolved_vr_mode == "ultra"
+                    # VR Ultra uses fixed source specialists. /pesquisa in
+                    # normal VR keeps the legacy module fan-out.
+                    fanout_allowed = force_research and resolved_vr_mode == "vr"
                     explicit_code_analysis = (
                         code_analysis_enabled and resolved_vr_mode == "ultra"
                     )
@@ -828,7 +835,7 @@ class ChatOrchestrator:
                             evidence_bundle,
                             response_intent,
                             has_images=bool(image_paths),
-                            force_deep=explicit_code_analysis or force_research or resolved_vr_mode == "ultra",
+                            force_deep=force_research,
                         )
                         if (
                             use_vr
@@ -842,7 +849,27 @@ class ChatOrchestrator:
                                 or conversation_id in self._cancelled_conversations
                                 or conversation_id in self._finalized_turns):
                             return
-                    if fanout_modules:
+                    if ultra_source_fanout:
+                        self._run_ultra_source_fanout(
+                            conversation_id,
+                            dict(conversation),
+                            native_id,
+                            workspace,
+                            orchestration_request,
+                            provider,
+                            turn_options,
+                            skills or [],
+                            response_intent,
+                            response_contract,
+                            code_analysis_enabled=explicit_code_analysis,
+                            code_analysis_release=code_analysis_release,
+                            application_contexts=application_contexts,
+                            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                            search_scope=local_query,
+                            resume_run_id=resume_run_id,
+                            grant_budget=grant_budget,
+                        )
+                    elif fanout_modules:
                         self._run_module_fanout(
                             conversation_id,
                             dict(conversation),
@@ -1064,6 +1091,53 @@ class ChatOrchestrator:
             RuntimeEvent(conversation_id, "turn_completed", payload=completed)
         )
 
+    def _publish_research_result(
+        self,
+        conversation_id: str,
+        run_id: str,
+        result: Any,
+    ) -> None:
+        """Publish a validated fan-out result through the shared final path."""
+        self._pending_evidence_bundles[conversation_id] = result.synthesis_bundle
+        draft = result.draft
+        if result.violations or draft is None:
+            self._pending_used_evidence_ids[conversation_id] = ()
+            final_text = build_controlled_failure(
+                FinalResponseValidation(
+                    verdict="reject",
+                    reasons=(RefinementReason.INVALID_OUTPUT,),
+                    missing_sections=(
+                        tuple(item.detail for item in result.violations[:3])
+                        or result.merged.gaps[:3]
+                    ),
+                )
+            )
+        elif draft.answer_status == "insufficient_evidence":
+            self._pending_used_evidence_ids[conversation_id] = ()
+            final_text = build_controlled_failure(
+                FinalResponseValidation(
+                    verdict="reject",
+                    reasons=(RefinementReason.INVALID_OUTPUT,),
+                    missing_sections=result.merged.gaps[:3],
+                )
+            )
+        else:
+            self._pending_used_evidence_ids[conversation_id] = tuple(
+                draft.used_evidence_ids
+            )
+            final_text = render_sources(
+                draft.answer_markdown,
+                draft.used_evidence_ids,
+                result.synthesis_bundle,
+            )
+        self._publish_final_response(
+            conversation_id,
+            final_text,
+            run_id=run_id,
+            started_payload=result.started_payload,
+            completed_payload=result.completed_payload,
+        )
+
     def _fanout_modules(
         self,
         bundle: EvidenceBundle | None,
@@ -1102,6 +1176,227 @@ class ChatOrchestrator:
             # Deep request without module routing: research the global lane.
             modules.append(GLOBAL_MODULE_LABEL)
         return tuple(modules[:MAX_PARALLEL_RESEARCHERS]) or None
+
+    def _run_ultra_source_fanout(
+        self,
+        conversation_id: str,
+        conversation: dict[str, Any],
+        native_id: str,
+        workspace: Path,
+        request: str,
+        provider: AgentProvider,
+        options: ConversationOptions,
+        skills: list[dict[str, Any]],
+        intent: ResponseIntent,
+        contract: ResponseContract,
+        *,
+        code_analysis_enabled: bool = False,
+        code_analysis_release: str = "current",
+        application_contexts: list[dict[str, Any]] | None = None,
+        code_analysis_manifest_sha256: str = "",
+        search_scope: str = "",
+        resume_run_id: str = "",
+        grant_budget: bool = False,
+    ) -> None:
+        """Run the fixed-source Ultra pipeline with shared ownership/publication."""
+        run_id = resume_run_id or uuid.uuid4().hex
+        previous_run = (
+            self.research_repository.get_run(run_id) if resume_run_id else None
+        )
+        code_scope_error = ""
+        if code_analysis_enabled:
+            try:
+                if application_contexts is not None:
+                    from .code_context import freeze_application_contexts
+
+                    application_contexts = freeze_application_contexts(
+                        self.settings.root,
+                        application_contexts,
+                    )
+                    code_analysis_release = ""
+                    code_analysis_manifest_sha256 = ""
+                release_status = (
+                    ErpReleaseCatalog(self.settings.root).status(
+                        code_analysis_release,
+                        full_hash=True,
+                    )
+                    if application_contexts is None
+                    else {"release_id": "", "release_manifest_sha256": ""}
+                )
+                code_analysis_release = str(release_status["release_id"])
+                actual_manifest = str(
+                    release_status["release_manifest_sha256"]
+                )
+                if (
+                    code_analysis_manifest_sha256
+                    and actual_manifest != code_analysis_manifest_sha256
+                ):
+                    raise ProviderError(
+                        "Manifesto da release mudou; selecione novamente a release de código."
+                    )
+                code_analysis_manifest_sha256 = actual_manifest
+            except Exception as exc:
+                code_scope_error = str(exc)
+        else:
+            code_analysis_release = ""
+
+        profile = self.retrieval_service.classify(search_scope or request)
+        initial_bundle = EvidenceBundle(profile=profile)
+        context = ExecutionContext(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            workspace=workspace,
+            owner_message_id=self._pending_user_messages.get(conversation_id),
+            budget=ExecutionBudget(
+                max_parallel=self._research_max_parallel,
+                reserved_synthesis_calls=6,
+                reserved_synthesis_seconds=45,
+            ),
+        )
+        context.metadata.update(
+            resume_run_id=resume_run_id,
+            grant_budget=grant_budget,
+            search_scope=search_scope,
+            scope_signature=self.retrieval_service.scope_signature(),
+            permissions={
+                "approval_profile": options.approval_profile,
+                "tools": list(options.mcp_tools),
+            },
+            code_analysis_enabled=code_analysis_enabled,
+            code_analysis_release=code_analysis_release,
+            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+            application_contexts=application_contexts,
+            code_scope_error=code_scope_error,
+            model={
+                "provider": conversation["provider"],
+                "model": conversation["model"],
+            },
+            fanout_kind="ultra_source",
+        )
+        with self._agent_run_lock:
+            self._active_orchestration_runs[conversation_id] = run_id
+            self._research_contexts[run_id] = context
+            self._research_evidence[run_id] = {}
+        self._pending_evidence_bundles[conversation_id] = initial_bundle
+        self._pending_response_modes[conversation_id] = "vr"
+
+        import copy
+
+        runner = copy.copy(self.execution_runner)
+        runner.providers = dict(self.providers)
+        runner.research_pool = self._research_pool
+        runner.research_max_parallel = self._research_max_parallel
+        try:
+            if previous_run and previous_run["status"] == "completed":
+                saved = json.loads(previous_run["result_json"] or "{}")
+                old_context = json.loads(previous_run["context_json"])
+                compatible = all(
+                    old_context.get(key) == context.metadata.get(key)
+                    for key in (
+                        "scope_signature",
+                        "permissions",
+                        "model",
+                        "code_analysis_release",
+                        "code_analysis_manifest_sha256",
+                        "application_contexts",
+                        "code_scope_error",
+                        "fanout_kind",
+                    )
+                )
+                if saved.get("publication_text") and compatible:
+                    self.research_repository.claim_resume(
+                        run_id,
+                        conversation_id,
+                        execution_id=context.owner_message_id or 0,
+                    )
+                    self.research_repository.set_context(
+                        run_id,
+                        context.metadata,
+                        context.owner_message_id or 0,
+                    )
+                    self.research_repository.update_run_status(run_id, "completed")
+                    self._pending_used_evidence_ids[conversation_id] = tuple(
+                        saved.get("used_evidence_ids", ())
+                    )
+                    self._pending_evidence_bundles[conversation_id] = replace(
+                        initial_bundle,
+                        candidates=tuple(
+                            EvidenceCandidate(**candidate)
+                            for candidate in saved.get("publication_candidates", [])
+                        ),
+                    )
+                    self._publish_final_response(
+                        conversation_id,
+                        saved["publication_text"],
+                        run_id=run_id,
+                    )
+                    return
+
+            result = runner.execute_ultra_source_fanout(
+                context=context,
+                conversation=conversation,
+                native_id=native_id,
+                provider=provider,
+                options=options,
+                skills=skills,
+                intent=intent,
+                contract=contract,
+                code_analysis_enabled=code_analysis_enabled,
+                code_analysis_release=code_analysis_release,
+                code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                application_contexts=application_contexts,
+                search_scope=search_scope,
+                request=request,
+            )
+            self._raise_if_cancelled(conversation_id)
+            if (
+                code_analysis_enabled
+                and application_contexts is not None
+                and not code_scope_error
+            ):
+                from .code_context import validate_application_contexts
+
+                validate_application_contexts(
+                    self.settings.root,
+                    application_contexts,
+                )
+            if self._pending_user_messages.get(conversation_id) != context.owner_message_id:
+                raise OrchestrationCancelled("O turno foi substituído.")
+            self._publish_research_result(conversation_id, run_id, result)
+        except ExecutionCancelledError as exc:
+            raise OrchestrationCancelled(str(exc)) from exc
+        except ProviderRateLimited as exc:
+            self._publish_final_response(conversation_id, str(exc), run_id=run_id)
+        except Exception as exc:
+            LOGGER.exception("Execução VR Ultra falhou.")
+            self._emit_orchestration_event(
+                conversation_id,
+                "research_failed",
+                "A pesquisa VR Ultra não pôde ser concluída.",
+                {
+                    "run_id": run_id,
+                    "error": str(exc)[:400],
+                    "budget": context.budget.to_dict(),
+                },
+            )
+            self._pending_used_evidence_ids[conversation_id] = ()
+            self._publish_final_response(
+                conversation_id,
+                build_controlled_failure(
+                    FinalResponseValidation(
+                        verdict="reject",
+                        reasons=(RefinementReason.INVALID_OUTPUT,),
+                    )
+                ),
+                run_id=run_id,
+            )
+        finally:
+            with self._agent_run_lock:
+                if self._research_contexts.get(run_id) is context:
+                    if self._active_orchestration_runs.get(conversation_id) == run_id:
+                        self._active_orchestration_runs.pop(conversation_id, None)
+                    self._research_evidence.pop(run_id, None)
+                    self._research_contexts.pop(run_id, None)
 
     def _run_module_fanout(
         self,
@@ -1208,27 +1503,7 @@ class ChatOrchestrator:
                 validate_application_contexts(self.settings.root, application_contexts)
             if self._pending_user_messages.get(conversation_id) != context.owner_message_id:
                 raise OrchestrationCancelled("O turno foi substituído.")
-            self._pending_evidence_bundles[conversation_id] = result.synthesis_bundle
-            draft = result.draft
-            if result.violations or draft is None:
-                self._pending_used_evidence_ids[conversation_id] = ()
-                final_text = build_controlled_failure(FinalResponseValidation(
-                    verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
-                    missing_sections=tuple(v.detail for v in result.violations[:3]) or result.merged.gaps[:3],
-                ))
-            elif draft.answer_status == "insufficient_evidence":
-                self._pending_used_evidence_ids[conversation_id] = ()
-                final_text = build_controlled_failure(FinalResponseValidation(
-                    verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,),
-                    missing_sections=result.merged.gaps[:3],
-                ))
-            else:
-                self._pending_used_evidence_ids[conversation_id] = tuple(draft.used_evidence_ids)
-                final_text = render_sources(draft.answer_markdown, draft.used_evidence_ids, result.synthesis_bundle)
-            self._publish_final_response(
-                conversation_id, final_text, run_id=run_id,
-                started_payload=result.started_payload, completed_payload=result.completed_payload,
-            )
+            self._publish_research_result(conversation_id, run_id, result)
         except ExecutionCancelledError as exc:
             raise OrchestrationCancelled(str(exc)) from exc
         except ProviderRateLimited as exc:

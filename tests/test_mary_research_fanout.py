@@ -21,10 +21,14 @@ from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.research_fanout import (
     MAX_PARALLEL_RESEARCHERS,
     ModuleResearch,
+    SourceResearch,
     build_researcher_prompt,
+    build_source_researcher_prompt,
     fanout_payload,
     merge_module_research,
+    merge_source_research,
     parse_researcher_output,
+    parse_source_researcher_output,
 )
 from vrsoft_extractor.mary.supervision import (
     ResponseContract,
@@ -158,6 +162,35 @@ class TestResearcherPromptAndParsing:
         assert not research.succeeded
         assert research.raw_error
 
+    def test_source_prompt_and_parser_enforce_lane_evidence_ids(self):
+        prompt = build_source_researcher_prompt(
+            "wiki",
+            "Como funciona?",
+            "evidências",
+            origins=("vrwiki", "endoo"),
+        )
+        assert "exclusivo da fonte WIKI" in prompt
+        assert "qualquer módulo" in prompt
+        assert "vrwiki, endoo" in prompt
+        raw = json.dumps({
+            "source_status": "found",
+            "findings": [{
+                "claim": "Achado",
+                "evidence_ids": ["wiki:ok", "kb:fora"],
+                "kind": "fact",
+                "confidence": 0.9,
+            }],
+        })
+        result = parse_source_researcher_output(
+            raw,
+            worker_id="ultra_wiki",
+            worker_name="Agente Wiki",
+            source="wiki",
+            allowed_evidence_ids=("wiki:ok",),
+        )
+        assert result.succeeded and result.report is not None
+        assert result.report.findings[0].evidence_ids == ("wiki:ok",)
+
 
 class TestMergeAndPayload:
     def test_merge_collects_claims_and_marks_failures(self):
@@ -179,6 +212,25 @@ class TestMergeAndPayload:
         good = parse_researcher_output(ok_raw, worker_id="f", worker_name="F", module="Fiscal")
         payload = fanout_payload([good, ModuleResearch(module="PDV", raw_error="x")])
         assert payload["ok"] == 1 and payload["failed"] == ["PDV"]
+
+    def test_exhausted_source_is_successful_and_mergeable(self):
+        exhausted = parse_source_researcher_output(
+            json.dumps({
+                "source_status": "exhausted",
+                "findings": [],
+                "missing_information": ["sem resultados"],
+            }),
+            worker_id="ultra_kb",
+            worker_name="Agente KB",
+            source="kb",
+        )
+        assert exhausted.succeeded
+        merged = merge_source_research([
+            exhausted,
+            SourceResearch(source="schema", raw_error="falha técnica"),
+        ])
+        assert "sem resultados" in merged.gaps
+        assert merged.failed_required_workers == ("schema",)
 
 
 # ------------------------------------------------------- Fase 2: gatilho

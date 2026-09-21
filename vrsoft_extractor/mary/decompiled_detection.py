@@ -14,7 +14,7 @@ import shutil
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from .apps_catalog import AppsCatalogStore, UNIDENTIFIED_VERSION, _transaction
@@ -29,6 +29,7 @@ from .decompiled_export import (
     PORTABLE_PACKAGE_FORMAT,
     PORTABLE_PACKAGE_MANIFEST,
     PORTABLE_PACKAGE_SCHEMA_VERSION,
+    _PROGRESS_REPORT_INTERVAL,
     _relative_source_path,
     _require_within,
 )
@@ -203,10 +204,13 @@ def _import_decompiled_source(
     release_id: str = "",
     package_name: str = "",
     apps_store: AppsCatalogStore | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Ingest already-decompiled Java sources into VRStudio SQLite index and apps catalog.
 
-    Bypasses JVM decompiler toolchains completely.
+    Bypasses JVM decompiler toolchains completely. ``progress`` receives
+    ``{"current": int, "total": int}`` while sources are copied and indexed so
+    callers can render a determinate progress bar.
     """
     ws = Path(workspace).resolve()
     detection = detect_decompiled_source(source_dir)
@@ -239,9 +243,13 @@ def _import_decompiled_source(
 
     artifacts_for_catalog: list[dict[str, Any]] = []
     total_indexed = 0
+    total_sources = int(detection["total_java_files"])
+    processed = 0
 
     now = _utc_now()
     release_hash = hashlib.sha256(selected_release_id.encode("utf-8")).hexdigest()
+    if progress is not None:
+        progress({"current": 0, "total": total_sources})
 
     try:
         with batch_store.connect() as conn:
@@ -318,60 +326,70 @@ def _import_decompiled_source(
                     )
 
                     output_ref = f"indice/codigo/decompilation/{selected_release_id}/{app_id}"
-                    cursor = conn.execute(
-                        """INSERT INTO code_sources
-                           (source_key, schema_version, release_id, release_hash,
-                            jar_relative_path, artifact_sha256, batch_id,
-                            class_version, tool,
-                            output_reference, source_relative_path, source_sha256,
-                            package_name, primary_type, qualified_name,
-                            logical_names_json, content_hashes_json, occurrence_count,
-                            parser_kind, syntax_error_count, symbols_text, body, indexed_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            source_key,
-                            CODE_INDEX_SCHEMA_VERSION,
-                            selected_release_id,
-                            release_hash,
-                            f"{app_id}.jar",
-                            app_sha256,
-                            f"batch-{selected_release_id}-{app_id}",
-                            52,
-                            "decompiled_import",
-                            output_ref,
-                            rel_path,
-                            file_hash,
-                            parsed.package_name,
-                            parsed.primary_type,
-                            parsed.qualified_name,
-                            json.dumps([parsed.qualified_name]),
-                            json.dumps([file_hash]),
-                            1,
-                            parsed.parser_kind,
-                            parsed.syntax_error_count,
-                            symbols_text,
-                            body,
-                            now,
-                        ),
-                    )
-                    source_id = cursor.lastrowid
-                    conn.executemany(
-                        """INSERT INTO code_symbols
-                           (source_id, kind, simple_name, qualified_name, signature, visibility, line_start)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        [(source_id, item["kind"], item["simple_name"], item["qualified_name"],
-                          item["signature"], item["visibility"], item["line_start"])
-                         for item in parsed.symbols],
-                    )
-                    conn.executemany(
-                        """INSERT INTO code_relations
-                           (source_id, kind, target, source_symbol, confidence, line_start)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
-                        [(source_id, item["kind"], item["target"], item.get("source_symbol", ""),
-                          float(item.get("confidence", 0.0)), item["line_start"])
-                         for item in parsed.relations],
-                    )
-                    total_indexed += 1
+                    if conn.execute(
+                        "SELECT 1 FROM code_sources WHERE source_key = ?",
+                        (source_key,),
+                    ).fetchone() is None:
+                        cursor = conn.execute(
+                            """INSERT INTO code_sources
+                               (source_key, schema_version, release_id, release_hash,
+                                jar_relative_path, artifact_sha256, batch_id,
+                                class_version, tool,
+                                output_reference, source_relative_path, source_sha256,
+                                package_name, primary_type, qualified_name,
+                                logical_names_json, content_hashes_json, occurrence_count,
+                                parser_kind, syntax_error_count, symbols_text, body, indexed_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                source_key,
+                                CODE_INDEX_SCHEMA_VERSION,
+                                selected_release_id,
+                                release_hash,
+                                f"{app_id}.jar",
+                                app_sha256,
+                                f"batch-{selected_release_id}-{app_id}",
+                                52,
+                                "decompiled_import",
+                                output_ref,
+                                rel_path,
+                                file_hash,
+                                parsed.package_name,
+                                parsed.primary_type,
+                                parsed.qualified_name,
+                                json.dumps([parsed.qualified_name]),
+                                json.dumps([file_hash]),
+                                1,
+                                parsed.parser_kind,
+                                parsed.syntax_error_count,
+                                symbols_text,
+                                body,
+                                now,
+                            ),
+                        )
+                        source_id = cursor.lastrowid
+                        conn.executemany(
+                            """INSERT INTO code_symbols
+                               (source_id, kind, simple_name, qualified_name, signature, visibility, line_start)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            [(source_id, item["kind"], item["simple_name"], item["qualified_name"],
+                              item["signature"], item["visibility"], item["line_start"])
+                             for item in parsed.symbols],
+                        )
+                        conn.executemany(
+                            """INSERT INTO code_relations
+                               (source_id, kind, target, source_symbol, confidence, line_start)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            [(source_id, item["kind"], item["target"], item.get("source_symbol", ""),
+                              float(item.get("confidence", 0.0)), item["line_start"])
+                             for item in parsed.relations],
+                        )
+                        total_indexed += 1
+                    processed += 1
+                    if (
+                        progress is not None
+                        and processed % _PROGRESS_REPORT_INTERVAL == 0
+                    ):
+                        progress({"current": processed, "total": total_sources})
 
 
                 app_sha256 = app_hash_digest.hexdigest()
@@ -385,6 +403,9 @@ def _import_decompiled_source(
                     "class_signatures": class_signatures,
                     "decompiled_classes": len(java_files),
                 })
+
+            if progress is not None and total_sources > 0:
+                progress({"current": total_sources, "total": total_sources})
 
             synthetic_manifest = {
                 "release_id": selected_release_id,
@@ -436,10 +457,16 @@ def import_decompiled_source(
     release_id: str = "",
     package_name: str = "",
     apps_store: AppsCatalogStore | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     store = apps_store or AppsCatalogStore(root=workspace)
     return _import_decompiled_source(
-        store, workspace, source_dir, release_id=release_id, package_name=package_name
+        store,
+        workspace,
+        source_dir,
+        release_id=release_id,
+        package_name=package_name,
+        progress=progress,
     )
 
 
@@ -765,8 +792,14 @@ def _import_decompiled_package_archive(
     *,
     release_id: str = "",
     package_name: str = "",
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Ingest a validated portable ZIP into a fresh catalog/workspace."""
+    """Ingest a validated portable ZIP into a fresh catalog/workspace.
+
+    ``progress`` receives ``{"current": int, "total": int}`` while archive
+    sources are extracted and indexed so callers can render a determinate
+    progress bar.
+    """
     ws = Path(workspace).resolve()
     detection = detect_decompiled_package_archive(source_archive)
     if not detection.get("is_valid"):
@@ -810,8 +843,12 @@ def _import_decompiled_package_archive(
     decomp_root.parent.mkdir(parents=True, exist_ok=True)
     staging = decomp_root.parent / f".{selected_release_id}.tmp-{uuid4().hex}"
     total_indexed = 0
+    total_sources = sum(len(artifact.get("sources") or []) for artifact in artifacts)
+    processed = 0
     catalog_artifacts: list[dict[str, Any]] = []
     published = False
+    if progress is not None:
+        progress({"current": 0, "total": total_sources})
     try:
         with zipfile.ZipFile(detection["source_archive"]) as archive:
             entries = {
@@ -914,60 +951,73 @@ def _import_decompiled_package_archive(
                                 + [str(item["target"]) for item in parsed.relations]
                             )
                         )
-                        cursor = conn.execute(
-                            """INSERT INTO code_sources
-                               (source_key, schema_version, release_id, release_hash,
-                                jar_relative_path, artifact_sha256, batch_id,
-                                class_version, tool,
-                                output_reference, source_relative_path, source_sha256,
-                                package_name, primary_type, qualified_name,
-                                logical_names_json, content_hashes_json, occurrence_count,
-                                parser_kind, syntax_error_count, symbols_text, body, indexed_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                source_key,
-                                CODE_INDEX_SCHEMA_VERSION,
-                                selected_release_id,
-                                release_hash,
-                                jar_path,
-                                artifact_sha,
-                                f"batch-{selected_release_id}-package-{artifact_index:04d}",
-                                52,
-                                "decompiled_package_import",
-                                output_ref,
-                                relative.as_posix(),
-                                file_hash,
-                                parsed.package_name,
-                                parsed.primary_type,
-                                parsed.qualified_name,
-                                json.dumps([parsed.qualified_name]),
-                                json.dumps([file_hash]),
-                                1,
-                                parsed.parser_kind,
-                                parsed.syntax_error_count,
-                                symbols_text,
-                                body,
-                                now,
-                            ),
-                        )
-                        source_id = cursor.lastrowid
-                        conn.executemany(
-                            """INSERT INTO code_symbols
-                               (source_id, kind, simple_name, qualified_name, signature, visibility, line_start)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                            [(source_id, item["kind"], item["simple_name"], item["qualified_name"],
-                              item["signature"], item["visibility"], item["line_start"])
-                             for item in parsed.symbols],
-                        )
-                        conn.executemany(
-                            """INSERT INTO code_relations
-                               (source_id, kind, target, source_symbol, confidence, line_start)
-                               VALUES (?, ?, ?, ?, ?, ?)""",
-                            [(source_id, item["kind"], item["target"], item.get("source_symbol", ""),
-                              float(item.get("confidence", 0.0)), item["line_start"])
-                             for item in parsed.relations],
-                        )
-                        total_indexed += 1
+                        if conn.execute(
+                            "SELECT 1 FROM code_sources WHERE source_key = ?",
+                            (source_key,),
+                        ).fetchone() is None:
+                            cursor = conn.execute(
+                                """INSERT INTO code_sources
+                                   (source_key, schema_version, release_id, release_hash,
+                                    jar_relative_path, artifact_sha256, batch_id,
+                                    class_version, tool,
+                                    output_reference, source_relative_path, source_sha256,
+                                    package_name, primary_type, qualified_name,
+                                    logical_names_json, content_hashes_json, occurrence_count,
+                                    parser_kind, syntax_error_count, symbols_text, body, indexed_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    source_key,
+                                    CODE_INDEX_SCHEMA_VERSION,
+                                    selected_release_id,
+                                    release_hash,
+                                    jar_path,
+                                    artifact_sha,
+                                    f"batch-{selected_release_id}-package-{artifact_index:04d}",
+                                    52,
+                                    "decompiled_package_import",
+                                    output_ref,
+                                    relative.as_posix(),
+                                    file_hash,
+                                    parsed.package_name,
+                                    parsed.primary_type,
+                                    parsed.qualified_name,
+                                    json.dumps([parsed.qualified_name]),
+                                    json.dumps([file_hash]),
+                                    1,
+                                    parsed.parser_kind,
+                                    parsed.syntax_error_count,
+                                    symbols_text,
+                                    body,
+                                    now,
+                                ),
+                            )
+                            source_id = cursor.lastrowid
+                            conn.executemany(
+                                """INSERT INTO code_symbols
+                                   (source_id, kind, simple_name, qualified_name, signature, visibility, line_start)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                [(source_id, item["kind"], item["simple_name"], item["qualified_name"],
+                                  item["signature"], item["visibility"], item["line_start"])
+                                 for item in parsed.symbols],
+                            )
+                            conn.executemany(
+                                """INSERT INTO code_relations
+                                   (source_id, kind, target, source_symbol, confidence, line_start)
+                                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                [(source_id, item["kind"], item["target"], item.get("source_symbol", ""),
+                                  float(item.get("confidence", 0.0)), item["line_start"])
+                                 for item in parsed.relations],
+                            )
+                            total_indexed += 1
+                        processed += 1
+                        if (
+                            progress is not None
+                            and processed % _PROGRESS_REPORT_INTERVAL == 0
+                        ):
+                            progress({"current": processed, "total": total_sources})
+
+                if progress is not None and total_sources > 0:
+                    progress({"current": total_sources, "total": total_sources})
 
                 synthetic_manifest = {
                     "release_id": selected_release_id,
@@ -1035,9 +1085,15 @@ def import_decompiled_package_archive(
     release_id: str = "",
     package_name: str = "",
     apps_store: AppsCatalogStore | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     store = apps_store or AppsCatalogStore(root=workspace)
     return _import_decompiled_package_archive(
-        store, workspace, source_archive, release_id=release_id, package_name=package_name
+        store,
+        workspace,
+        source_archive,
+        release_id=release_id,
+        package_name=package_name,
+        progress=progress,
     )
 

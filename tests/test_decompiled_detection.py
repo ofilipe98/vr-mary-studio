@@ -184,6 +184,83 @@ class TestDecompiledDetection(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_import_decompiled_source_skips_duplicate_identities(self):
+        with TemporaryDirectory() as ws_dir, TemporaryDirectory() as src_dir:
+            ws_path = Path(ws_dir)
+            src_path = Path(src_dir)
+            self._prepare_directory_import(src_path)
+            duplicate = src_path / "vr" / "vrmaster" / "backup" / "A.java"
+            duplicate.parent.mkdir(parents=True)
+            duplicate.write_text(
+                "package vr.vrmaster;\npublic class A {}\n", encoding="utf-8"
+            )
+
+            result = import_decompiled_source(ws_path, src_path, release_id="dup-rel")
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["total_indexed_sources"], 2)
+            self.assertEqual(len(_sources_snapshot(ws_path)), 2)
+            self.assertTrue(
+                (
+                    ws_path / "indice" / "codigo" / "decompilation"
+                    / "dup-rel" / "vrmaster" / "vr" / "vrmaster" / "backup" / "A.java"
+                ).is_file()
+            )
+
+    def _prepare_directory_import(self, src_path: Path) -> None:
+        (src_path / "vrmaster.properties").write_text(
+            "app.name=VRMaster\nversao.major=4\nversao.minor=4\nversao.release=102\nversao.build=0\n",
+            encoding="utf-8",
+        )
+        src_pkg = src_path / "vr" / "vrmaster"
+        src_pkg.mkdir(parents=True)
+        (src_pkg / "A.java").write_text(
+            "package vr.vrmaster;\npublic class A {}\n", encoding="utf-8"
+        )
+        (src_pkg / "B.java").write_text(
+            "package vr.vrmaster;\npublic class B {}\n", encoding="utf-8"
+        )
+
+    def test_import_decompiled_source_reports_progress(self):
+        with TemporaryDirectory() as ws_dir, TemporaryDirectory() as src_dir:
+            ws_path = Path(ws_dir)
+            src_path = Path(src_dir)
+            self._prepare_directory_import(src_path)
+            events = []
+
+            result = import_decompiled_source(
+                ws_path, src_path, release_id="progress-rel", progress=events.append
+            )
+
+            self.assertEqual(result["total_indexed_sources"], 2)
+            self.assertEqual(events[0], {"current": 0, "total": 2})
+            self.assertEqual(events[-1], {"current": 2, "total": 2})
+            self.assertTrue(all(event["total"] == 2 for event in events))
+            self.assertEqual(
+                [event["current"] for event in events],
+                sorted(event["current"] for event in events),
+            )
+
+    def test_import_decompiled_source_reports_throttled_progress(self):
+        with TemporaryDirectory() as ws_dir, TemporaryDirectory() as src_dir:
+            ws_path = Path(ws_dir)
+            src_path = Path(src_dir)
+            self._prepare_directory_import(src_path)
+            events = []
+
+            with patch(
+                "vrsoft_extractor.mary.decompiled_detection._PROGRESS_REPORT_INTERVAL", 1
+            ):
+                import_decompiled_source(
+                    ws_path, src_path, release_id="progress-steps", progress=events.append
+                )
+
+            self.assertEqual(
+                [event["current"] for event in events][:3],
+                [0, 1, 2],
+            )
+            self.assertEqual(events[-1], {"current": 2, "total": 2})
+
 
 def _write_portable_zip(path: Path, manifest: dict, entries: dict[str, bytes]) -> None:
     with zipfile.ZipFile(path, "w") as archive:
@@ -369,6 +446,64 @@ class TestPortableDecompiledPackage(unittest.TestCase):
             catalog_text = json.dumps(store_b.load_catalog(), ensure_ascii=False)
             self.assertNotIn(str(workspace_a), catalog_text)
             self.assertNotIn(str(workspace_a), references)
+
+    def test_portable_decompiled_package_import_reports_progress(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace_a = root / "workspace-a"
+            _prepare_registered_portable_workspace(workspace_a)
+            archive = root / "Pacote-decompiled.zip"
+            export_decompiled_package(workspace_a, archive, package_id="release-a")
+
+            workspace_b = root / "workspace-b"
+            workspace_b.mkdir()
+            events = []
+
+            result = import_decompiled_package_archive(
+                workspace_b, archive, progress=events.append
+            )
+
+            self.assertEqual(result["total_indexed_sources"], 3)
+            self.assertEqual(events[0], {"current": 0, "total": 3})
+            self.assertEqual(events[-1], {"current": 3, "total": 3})
+            self.assertTrue(all(event["total"] == 3 for event in events))
+            self.assertEqual(
+                [event["current"] for event in events],
+                sorted(event["current"] for event in events),
+            )
+
+    def test_portable_import_skips_duplicate_source_identities(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "duplicado.zip"
+            manifest = _minimal_manifest()
+            artifact = manifest["artifacts"][0]
+            artifact["sources"].append({
+                "source_relative_path": "1/0/br/App.java",
+                "source_sha256": _PORTABLE_SHA,
+                "archive_path": "sources/0001/1/0/br/App.java",
+            })
+            artifact["source_count"] = 2
+            manifest["file_count"] = 2
+            manifest["total_bytes"] = 2 * len(_PORTABLE_BODY)
+            _write_portable_zip(archive, manifest, {
+                "sources/0001/br/App.java": _PORTABLE_BODY,
+                "sources/0001/1/0/br/App.java": _PORTABLE_BODY,
+            })
+            workspace = root / "workspace"
+            workspace.mkdir()
+
+            result = import_decompiled_package_archive(workspace, archive)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["total_indexed_sources"], 1)
+            self.assertEqual(len(_sources_snapshot(workspace)), 1)
+            self.assertTrue(
+                (
+                    workspace / "indice" / "codigo" / "decompilation"
+                    / "package-1" / "artifacts" / "0001" / "1" / "0" / "br" / "App.java"
+                ).is_file()
+            )
 
     def test_portable_import_rejects_existing_release_without_partial_state(self):
         with TemporaryDirectory() as temp_dir:

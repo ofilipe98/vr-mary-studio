@@ -26,6 +26,7 @@ from vrsoft_extractor.mary.execution import (
     ResearchStagePlan,
     StageExecutionResult,
     StageStatus,
+    UltraSourceFanoutPlan,
 )
 from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.models import (
@@ -174,10 +175,43 @@ class TestRetrievalServiceContract:
             source_origin="vrwiki",
             title="Manual Fiscal",
             url="https://wiki.vr.internal/fiscal",
-            markdown="Instruções sobre apuração de ICMS e SPED Fiscal no sistema.",
+            markdown="Instruções sobre apuração de ICMS e SPED Fiscal no sistema. Escopo global Ultra.",
             module="Fiscal",
             review_status="approved",
             content_hash="h-fiscal-1",
+        ))
+        db.upsert_document(KnowledgeDocument(
+            source="wiki",
+            source_id="doc-pdv-endoo",
+            source_origin="endoo",
+            title="Manual PDV complementar",
+            url="https://endoo.example/pdv",
+            markdown="Orientações complementares do escopo global Ultra no PDV.",
+            module="PDV",
+            review_status="approved",
+            content_hash="h-pdv-endoo-1",
+        ))
+        db.upsert_document(KnowledgeDocument(
+            source="kb",
+            source_id="kb-estoque",
+            source_origin="movidesk",
+            title="Inventário e saldo",
+            url="https://kb.example/estoque",
+            markdown="Procedimento para inventário e conferência de saldo.",
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="h-kb-1",
+        ))
+        db.upsert_document(KnowledgeDocument(
+            source="schema",
+            source_id="schema-produto",
+            source_origin="local",
+            title="Tabela produto",
+            url="",
+            markdown="A tabela produto armazena o identificador e a descrição.",
+            module="ADM_FIN_ESTOQUE",
+            review_status="approved",
+            content_hash="h-schema-1",
         ))
         router = KnowledgeRouter(db, settings.root)
         service = RetrievalService(router)
@@ -203,6 +237,33 @@ class TestRetrievalServiceContract:
 
         # Enabled origins parity
         assert service.enabled_origins("wiki") == router._enabled_origins("wiki")
+
+    def test_route_source_is_global_and_strictly_source_scoped(
+        self, setup_retrieval
+    ) -> None:
+        service, _router = setup_retrieval
+
+        wiki = service.route_source("escopo global Ultra", "wiki")
+        assert {item.source for item in wiki.candidates} == {"wiki"}
+        assert {item.module for item in wiki.candidates} >= {"Fiscal", "PDV"}
+        wiki_report = wiki.source_report("wiki")
+        assert wiki_report is not None
+        assert {item.source_origin for item in wiki_report.origin_reports} == {
+            "vrwiki",
+            "endoo",
+        }
+
+        kb = service.route_source("inventário saldo", "kb")
+        assert kb.candidates and {item.source for item in kb.candidates} == {"kb"}
+        schema = service.route_source("tabela produto", "schema")
+        assert schema.candidates and {item.source for item in schema.candidates} == {
+            "schema"
+        }
+
+    def test_route_source_rejects_unknown_source(self, setup_retrieval) -> None:
+        service, _router = setup_retrieval
+        with pytest.raises(ValueError, match="Fonte inválida"):
+            service.route_source("consulta", "code")
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +336,51 @@ class TestExecutionRunnerContract:
         assert isinstance(orch.retrieval_service, RetrievalService)
         assert hasattr(orch, "execution_runner")
         assert isinstance(orch.execution_runner, ExecutionRunner)
+
+    def test_runner_plans_fixed_ultra_sources_and_optional_code(
+        self, tmp_path: Path
+    ) -> None:
+        settings = MarySettings(
+            app_dir=(tmp_path / "app").resolve(),
+            root=(tmp_path / "mary").resolve(),
+            old_root=(tmp_path / "old").resolve(),
+        )
+        settings.ensure_dirs()
+        runner = ExecutionRunner(
+            settings=settings,
+            providers={},
+            retrieval=MagicMock(),
+            event_emitter=MagicMock(),
+            ephemeral_turn_runner=MagicMock(),
+            buffered_turn_runner=MagicMock(),
+            looks_like_final_envelope=lambda _text: False,
+        )
+        main_model = ModelRef(provider="codex", model="gpt-5")
+
+        without_code = runner.plan_ultra_source_fanout(
+            "ultra-1", main_model, "high"
+        )
+        assert isinstance(without_code, UltraSourceFanoutPlan)
+        assert [stage["id"] for stage in without_code.runtime_stages] == [
+            "ultra_wiki",
+            "ultra_kb",
+            "ultra_schema",
+            "ultra_synthesis",
+        ]
+
+        with_code = runner.plan_ultra_source_fanout(
+            "ultra-2",
+            main_model,
+            "high",
+            code_analysis_enabled=True,
+        )
+        assert [stage["id"] for stage in with_code.runtime_stages] == [
+            "ultra_wiki",
+            "ultra_kb",
+            "ultra_schema",
+            "ultra_code",
+            "ultra_synthesis",
+        ]
 
 
 class TestEvidenceCollectedBeforeParse:

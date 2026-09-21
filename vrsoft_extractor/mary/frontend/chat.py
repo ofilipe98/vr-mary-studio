@@ -271,6 +271,10 @@ class ChatBridge(QObject):
         self._decompiled_export_progress = 0.0
         self._decompiled_export_processed = 0
         self._decompiled_export_total = 0
+        self._decompiled_import_running = False
+        self._decompiled_import_progress = 0.0
+        self._decompiled_import_processed = 0
+        self._decompiled_import_total = 0
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -808,6 +812,22 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def decompiledExportTotal(self) -> int:  # noqa: N802
         return self._decompiled_export_total
+
+    @Property(bool, notify=stateChanged)
+    def decompiledImportRunning(self) -> bool:  # noqa: N802
+        return self._decompiled_import_running
+
+    @Property(float, notify=stateChanged)
+    def decompiledImportProgress(self) -> float:  # noqa: N802
+        return self._decompiled_import_progress
+
+    @Property(int, notify=stateChanged)
+    def decompiledImportProcessed(self) -> int:  # noqa: N802
+        return self._decompiled_import_processed
+
+    @Property(int, notify=stateChanged)
+    def decompiledImportTotal(self) -> int:  # noqa: N802
+        return self._decompiled_import_total
 
     @Property(bool, notify=stateChanged)
     def decompiledCodeExportAvailable(self) -> bool:  # noqa: N802

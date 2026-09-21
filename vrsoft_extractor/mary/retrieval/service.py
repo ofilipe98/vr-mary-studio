@@ -308,6 +308,20 @@ class RetrievalService:
         finally:
             self._router.retrieval_revision.reset(token)
 
+    def route_source(self, query: str, source: str) -> EvidenceBundle:
+        """Route a single documentary source through the shared router."""
+        self._prepare_search()
+        bundle = self._finalize_bundle(self._router.route_source(query, source))
+        normalized_source = str(source or "").strip().casefold()
+        return replace(
+            bundle,
+            candidates=tuple(
+                item
+                for item in bundle.candidates
+                if item.source == normalized_source
+            ),
+        )
+
     def _prepare_search(self) -> None:
         if self._configuration["mode"] == "hybrid":
             self._ensure_neural()

@@ -16,7 +16,7 @@ from typing import Any
 from ..models import (
     EvidenceBundle,
 )
-from ..research_fanout import ModuleResearch
+from ..research_fanout import ModuleResearch, SourceResearch
 from ..supervision import MergedEvidence, ResponseViolation
 from .budget import ExecutionBudget
 from .cancellation import CancellationToken
@@ -136,6 +136,31 @@ class ResearchFanoutResult:
 
     run_id: str
     ordered: list[ModuleResearch]
+    merged: MergedEvidence
+    synthesis_bundle: EvidenceBundle
+    code_status: str
+    draft: Any | None = None
+    violations: tuple[ResponseViolation, ...] = ()
+    started_payload: dict[str, Any] = field(default_factory=dict)
+    completed_payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class UltraSourceFanoutPlan:
+    """Plan for the fixed-source VR Ultra fan-out."""
+
+    run_id: str
+    sources: tuple[str, ...]
+    runtime_stages: list[dict[str, Any]]
+    max_parallel: int
+
+
+@dataclass(frozen=True, slots=True)
+class UltraSourceFanoutResult:
+    """Outcome of the fixed-source VR Ultra pipeline."""
+
+    run_id: str
+    reports: list[SourceResearch]
     merged: MergedEvidence
     synthesis_bundle: EvidenceBundle
     code_status: str

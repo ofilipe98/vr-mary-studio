@@ -644,6 +644,44 @@ def test_package_export_reports_progress_through_poll_timer(bridge, tmp_path, mo
     assert "2.000 arquivos exportados" in bridge.releaseSnapshotStatus
 
 
+def test_package_import_reports_progress_through_poll_timer(bridge, tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(*args, progress=None, **kwargs):
+        entered.set()
+        progress({"current": 0, "total": 40})
+        progress({"current": 10, "total": 40})
+        release.wait(5)
+        progress({"current": 40, "total": 40})
+        return {
+            "success": True,
+            "release_id": "release-a",
+            "package_name": "Pacote A",
+            "imported_applications": 1,
+            "total_indexed_sources": 40,
+            "package": {},
+        }
+
+    monkeypatch.setattr(codeadmin, "import_decompiled_package_archive", blocked)
+    archive = tmp_path / "Pacote-decompiled.zip"
+    archive.write_bytes(b"zip")
+    try:
+        assert bridge.importDecompiledPackageArchive(
+            str(archive), "release-a", "Pacote A"
+        )["pending"]
+        assert entered.wait(2)
+        wait_until(lambda: bridge.decompiledImportProgress == 25.0)
+        assert bridge.decompiledImportRunning is True
+        assert bridge.decompiledImportProcessed == 10
+        assert bridge.decompiledImportTotal == 40
+        assert bridge.releaseSnapshotStatus.startswith("Importando código descompilado")
+    finally:
+        release.set()
+    wait_until(lambda: not bridge.releaseSnapshotRunning)
+    assert bridge.decompiledImportRunning is False
+    assert "Importação concluída: 40 fontes indexados" in bridge.releaseSnapshotStatus
+
+
 def test_package_import_runs_off_qt_thread_and_rejects_overlap(bridge, tmp_path, monkeypatch):
     entered, release, heartbeat = (threading.Event() for _ in range(3))
     worker_threads = []

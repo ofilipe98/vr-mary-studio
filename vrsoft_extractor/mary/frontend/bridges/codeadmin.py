@@ -1536,6 +1536,23 @@ class CodeAdminDomain:
         self._decompiled_export_total = total_value
 
 
+    def _apply_decompiled_import_progress(self, current: Any, total: Any) -> None:
+        total_value = max(0, int(total or 0))
+        current_value = max(0, int(current or 0))
+        if total_value:
+            current_value = min(current_value, total_value)
+            percent = round(100.0 * current_value / total_value, 1)
+            self._release_snapshot_status = (
+                f"Importando código descompilado — {current_value:,}/{total_value:,} arquivos"
+            ).replace(",", ".")
+        else:
+            percent = 0.0
+            self._release_snapshot_status = "Importando código descompilado…"
+        self._decompiled_import_progress = percent
+        self._decompiled_import_processed = current_value
+        self._decompiled_import_total = total_value
+
+
     def _poll_release_snapshot(self) -> None:
         if self._closed:
             return
@@ -1566,8 +1583,13 @@ class CodeAdminDomain:
                 return
             current = latest_progress.get("current", 0)
             total = latest_progress.get("total", 0)
-            if str(latest_progress.get("operation") or "") == "export_decompiled":
+            progress_operation = str(latest_progress.get("operation") or "")
+            if progress_operation == "export_decompiled":
                 self._apply_decompiled_export_progress(current, total)
+                self.stateChanged.emit()
+                return
+            if progress_operation == "import_decompiled":
+                self._apply_decompiled_import_progress(current, total)
                 self.stateChanged.emit()
                 return
             stage = str(latest_progress.get("stage") or "")
@@ -1600,6 +1622,8 @@ class CodeAdminDomain:
         self._release_snapshot_running = False
         if operation == "export_decompiled":
             self._decompiled_export_running = False
+        elif operation == "import_decompiled":
+            self._decompiled_import_running = False
         self._release_snapshot_poll_timer.stop()
         if latest.get("workspace", self._settings.root) != self._settings.root:
             self.stateChanged.emit()
@@ -2438,8 +2462,9 @@ class CodeAdminDomain:
         if self._closed or self._release_snapshot_running or self._code_processing_running:
             return {"success": False, "busy": True}
         workspace = self._settings.root
-        self._start_package_task("import_decompiled", lambda: import_decompiled_source(
+        self._start_package_task("import_decompiled", lambda progress=None: import_decompiled_source(
             workspace, source_dir, release_id=release_id, package_name=package_name,
+            progress=progress,
         ))
         return {"pending": True}
 
@@ -2494,8 +2519,9 @@ class CodeAdminDomain:
         if self._closed or self._release_snapshot_running or self._code_processing_running:
             return {"success": False, "busy": True}
         workspace = self._settings.root
-        self._start_package_task("import_decompiled", lambda: import_decompiled_package_archive(
+        self._start_package_task("import_decompiled", lambda progress=None: import_decompiled_package_archive(
             workspace, archive_path, release_id=release_id, package_name=package_name,
+            progress=progress,
         ))
         return {"pending": True}
 
@@ -2550,6 +2576,11 @@ class CodeAdminDomain:
             self._decompiled_export_progress = 0.0
             self._decompiled_export_processed = 0
             self._decompiled_export_total = 0
+        elif operation == "import_decompiled":
+            self._decompiled_import_running = True
+            self._decompiled_import_progress = 0.0
+            self._decompiled_import_processed = 0
+            self._decompiled_import_total = 0
         if operation != "export_decompiled":
             self._apps_catalog_error = ""
 
@@ -2564,7 +2595,7 @@ class CodeAdminDomain:
         def worker() -> None:
             result = {"operation": operation, "workspace": workspace}
             try:
-                if operation == "export_decompiled":
+                if operation in {"export_decompiled", "import_decompiled"}:
                     result.update(ok=True, result=task(progress_cb))
                 else:
                     result.update(ok=True, result=task())

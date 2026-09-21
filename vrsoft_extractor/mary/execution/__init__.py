@@ -25,6 +25,8 @@ from .contracts import (
     ResearchStagePlan,
     StageExecutionResult,
     StageStatus,
+    UltraSourceFanoutPlan,
+    UltraSourceFanoutResult,
 )
 from .repository import (
     CONTRACT_VERSION,
@@ -49,5 +51,7 @@ __all__ = [
     "StageExecutionResult",
     "StageStatus",
     "TokenAccounting",
+    "UltraSourceFanoutPlan",
+    "UltraSourceFanoutResult",
     "compute_step_input_hash",
 ]

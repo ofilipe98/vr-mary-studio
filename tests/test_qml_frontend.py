@@ -5494,7 +5494,7 @@ class QmlFrontendTest(unittest.TestCase):
 
                 import_calls = []
 
-                def fake_package_import(workspace, archive, *, release_id="", package_name=""):
+                def fake_package_import(workspace, archive, *, release_id="", package_name="", progress=None):
                     import_calls.append((str(archive), release_id, package_name))
                     return {
                         "success": True,
@@ -5528,6 +5528,34 @@ class QmlFrontendTest(unittest.TestCase):
                     )],
                 )
 
+                import_progress_card = find_by_name(
+                    window.contentItem(), "decompiledImportProgressCard"
+                )
+                import_progress_bar = find_by_name(
+                    window.contentItem(), "decompiledImportProgressBar"
+                )
+                self.assertIsNotNone(import_progress_card)
+                self.assertIsNotNone(import_progress_bar)
+                self.assertFalse(import_progress_card.property("visible"))
+                chat_bridge._decompiled_import_running = True
+                chat_bridge._decompiled_import_progress = 42.5
+                chat_bridge._decompiled_import_processed = 425
+                chat_bridge._decompiled_import_total = 1000
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertTrue(import_progress_card.property("visible"))
+                self.assertAlmostEqual(
+                    float(import_progress_bar.property("value")), 42.5, places=1
+                )
+                self.assertFalse(bool(import_progress_bar.property("indeterminate")))
+                chat_bridge._decompiled_import_running = False
+                chat_bridge._decompiled_import_progress = 0.0
+                chat_bridge._decompiled_import_processed = 0
+                chat_bridge._decompiled_import_total = 0
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(import_progress_card.property("visible"))
+
                 directory_result = {
                     "is_valid": True,
                     "source_root": str(root / "fontes"),
@@ -5557,7 +5585,7 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertTrue(dialog.property("visible"))
                 directory_calls = []
 
-                def fake_directory_import(workspace, source_dir, *, release_id="", package_name=""):
+                def fake_directory_import(workspace, source_dir, *, release_id="", package_name="", progress=None):
                     directory_calls.append((str(source_dir), release_id, package_name))
                     return {
                         "success": True,
