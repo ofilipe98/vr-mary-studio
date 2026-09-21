@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .runtime import configure_playwright_runtime
+from .runtime import ensure_playwright_chromium
 from .settings import ConfigError, Settings, ensure_runtime_dirs, get_credentials
 
 LOGGER = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class AuthError(RuntimeError):
 
 def login(settings: Settings, *, headless: bool = False, force: bool = False) -> Path:
     ensure_runtime_dirs(settings)
-    configure_playwright_runtime()
+    ensure_playwright_chromium()
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:

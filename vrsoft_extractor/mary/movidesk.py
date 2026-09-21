@@ -16,7 +16,7 @@ from typing import Callable
 
 from bs4 import BeautifulSoup
 
-from ..runtime import configure_playwright_runtime
+from ..runtime import ensure_playwright_chromium
 from .classifier import classify
 from .config import MarySettings
 from .content import (
@@ -71,7 +71,7 @@ class MovideskSync:
         self.ocr = OcrManager(settings.tesseract_dir)
 
     def sync(self, headed: bool = False, limit: int | None = None) -> SyncStats:
-        configure_playwright_runtime()
+        ensure_playwright_chromium(progress=self.progress)
         from playwright.sync_api import sync_playwright
 
         run_id = self.database.start_sync("kb", "movidesk")
@@ -170,7 +170,7 @@ class MovideskSync:
 
     def login(self) -> None:
         """Completes interactive authentication and persists it before syncing."""
-        configure_playwright_runtime()
+        ensure_playwright_chromium(progress=self.progress)
         from playwright.sync_api import sync_playwright
 
         self.settings.state_dir.mkdir(parents=True, exist_ok=True)

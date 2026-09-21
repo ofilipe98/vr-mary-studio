@@ -89,9 +89,15 @@ explicitamente em vez de serem preenchidos por suposição.
 cd D:\Codex\VRStudio
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]" -c constraints-windows-x64.txt
-$env:PLAYWRIGHT_BROWSERS_PATH='0'
-.\.venv\Scripts\python.exe -m playwright install chromium
 ```
+
+No checkout Python, o primeiro fluxo que depende de Playwright prepara automaticamente
+o Chromium compatível com a versão instalada. O padrão é hermético
+(`PLAYWRIGHT_BROWSERS_PATH=0`); um valor externo explícito é preservado em Python.
+A distribuição PyInstaller força o modo hermético, usa somente o Chromium
+empacotado e não baixa browsers em runtime; se estiver ausente, repare ou
+reextraia a distribuição. O build portátil prepara o Chromium compatível antes
+do PyInstaller e mantém a validação posterior de Chromium/FFmpeg incorporados.
 
 Copie `.env.example` para `.env` e preencha apenas as credenciais necessárias:
 

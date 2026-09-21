@@ -155,9 +155,9 @@ def course_from_payload(summary: dict[str, Any], detail: dict[str, Any]) -> Cour
 def refresh_courses(settings: Settings, *, headless: bool = True) -> list[CourseCatalogItem]:
     ensure_runtime_dirs(settings)
     ensure_session(settings, headless=headless)
-    from .runtime import configure_playwright_runtime
+    from .runtime import ensure_playwright_chromium
 
-    configure_playwright_runtime()
+    ensure_playwright_chromium()
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -218,9 +218,9 @@ def enroll_courses(
 
     ensure_runtime_dirs(settings)
     ensure_session(settings, headless=True)
-    from .runtime import configure_playwright_runtime
+    from .runtime import ensure_playwright_chromium
 
-    configure_playwright_runtime()
+    ensure_playwright_chromium()
     from playwright.sync_api import sync_playwright
 
     results: list[dict[str, Any]] = []

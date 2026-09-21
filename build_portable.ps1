@@ -80,6 +80,12 @@ else {
 
 Push-Location $ProjectRoot
 try {
+    $env:PLAYWRIGHT_BROWSERS_PATH = "0"
+    & $Python -c "from vrsoft_extractor.runtime import ensure_playwright_chromium; ensure_playwright_chromium(allow_install=True)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Preparacao do Chromium compativel falhou. Verifique o ambiente de build antes de executar o PyInstaller."
+    }
+
     & $Python -m PyInstaller --noconfirm --clean VRNorteStudio.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller falhou com codigo $LASTEXITCODE"

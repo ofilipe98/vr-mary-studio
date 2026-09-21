@@ -40,6 +40,16 @@ recrie a virtualenv e reinstale o pacote. Preserve `.env`, `.state` e `VRProject
 
 ### Ciclo de verificação
 
+No checkout Python, o primeiro fluxo Playwright prepara automaticamente o Chromium
+compatível. O padrão é hermético (`PLAYWRIGHT_BROWSERS_PATH=0`); valores externos
+explícitos são preservados em Python. A distribuição PyInstaller força `0`, usa
+somente o Chromium empacotado e nunca baixa browsers em runtime. Caso o binário
+esteja ausente, repare ou reextraia a distribuição. O build portátil prepara o
+Chromium antes do PyInstaller e valida Chromium/FFmpeg novamente no artefato.
+
+Testes unitários devem mockar a resolução e o instalador do runtime (ou a garantia
+no módulo consumidor). Nunca podem disparar download real de browser.
+
 Execute os comandos na raiz, usando o Python da virtualenv:
 
 | Objetivo | Comando após `.\.venv\Scripts\python.exe` |

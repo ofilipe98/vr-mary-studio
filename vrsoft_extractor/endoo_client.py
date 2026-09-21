@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .auth import ensure_session, login
-from .runtime import configure_playwright_runtime
+from .runtime import ensure_playwright_chromium
 from .scanner import API_HEADER_KEYS
 from .settings import ConfigError, Settings, load_settings
 
@@ -74,7 +74,7 @@ class EndooReadClient:
 
     def __enter__(self) -> "EndooReadClient":
         ensure_session(self.settings, headless=self.headless)
-        configure_playwright_runtime()
+        ensure_playwright_chromium()
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:

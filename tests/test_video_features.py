@@ -208,7 +208,7 @@ def test_scan_failure_preserves_previous_inventory():
         with (
             patch("playwright.sync_api.sync_playwright", return_value=playwright_context),
             patch("vrsoft_extractor.scanner.ensure_session"),
-            patch("vrsoft_extractor.scanner.configure_playwright_runtime"),
+            patch("vrsoft_extractor.scanner.ensure_playwright_chromium"),
             patch(
                 "vrsoft_extractor.scanner.SECTION_SPECS",
                 (SectionSpec("curso", "Cursos", "/cursos"),),

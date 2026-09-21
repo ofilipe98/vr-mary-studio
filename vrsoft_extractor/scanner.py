@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urldefrag, urljoin, urlparse, url
 from .auth import ensure_session
 from .inventory import load_inventory, merge_inventory, save_inventory
 from .models import VideoItem
-from .runtime import configure_playwright_runtime
+from .runtime import ensure_playwright_chromium
 from .settings import ConfigError, Settings, ensure_runtime_dirs, sensitive_values
 from .video_classification import classify_inventory
 from .utils import (
@@ -156,7 +156,7 @@ def scan(
 ) -> list[VideoItem]:
     ensure_runtime_dirs(settings)
     ensure_session(settings, headless=headless)
-    configure_playwright_runtime()
+    ensure_playwright_chromium()
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:

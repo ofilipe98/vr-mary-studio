@@ -73,6 +73,20 @@ class UtilsTest(unittest.TestCase):
             tuple(int(value) for value in fixed_match.groups()), expected_fixed
         )
 
+    def test_portable_build_prepares_hermetic_chromium_before_packaging(self):
+        script = (Path(__file__).parents[1] / "build_portable.ps1").read_text(encoding="utf-8")
+        preparation = script.index("ensure_playwright_chromium(allow_install=True)")
+        packaging = script.index("& $Python -m PyInstaller")
+        self.assertLess(script.index('$env:PLAYWRIGHT_BROWSERS_PATH = "0"'), preparation)
+        self.assertIn('& $Python -c "from vrsoft_extractor.runtime import', script)
+        self.assertLess(preparation, packaging)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", script[preparation:packaging])
+        self.assertIn('throw "Preparacao do Chromium', script[preparation:packaging])
+        for binary in ('-Filter "chrome.exe"', '-Filter "ffmpeg-win64.exe"'):
+            self.assertGreater(script.index(binary), packaging)
+        self.assertEqual(script.count('Where-Object { $_.FullName -like "*playwright*'), 2)
+        self.assertIn("if (-not $BundledBrowser -or -not $BundledFfmpeg)", script)
+
     def test_portable_build_uses_zip64_capable_archiver(self):
         root = Path(__file__).parents[1]
         build_script = (root / "build_portable.ps1").read_text(encoding="utf-8")
