@@ -467,8 +467,8 @@ Item {
 
                                 VrLineIcon {
                                     anchors.centerIn: parent
-                                    width: Theme.iconMedium
-                                    height: Theme.iconMedium
+                                    width: Theme.scaledGeometry(18)
+                                    height: Theme.scaledGeometry(18)
                                     kind: chat.applicationImportPreview.error ? "warning" : "files"
                                     foreground: chat.applicationImportPreview.error
                                         ? Theme.palette.danger
@@ -1357,8 +1357,8 @@ Item {
                             spacing: Theme.spaceSm
 
                             VrLineIcon {
-                                Layout.preferredWidth: Theme.iconMedium
-                                Layout.preferredHeight: Theme.iconMedium
+                                Layout.preferredWidth: Theme.scaledGeometry(18)
+                                Layout.preferredHeight: Theme.scaledGeometry(18)
                                 kind: "play"
                                 foreground: Theme.palette.brandOrange
                             }
@@ -2700,8 +2700,8 @@ Item {
                                         spacing: Theme.scaledGeometry(8)
 
                                         VrLineIcon {
-                                            width: Theme.iconSmall
-                                            height: Theme.iconSmall
+                                            width: Theme.scaledGeometry(16)
+                                            height: Theme.scaledGeometry(16)
                                             kind: "browser"
                                             foreground: Theme.palette.warning
                                         }
@@ -3746,8 +3746,8 @@ Item {
                     RowLayout {
                         spacing: Theme.scaledGeometry(6)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.iconCompact
-                            Layout.preferredHeight: Theme.iconCompact
+                            Layout.preferredWidth: Theme.scaledGeometry(14)
+                            Layout.preferredHeight: Theme.scaledGeometry(14)
                             kind: "settings"
                             foreground: Theme.palette.brandOrange
                         }

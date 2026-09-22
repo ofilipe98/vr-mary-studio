@@ -251,8 +251,6 @@ def main():
                             if not source_interaction_checked:
                                 copy_source = window.findChild(QObject, "copyApplicationSourceButton")
                                 assert copy_source is not None
-                                copy_source.clicked.emit()
-                                assert QApplication.clipboard().text() == chat.applicationSources["body"]
                                 clean_mode = window.findChild(QObject, "applicationSourceCleanModeButton")
                                 raw_mode = window.findChild(QObject, "applicationSourceRawModeButton")
                                 view_note = window.findChild(QObject, "applicationSourceViewNote")
@@ -267,12 +265,14 @@ def main():
                                 assert chat.applicationSources.get("clean_available") is True
                                 assert view_note.property("visible")
                                 assert body_area.property("text") == chat.applicationSources.get("clean_body", "")
+                                copy_source.clicked.emit()
+                                wait_for(lambda: QApplication.clipboard().text() == body_area.property("text"))
                                 raw_mode.clicked.emit()
-                                QTest.qWait(30)
-                                assert body_area.property("text") == chat.applicationSources.get("body", "")
+                                wait_for(lambda: body_area.property("text") == chat.applicationSources.get("body", ""))
+                                copy_source.clicked.emit()
+                                wait_for(lambda: QApplication.clipboard().text() == chat.applicationSources.get("body", ""))
                                 clean_mode.clicked.emit()
-                                QTest.qWait(30)
-                                assert body_area.property("text") == chat.applicationSources.get("clean_body", "")
+                                wait_for(lambda: body_area.property("text") == chat.applicationSources.get("clean_body", ""))
                                 source_interaction_checked = True
                                 QTest.qWait(2600)
                         panel_name = ["summary", "processing", "comparison", "origins", "code"][panel]

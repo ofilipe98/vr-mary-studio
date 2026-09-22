@@ -194,3 +194,35 @@ def test_cleaning_is_idempotent():
     second = _clean(first.body)
     assert second.body == first.body
     assert second.status == "unchanged"
+
+
+def test_crlf_unprotected_whitespace_and_blank_lines_are_normalized():
+    body = (
+        "\r\n"
+        "package br.vr;\r\n"
+        "\r\n"
+        "\r\n"
+        "public class App {   \r\n"
+        "}\r\n"
+        "\r\n"
+    )
+    result = _clean(body)
+    assert result.status == "cleaned"
+    assert result.body == "package br.vr;\n\npublic class App {\n}\n"
+    assert "\r" not in result.body
+    assert result.body.endswith("\n")
+    assert not result.body.endswith("\r\n")
+
+
+def test_crlf_inside_block_comment_is_preserved():
+    body = (
+        "class App {}\r\n"
+        "/* first line  \r\n"
+        "   second line\r\n"
+        "   third line  */\r\n"
+    )
+    result = _clean(body)
+    assert result.status == "cleaned"
+    protected = "/* first line  \r\n   second line\r\n   third line  */"
+    assert protected in result.body
+    assert result.body == "class App {}\n" + protected + "\n"

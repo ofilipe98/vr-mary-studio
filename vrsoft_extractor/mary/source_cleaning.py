@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Literal
 
 _BANNER_TOOLS = frozenset({"cfr", "vineflower"})
-_EDGE_WHITESPACE = " \t"
+# Trailing characters of unprotected lines: spaces/tabs before a line break
+# and a bare CR of a CRLF pair, which is line structure rather than content.
+_EDGE_WHITESPACE = " \t\r"
 _INITIAL_WHITESPACE = "\ufeff \t\r\n"
 
 _NORMAL = 0
