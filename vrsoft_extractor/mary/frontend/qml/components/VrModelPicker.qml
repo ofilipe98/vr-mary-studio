@@ -7,7 +7,32 @@ Button {
     id: control
 
     function openPicker() {
+        control.refreshPlacement()
         pickerPopup.open()
+    }
+
+    function togglePopup() {
+        if (pickerPopup.opened) {
+            pickerPopup.close()
+            return
+        }
+        control.openPicker()
+    }
+
+    // T3 (Base UI Positioner) prefers opening below and flips up only when the
+    // popup does not fit. QML cannot track mapToItem() inside a binding, so the
+    // trigger position is captured whenever the popup opens or the window
+    // resizes; otherwise the placement math runs on a stale composer position.
+    property real sceneTop: 0
+    readonly property real popupGap: Theme.scaledGeometry(8)
+
+    function refreshPlacement() {
+        sceneTop = control.mapToItem(null, 0, 0).y
+    }
+
+    Connections {
+        target: Theme
+        function onViewportHeightChanged() { control.refreshPlacement() }
     }
 
     property var model: []
@@ -46,7 +71,7 @@ Button {
     hoverEnabled: true
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down ? 0.97 : 1
-    onClicked: pickerPopup.opened ? pickerPopup.close() : pickerPopup.open()
+    onClicked: control.togglePopup()
 
     Behavior on scale {
         enabled: !frontend.reduceMotion
@@ -100,18 +125,20 @@ Button {
         id: pickerPopup
         objectName: "modelPickerPopup"
         parent: control
-        // The list opens below the composer control and only flips up when the
-        // window has no usable room left; the height caps to the gap so the
-        // popup never leaves the viewport (the list scrolls instead).
-        readonly property real naturalHeight: Theme.scaledGeometry(400)
-        readonly property real minVisibleHeight: Theme.scaledGeometry(200)
+        // T3 keeps the model list tall (max-h-86.5 ≈ 346px) and scrolls the
+        // rows; the popup flips up when it does not fit below and never leaves
+        // the window — the height caps to the available side.
+        readonly property real naturalHeight: Theme.scaledGeometry(346)
         readonly property real spaceBelow: Theme.viewportHeight
-            - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(16)
-        readonly property bool openAbove: control.popupAbove || spaceBelow < minVisibleHeight
+            - control.sceneTop - control.height - control.popupGap
+        readonly property real spaceAbove: control.sceneTop - control.popupGap
+        readonly property bool openAbove: control.popupAbove
+            || (naturalHeight > spaceBelow && spaceAbove > spaceBelow)
         x: 0
-        y: openAbove ? -height - 8 : control.height + 8
+        y: openAbove ? -height - control.popupGap : control.height + control.popupGap
         width: Math.min(Theme.scaledGeometry(376), Theme.viewportWidth - 24)
-        height: openAbove ? naturalHeight : Math.min(naturalHeight, spaceBelow)
+        height: Math.max(Theme.scaledGeometry(40), Math.min(naturalHeight,
+            openAbove ? spaceAbove : spaceBelow))
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {

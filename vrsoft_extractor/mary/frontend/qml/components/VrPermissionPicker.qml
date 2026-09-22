@@ -12,7 +12,34 @@ Button {
         ? model[currentIndex] : ({})
     signal activated(int index)
 
-    function openPicker() { optionsPopup.open() }
+    function openPicker() {
+        control.refreshPlacement()
+        optionsPopup.open()
+    }
+
+    function togglePopup() {
+        if (optionsPopup.opened) {
+            optionsPopup.close()
+            return
+        }
+        control.openPicker()
+    }
+
+    // T3 (Base UI Positioner) prefers opening below and flips up only when the
+    // popup does not fit. QML cannot track mapToItem() inside a binding, so the
+    // trigger position is captured whenever the popup opens or the window
+    // resizes; otherwise the placement math runs on a stale composer position.
+    property real sceneTop: 0
+    readonly property real popupGap: Theme.scaledGeometry(7)
+
+    function refreshPlacement() {
+        sceneTop = control.mapToItem(null, 0, 0).y
+    }
+
+    Connections {
+        target: Theme
+        function onViewportHeightChanged() { control.refreshPlacement() }
+    }
     function permissionIconKind(value) {
         var key = String(value || "auto")
         if (key === "supervised") return "lock"
@@ -40,7 +67,7 @@ Button {
     focusPolicy: Qt.StrongFocus
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down ? 0.97 : 1
-    onClicked: optionsPopup.opened ? optionsPopup.close() : optionsPopup.open()
+    onClicked: control.togglePopup()
 
     Behavior on scale {
         enabled: !frontend.reduceMotion
@@ -92,17 +119,20 @@ Button {
         id: optionsPopup
         objectName: "permissionPickerPopup"
         parent: control
-        // Opens below the composer control; flips up only when the options
-        // would not fit in the remaining window space (no content is clipped).
-        // The popup hugs the rows like T3 instead of reserving a fixed menu.
+        // Opens below the composer control; flips up when the rows do not fit
+        // and never leaves the window — the height caps to the available side
+        // and the rows scroll. The popup hugs its content like T3.
         readonly property real naturalHeight: permissionColumn.implicitHeight + 2 * padding
         readonly property real spaceBelow: Theme.viewportHeight
-            - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(14)
-        readonly property bool openAbove: control.popupAbove || spaceBelow < naturalHeight
+            - control.sceneTop - control.height - control.popupGap
+        readonly property real spaceAbove: control.sceneTop - control.popupGap
+        readonly property bool openAbove: control.popupAbove
+            || (naturalHeight > spaceBelow && spaceAbove > spaceBelow)
         x: 0
-        y: openAbove ? -height - 7 : control.height + 7
+        y: openAbove ? -height - control.popupGap : control.height + control.popupGap
         width: Math.min(Theme.scaledGeometry(360), Theme.viewportWidth - 24)
-        height: naturalHeight
+        height: Math.max(Theme.scaledGeometry(40), Math.min(naturalHeight,
+            openAbove ? spaceAbove : spaceBelow))
         padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 

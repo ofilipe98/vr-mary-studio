@@ -635,6 +635,94 @@ class QmlFrontendTest(unittest.TestCase):
             engine.deleteLater()
             self.application.processEvents()
 
+    def test_composer_pickers_flip_up_and_stay_inside_the_window(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            provider_labels = {"codex": "Codex", "opencode": "OpenCode"}
+            chat_bridge._model_items = [
+                {
+                    "provider": provider,
+                    "value": value,
+                    "displayName": name,
+                    "label": name,
+                    "key": f"{provider}:{value}",
+                    "providerLabel": provider_labels[provider],
+                }
+                for provider, value, name in (
+                    ("opencode", "deepseek-v4.1-flash", "DeepSeek V4.1 Flash"),
+                    ("codex", "gpt-6-astra", "GPT-6-Astra"),
+                )
+            ]
+            chat_bridge._favorite_model_keys = {
+                "opencode:deepseek-v4.1-flash",
+                "codex:gpt-6-astra",
+            }
+            with patch.object(chat_bridge, "refreshModels"):
+                engine = create_engine(bridge, chat_bridge)
+                self.application.processEvents()
+                window = engine.rootObjects()[0]
+                pickers = (
+                    ("chatModelPicker", "modelPickerPopup"),
+                    ("chatReasoningPicker", "reasoningPickerPopup"),
+                    ("chatPermissionPicker", "permissionPickerPopup"),
+                )
+                # T3 relies on the Base UI positioner: popups prefer opening
+                # below, flip up when they do not fit, and cap their height to
+                # the available side so they never leave the viewport.
+                for height, must_flip, must_stay_below in (
+                    (1000, set(), {name for _, name in pickers}),
+                    (700, {"modelPickerPopup", "reasoningPickerPopup"}, set()),
+                    (500, {name for _, name in pickers}, set()),
+                ):
+                    window.setWidth(700)
+                    window.setHeight(height)
+                    QTest.qWait(120)
+                    for picker_name, popup_name in pickers:
+                        picker = window.findChild(QObject, picker_name)
+                        picker.click()
+                        QTest.qWait(60)
+                        popup = window.findChild(QObject, popup_name)
+                        self.assertTrue(popup.property("visible"), popup_name)
+                        content = popup.property("contentItem")
+                        padding = float(popup.property("padding"))
+                        top = content.mapToScene(QPointF(0, 0)).y() - padding
+                        popup_height = float(popup.property("height"))
+                        bottom = top + popup_height
+                        self.assertGreaterEqual(top, -0.5, popup_name)
+                        self.assertLessEqual(bottom, height + 0.5, popup_name)
+                        self.assertLessEqual(
+                            popup_height,
+                            float(popup.property("naturalHeight")) + 0.5,
+                            popup_name,
+                        )
+                        if popup_name in must_flip:
+                            self.assertTrue(
+                                popup.property("openAbove"),
+                                f"{popup_name} should flip up in a {height}px window",
+                            )
+                        if popup_name in must_stay_below:
+                            self.assertFalse(
+                                popup.property("openAbove"),
+                                f"{popup_name} should stay below in a {height}px window",
+                            )
+                        picker.click()
+                        QTest.qWait(40)
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
     def test_text_fields_expose_themed_edit_context_menu(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
