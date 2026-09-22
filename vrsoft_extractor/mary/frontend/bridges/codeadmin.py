@@ -59,6 +59,7 @@ class CodeAdminDomain:
             self._code_analysis_enabled = False
             self._preferences.setValue("research/code_analysis_enabled", False)
             self._preferences.sync()
+            self._set_code_analysis_auto_enable_pending(False)
         self.stateChanged.emit()
 
     def addSelectedApplicationContext(self) -> bool:  # noqa: N802
@@ -72,21 +73,121 @@ class CodeAdminDomain:
         self._ultra_application_contexts = [item for item in self._ultra_application_contexts
                                              if item["app_id"] != selection["app_id"]] + [selection]
         self._save_application_contexts()
+        self._request_code_analysis_auto_enable()
         return True
 
     def removeApplicationContext(self, app_id: str) -> None:  # noqa: N802
         self._ultra_application_contexts = [item for item in self._ultra_application_contexts if item["app_id"] != app_id]
         self._save_application_contexts()
+        if self._ultra_application_contexts:
+            self._sync_code_analysis_auto_enable()
 
     def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
+        if not enabled:
+            self._set_code_analysis_auto_enable_pending(False)
         self._code_analysis_enabled = bool(
             enabled
             and self.ultraApplicationContextsReady
         )
+        if self._code_analysis_enabled:
+            self._set_code_analysis_auto_enable_pending(False)
         self._preferences.setValue(
             "research/code_analysis_enabled", self._code_analysis_enabled
         )
         self._preferences.sync()
+        self.stateChanged.emit()
+
+    def pending_imported_package_for_ultra(self) -> dict[str, Any]:
+        package_id = str(self._pending_ultra_package_choice_id or "").strip()
+        if not package_id:
+            return {}
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(package_id) if isinstance(packages, dict) else None
+        if not isinstance(package, dict):
+            return {}
+        composition = [
+            item for item in package.get("composition") or []
+            if isinstance(item, dict)
+            and item.get("app_id") and item.get("version") and item.get("variant_id")
+        ]
+        if not composition:
+            return {}
+        return {
+            "packageId": package_id,
+            "packageName": str(package.get("name") or package_id),
+            "applicationCount": len(composition),
+        }
+
+    def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
+        selected = str(package_id or "").strip()
+        if not selected or selected != str(self._pending_ultra_package_choice_id or ""):
+            return False
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(selected) if isinstance(packages, dict) else None
+        contexts: list[dict[str, Any]] = []
+        if isinstance(package, dict):
+            for item in package.get("composition") or []:
+                if not isinstance(item, dict):
+                    contexts = []
+                    break
+                app_id = str(item.get("app_id") or "")
+                version = str(item.get("version") or "")
+                variant_id = str(item.get("variant_id") or "")
+                if not (app_id and version and variant_id):
+                    contexts = []
+                    break
+                contexts.append({
+                    "app_id": app_id,
+                    "version": version,
+                    "variant_id": variant_id,
+                    "package_id": selected,
+                })
+        if not contexts:
+            self._pending_ultra_package_choice_id = ""
+            self._apps_catalog_error = (
+                "O pacote importado não possui composição válida para usar no Ultra."
+            )
+            self.stateChanged.emit()
+            return False
+        self._ultra_application_contexts = contexts
+        self._pending_ultra_package_choice_id = ""
+        self._save_application_contexts()
+        self._request_code_analysis_auto_enable()
+        return True
+
+    def dismissImportedPackageUltraChoice(self, package_id: str) -> None:  # noqa: N802
+        selected = str(package_id or "").strip()
+        if selected and selected == str(self._pending_ultra_package_choice_id or ""):
+            self._pending_ultra_package_choice_id = ""
+            self.stateChanged.emit()
+
+    def _set_code_analysis_auto_enable_pending(self, pending: bool) -> None:
+        value = bool(pending)
+        if value == bool(self._code_analysis_auto_enable_pending):
+            return
+        self._code_analysis_auto_enable_pending = value
+        self._preferences.setValue(
+            self._workspace_research_preference("code_analysis_auto_enable_pending"),
+            value,
+        )
+        self._preferences.sync()
+
+    def _request_code_analysis_auto_enable(self) -> None:
+        self._set_code_analysis_auto_enable_pending(True)
+        self._sync_code_analysis_auto_enable()
+
+    def _sync_code_analysis_auto_enable(self) -> None:
+        if not self._code_analysis_auto_enable_pending:
+            return
+        if not self._ultra_application_contexts:
+            self._set_code_analysis_auto_enable_pending(False)
+            return
+        if not self.ultraApplicationContextsReady:
+            return
+        self._code_analysis_enabled = True
+        self._preferences.setValue("research/code_analysis_enabled", True)
+        self._preferences.sync()
+        self._set_code_analysis_auto_enable_pending(False)
         self.stateChanged.emit()
 
 
@@ -1281,7 +1382,7 @@ class CodeAdminDomain:
         self.stateChanged.emit()
 
 
-    def snapshotCodeAnalysisRelease(self, release_id: str, *, source_override: str = "", single_override: bool | None = None, preview_fingerprint: list[dict[str, Any]] | None = None) -> bool:  # noqa: N802
+    def snapshotCodeAnalysisRelease(self, release_id: str, *, source_override: str = "", single_override: bool | None = None, preview_fingerprint: list[dict[str, Any]] | None = None, offer_ultra_choice: bool = False) -> bool:  # noqa: N802
         """Detect, categorize and inventory local JARs off the UI thread."""
 
         selected_release = str(release_id or "").strip()
@@ -1403,6 +1504,7 @@ class CodeAdminDomain:
                     "updated_applications": list(
                         manifest.get("updated_applications") or []
                     ),
+                    "offer_ultra_choice": bool(offer_ultra_choice),
                 }
             )
             self._releaseSnapshotReady.emit()
@@ -1736,6 +1838,8 @@ class CodeAdminDomain:
             self.stateChanged.emit()
             return
         if bool(latest.get("ok")):
+            if latest.get("offer_ultra_choice") and release_id:
+                self._pending_ultra_package_choice_id = release_id
             self.refreshApplicationsCatalog()
             self._invalidate_release_coverage()
             self._refresh_code_analysis_releases()
@@ -2204,6 +2308,7 @@ class CodeAdminDomain:
             self._packages_catalog = result["packages"]
             self._applications_catalog_loaded = True
             self.selectApplication(self._selected_app_id)
+            self._sync_code_analysis_auto_enable()
             if phase_signal is not None:
                 try:
                     versions_count = result.get("versions_count")
@@ -2355,7 +2460,8 @@ class CodeAdminDomain:
             return False
         started = CodeAdminDomain.snapshotCodeAnalysisRelease(self, preview["release_id"],
             source_override=preview["source"], single_override=preview["single"],
-            preview_fingerprint=preview["fingerprint"])
+            preview_fingerprint=preview["fingerprint"],
+            offer_ultra_choice=not bool(preview.get("single")))
         if started:
             self._application_import_preview = {}
             self.stateChanged.emit()
@@ -2367,7 +2473,7 @@ class CodeAdminDomain:
         candidate = Path(source_path).resolve()
         if not candidate.is_dir():
             return False
-        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=False)
+        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=False, offer_ultra_choice=True)
 
     def importSingleJar(self, jar_path: str) -> bool:  # noqa: N802
         candidate = Path(str(jar_path or "").strip()).resolve()

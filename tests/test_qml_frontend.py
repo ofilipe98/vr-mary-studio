@@ -5792,6 +5792,113 @@ class QmlFrontendTest(unittest.TestCase):
                 self.application.processEvents()
 
 
+    def test_imported_package_ultra_choice_dialog_flow(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path, root=settings.root, backup_portable_migration=False
+            )
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(settings, database, preferences)
+
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            try:
+                settings_page = window.findChild(QObject, "settingsPage")
+                self.assertIsNotNone(settings_page)
+                settings_page.setProperty("tabIndex", 3)
+                apps_page = window.findChild(QObject, "appsSettingsPage")
+                self.assertIsNotNone(apps_page)
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._apps_catalog_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._apps_catalog_thread)
+
+                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
+                use_button = window.findChild(QObject, "useImportedPackageInUltraButton")
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
+                self.assertIsNotNone(dialog)
+                self.assertIsNotNone(use_button)
+                self.assertIsNotNone(choose_button)
+                self.assertFalse(dialog.property("visible"))
+                self.assertFalse(dialog.property("opened"))
+
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
+                chat_bridge._apps_catalog_data = {
+                    "data": {
+                        "applications": {},
+                        "packages": {
+                            "pkg-one": {
+                                "package_id": "pkg-one",
+                                "name": "Pacote Importado",
+                                "composition": [
+                                    {
+                                        "app_id": "vrmaster",
+                                        "version": "4.1.0",
+                                        "variant_id": "sha-master",
+                                    },
+                                    {
+                                        "app_id": "vrpdv",
+                                        "version": "3.2.0",
+                                        "variant_id": "sha-pdv",
+                                    },
+                                ],
+                            }
+                        },
+                    }
+                }
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertTrue(dialog.property("visible"))
+                self.assertTrue(dialog.property("opened"))
+                self.assertEqual(dialog.property("packageId"), "pkg-one")
+                self.assertEqual(dialog.property("applicationCount"), 2)
+
+                self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
+                self.application.processEvents()
+                self.assertFalse(dialog.property("visible"))
+                self.assertFalse(dialog.property("opened"))
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                contexts = chat_bridge._ultra_application_contexts
+                self.assertEqual(len(contexts), 2)
+                self.assertTrue(
+                    all(item["package_id"] == "pkg-one" for item in contexts)
+                )
+                self.assertEqual(
+                    {item["app_id"] for item in contexts}, {"vrmaster", "vrpdv"}
+                )
+
+                # Escolher por aplicativo fecha a pergunta e mantém o catálogo.
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
+                chat_bridge.stateChanged.emit()
+                apps_page.setProperty("navigationLevel", 1)
+                apps_page.setProperty("importToolsExpanded", True)
+                self.application.processEvents()
+                self.assertTrue(dialog.property("visible"))
+                before = [dict(item) for item in chat_bridge._ultra_application_contexts]
+                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
+                self.application.processEvents()
+                self.assertFalse(dialog.property("visible"))
+                self.assertFalse(dialog.property("opened"))
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                self.assertEqual(apps_page.property("navigationLevel"), 0)
+                self.assertFalse(bool(apps_page.property("importToolsExpanded")))
+                self.assertEqual(chat_bridge._ultra_application_contexts, before)
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
     def test_software_rendering_flags_and_safe_mode_args(self):
         from vrsoft_extractor.mary.frontend.app import build_parser
 

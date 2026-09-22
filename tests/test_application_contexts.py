@@ -503,3 +503,141 @@ def test_read_code_source_falls_back_to_master(tmp_path):
         tmp_path, "br.vr.Central", application_contexts=[by_app["vra"]], master_fallback=False
     )
     assert missing["state"] == "no_results"
+
+
+def _arm_manual_context(bridge, context):  # noqa: F811
+    bridge._selected_app_id = context["app_id"]
+    bridge._selected_app_version = context["version"]
+    bridge._selected_app_variant_id = context["variant_id"]
+    bridge._selected_app_origin_id = context["package_id"]
+
+
+@pytest.mark.qml
+def test_imported_package_becomes_atomic_ultra_scope(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+
+    bridge._ultra_application_contexts = [
+        {"app_id": "legacy", "version": "0.1", "variant_id": "old", "package_id": "other"}
+    ]
+    bridge._CodeAdmin_domain._save_application_contexts()
+    bridge._pending_ultra_package_choice_id = "one"
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+
+    assert bridge.useImportedPackageInUltra("one")
+    scopes = bridge.ultraApplicationContexts
+    assert len(scopes) == 2
+    assert all(item["package_id"] == "one" for item in scopes)
+    assert {item["app_id"] for item in scopes} == {item["app_id"] for item in contexts}
+    assert not any(item["app_id"] == "legacy" for item in scopes)
+    assert bridge.pendingImportedPackageForUltra == {}
+
+
+@pytest.mark.qml
+def test_invalid_imported_package_composition_is_atomic(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    _arm_manual_context(bridge, contexts[0])
+    assert bridge.addSelectedApplicationContext()
+    before = [dict(item) for item in bridge._ultra_application_contexts]
+
+    bridge._apps_catalog_data["data"]["packages"]["broken"] = {
+        "package_id": "broken",
+        "name": "Pacote Quebrado",
+        "composition": [{"app_id": "vra", "version": "", "variant_id": "sha"}],
+    }
+    bridge._pending_ultra_package_choice_id = "broken"
+    assert bridge.useImportedPackageInUltra("broken") is False
+    assert bridge._ultra_application_contexts == before
+    assert bridge.applicationsCatalogError
+    assert bridge.pendingImportedPackageForUltra == {}
+
+
+@pytest.mark.qml
+def test_manual_ready_context_auto_enables_code_analysis(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    context = contexts[0]
+    bridge.selectApplication(context["app_id"])
+    bridge.selectAppVersion(context["version"])
+    assert bridge.addSelectedApplicationContext()
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
+    assert not bridge._code_analysis_auto_enable_pending
+
+
+@pytest.mark.qml
+def test_manual_pending_context_activates_when_catalog_turns_ready(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    context = contexts[0]
+    _arm_manual_context(bridge, context)
+    assert bridge.addSelectedApplicationContext()
+    assert not bridge.codeAnalysisEnabled
+    assert bridge._code_analysis_auto_enable_pending
+
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
+    assert not bridge._code_analysis_auto_enable_pending
+
+
+@pytest.mark.qml
+def test_removing_all_contexts_cancels_auto_enable_intent(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    context = contexts[0]
+    _arm_manual_context(bridge, context)
+    assert bridge.addSelectedApplicationContext()
+    assert bridge._code_analysis_auto_enable_pending
+
+    bridge.removeApplicationContext(context["app_id"])
+    assert bridge._code_analysis_auto_enable_pending is False
+    stored = bridge._preferences.value(
+        bridge._workspace_research_preference("code_analysis_auto_enable_pending")
+    )
+    assert bridge._stored_bool(stored, True) is False
+
+
+@pytest.mark.qml
+def test_explicit_disable_cancels_auto_enable_intent(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    _arm_manual_context(bridge, contexts[0])
+    assert bridge.addSelectedApplicationContext()
+    bridge.setCodeAnalysisEnabled(True)
+    assert bridge._code_analysis_auto_enable_pending
+
+    bridge.setCodeAnalysisEnabled(False)
+    assert not bridge.codeAnalysisEnabled
+    assert bridge._code_analysis_auto_enable_pending is False
+
+
+@pytest.mark.qml
+def test_workspace_preference_restores_auto_enable_intent(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    context = contexts[0]
+    bridge._ultra_application_contexts = [
+        {
+            "app_id": context["app_id"],
+            "version": context["version"],
+            "variant_id": context["variant_id"],
+            "package_id": context["package_id"],
+        }
+    ]
+    bridge._CodeAdmin_domain._save_application_contexts()
+    bridge._preferences.setValue(
+        bridge._workspace_research_preference("code_analysis_auto_enable_pending"),
+        True,
+    )
+    bridge._preferences.sync()
+    bridge._load_research_config()
+    assert bridge._code_analysis_auto_enable_pending
+    assert not bridge.codeAnalysisEnabled
+
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
+    assert not bridge._code_analysis_auto_enable_pending

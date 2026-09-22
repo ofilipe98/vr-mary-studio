@@ -290,6 +290,8 @@ class ChatBridge(QObject):
         self._code_processing_total_jars = 0
         self._code_processing_can_retry = False
         self._ultra_application_contexts: list[dict[str, Any]] = []
+        self._pending_ultra_package_choice_id = ""
+        self._code_analysis_auto_enable_pending = False
         self._applications_catalog: list[dict[str, Any]] = []
         self._selected_app_id: str = ""
         self._app_versions: list[dict[str, Any]] = []
@@ -717,6 +719,18 @@ class ChatBridge(QObject):
     @Slot(str)
     def removeApplicationContext(self, app_id: str) -> None:  # noqa: N802
         self._CodeAdmin_domain.removeApplicationContext(app_id)
+
+    @Property("QVariantMap", notify=stateChanged)
+    def pendingImportedPackageForUltra(self) -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.pending_imported_package_for_ultra()
+
+    @Slot(str, result=bool)
+    def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.useImportedPackageInUltra(package_id)
+
+    @Slot(str)
+    def dismissImportedPackageUltraChoice(self, package_id: str) -> None:  # noqa: N802
+        self._CodeAdmin_domain.dismissImportedPackageUltraChoice(package_id)
 
     @Property("QVariantMap", notify=stateChanged)
     def selectedVersionDetails(self) -> dict[str, Any]:  # noqa: N802

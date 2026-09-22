@@ -658,6 +658,17 @@ class ProviderSettingsDomain:
             self._ultra_application_contexts = []
         if not self._ultra_application_contexts:
             self._code_analysis_enabled = False
+        self._code_analysis_auto_enable_pending = self._stored_bool(
+            self._preferences.value(
+                self._workspace_research_preference(
+                    "code_analysis_auto_enable_pending"
+                ),
+                False,
+            ),
+            False,
+        )
+        if not self._ultra_application_contexts:
+            self._code_analysis_auto_enable_pending = False
         release_preference = self._workspace_research_preference(
             "code_analysis_release"
         )
