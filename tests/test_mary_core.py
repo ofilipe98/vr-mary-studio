@@ -3013,11 +3013,12 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("CONTEXTO TRANSFERIDO", claude.prompts[-1])
         self.assertIn("Criar treinamento de PIX", claude.prompts[-1])
 
-    def test_mary_search_is_automatic_for_codex_claude_and_optional_prefix(self):
+    def test_mary_vr_prompt_is_tool_driven_without_automatic_search(self):
         class FakeProvider:
             def __init__(self, native_id):
                 self.native_id = native_id
                 self.prompts = []
+                self.sent = threading.Event()
 
             def available(self):
                 return True
@@ -3027,6 +3028,7 @@ class MaryCoreTest(unittest.TestCase):
 
             def send_message(self, *args):
                 self.prompts.append(args[5])
+                self.sent.set()
 
             def close(self):
                 pass
@@ -3065,23 +3067,22 @@ class MaryCoreTest(unittest.TestCase):
                 + "\n\nINSTRUÇÕES INTERNAS DE ANEXOS E SKILLS: "
                 + "planilha fiscal cadastro fornecedor não usar na busca."
             )
-            orchestrator.send(
-                conversation_id,
-                provider_text,
-                lambda _event: None,
-                search_text=typed,
-            )
-            for _ in range(100):
-                if provider.prompts:
-                    break
-                import time
-
-                time.sleep(0.005)
+            with patch.object(database, "search") as local_search:
+                orchestrator.send(
+                    conversation_id,
+                    provider_text,
+                    lambda _event: None,
+                    search_text=typed,
+                )
+                self.assertTrue(provider.sent.wait(10))
+            local_search.assert_not_called()
             prompt = provider.prompts[-1]
-            self.assertEqual(prompt.count("CONTEXTO LOCAL VR"), 1)
-            self.assertIn("[Funcao 102](https://wiki.example", prompt)
+            self.assertIn("Contrato de acesso tool-driven do modo VR", prompt)
+            self.assertIn("vr_search", prompt)
+            self.assertIn("<user_request>", prompt)
+            self.assertNotIn("CONTEXTO LOCAL VR RECUPERADO", prompt)
             self.assertNotIn("funcao-102--3742.md", prompt)
-            self.assertIn("Atalho O", prompt)
+            self.assertNotIn("Atalho O", prompt)
 
     def test_disabled_vr_flow_sends_plain_prompt_without_local_search(self):
         class FakeProvider:
@@ -3173,46 +3174,37 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("valide essa informação", query.casefold())
         self.assertTrue(query.endswith("Tente validar o código fonte novamente."))
 
-    def test_missing_or_ambiguous_local_sources_forbid_high_confidence(self):
+    def test_missing_local_sources_are_answered_by_tools_not_automatic_search(self):
+        from vrsoft_extractor.mary.personality import (
+            VRMASTER_TOOL_DRIVEN_ACCESS_POLICY,
+        )
+
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
-        with patch.object(database, "search", return_value=[]):
+        with patch.object(
+            database, "search", side_effect=AssertionError("sem retrieval")
+        ):
             missing = orchestrator._enrich_prompt("Pergunta sem fonte", "sem fonte")
-        self.assertIn("nenhuma fonte validada", missing)
-        self.assertIn("não invente referência", missing)
+        self.assertIn(VRMASTER_TOOL_DRIVEN_ACCESS_POLICY, missing)
+        self.assertIn("CONSULTA SOB DEMANDA", missing)
+        self.assertIn("vr_sources", missing)
+        self.assertIn("vr_search", missing)
+        self.assertIn("vr_read", missing)
+        self.assertNotIn("CONTEXTO LOCAL VR RECUPERADO", missing)
+        self.assertNotIn("nenhuma fonte validada", missing)
         self.assertIn("não invalida fatos e passos confirmados", missing)
         self.assertIn('"clique neste botão"', missing)
         self.assertIn("Código Java decompilado e indexado", missing)
 
-        ambiguous_rows = [
-            {
-                "title": title,
-                "url": f"https://example.com/{index}",
-                "source": "wiki",
-                "module": "PDV",
-                "local_path": f"conhecimento/{index}.md",
-                "excerpt": "Trecho",
-                "matched_terms": ["teste"],
-                "coverage": 1.0,
-                "confidence": 0.9,
-                "score": score,
-            }
-            for index, (title, score) in enumerate((("Fonte A", 100), ("Fonte B", 95)))
-        ]
-        with patch.object(database, "search", return_value=ambiguous_rows):
-            ambiguous = orchestrator._enrich_prompt("Teste", "teste")
-        self.assertIn("diferem menos de 10%", ambiguous)
-        self.assertIn("não apresente a conclusão com confiança alta", ambiguous)
-
-    def test_local_search_error_is_not_reported_as_no_results(self):
+    def test_local_search_error_is_no_longer_part_of_the_vr_prompt(self):
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
         with patch.object(database, "search", side_effect=RuntimeError("offline")):
             enriched = orchestrator._enrich_prompt("Como configurar o PIX?")
 
-        self.assertIn("ERRO AO CONSULTAR A BASE", enriched)
-        self.assertIn("não significa ausência de resultados", enriched)
+        self.assertNotIn("ERRO AO CONSULTAR A BASE", enriched)
         self.assertNotIn("nenhuma fonte validada foi encontrada", enriched)
+        self.assertIn("CONSULTA SOB DEMANDA", enriched)
 
     def test_cloned_context_is_sent_on_first_turn(self):
         class FakeProvider:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.models import KnowledgeDocument, RuntimeEvent
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.retrieval.service import RetrievalService
 
 
 def _settings(tmp_path: Path) -> MarySettings:
@@ -89,6 +91,7 @@ def test_vr_search_tool_spec_matches_schema() -> None:
         {},
         {"source": "google", "query": "x"},
         {"module": "RH", "query": "x"},
+        {"module": "Fiscal", "query": "x"},
         {"limit": "muito", "query": "x"},
         {"query": "ok", "extra": True},
     ],
@@ -100,6 +103,149 @@ def test_run_vr_search_rejects_invalid_arguments(arguments: dict[str, Any]) -> N
 
     with pytest.raises(Exception):
         run_vr_search(arguments, _Router())
+
+
+def test_vr_search_schema_no_longer_exposes_module() -> None:
+    assert "module" not in VR_SEARCH_INPUT_SCHEMA["properties"]
+    assert "Fiscal" not in json.dumps(VR_SEARCH_INPUT_SCHEMA)
+    with pytest.raises(Exception):
+        validate_tool_arguments(
+            {"query": "x", "module": "Fiscal"}, VR_SEARCH_INPUT_SCHEMA
+        )
+
+
+def _service(tmp_path: Path) -> RetrievalService:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed(database)
+    return RetrievalService(KnowledgeRouter(database, settings.root))
+
+
+def test_search_without_source_consolidates_documentary_lanes(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    payload = service.search("Como gerar SPED Fiscal no VR?", limit=10)
+
+    assert set(payload["source_states"]) == {"wiki", "kb", "schema", "code"}
+    assert payload["source_states"]["wiki"] == "available"
+    assert payload["source_states"]["kb"] == "available"
+    assert payload["source_states"]["schema"] == "available"
+    assert payload["total"] >= 3
+    assert payload["errors"] == {}
+
+
+def test_search_without_source_runs_four_lanes_concurrently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    barrier = threading.Barrier(4)
+    original = service._search_tool_lane
+
+    def lane(query, lane_name, **kwargs):
+        barrier.wait(timeout=10)
+        return original(query, lane_name, **kwargs)
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("Como gerar SPED Fiscal no VR?", limit=10)
+
+    assert set(payload["source_states"]) == {"wiki", "kb", "schema", "code"}
+    assert payload["errors"] == {}
+
+
+def test_search_without_source_keeps_fixed_lane_order(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    delays = {"wiki": 0.08, "kb": 0.06, "schema": 0.04, "code": 0.02}
+
+    def lane(query, lane_name, **kwargs):
+        # Deliberately complete in the inverse order.
+        time.sleep(delays[lane_name])
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", limit=10)
+
+    assert [row["reference"] for row in payload["results"]] == [
+        "wiki:1",
+        "kb:1",
+        "schema:1",
+        "code:1",
+    ]
+
+
+def test_search_without_source_isolates_lane_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+
+    def lane(query, lane_name, **kwargs):
+        if lane_name == "kb":
+            return [], "unavailable", "kb fora do ar"
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", limit=10)
+
+    assert payload["errors"] == {"kb": "kb fora do ar"}
+    assert payload["source_states"]["kb"] == "unavailable"
+    assert payload["source_states"]["wiki"] == "available"
+    assert [row["reference"] for row in payload["results"]] == [
+        "wiki:1",
+        "schema:1",
+        "code:1",
+    ]
+
+
+def test_search_with_source_runs_only_that_lane(tmp_path: Path, monkeypatch) -> None:
+    service = _service(tmp_path)
+    called: list[str] = []
+
+    def lane(query, lane_name, **kwargs):
+        called.append(lane_name)
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", source="schema")
+
+    assert called == ["schema"]
+    assert set(payload["source_states"]) == {"schema"}
+    assert [row["reference"] for row in payload["results"]] == ["schema:1"]
+
+
+def test_search_with_source_document_error_is_reported_per_lane(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("indice indisponivel")
+
+    monkeypatch.setattr(service, "_prepare_search", broken)
+
+    payload = service.search("sped fiscal")
+
+    assert payload["source_states"]["wiki"] == "unavailable"
+    assert payload["source_states"]["kb"] == "unavailable"
+    assert payload["source_states"]["schema"] == "unavailable"
+    assert payload["errors"]["wiki"] == "indice indisponivel"
+    assert "code" in payload["source_states"]
 
 
 def test_knowledge_router_search_returns_compact_results(tmp_path: Path) -> None:

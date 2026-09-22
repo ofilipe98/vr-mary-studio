@@ -4,6 +4,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
@@ -14,6 +15,9 @@ from vrsoft_extractor.mary.models import (
     RuntimeEvent,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.personality import (
+    VRMASTER_TOOL_DRIVEN_ACCESS_POLICY,
+)
 from vrsoft_extractor.mary.supervision import (
     ResponseContract,
     strip_internal_leaks,
@@ -88,18 +92,45 @@ class TestPromptPrefixCache:
         assert identity < question
         assert "Como exportar SPED?" in prompt[question:]
 
-    def test_fallback_search_block_present_without_bundle(self, tmp_path: Path) -> None:
+    def test_tool_driven_contract_without_automatic_search(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)
-        prompt = orchestrator._enrich_prompt("pergunta", evidence_bundle=None)
-        assert "nenhuma fonte validada" in prompt
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompt = orchestrator._enrich_prompt("pergunta", evidence_bundle=None)
+        assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in prompt
+        assert "CONSULTA SOB DEMANDA" in prompt
+        assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in prompt
+        assert "<user_request>" in prompt
 
-    def test_images_skip_evidence_block(self, tmp_path: Path) -> None:
+    def test_empty_bundle_also_skips_automatic_search(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)
-        prompt = orchestrator._enrich_prompt(
-            "olha o print", evidence_bundle=None, has_images=True
+        empty = EvidenceBundle(
+            profile=QueryProfile(query="pergunta", intents={"functional": 1.0})
         )
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompt = orchestrator._enrich_prompt("pergunta", evidence_bundle=empty)
+        assert "CONSULTA SOB DEMANDA" in prompt
+        assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
+
+    def test_images_keep_tools_and_skip_evidence_block(self, tmp_path: Path) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompt = orchestrator._enrich_prompt(
+                "olha o print", evidence_bundle=None, has_images=True
+            )
         assert "ANEXO VISUAL" in prompt
         assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
+        assert "CONTEXTO LOCAL VR" not in prompt
+        assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in prompt
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in prompt
         assert "<user_request>" in prompt
 
     def test_native_tool_hint_only_for_supporting_providers(self, tmp_path: Path) -> None:
@@ -111,8 +142,12 @@ class TestPromptPrefixCache:
             "pergunta", supports_native_tools=False
         )
         assert "ferramenta `vr_search`" in codex_prompt
-        assert "`vr_search`" not in opencode_prompt.replace("vr-search", "")
+        # Providers without the native dynamic-tool cycle keep the structured
+        # local search/read script as a transport fallback, not as retrieval.
         assert "vr-search.ps1" in opencode_prompt
+        assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in opencode_prompt
+        assert "O fallback estruturado" in opencode_prompt
+        assert "O fallback estruturado" not in codex_prompt
 
     def test_prefix_is_byte_identical_across_questions(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)
@@ -193,6 +228,93 @@ class TestValidateNormalResponse:
         assert "Linha boa." in cleaned
         assert "D:\\Temp" not in cleaned
         assert "Outra linha boa." in cleaned
+
+
+# ------------------------------------------------- dynamic tool evidence
+
+
+def _dynamic_candidate(evidence_id: str, url: str) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        evidence_id=evidence_id,
+        source="wiki",
+        source_id=evidence_id.partition(":")[2],
+        document_id=0,
+        chunk_id=1,
+        title="Doc",
+        heading="H",
+        content_type="section",
+        module="",
+        product="",
+        excerpt="x",
+        url=url,
+        confidence=0.9,
+    )
+
+
+def test_dynamic_evidence_merges_before_validation_and_only_cited_persists(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    cited = _dynamic_candidate("wiki:doc-cited", "https://wiki.example/cited")
+    uncited = _dynamic_candidate("wiki:doc-uncited", "https://wiki.example/uncited")
+    orchestrator._pending_evidence_bundles[conversation_id] = EvidenceBundle(
+        profile=QueryProfile(query="q", intents={"functional": 1.0}), candidates=()
+    )
+    orchestrator._turn_dynamic_candidates[conversation_id] = [cited, uncited]
+
+    answer = "Conforme [Doc](https://wiki.example/cited), o procedimento é X."
+    validated = orchestrator._validate_direct_response(conversation_id, answer)
+    assert validated == answer
+
+    merged = orchestrator._pending_evidence_bundles[conversation_id]
+    assert {c.evidence_id for c in merged.candidates} == {
+        "wiki:doc-cited",
+        "wiki:doc-uncited",
+    }
+    persisted = orchestrator._candidates_cited_in_content(validated, merged)
+    assert [c.evidence_id for c in persisted] == ["wiki:doc-cited"]
+
+    message_id = database.add_message(
+        conversation_id, "assistant", validated, turn_id="turn:1"
+    )
+    database.add_source_citations(
+        conversation_id, message_id, [c.to_dict() for c in persisted]
+    )
+    citations = database.get_source_citations(message_id)
+    assert [c["evidence_id"] for c in citations] == ["wiki:doc-cited"]
+
+
+def test_dynamic_evidence_not_cited_is_not_persisted(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    uncited = _dynamic_candidate("wiki:doc-uncited", "https://wiki.example/uncited")
+    orchestrator._pending_evidence_bundles[conversation_id] = EvidenceBundle(
+        profile=QueryProfile(query="q", intents={"functional": 1.0}), candidates=()
+    )
+    orchestrator._turn_dynamic_candidates[conversation_id] = [uncited]
+
+    answer = "Resposta sem citar documentação."
+    validated = orchestrator._validate_direct_response(conversation_id, answer)
+    merged = orchestrator._pending_evidence_bundles[conversation_id]
+    persisted = orchestrator._candidates_cited_in_content(validated, merged)
+    assert persisted == []
+
+    message_id = database.add_message(
+        conversation_id, "assistant", validated, turn_id="turn:2"
+    )
+    database.add_source_citations(
+        conversation_id, message_id, [c.to_dict() for c in persisted]
+    )
+    assert database.get_source_citations(message_id) == []
 
 
 # ------------------------------------------------- gate integration (turn end)

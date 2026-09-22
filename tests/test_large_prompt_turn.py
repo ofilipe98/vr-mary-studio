@@ -31,7 +31,9 @@ def test_stop_during_preparation_completes_without_provider_callback(tmp_path, m
     if phase == "context":
         monkeypatch.setattr("vrsoft_extractor.mary.retrieval.code_retrieval.resolve_code_contexts", blocked)
     else:
-        monkeypatch.setattr(orchestrator.retrieval_service, "route_vr_sources", blocked)
+        # VR is tool-driven: preparation in the orchestrator is only the
+        # response classification, which must not block the Stop path.
+        monkeypatch.setattr(orchestrator.retrieval_service, "classify", blocked)
     cid = orchestrator.new_conversation("opencode", "test", defer_provider_start=True)
     done = threading.Event()
 

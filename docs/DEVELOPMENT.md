@@ -25,6 +25,32 @@ Os arquivos de build permanecem na raiz porque o empacotamento e seus testes
 usam esses caminhos. Não mover o pacote Python para `src/` sem migrar também
 instalação, recursos QML, scripts e PyInstaller.
 
+## Modos de resposta (OFF, VR e Ultra)
+
+O modo controla a estratégia de resposta; as fontes locais são as mesmas nos
+três modos.
+
+- **OFF**: o provedor decide quando pesquisar e as fontes internas ficam
+  disponíveis sob demanda. Não há retrieval automático, classificação VR nem
+  fan-out.
+- **VR**: o modelo principal recebe o contrato VR especializado (identidade,
+  fontes disponíveis e política de grounding) e decide usar `vr_sources`,
+  `vr_search` e `vr_read`. Há uma única chamada principal; não há agentes,
+  research run, fan-out ou síntese. `vr_search` sem `source` consulta Wiki, KB,
+  Schema e Código em paralelo (quatro lanes determinísticas em ordem fixa
+  wiki, kb, schema, code) e devolve um resultado consolidado; com `source`,
+  consulta somente a fonte escolhida. O filtro por módulo não faz parte da tool
+  de chat VR: a unidade de consulta é a fonte.
+- **Ultra**: mantém o fan-out por fonte com agentes, o agente DEV Java opcional
+  e a síntese única validada.
+
+“Fontes disponíveis” não significa “fontes pré-carregadas”. O backend otimiza a
+consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
+`vr_search`), mas não pesquisa automaticamente antes da resposta.
+Prefetch/cache de consulta não pertencem a este contrato. Perfis de atendimento
+(senior, implantação, suporte e treinamento) serão uma camada posterior sobre o
+mesmo mecanismo de retrieval.
+
 ## Instalação e testes
 
 ```powershell

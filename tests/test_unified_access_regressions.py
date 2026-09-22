@@ -145,12 +145,22 @@ def test_turn_freezes_ui_selection_in_all_modes(tmp_path, mode):
         assert captured and captured[0]["application_contexts"] == [contexts[0]]
         assert captured[0]["master_fallback"] == (mode != "off")
         if mode == "vr":
-            assert "class Outer" in provider.sent[0]["message"]
+            # Tool-driven VR: the frozen selection is not injected as context;
+            # the model reaches it through the knowledge tools.
+            assert "Contrato de acesso tool-driven" in provider.sent[0]["message"]
+            assert "class Outer" not in provider.sent[0]["message"]
+            hits = orchestrator.retrieval_service.search(
+                "Outer",
+                source="code",
+                application_contexts=selections,
+                master_fallback=True,
+            )["results"]
+            assert any("class Outer" in hit.get("excerpt", "") for hit in hits)
     finally:
         orchestrator.close()
 
 
-def test_master_fallback_reaches_vr_prompt_only_when_needed(tmp_path):
+def test_master_fallback_reaches_vr_tools_only_when_needed(tmp_path):
     settings, database, _, _ = _setup_test_env(tmp_path)
     _, contexts = indexed_contexts_with_master(settings.root / "isolated")
     settings = replace(settings, root=settings.root / "isolated")
@@ -173,8 +183,17 @@ def test_master_fallback_reaches_vr_prompt_only_when_needed(tmp_path):
             use_vr=True, vr_mode="vr", application_contexts=selections)
         assert done.wait(20)
         message = provider.sent[0]["message"]
-        assert "fallback VRMaster" in message
-        assert "class Central" in message
+        # No automatic retrieval: the fallback is reached through vr_search.
+        assert "Contrato de acesso tool-driven" in message
+        assert "class Central" not in message
+        hits = orchestrator.retrieval_service.search(
+            "Central",
+            source="code",
+            application_contexts=selections,
+            master_fallback=True,
+        )["results"]
+        assert any("fallback VRMaster" in hit.get("title", "") for hit in hits)
+        assert any("class Central" in hit.get("excerpt", "") for hit in hits)
         # The persisted scope stays the user selection; VRMaster is only a fallback.
         assert captured and captured[0]["application_contexts"] == [vra]
         assert captured[0]["master_fallback"] is True

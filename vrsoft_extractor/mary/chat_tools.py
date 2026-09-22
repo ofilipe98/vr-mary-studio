@@ -279,13 +279,8 @@ VR_SEARCH_INPUT_SCHEMA: dict[str, Any] = {
             "description": (
                 "Fonte opcional: wiki (funcionamento), kb (processos e casos), "
                 "schema (tabelas e relacionamentos) ou code (código Java descompilado). "
-                "Omita para buscar em Wiki, KB, Schema e código disponível no contexto."
+                "Omita para buscar Wiki, KB, Schema e Código em paralelo."
             ),
-        },
-        "module": {
-            "type": "string",
-            "enum": ["Fiscal", "ADM_FIN_ESTOQUE", "PDV"],
-            "description": "Módulo opcional do ERP para restringir a busca.",
         },
         "context": {
             "type": "string",
@@ -310,10 +305,12 @@ def vr_search_tool_spec() -> dict[str, Any]:
         "type": "function",
         "name": VR_SEARCH_TOOL_NAME,
         "description": (
-            "Busca evidências validadas na base de conhecimento local do VR "
-            "(Wiki de funcionamento, KB de processos, Schema de banco e Código Java descompilado). "
-            "Use sempre que faltar detalhe confiável sobre regras, procedimentos, "
-            "funcionamento, rotinas ou implementações antes de responder."
+            "Busca evidências validadas na base de conhecimento local do VR. "
+            "Sem `source`, consulta Wiki (funcionamento), KB (processos), Schema "
+            "(banco) e Código Java descompilado em paralelo e devolve um "
+            "resultado consolidado. Com `source`, consulta somente a fonte "
+            "escolhida. Use sempre que faltar detalhe confiável sobre regras, "
+            "procedimentos, funcionamento, rotinas ou implementações antes de responder."
         ),
         "inputSchema": VR_SEARCH_INPUT_SCHEMA,
     }
@@ -390,7 +387,7 @@ def run_vr_sources(arguments: dict[str, Any], router: Any, **kwargs: Any) -> Too
 def run_vr_search(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolExecutionResult:
     validate_tool_arguments(arguments, VR_SEARCH_INPUT_SCHEMA)
     service = _access_service(router)
-    options = {"source": str(arguments.get("source") or ""), "module": str(arguments.get("module") or ""),
+    options = {"source": str(arguments.get("source") or ""),
                "limit": max(1, min(20, int(arguments.get("limit") or 6)))}
     if arguments.get("context"):
         options["context"] = str(arguments["context"])

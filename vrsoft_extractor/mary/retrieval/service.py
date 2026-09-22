@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from dataclasses import replace
 from .generations import GenerationSemanticIndex, document_signature
@@ -138,7 +139,6 @@ class RetrievalService:
         master_fallback: bool = False,
     ) -> dict[str, Any]:
         """Run a focused evidence retrieval for tools or direct queries."""
-        from .code_retrieval import retrieve_code_candidates, resolve_code_contexts
         source = source.strip().casefold()
         if source == "project":
             from .project_sources import list_sources
@@ -147,52 +147,116 @@ class RetrievalService:
             raise ValueError("Fonte desconhecida")
         limit, cursor = max(1, min(20, int(limit))), max(0, int(cursor))
         needed = cursor + limit + 1
-        results, errors, states = [], {}, {}
-        token = self._router.retrieval_revision.set(revision)
+        # Prepare the shared index once; each lane converts a preparation
+        # failure into its own unavailable state instead of cancelling the rest.
+        document_error: Exception | None = None
         try:
-            document_error = None
-            try:
-                self._prepare_search()
-                self._router._ensure_index_ready()
-            except Exception as exc:
-                document_error = exc
-            for lane in ([source] if source else ["wiki", "kb", "schema", "code"]):
-                try:
-                    if lane == "code":
-                        contexts = resolve_code_contexts(self._router.root, application_contexts, context)
-                        candidates, _, _ = retrieve_code_candidates(self._router.root, query,
-                            application_contexts=contexts, code_analysis_release=code_analysis_release,
-                            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
-                            limit_per_scope=needed, limit_per_query=needed, max_caller_nodes=0,
-                            max_excerpt_chars=1200, module=module, master_fallback=master_fallback)
-                        hits = [{**c.to_dict(), "reference": c.evidence_id, "excerpt": c.excerpt[:600]} for c in candidates]
-                        states[lane] = "scope_required" if contexts == [] else ("available" if hits else "no_results")
-                    else:
-                        if document_error is not None:
-                            raise document_error
-                        rows = []
-                        for origin in self.enabled_origins(lane):
-                            page, _ = self._router.database.search_page(query, source=lane, module=module,
-                                source_origin=origin, limit=needed)
-                            rows.extend(r for r in page if not revision or r.get("revision") == revision)
-                        rows.sort(key=lambda r: (float(r.get("rank", 0)), str(r["source_id"])))
-                        hits = [self._document_payload(r) for r in rows[:needed]]
-                        states[lane] = "available" if hits else "no_results"
-                    results.append(hits)
-                except Exception as exc:
-                    errors[lane] = str(exc)
-                    states[lane] = "unavailable"
-            # Interleave source lanes so a populated documentary lane cannot hide code.
-            merged = [lane[i] for i in range(max((len(lane) for lane in results), default=0))
-                      for lane in results if i < len(lane)]
-            page = merged[cursor:cursor + limit]
-            more = cursor + len(page) < len(merged)
-            return {"query": query, "source": source, "module": module, "total": len(merged),
-                    "results": page, "cursor": cursor, "limit": limit, "has_more": more,
-                    "next_cursor": cursor + len(page) if more else None,
-                    "source_states": states, "conflicts": [], "warnings": [], "errors": errors}
+            self._prepare_search()
+            self._router._ensure_index_ready()
+        except Exception as exc:
+            document_error = exc
+        lane_options: dict[str, Any] = {
+            "module": module,
+            "needed": needed,
+            "revision": revision,
+            "context": context,
+            "application_contexts": application_contexts,
+            "code_analysis_release": code_analysis_release,
+            "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
+            "master_fallback": master_fallback,
+            "document_error": document_error,
+        }
+        lanes = [source] if source else ["wiki", "kb", "schema", "code"]
+        if source:
+            # An explicit source runs only its own lane, without a pool.
+            lane_results = {source: self._run_tool_lane(query, source, lane_options)}
+        else:
+            # Local retrieval only: no provider, LLM, agent or research run.
+            lane_results = {}
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {
+                    pool.submit(self._run_tool_lane, query, lane, lane_options): lane
+                    for lane in lanes
+                }
+                for future in as_completed(futures):
+                    lane_results[futures[future]] = future.result()
+        # Rebuild in the fixed wiki, kb, schema, code order regardless of the
+        # workers' completion order. Completion time is never a ranking signal.
+        results: list[list[dict[str, Any]]] = []
+        errors: dict[str, str] = {}
+        states: dict[str, str] = {}
+        for lane in lanes:
+            hits, state, error = lane_results[lane]
+            results.append(hits)
+            states[lane] = state
+            if error:
+                errors[lane] = error
+        # Interleave source lanes so a populated documentary lane cannot hide code.
+        merged = [lane[i] for i in range(max((len(lane) for lane in results), default=0))
+                  for lane in results if i < len(lane)]
+        page = merged[cursor:cursor + limit]
+        more = cursor + len(page) < len(merged)
+        return {"query": query, "source": source, "module": module, "total": len(merged),
+                "results": page, "cursor": cursor, "limit": limit, "has_more": more,
+                "next_cursor": cursor + len(page) if more else None,
+                "source_states": states, "conflicts": [], "warnings": [], "errors": errors}
+
+    def _run_tool_lane(
+        self,
+        query: str,
+        lane: str,
+        lane_options: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], str, str]:
+        """Bind the revision to this worker thread, then run its single lane."""
+        token = self._router.retrieval_revision.set(lane_options["revision"])
+        try:
+            return self._search_tool_lane(query, lane, **lane_options)
         finally:
             self._router.retrieval_revision.reset(token)
+
+    def _search_tool_lane(
+        self,
+        query: str,
+        lane: str,
+        *,
+        module: str,
+        needed: int,
+        revision: str,
+        context: str,
+        application_contexts: list[dict[str, Any]] | None,
+        code_analysis_release: str,
+        code_analysis_manifest_sha256: str,
+        master_fallback: bool,
+        document_error: Exception | None,
+    ) -> tuple[list[dict[str, Any]], str, str]:
+        """Retrieve a single source lane and report its own state and error."""
+        from .code_retrieval import retrieve_code_candidates, resolve_code_contexts
+        if lane == "code":
+            try:
+                contexts = resolve_code_contexts(self._router.root, application_contexts, context)
+                candidates, _, _ = retrieve_code_candidates(self._router.root, query,
+                    application_contexts=contexts, code_analysis_release=code_analysis_release,
+                    code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                    limit_per_scope=needed, limit_per_query=needed, max_caller_nodes=0,
+                    max_excerpt_chars=1200, module=module, master_fallback=master_fallback)
+                hits = [{**c.to_dict(), "reference": c.evidence_id, "excerpt": c.excerpt[:600]} for c in candidates]
+                state = "scope_required" if contexts == [] else ("available" if hits else "no_results")
+                return hits, state, ""
+            except Exception as exc:
+                return [], "unavailable", str(exc)
+        try:
+            if document_error is not None:
+                raise document_error
+            rows = []
+            for origin in self.enabled_origins(lane):
+                page, _ = self._router.database.search_page(query, source=lane, module=module,
+                    source_origin=origin, limit=needed)
+                rows.extend(r for r in page if not revision or r.get("revision") == revision)
+            rows.sort(key=lambda r: (float(r.get("rank", 0)), str(r["source_id"])))
+            hits = [self._document_payload(r) for r in rows[:needed]]
+            return hits, ("available" if hits else "no_results"), ""
+        except Exception as exc:
+            return [], "unavailable", str(exc)
 
     @staticmethod
     def _document_payload(row: dict) -> dict:

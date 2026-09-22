@@ -524,5 +524,27 @@ def test_contract_parity_and_deferred_ultra_source_routing(tmp_path: Path) -> No
     vr = payloads_by_mode["vr"]
     ultra = payloads_by_mode["ultra"]
     assert vr["response_contract_created"] == ultra["response_contract_created"]
-    assert "knowledge_routed" in vr
+    # Normal VR starts tool-driven: no automatic routing event in either mode.
+    assert "knowledge_routed" not in vr
     assert "knowledge_routed" not in ultra
+
+
+def test_ultra_fanout_executes_source_pipeline_once(tmp_path: Path, monkeypatch) -> None:
+    from vrsoft_extractor.mary.execution.runner import ExecutionRunner
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    calls: list[str] = []
+    original = ExecutionRunner.execute_ultra_source_fanout
+
+    def spy(self, **kwargs):
+        calls.append(str(kwargs.get("search_scope") or ""))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ExecutionRunner, "execute_ultra_source_fanout", spy)
+
+    _run_send(orchestrator, cid, events)
+
+    assert len(calls) == 1, "Ultra com fan-out ativo deve executar o pipeline por fonte"
+    assert any(event.kind == "research_completed" for event in events)

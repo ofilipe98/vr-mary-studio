@@ -388,7 +388,12 @@ def test_vr_on_direct_adds_identity_and_local_base(
     prompt = provider.sent[0]["message"]
     assert "MODO VR ATIVO" in prompt
     assert "Seu nome de atendimento é VR" in prompt
-    assert "PESQUISA LOCAL VR" in prompt
+    assert "Contrato de acesso tool-driven do modo VR" in prompt
+    assert "CONSULTA SOB DEMANDA" in prompt
+    assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
+    assert "vr_sources" in prompt
+    assert "vr_search" in prompt
+    assert "vr_read" in prompt
     assert str(settings.root) in prompt
     assert provider.sent[0]["options"].vr_enabled is True
     assert provider.start_options[0].vr_enabled is True
@@ -959,9 +964,81 @@ def test_router_groups_cross_source_duplicates_and_flags_conflicts(
     assert "polaridade diferente" in bundle.conflicts[0].reason
 
 
-def test_vr_turn_persists_routed_evidence_as_message_citations(
-    tmp_path: Path,
-) -> None:
+def _forbid_automatic_retrieval(orchestrator: ChatOrchestrator) -> None:
+    service = orchestrator.retrieval_service
+
+    def blocked(*_args, **_kwargs):
+        raise AssertionError("retrieval automático não deveria rodar")
+
+    service.route = blocked
+    service.route_source = blocked
+    service.route_code_source = blocked
+    service.route_vr_sources = blocked
+
+
+class ToolCallingVrProvider(FakeProvider):
+    """VR provider that calls vr_search before answering the turn."""
+
+    def __init__(self, final_text: str, query: str) -> None:
+        super().__init__("codex", final_text=final_text)
+        self.query = query
+        self.tool_finished = threading.Event()
+
+    def send_message(
+        self,
+        conversation_id: str,
+        native_id: str,
+        model: str,
+        effort: str,
+        workspace: Path,
+        message: str,
+        callback: Callable[[RuntimeEvent], None],
+        options: ConversationOptions | None = None,
+        skills: list[dict[str, Any]] | None = None,
+        image_paths: list[str] | None = None,
+    ) -> None:
+        with self._lock:
+            self.sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "native_id": native_id,
+                    "model": model,
+                    "effort": effort,
+                    "message": message,
+                    "options": options,
+                }
+            )
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_started",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "dynamic_tool_requested",
+                "vr_search",
+                {
+                    "tool": "vr_search",
+                    "request_id": "req-search-1",
+                    "arguments": {"query": self.query},
+                },
+            )
+        )
+        assert self.tool_finished.wait(10), "vr_search não respondeu"
+        callback(RuntimeEvent(conversation_id, "assistant_delta", self.final_text))
+        callback(
+            RuntimeEvent(
+                conversation_id,
+                "turn_completed",
+                payload={"turn": {"id": f"turn:{conversation_id}"}},
+            )
+        )
+
+
+def test_vr_tool_evidence_feeds_validation_and_citations(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     database.upsert_document(
@@ -978,18 +1055,21 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
         )
     )
     orchestrator = ChatOrchestrator(settings, database)
-    provider = FakeProvider(
-        "codex", final_text="Fonte: https://wiki.example/102"
+    provider = ToolCallingVrProvider(
+        final_text="Fonte: https://wiki.example/102", query="função 102 PDV"
     )
     orchestrator.providers = {"codex": provider}
     conversation_id = orchestrator.new_conversation(
         "codex", "sol", defer_provider_start=True, vr_enabled=True
     )
+    _forbid_automatic_retrieval(orchestrator)
     events: list[RuntimeEvent] = []
     completed = threading.Event()
 
     def callback(event: RuntimeEvent) -> None:
         events.append(event)
+        if event.kind == "tool_event":
+            provider.tool_finished.set()
         if event.kind == "turn_completed":
             completed.set()
 
@@ -1000,21 +1080,22 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
         use_vr=True,
     )
 
-    assert completed.wait(5)
-    assert any(event.kind == "knowledge_routed" for event in events)
+    assert completed.wait(10)
+    kinds = [event.kind for event in events]
+    assert "knowledge_routed" not in kinds
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
+    tool_events = [event for event in events if event.kind == "tool_event"]
+    assert tool_events and tool_events[0].payload["success"] is True
+    payload = json.loads(str(tool_events[0].payload["output"]))
+    assert payload["source_states"]["wiki"] == "available"
     response_plans = [
         event for event in events if event.kind == "response_plan_created"
     ]
     assert len(response_plans) == 1
-    assert response_plans[0].payload["completed"] == 3
     assert len(response_plans[0].payload["steps"]) == 5
-    assert "função 102" in response_plans[0].payload["steps"][0].casefold()
-    assert any("PDV" in step for step in response_plans[0].payload["steps"])
-    assert not any(
-        "interpretando intenção" in step.casefold()
-        for step in response_plans[0].payload["steps"]
-    )
     assistant = database.messages(conversation_id)[-1]
+    assert assistant["response_mode"] == "vr"
     with database.connect() as connection:
         citations = connection.execute(
             "SELECT * FROM source_citations WHERE message_id=?",
@@ -1022,6 +1103,61 @@ def test_vr_turn_persists_routed_evidence_as_message_citations(
         ).fetchall()
     assert len(citations) == 1
     assert "entrada do operador" in citations[0]["excerpt"]
+
+
+def test_vr_turn_without_tool_does_not_retrieve(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="funcao-102",
+            title="Função 102",
+            url="https://wiki.example/102",
+            markdown="A função 102 permite a entrada do operador no PDV.",
+            module="PDV",
+            review_status="approved",
+            content_hash="funcao-102",
+            local_path="conhecimento/PDV/Wiki/funcao-102.md",
+        )
+    )
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta direta sem consultar a base.")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True
+    )
+    _forbid_automatic_retrieval(orchestrator)
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    with patch.object(
+        database, "search", side_effect=AssertionError("sem retrieval automático")
+    ):
+        orchestrator.send(
+            conversation_id,
+            "Qual a capital da França?",
+            callback,
+            use_vr=True,
+        )
+        assert completed.wait(5)
+
+    assert not any(event.kind == "knowledge_routed" for event in events)
+    assert not any(event.kind == "tool_event" for event in events)
+    assistant = database.messages(conversation_id)[-1]
+    assert assistant["response_mode"] == "vr"
+    assert assistant["content"] == "Resposta direta sem consultar a base."
+    with database.connect() as connection:
+        total = connection.execute(
+            "SELECT count(*) FROM source_citations WHERE message_id=?",
+            (assistant["id"],),
+        ).fetchone()[0]
+    assert total == 0
 
 
 def test_direct_vr_does_not_persist_candidates_not_cited_by_the_answer(

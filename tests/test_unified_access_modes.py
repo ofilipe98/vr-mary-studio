@@ -544,24 +544,75 @@ def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
     assert VR_READ_TOOL_NAME in tool_names
 
 
-def test_vr_normal_uses_four_fixed_sources_without_agents(tmp_path: Path):
+def test_vr_normal_is_tool_driven_without_agents_or_automatic_retrieval(
+    tmp_path: Path,
+):
     from test_mary_vr_ultra import _orchestrator
 
     settings, database, orchestrator, provider, cid, events = _orchestrator(
         tmp_path, "vr"
     )
     calls = _mode_calls(orchestrator)
+    captured: dict = {}
+    original_validate = orchestrator._validate_direct_response
+
+    def validate(conversation_id, content):
+        bundle = orchestrator._pending_evidence_bundles.get(conversation_id)
+        captured["candidates"] = tuple(bundle.candidates) if bundle else ()
+        captured["dynamic"] = tuple(
+            orchestrator._turn_dynamic_candidates.get(conversation_id, ())
+        )
+        return original_validate(conversation_id, content)
+
+    orchestrator._validate_direct_response = validate
 
     _run_mode(orchestrator, cid, events, use_vr=True)
 
-    assert calls["route_vr_sources"] >= 1
-    assert sorted(calls["route_source"]) == ["kb", "schema", "wiki"]
-    assert calls["route_code_source"] >= 1
-    assert calls["route"] == 0
-    assert calls["ultra"] == 0
+    assert calls == {
+        "route": 0,
+        "route_source": [],
+        "route_code_source": 0,
+        "route_vr_sources": 0,
+        "ultra": 0,
+    }
     kinds = [event.kind for event in events]
     assert "research_started" not in kinds
     assert "agent_started" not in kinds
+    assert "knowledge_fallback_used" not in kinds
+    assert "knowledge_routed" not in kinds
+    assert captured["candidates"] == ()
+    assert captured["dynamic"] == ()
+    assert provider.calls.count(cid) == 1
+    assert database.messages(cid)[-1]["response_mode"] == "vr"
+
+
+def test_vr_normal_prompt_exposes_three_tools_without_automatic_context(
+    tmp_path: Path,
+):
+    from vrsoft_extractor.mary.personality import (
+        VRMASTER_TOOL_DRIVEN_ACCESS_POLICY,
+    )
+
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator, provider, conversation_id = _vr_normal_orchestrator(
+        settings, database, service
+    )
+    events: list[RuntimeEvent] = []
+    _send_vr_query(orchestrator, conversation_id, events)
+
+    assert len(provider.calls) == 1
+    prompt = provider.calls[0][1]
+    assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in prompt
+    for name in (VR_SOURCES_TOOL_NAME, VR_SEARCH_TOOL_NAME, VR_READ_TOOL_NAME):
+        assert name in prompt
+    assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
+    options = orchestrator._conversation_options(conversation_id, use_vr=True)
+    tool_names = {tool.get("name") for tool in options.dynamic_tools}
+    assert {
+        VR_SOURCES_TOOL_NAME,
+        VR_SEARCH_TOOL_NAME,
+        VR_READ_TOOL_NAME,
+    } <= tool_names
 
 
 def test_ultra_mode_uses_source_fanout_without_route_vr_sources(tmp_path: Path):
@@ -582,7 +633,7 @@ def test_ultra_mode_uses_source_fanout_without_route_vr_sources(tmp_path: Path):
     assert research.payload["sources"] == ["wiki", "kb", "schema"]
 
 
-def test_ultra_mode_falls_back_to_direct_path_when_flag_disabled(
+def test_ultra_mode_falls_back_to_direct_tool_driven_path_when_flag_disabled(
     tmp_path: Path,
 ):
     from test_mary_vr_ultra import _orchestrator
@@ -598,7 +649,7 @@ def test_ultra_mode_falls_back_to_direct_path_when_flag_disabled(
     _run_mode(orchestrator, cid, events, use_vr=True)
 
     assert calls["ultra"] == 0
-    assert calls["route_vr_sources"] == 1
+    assert calls["route_vr_sources"] == 0
     assert calls["route"] == 0
     assert "research_started" not in [event.kind for event in events]
     assistant = [
@@ -672,50 +723,34 @@ def _send_vr_query(orchestrator, conversation_id, events, query: str = VR_QUERY)
     assert done.wait(30), "turno não concluiu"
 
 
-def test_vr_normal_bundle_covers_wiki_origins_kb_schema_and_code(tmp_path: Path):
+def test_vr_normal_initial_bundle_is_empty_tool_evidence_accumulator(
+    tmp_path: Path,
+):
     settings, database, code_index, service = _setup_test_env(tmp_path)
     orchestrator, provider, conversation_id = _vr_normal_orchestrator(
         settings, database, service
     )
     captured: dict = {}
-    original = service.route_vr_sources
+    original = orchestrator._validate_direct_response
 
-    def spy(query, **kwargs):
-        bundle = original(query, **kwargs)
-        captured["bundle"] = bundle
-        return bundle
+    def validate(cid, content):
+        captured["bundle"] = orchestrator._pending_evidence_bundles.get(cid)
+        return original(cid, content)
 
-    service.route_vr_sources = spy
+    orchestrator._validate_direct_response = validate
     events: list[RuntimeEvent] = []
     _send_vr_query(orchestrator, conversation_id, events)
 
     bundle = captured["bundle"]
+    assert bundle is not None
+    assert bundle.candidates == ()
+    assert bundle.source_reports == ()
     assert bundle.selected_modules == ()
     assert bundle.module_routing == ()
-    assert {item.source for item in bundle.candidates} == {
-        "wiki",
-        "kb",
-        "schema",
-        "code",
-    }
-    assert [report.source for report in bundle.source_reports] == [
-        "wiki",
-        "kb",
-        "schema",
-        "code",
-    ]
-    assert all(
-        report.status != "unavailable" for report in bundle.source_reports
-    )
-    wiki_report = bundle.source_report("wiki")
-    assert wiki_report is not None
-    assert {item.source_origin for item in wiki_report.origin_reports} == {
-        "vrwiki",
-        "endoo",
-    }
     kinds = [event.kind for event in events]
     assert "research_started" not in kinds
     assert "agent_started" not in kinds
+    assert "knowledge_routed" not in kinds
     main_calls = [
         item for item in provider.calls if item[0] == conversation_id
     ]
