@@ -943,7 +943,7 @@ Item {
 
                     AppearanceRow {
                         title: "Importação direta"
-                        description: "Importe pacotes compactados, JARs avulsos ou pastas já descompiladas para o catálogo."
+                        description: "Importe pacotes compactados, JARs avulsos ou pacotes descompilados para o catálogo."
                         divider: true
 
                         Flow {
@@ -972,20 +972,6 @@ Item {
                                     var res = chat.selectAndImportSingleJar();
                                     if (res) {
                                         chat.refreshApplicationsCatalog();
-                                    }
-                                }
-                            }
-
-                            VrButton {
-                                text: "Importar código descompilado"
-                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                                variant: "secondary"
-                                implicitHeight: Theme.scaledGeometry(32)
-                                onClicked: {
-                                    var det = chat.detectDecompiledDirectory("");
-                                    if (det && det.is_valid) {
-                                        root.decompiledDetectionResult = det;
-                                        decompiledImportDialog.open();
                                     }
                                 }
                             }
@@ -3649,13 +3635,12 @@ Item {
         anchors.centerIn: parent
         width: Math.min(540, root.width - Theme.spaceLg * 2)
         modal: true
-        title: "Importar Código Descompilado"
+        title: "Importar Pacote Descompilado"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: Theme.spaceMd
             Text {
                 Layout.fillWidth: true
-                visible: !!(root.decompiledDetectionResult && root.decompiledDetectionResult.portable_package)
                 text: "Pacote portátil VRStudio (.zip)"
                 color: Theme.palette.brandOrange
                 font.family: Theme.fontFamily
@@ -3670,9 +3655,7 @@ Item {
                     "Fontes detectados com sucesso!\n" +
                     "Aplicativos: " + (root.decompiledDetectionResult.applications ? root.decompiledDetectionResult.applications.length : 0) +
                     " · Total de arquivos Java: " + (root.decompiledDetectionResult.total_java_files || 0) + "\n" +
-                    (root.decompiledDetectionResult.portable_package
-                        ? "Arquivo: " + (root.decompiledDetectionResult.source_archive || "")
-                        : "Diretório: " + (root.decompiledDetectionResult.source_root || ""))
+                    "Arquivo: " + (root.decompiledDetectionResult.source_archive || "")
                 ) : ""
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
@@ -3701,11 +3684,7 @@ Item {
                         var res = root.decompiledDetectionResult;
                         decompiledImportDialog.close();
                         if (!res) return;
-                        if (res.portable_package === true) {
-                            chat.importDecompiledPackageArchive(res.source_archive, res.suggested_release_id || "", res.suggested_name || "");
-                        } else if (res.source_root) {
-                            chat.importDecompiledDirectory(res.source_root, res.suggested_release_id || "", res.suggested_name || "");
-                        }
+                        chat.importDecompiledPackageArchive(res.source_archive, res.suggested_release_id || "", res.suggested_name || "");
                     }
                 }
             }

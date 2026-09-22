@@ -20,9 +20,7 @@ from ...jvm_toolchain import JvmToolchain
 
 from ...decompiled_detection import (
     detect_decompiled_package_archive,
-    detect_decompiled_source,
     import_decompiled_package_archive,
-    import_decompiled_source,
 )
 from ...decompiled_export import export_decompiled_package, export_decompiled_source
 from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
@@ -2565,32 +2563,6 @@ class CodeAdminDomain:
             return {"deleted_count": 0, "error": "Aguarde a operação em andamento."}
         workspace = self._settings.root
         self._start_package_task("delete_source_jars", lambda: ErpReleaseCatalog(workspace).delete_source_jars(package_id))
-        return {"pending": True}
-
-    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
-        if self._closed or self._release_snapshot_running or self._code_processing_running:
-            return {"is_valid": False, "busy": True}
-        target_dir = str(directory or "").strip()
-        if not target_dir:
-            initial = str(self._settings.root)
-            target_dir = QFileDialog.getExistingDirectory(
-                None,
-                "Selecionar pasta de código descompilado",
-                initial,
-            )
-            if not target_dir:
-                return {"is_valid": False, "canceled": True}
-        self._start_package_task("detect_decompiled", lambda: detect_decompiled_source(target_dir))
-        return {"pending": True}
-
-    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
-        if self._closed or self._release_snapshot_running or self._code_processing_running:
-            return {"success": False, "busy": True}
-        workspace = self._settings.root
-        self._start_package_task("import_decompiled", lambda progress=None: import_decompiled_source(
-            workspace, source_dir, release_id=release_id, package_name=package_name,
-            progress=progress,
-        ))
         return {"pending": True}
 
     def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802

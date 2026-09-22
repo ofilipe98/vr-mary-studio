@@ -2572,16 +2572,6 @@ class ChatBridge(QObject):
 
     @Slot(result="QVariantMap")
     @Slot(str, result="QVariantMap")
-    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
-        return self._CodeAdmin_domain.detectDecompiledDirectory(directory)
-
-    @Slot(str, str, str, result="QVariantMap")
-    @Slot(str, result="QVariantMap")
-    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
-        return self._CodeAdmin_domain.importDecompiledDirectory(source_dir, release_id, package_name)
-
-    @Slot(result="QVariantMap")
-    @Slot(str, result="QVariantMap")
     def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.exportDecompiledCode(destination_parent)
 

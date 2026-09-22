@@ -209,8 +209,7 @@ def test_import_runs_off_qt_thread_and_reports_error(bridge, tmp_path, monkeypat
     assert "injected import failure" in bridge.releaseSnapshotStatus
 
 
-@pytest.mark.parametrize("operation", ["detect", "import", "delete"])
-def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path, monkeypatch, operation):
+def test_delete_jars_task_keeps_qt_responsive_and_rejects_overlap(bridge, monkeypatch):
     entered, release, heartbeat = (threading.Event() for _ in range(3))
 
     def blocked(*args, **kwargs):
@@ -218,20 +217,15 @@ def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path
         release.wait(5)
         raise RuntimeError("decompiled failure")
 
-    if operation == "delete":
-        monkeypatch.setattr(ErpReleaseCatalog, "delete_source_jars", blocked)
-    else:
-        monkeypatch.setattr(codeadmin, f"{operation}_decompiled_source", blocked)
+    monkeypatch.setattr(ErpReleaseCatalog, "delete_source_jars", blocked)
     try:
-        result = (bridge.detectDecompiledDirectory(str(tmp_path)) if operation == "detect"
-                  else bridge.deleteSourceJars("one") if operation == "delete"
-                  else bridge.importDecompiledDirectory(str(tmp_path), "one", "One"))
+        result = bridge.deleteSourceJars("one")
         assert result["pending"]
         assert entered.wait(2)
         QTimer.singleShot(0, heartbeat.set)
         wait_until(heartbeat.is_set)
         assert not bridge.unlinkPackage("one", False)
-        assert bridge.importDecompiledDirectory(str(tmp_path))["busy"]
+        assert bridge.deleteSourceJars("one")["error"] == "Aguarde a operação em andamento."
     finally:
         release.set()
     wait_until(lambda: not bridge.releaseSnapshotRunning)

@@ -5794,68 +5794,6 @@ class QmlFrontendTest(unittest.TestCase):
                 self.application.processEvents()
                 self.assertFalse(import_progress_card.property("visible"))
 
-                directory_result = {
-                    "is_valid": True,
-                    "source_root": str(root / "fontes"),
-                    "suggested_release_id": "decompiled-vrmaster-1",
-                    "suggested_name": "Fontes Descompilados: VRMaster",
-                    "applications": [{"app_id": "vrmaster"}],
-                    "total_java_files": 2,
-                }
-                directory_button = find_by_text(import_card, "Importar código descompilado")
-                self.assertIsNotNone(directory_button)
-                with (
-                    patch.object(
-                        codeadmin, "detect_decompiled_source", return_value=directory_result
-                    ),
-                    patch.object(
-                        codeadmin.QFileDialog,
-                        "getExistingDirectory",
-                        return_value=directory_result["source_root"],
-                    ),
-                ):
-                    self.assertTrue(QMetaObject.invokeMethod(directory_button, "click"))
-                    for _attempt in range(200):
-                        self.application.processEvents()
-                        if dialog.property("visible"):
-                            break
-                        QTest.qWait(10)
-                self.assertTrue(dialog.property("visible"))
-                directory_calls = []
-
-                def fake_directory_import(workspace, source_dir, *, release_id="", package_name="", progress=None):
-                    directory_calls.append((str(source_dir), release_id, package_name))
-                    return {
-                        "success": True,
-                        "release_id": release_id,
-                        "package_name": package_name,
-                        "total_indexed_sources": 2,
-                        "imported_applications": 1,
-                        "package": {},
-                    }
-
-                confirm_button = find_by_text(dialog.property("contentItem"), "Importar e Indexar")
-                self.assertIsNotNone(confirm_button)
-                with patch.object(
-                    codeadmin,
-                    "import_decompiled_source",
-                    side_effect=fake_directory_import,
-                ):
-                    self.assertTrue(QMetaObject.invokeMethod(confirm_button, "click"))
-                    for _attempt in range(200):
-                        self.application.processEvents()
-                        if directory_calls and not chat_bridge.releaseSnapshotRunning:
-                            break
-                        QTest.qWait(10)
-                self.assertFalse(dialog.property("visible"))
-                self.assertEqual(
-                    directory_calls,
-                    [(
-                        directory_result["source_root"],
-                        "decompiled-vrmaster-1",
-                        "Fontes Descompilados: VRMaster",
-                    )],
-                )
             finally:
                 window.close()
                 engine.deleteLater()
