@@ -3417,8 +3417,7 @@ Item {
             {label:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
             {label:"/usage-limits",description:"Ver limites de uso e quotas do provedor",action:"usage-limits"},
             {label:"/tools",description:"Ver tools e MCP",action:"tools"},
-            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"},
-            {label:"/pesquisa",description:"Pesquisa multiagente: /pesquisa <pergunta>",action:"pesquisa"}
+            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
@@ -3510,11 +3509,6 @@ Item {
         else if (item.action === "effort" && root.chatBridge.supportsReasoning) effortSelector.openPicker()
         else if (item.action === "permissions") approvalSelector.openPicker()
         else if (item.action === "vr") root.chatBridge.cycleVrMode()
-        else if (item.action === "pesquisa") {
-            composerInput.text = "/pesquisa "
-            composerInput.cursorPosition = composerInput.length
-            composerInput.forceActiveFocus()
-        }
         else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
         else if (item.action === "reference") {
             var before = composerInput.text.substring(0, item.start)

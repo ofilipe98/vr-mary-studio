@@ -34,12 +34,10 @@ from vrsoft_extractor.mary.models import (
     ConversationOptions,
     EvidenceBundle,
     EvidenceCandidate,
-    ModelRef,
     QueryProfile,
     SourceSearchReport,
 )
 from vrsoft_extractor.mary.research_fanout import (
-    MAX_PARALLEL_RESEARCHERS,
     ULTRA_MAX_PARALLEL_RESEARCHERS,
 )
 from vrsoft_extractor.mary.supervision import (
@@ -203,83 +201,6 @@ class TestCooperativeCancellation:
 # ---------------------------------------------------------------------------
 # 5. ExecutionRunner Integration with Budget and Cancellation
 # ---------------------------------------------------------------------------
-
-class TestExecutionRunnerBudgetIntegration:
-    def test_budget_exhaustion_preserves_findings_and_skips_optional_code_agent(self, tmp_path: Path) -> None:
-        settings = MarySettings(
-            app_dir=(tmp_path / "app").resolve(),
-            root=(tmp_path / "mary").resolve(),
-            old_root=(tmp_path / "old").resolve(),
-        )
-        settings.ensure_dirs()
-
-        budget = ExecutionBudget(
-            max_active_seconds=60.0,
-            max_calls=3,  # 3 calls total, 2 reserved for synthesis -> exactly 1 researcher call allowed!
-            reserved_synthesis_calls=2,
-        )
-        ctx = ExecutionContext(
-            conversation_id="conv-1",
-            run_id="run-1",
-            workspace=tmp_path,
-            budget=budget,
-        )
-
-        mock_retrieval = MagicMock()
-        mock_retrieval.prompt_for_role.return_value = "prompt"
-        mock_emitter = MagicMock()
-
-        # Ephemeral turn returns valid JSON for the 1 successful researcher
-        def fake_ephemeral(*args, **kwargs):
-            return '{"source_status":"found","findings":[{"claim":"achado fiscal","evidence_ids":[],"kind":"fact","confidence":0.9}],"conflicts":[],"missing_information":[],"warnings":[],"sources":[]}'
-
-        def fake_buffered(*args, **kwargs):
-            return '{"answer_status":"grounded","answer_markdown":"Resultado final com evidências.","cited_evidence_ids":[],"warnings":[],"missing_information":[],"follow_up_suggestions":[]}', {}, {}
-
-        runner = ExecutionRunner(
-            settings=settings,
-            providers={},
-            retrieval=mock_retrieval,
-            event_emitter=mock_emitter,
-            ephemeral_turn_runner=fake_ephemeral,
-            buffered_turn_runner=fake_buffered,
-            looks_like_final_envelope=lambda x: False,
-        )
-
-        bundle = EvidenceBundle(
-            profile=QueryProfile(query="teste", intents={}, module="Fiscal"),
-            candidates=(),
-        )
-        intent = ResponseIntent(topic="Fiscal", user_goal="answer_question")
-        contract = build_response_contract(intent)
-        options = ConversationOptions(vr_mode="ultra")
-
-        # 2 modules: Fiscal and Contabil. With 1 allowed researcher slot, one succeeds and one is rejected due to budget.
-        # But because 1 succeeded, execution proceeds to synthesis!
-        result = runner.execute_fanout(
-            context=ctx,
-            conversation={"provider": "codex", "model": "gpt-5"},
-            native_id="native-1",
-            provider=MagicMock(),
-            options=options,
-            skills=[],
-            bundle=bundle,
-            intent=intent,
-            contract=contract,
-            modules=("Fiscal", "Contabil"),
-            request="pesquisa fiscal",
-        )
-
-        assert result.draft is not None
-        assert "Resultado final" in result.draft.answer_markdown
-        # Verify synthesis consumed the reserved slots
-        assert budget.remaining_calls() < 2
-
-
-# ---------------------------------------------------------------------------
-# 6. Ultra Source Fanout: parallelism and synthesis reservation
-# ---------------------------------------------------------------------------
-
 
 class TestUltraSourceFanoutBudget:
     def _runner(
@@ -490,35 +411,6 @@ class TestUltraSourceFanoutBudget:
         assert not barrier.broken, "as quatro frentes precisam coexistir"
         assert peak == ULTRA_MAX_PARALLEL_RESEARCHERS
         assert budget.calls_in_flight == 0
-
-    def test_modular_fanout_keeps_legacy_cap_with_ultra_parallelism(
-        self, tmp_path: Path
-    ) -> None:
-        runner, _events = self._runner(
-            tmp_path, ephemeral=self._report, buffered=self._buffered
-        )
-        runner.research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
-        main_model = ModelRef(provider="codex", model="gpt-5")
-
-        modular = runner.plan_fanout(
-            run_id="run-legacy-cap",
-            modules=("Fiscal", "PDV", "Multimodulo", "Schema"),
-            main_model=main_model,
-            synthesis_effort="medium",
-            code_analysis_enabled=True,
-        )
-        assert modular.max_parallel == MAX_PARALLEL_RESEARCHERS
-        assert modular.max_parallel <= 3, (
-            "o fan-out modular legado do /pesquisa continua limitado a três"
-        )
-
-        ultra = runner.plan_ultra_source_fanout(
-            "run-ultra-cap",
-            main_model,
-            "medium",
-            code_analysis_enabled=True,
-        )
-        assert ultra.max_parallel == ULTRA_MAX_PARALLEL_RESEARCHERS
 
     def test_ultra_executor_preserves_synthesis_reservation(
         self, tmp_path: Path

@@ -2586,7 +2586,49 @@ class QmlFrontendTest(unittest.TestCase):
                 any(item["path"] == str(folder.resolve()) for item in bridge.projectItems)
             )
 
-    def test_pesquisa_command_requires_vr(self):
+    def test_pesquisa_literal_follows_normal_send_path(self):
+        def send_call_for(text: str):
+            with TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                settings = self._settings(root)
+                database = MaryDatabase(
+                    settings.database_path,
+                    root=settings.root,
+                    backup_portable_migration=False,
+                )
+                preferences = QSettings(
+                    str(root / "preferences.ini"), QSettings.IniFormat
+                )
+                bridge = ChatBridge(settings, database, preferences)
+                bridge.setVrMode("off")
+                conversation_id = database.create_conversation(
+                    "Conversa", "codex", "gpt-5", settings.root
+                )
+                bridge.refresh()
+                bridge.selectConversationId(conversation_id)
+                with patch.object(bridge._orchestrator, "send") as send_mock:
+                    self.assertTrue(bridge.sendMessage(text))
+                send_mock.assert_called_once()
+                call = send_mock.call_args
+                self.assertEqual(call.args[0], conversation_id)
+                self.assertNotIn("force_research", call.kwargs)
+                return call, bridge
+
+        literal, literal_bridge = send_call_for("/pesquisa onde grava o SPED")
+        plain, plain_bridge = send_call_for("onde grava o SPED")
+
+        self.assertEqual(literal.args[1], "/pesquisa onde grava o SPED")
+        self.assertEqual(literal.args[4], "/pesquisa onde grava o SPED")
+        self.assertEqual(literal.args[5], "/pesquisa onde grava o SPED")
+        self.assertEqual(len(literal.args), len(plain.args), "mesmo caminho de envio")
+        self.assertEqual(literal.args[3], plain.args[3])
+        self.assertEqual(literal.args[6], plain.args[6])
+        self.assertEqual(sorted(literal.kwargs), sorted(plain.kwargs))
+        self.assertNotIn("Ative o VR", literal_bridge._status_text)
+        self.assertEqual(literal_bridge._status_text, "Executando…")
+        self.assertEqual(literal_bridge._status_text, plain_bridge._status_text)
+
+    def test_command_palette_does_not_offer_pesquisa(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
@@ -2598,13 +2640,39 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
-            bridge = ChatBridge(settings, database, preferences)
-            bridge.setVrMode("off")
-
-            bridge.sendMessage("/pesquisa onde grava o SPED")
-
-            self.assertIn("Ative o VR", bridge._status_text)
-            self.assertEqual(len(database.list_conversations()), 0)
+            chat_bridge = ChatBridge(settings, database, preferences)
+            frontend_bridge = self._bridge(root, initial_page="Chat VR")
+            engine = create_engine(frontend_bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.show()
+            QTest.qWait(150)
+            try:
+                page = window.findChild(QObject, "chatPage")
+                composer = window.findChild(QObject, "chatComposerInput")
+                self.assertIsNotNone(page)
+                self.assertIsNotNone(composer)
+                composer.setProperty("text", "/")
+                QTest.qWait(50)
+                with patch.object(
+                    chat_bridge, "skillSuggestions", return_value=[]
+                ):
+                    self.assertTrue(
+                        QMetaObject.invokeMethod(page, "updateComposerSuggestions")
+                    )
+                suggestions = page.property("composerSuggestions")
+                if hasattr(suggestions, "toVariant"):
+                    suggestions = suggestions.toVariant()
+                self.assertTrue(suggestions, "o palette deveria listar comandos")
+                labels = {str(item.get("label") or "") for item in suggestions}
+                self.assertNotIn("/pesquisa", labels)
+                actions = {str(item.get("action") or "") for item in suggestions}
+                self.assertNotIn("pesquisa", actions)
+                self.assertIn("/vr", labels)
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
 
     def test_effort_and_service_tier_options_follow_selected_model_metadata(self):
         with TemporaryDirectory() as temporary:

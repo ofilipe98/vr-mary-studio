@@ -13,7 +13,6 @@ from vrsoft_extractor.mary.models import (
     RuntimeEvent,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator, _code_scope_queries
-from vrsoft_extractor.mary.supervision import analyze_response_intent
 
 
 QUESTION = "como emitir NF no Fiscal E fechar o caixa no PDV"
@@ -221,32 +220,6 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert "agent_usage" in persisted_kinds
 
 
-def test_complete_single_module_flow_and_explicit_code_request_trigger_fanout(
-    tmp_path: Path,
-) -> None:
-    _settings_value, _database, orchestrator, _provider, _cid, _events = (
-        _orchestrator(tmp_path, "ultra")
-    )
-    bundle = orchestrator.knowledge_router.route("como emitir NF no Fiscal")
-    intent = analyze_response_intent(
-        "Monte um fluxo completo para emitir NF no Fiscal.",
-        bundle.profile,
-    )
-
-    assert intent.requested_detail == "high"
-    assert orchestrator._fanout_modules(
-        bundle,
-        intent,
-        has_images=False,
-    ) == ("Fiscal",)
-    assert orchestrator._fanout_modules(
-        bundle,
-        analyze_response_intent("Analise o código do VRMaster.", bundle.profile),
-        has_images=False,
-        force_deep=True,
-    ) == ("Fiscal",)
-
-
 def test_code_scope_prefers_original_business_term_over_follow_up_wording() -> None:
     scope = (
         "Quero que monte um fluxo completo de crossdocking no VRMaster.\n"
@@ -291,13 +264,6 @@ def test_ultra_single_module_question_keeps_fixed_sources(tmp_path: Path) -> Non
     settings, database, orchestrator, provider, cid, events = _orchestrator(
         tmp_path, "ultra"
     )
-    fanout_module_calls: list[Any] = []
-
-    def spy_fanout_modules(*args, **kwargs):
-        fanout_module_calls.append((args, kwargs))
-        return None
-
-    orchestrator._fanout_modules = spy_fanout_modules
     done = threading.Event()
 
     def callback(event: RuntimeEvent) -> None:
@@ -313,7 +279,6 @@ def test_ultra_single_module_question_keeps_fixed_sources(tmp_path: Path) -> Non
     )
     assert done.wait(30), "turno não concluiu"
 
-    assert fanout_module_calls == [], "Ultra não depende do fan-out por módulo"
     research_started = next(e for e in events if e.kind == "research_started")
     assert research_started.payload["sources"] == ["wiki", "kb", "schema"]
     plan = next(e for e in events if e.kind == "plan_created")
@@ -339,21 +304,6 @@ def test_ultra_single_module_question_keeps_fixed_sources(tmp_path: Path) -> Non
         event.payload.get("parent_id") == "vr_ultra_fanout"
         for event in events
         if event.kind in {"agent_started", "agent_completed", "agent_failed"}
-    )
-
-
-def test_force_research_on_plain_vr(tmp_path: Path) -> None:
-    settings, database, orchestrator, provider, cid, events = _orchestrator(tmp_path, "vr")
-    _run_send(
-        orchestrator,
-        cid,
-        events,
-        force_research=True,
-        code_analysis_enabled=True,
-    )
-    assert any(e.kind == "research_started" for e in events)
-    assert not any(
-        event.payload.get("worker_id") == "fanout_codigo" for event in events
     )
 
 

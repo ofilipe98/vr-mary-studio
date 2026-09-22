@@ -62,6 +62,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.models import (
     EvidenceCandidate,
     KnowledgeDocument,
+    RuntimeEvent,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
 from vrsoft_extractor.mary.provider_adapters.antigravity import AntigravityProvider
@@ -461,8 +462,14 @@ def _run_mode(orchestrator, conversation_id, events, *, use_vr, **kwargs):
     assert done.wait(30), "turno não concluiu"
 
 
-def _fanout_calls(orchestrator):
-    calls = {"route": 0, "route_source": [], "ultra": 0, "module": 0}
+def _mode_calls(orchestrator):
+    calls = {
+        "route": 0,
+        "route_source": [],
+        "route_code_source": 0,
+        "route_vr_sources": 0,
+        "ultra": 0,
+    }
     service = orchestrator.retrieval_service
     original_route = service.route
 
@@ -478,6 +485,20 @@ def _fanout_calls(orchestrator):
         return original_route_source(query, source)
 
     service.route_source = route_source
+    original_route_code = service.route_code_source
+
+    def route_code_source(query, **kwargs):
+        calls["route_code_source"] += 1
+        return original_route_code(query, **kwargs)
+
+    service.route_code_source = route_code_source
+    original_route_vr = service.route_vr_sources
+
+    def route_vr_sources(query, **kwargs):
+        calls["route_vr_sources"] += 1
+        return original_route_vr(query, **kwargs)
+
+    service.route_vr_sources = route_vr_sources
     original_ultra = orchestrator._run_ultra_source_fanout
 
     def ultra(*args, **kwargs):
@@ -485,13 +506,6 @@ def _fanout_calls(orchestrator):
         return original_ultra(*args, **kwargs)
 
     orchestrator._run_ultra_source_fanout = ultra
-    original_module = orchestrator._run_module_fanout
-
-    def module(*args, **kwargs):
-        calls["module"] += 1
-        return original_module(*args, **kwargs)
-
-    orchestrator._run_module_fanout = module
     return calls
 
 
@@ -501,62 +515,54 @@ def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
     settings, database, orchestrator, provider, cid, events = _orchestrator(
         tmp_path, "off"
     )
-    calls = _fanout_calls(orchestrator)
+    calls = _mode_calls(orchestrator)
 
     _run_mode(orchestrator, cid, events, use_vr=False)
 
-    assert calls == {"route": 0, "route_source": [], "ultra": 0, "module": 0}
+    assert calls == {
+        "route": 0,
+        "route_source": [],
+        "route_code_source": 0,
+        "route_vr_sources": 0,
+        "ultra": 0,
+    }
     assert "research_started" not in [event.kind for event in events]
 
 
-def test_vr_without_research_uses_direct_route_only(tmp_path: Path):
+def test_vr_normal_uses_four_fixed_sources_without_agents(tmp_path: Path):
     from test_mary_vr_ultra import _orchestrator
 
     settings, database, orchestrator, provider, cid, events = _orchestrator(
         tmp_path, "vr"
     )
-    calls = _fanout_calls(orchestrator)
+    calls = _mode_calls(orchestrator)
 
     _run_mode(orchestrator, cid, events, use_vr=True)
 
-    assert calls["route"] >= 1
-    assert calls["route_source"] == []
+    assert calls["route_vr_sources"] >= 1
+    assert sorted(calls["route_source"]) == ["kb", "schema", "wiki"]
+    assert calls["route_code_source"] >= 1
+    assert calls["route"] == 0
     assert calls["ultra"] == 0
-    assert calls["module"] == 0
-    assert "research_started" not in [event.kind for event in events]
+    kinds = [event.kind for event in events]
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
 
 
-def test_vr_research_command_uses_legacy_module_fanout(tmp_path: Path):
-    from test_mary_vr_ultra import _orchestrator
-
-    settings, database, orchestrator, provider, cid, events = _orchestrator(
-        tmp_path, "vr"
-    )
-    calls = _fanout_calls(orchestrator)
-
-    _run_mode(orchestrator, cid, events, use_vr=True, force_research=True)
-
-    assert calls["module"] >= 1
-    assert calls["ultra"] == 0
-    assert calls["route_source"] == []
-    research = next(event for event in events if event.kind == "research_started")
-    assert "modules" in research.payload
-    assert "sources" not in research.payload
-
-
-def test_ultra_mode_uses_source_fanout_when_flag_active(tmp_path: Path):
+def test_ultra_mode_uses_source_fanout_without_route_vr_sources(tmp_path: Path):
     from test_mary_vr_ultra import _orchestrator
 
     settings, database, orchestrator, provider, cid, events = _orchestrator(
         tmp_path, "ultra"
     )
-    calls = _fanout_calls(orchestrator)
+    calls = _mode_calls(orchestrator)
 
     _run_mode(orchestrator, cid, events, use_vr=True)
 
     assert calls["ultra"] == 1
+    assert calls["route_vr_sources"] == 0
+    assert calls["route_code_source"] == 0
     assert sorted(calls["route_source"]) == ["kb", "schema", "wiki"]
-    assert calls["module"] == 0
     research = next(event for event in events if event.kind == "research_started")
     assert research.payload["sources"] == ["wiki", "kb", "schema"]
 
@@ -572,16 +578,172 @@ def test_ultra_mode_falls_back_to_direct_path_when_flag_disabled(
     orchestrator.settings = replace(
         orchestrator.settings, vr_research_fanout=False
     )
-    calls = _fanout_calls(orchestrator)
+    calls = _mode_calls(orchestrator)
 
     _run_mode(orchestrator, cid, events, use_vr=True)
 
     assert calls["ultra"] == 0
-    assert calls["module"] == 0
-    assert calls["route_source"] == []
-    assert calls["route"] >= 1
+    assert calls["route_vr_sources"] == 1
+    assert calls["route"] == 0
     assert "research_started" not in [event.kind for event in events]
     assistant = [
         row for row in database.messages(cid) if row["role"] == "assistant"
     ]
     assert assistant and "Resposta Ultra" in assistant[-1]["content"]
+
+
+# --------------------------------------------- VR normal: quatro fontes fixas
+
+
+class _DirectVrProvider:
+    """Provider stub for the single direct answer of normal VR."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.calls: list[tuple[str, str]] = []
+
+    def available(self) -> bool:
+        return True
+
+    def start_conversation(self, conversation_id, model, effort, workspace, options=None):
+        return f"native:{conversation_id}"
+
+    def release_conversation(self, *args, **kwargs):
+        pass
+
+    def interrupt(self, conversation_id):
+        pass
+
+    def send_message(self, conversation_id, native_id, model, effort, workspace,
+                     message, callback, options=None, skills=None, image_paths=None):
+        with self.lock:
+            self.calls.append((conversation_id, message))
+        callback(RuntimeEvent(conversation_id, "turn_started", payload={"turn": {"id": "t"}}))
+        callback(RuntimeEvent(conversation_id, "assistant_delta", "Resposta direta da base."))
+        callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+
+VR_QUERY = "SPED Fiscal sped_fiscal_detalhe SpedFiscalManager"
+
+
+def _vr_normal_orchestrator(settings, database, service):
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.retrieval_service = service
+    provider = _DirectVrProvider()
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    database.update_conversation(
+        conversation_id, native_id="native-x", native_id_vr="native-x"
+    )
+    return orchestrator, provider, conversation_id
+
+
+def _send_vr_query(orchestrator, conversation_id, events, query: str = VR_QUERY):
+    done = threading.Event()
+
+    def callback(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+
+    orchestrator.send(
+        conversation_id,
+        query,
+        callback,
+        use_vr=True,
+    )
+    assert done.wait(30), "turno não concluiu"
+
+
+def test_vr_normal_bundle_covers_wiki_origins_kb_schema_and_code(tmp_path: Path):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator, provider, conversation_id = _vr_normal_orchestrator(
+        settings, database, service
+    )
+    captured: dict = {}
+    original = service.route_vr_sources
+
+    def spy(query, **kwargs):
+        bundle = original(query, **kwargs)
+        captured["bundle"] = bundle
+        return bundle
+
+    service.route_vr_sources = spy
+    events: list[RuntimeEvent] = []
+    _send_vr_query(orchestrator, conversation_id, events)
+
+    bundle = captured["bundle"]
+    assert bundle.selected_modules == ()
+    assert bundle.module_routing == ()
+    assert {item.source for item in bundle.candidates} == {
+        "wiki",
+        "kb",
+        "schema",
+        "code",
+    }
+    wiki_report = bundle.source_report("wiki")
+    assert wiki_report is not None
+    assert {item.source_origin for item in wiki_report.origin_reports} == {
+        "vrwiki",
+        "endoo",
+    }
+    kinds = [event.kind for event in events]
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
+    main_calls = [
+        item for item in provider.calls if item[0] == conversation_id
+    ]
+    assert len(main_calls) == 1
+
+
+def test_vr_normal_wiki_keeps_endoo_when_globally_disabled(tmp_path: Path):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="sped-endoo-unified",
+            source_origin="endoo",
+            title="SPED Fiscal no Endoo",
+            url="https://endoo.example/sped",
+            markdown="SPED Fiscal sped_fiscal_detalhe SpedFiscalManager no Endoo.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="hash-endoo-1",
+        )
+    )
+    router = KnowledgeRouter(
+        database, settings.root, disabled_origins=("endoo",)
+    )
+    disabled_service = RetrievalService(router)
+
+    bundle = disabled_service.route_vr_sources(VR_QUERY)
+
+    assert any(
+        item.source == "wiki" and item.source_origin == "endoo"
+        for item in bundle.candidates
+    )
+    assert disabled_service.enabled_origins("wiki") == ("vrwiki",)
+
+
+def test_vr_normal_isolates_single_source_failure(tmp_path: Path):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    original = service.route_source
+
+    def flaky(query, source):
+        if source == "kb":
+            raise RuntimeError("kb fora do ar")
+        return original(query, source)
+
+    service.route_source = flaky
+
+    bundle = service.route_vr_sources(VR_QUERY)
+
+    assert {item.source for item in bundle.candidates} >= {
+        "wiki",
+        "schema",
+        "code",
+    }
+    assert any("KB" in warning for warning in bundle.warnings)
+    assert "kb" in bundle.missing_sources

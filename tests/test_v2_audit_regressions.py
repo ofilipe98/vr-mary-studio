@@ -184,7 +184,24 @@ def test_live_adapter_cancellation_releases_the_research_session(tmp_path):
     started = threading.Event()
     interrupted = []
 
-    class WaitingProvider(fixture._FakeFanoutProvider):
+    class WaitingProvider:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self._active_ids: set[str] = set()
+
+        def available(self):
+            return True
+
+        def start_conversation(self, conversation_id, model, effort, workspace, options=None):
+            with self.lock:
+                self._active_ids.add(conversation_id)
+            return f"native:{conversation_id}"
+
+        def release_conversation(self, *args, **kwargs):
+            local = str(kwargs.get("local_id") or (args[0] if args else ""))
+            with self.lock:
+                self._active_ids.discard(local)
+
         def close(self):
             pass
 

@@ -18,7 +18,13 @@ from dataclasses import replace
 from .generations import GenerationSemanticIndex, document_signature
 
 from ..knowledge_router import KnowledgeRouter
-from ..models import EvidenceBundle, EvidenceCandidate, KnowledgeDocument, QueryProfile
+from ..models import (
+    EvidenceBundle,
+    EvidenceCandidate,
+    KnowledgeDocument,
+    QueryProfile,
+    SourceSearchReport,
+)
 from .hybrid_search import HybridSearchEngine
 from .relations import ContextExpander, RelationExtractor, RelationRepository
 from .semantic_index import SemanticIndex
@@ -331,6 +337,152 @@ class RetrievalService:
                 for item in bundle.candidates
                 if item.source == normalized_source
             ),
+        )
+
+    def route_code_source(
+        self,
+        query: str,
+        *,
+        application_contexts: list[dict[str, Any]] | None = None,
+        code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
+    ) -> EvidenceBundle:
+        """Retrieve the fixed code lane deterministically, without an agent."""
+        from .code_retrieval import retrieve_code_candidates
+
+        profile = self._router.classify(query)
+        root = getattr(self._settings, "root", None) or getattr(
+            self._router, "root", None
+        )
+        candidates: list[EvidenceCandidate] = []
+        status = "unavailable"
+        error = ""
+        if not root:
+            error = "Raiz de dados não configurada"
+        else:
+            try:
+                candidates, _claims, _raw = retrieve_code_candidates(
+                    Path(root),
+                    query,
+                    application_contexts=application_contexts,
+                    code_analysis_release=code_analysis_release,
+                    code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                    limit_per_scope=3,
+                    limit_per_query=2,
+                    max_caller_nodes=0,
+                    max_excerpt_chars=2000,
+                    module="",
+                    product=profile.product,
+                    master_fallback=True,
+                )
+                status = "found" if candidates else "exhausted"
+            except Exception as exc:
+                error = str(exc)
+                logging.getLogger(__name__).warning(
+                    "Falha ao recuperar a trilha de código: %s", exc
+                )
+        report = SourceSearchReport(
+            source="code",
+            status=status,
+            candidates_examined=len(candidates),
+            selected_evidence_ids=tuple(
+                item.evidence_id for item in candidates
+            ),
+            exhaustion_reason=(
+                "Nenhum trecho Java correspondeu ao escopo permitido."
+                if status == "exhausted"
+                else ""
+            ),
+            error=error,
+        )
+        return EvidenceBundle(
+            profile=profile,
+            candidates=tuple(candidates),
+            source_reports=(report,),
+            missing_sources=() if status == "found" else ("code",),
+        )
+
+    def route_vr_sources(
+        self,
+        query: str,
+        *,
+        application_contexts: list[dict[str, Any]] | None = None,
+        code_analysis_release: str = "current",
+        code_analysis_manifest_sha256: str = "",
+    ) -> EvidenceBundle:
+        """Retrieve the four fixed VR source lanes without agents or module scope."""
+        self._prepare_search()
+        profile = self._router.classify(query)
+        bundles: list[EvidenceBundle] = []
+        warnings: list[str] = []
+        failed_sources: list[str] = []
+        for source in ("wiki", "kb", "schema"):
+            try:
+                bundles.append(self.route_source(query, source))
+            except Exception as exc:
+                warnings.append(f"Falha na trilha {source.upper()}: {exc}")
+                failed_sources.append(source)
+                logging.getLogger(__name__).warning(
+                    "Falha na trilha %s: %s", source.upper(), exc
+                )
+        try:
+            bundles.append(
+                self.route_code_source(
+                    query,
+                    application_contexts=application_contexts,
+                    code_analysis_release=code_analysis_release,
+                    code_analysis_manifest_sha256=code_analysis_manifest_sha256,
+                )
+            )
+        except Exception as exc:
+            warnings.append(f"Falha na trilha CODE: {exc}")
+            failed_sources.append("code")
+            logging.getLogger(__name__).warning(
+                "Falha na trilha CODE: %s", exc
+            )
+        bundle = self._merge_source_bundles(profile, bundles)
+        if failed_sources:
+            bundle = replace(
+                bundle,
+                missing_sources=tuple(
+                    dict.fromkeys((*bundle.missing_sources, *failed_sources))
+                ),
+            )
+        if warnings:
+            bundle = replace(
+                bundle,
+                warnings=tuple(dict.fromkeys((*bundle.warnings, *warnings))),
+            )
+        return bundle
+
+    def _merge_source_bundles(
+        self,
+        profile: QueryProfile,
+        bundles: Sequence[EvidenceBundle],
+    ) -> EvidenceBundle:
+        """Consolidate lane bundles through the shared router deduplication."""
+        candidates: list[EvidenceCandidate] = []
+        source_reports: list[SourceSearchReport] = []
+        missing_sources: list[str] = []
+        warnings: list[str] = []
+        for bundle in bundles:
+            candidates.extend(bundle.candidates)
+            source_reports.extend(bundle.source_reports)
+            missing_sources.extend(bundle.missing_sources)
+            warnings.extend(bundle.warnings)
+        unique = list({item.evidence_id: item for item in candidates}.values())
+        selected, groups, conflicts = self._router._deduplicate_and_group(unique)
+        selected = self._router._restore_source_coverage(selected, unique)
+        from ..knowledge_access import bounded_candidates
+        return EvidenceBundle(
+            profile=profile,
+            candidates=bounded_candidates(tuple(selected)),
+            groups=tuple(groups),
+            conflicts=tuple(conflicts),
+            source_reports=tuple(source_reports),
+            module_routing=(),
+            missing_sources=tuple(dict.fromkeys(missing_sources)),
+            warnings=tuple(dict.fromkeys(warnings)),
         )
 
     def _prepare_search(self) -> None:

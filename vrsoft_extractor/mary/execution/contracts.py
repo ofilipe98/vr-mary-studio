@@ -16,7 +16,7 @@ from typing import Any
 from ..models import (
     EvidenceBundle,
 )
-from ..research_fanout import ModuleResearch, SourceResearch
+from ..research_fanout import SourceResearch
 from ..supervision import MergedEvidence, ResponseViolation
 from .budget import ExecutionBudget
 from .cancellation import CancellationToken
@@ -118,31 +118,6 @@ class StageExecutionResult:
     @property
     def succeeded(self) -> bool:
         return self.status == StageStatus.COMPLETED
-
-
-@dataclass(frozen=True, slots=True)
-class ResearchFanoutPlan:
-    """Consolidated plan for fanout research stages."""
-
-    run_id: str
-    modules: tuple[str, ...]
-    runtime_stages: list[dict[str, Any]]
-    max_parallel: int
-
-
-@dataclass(frozen=True, slots=True)
-class ResearchFanoutResult:
-    """Consolidated outcome of the parallel research and synthesis pipeline."""
-
-    run_id: str
-    ordered: list[ModuleResearch]
-    merged: MergedEvidence
-    synthesis_bundle: EvidenceBundle
-    code_status: str
-    draft: Any | None = None
-    violations: tuple[ResponseViolation, ...] = ()
-    started_payload: dict[str, Any] = field(default_factory=dict)
-    completed_payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
