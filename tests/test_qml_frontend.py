@@ -5806,6 +5806,10 @@ class QmlFrontendTest(unittest.TestCase):
             window.setWidth(1280)
             window.setHeight(820)
             window.show()
+
+            def named_objects(name):
+                return window.findChildren(QObject, name)
+
             try:
                 settings_page = window.findChild(QObject, "settingsPage")
                 self.assertIsNotNone(settings_page)
@@ -5819,18 +5823,17 @@ class QmlFrontendTest(unittest.TestCase):
                     QTest.qWait(10)
                 self.assertIsNone(chat_bridge._apps_catalog_thread)
 
-                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
-                use_button = window.findChild(QObject, "useImportedPackageInUltraButton")
-                choose_button = window.findChild(
-                    QObject, "chooseImportedPackageAppsButton"
+                # Sem pendência o diálogo não existe na árvore.
+                self.assertIsNone(
+                    window.findChild(QObject, "importedPackageUltraChoiceDialog")
                 )
-                self.assertIsNotNone(dialog)
-                self.assertIsNotNone(use_button)
-                self.assertIsNotNone(choose_button)
-                self.assertFalse(dialog.property("visible"))
-                self.assertFalse(dialog.property("opened"))
+                self.assertIsNone(
+                    window.findChild(QObject, "useImportedPackageInUltraButton")
+                )
+                self.assertIsNone(
+                    window.findChild(QObject, "chooseImportedPackageAppsButton")
+                )
 
-                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
                 chat_bridge._apps_catalog_data = {
                     "data": {
                         "applications": {},
@@ -5844,27 +5847,75 @@ class QmlFrontendTest(unittest.TestCase):
                                         "version": "4.1.0",
                                         "variant_id": "sha-master",
                                     },
-                                    {
-                                        "app_id": "vrpdv",
-                                        "version": "3.2.0",
-                                        "variant_id": "sha-pdv",
-                                    },
+                                    {"app_id": "vrpdv", "version": "3.2.0"},
                                 ],
                             }
                         },
                     }
                 }
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
                 chat_bridge.stateChanged.emit()
                 self.application.processEvents()
+
+                dialogs = named_objects("importedPackageUltraChoiceDialog")
+                self.assertEqual(len(dialogs), 1)
+                self.assertEqual(
+                    len(named_objects("useImportedPackageInUltraButton")), 1
+                )
+                self.assertEqual(
+                    len(named_objects("chooseImportedPackageAppsButton")), 1
+                )
+                dialog = dialogs[0]
                 self.assertTrue(dialog.property("visible"))
                 self.assertTrue(dialog.property("opened"))
                 self.assertEqual(dialog.property("packageId"), "pkg-one")
                 self.assertEqual(dialog.property("applicationCount"), 2)
 
+                # stateChanged sem mudar o packageId não duplica o diálogo.
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertEqual(
+                    len(named_objects("importedPackageUltraChoiceDialog")), 1
+                )
+
+                # Composição estruturalmente inválida: falha e mantém a pergunta.
+                use_button = window.findChild(
+                    QObject, "useImportedPackageInUltraButton"
+                )
                 self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
                 self.application.processEvents()
-                self.assertFalse(dialog.property("visible"))
-                self.assertFalse(dialog.property("opened"))
+                self.assertTrue(chat_bridge.applicationsCatalogError)
+                self.assertEqual(chat_bridge._pending_ultra_package_choice_id, "pkg-one")
+                self.assertEqual(
+                    chat_bridge.pendingImportedPackageForUltra.get("packageId"),
+                    "pkg-one",
+                )
+                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
+                self.assertIsNotNone(dialog)
+                self.assertTrue(dialog.property("visible"))
+                self.assertTrue(dialog.property("opened"))
+
+                # Composição válida: resolve a pendência e destrói o diálogo.
+                chat_bridge._apps_catalog_data["data"]["packages"]["pkg-one"][
+                    "composition"
+                ] = [
+                    {
+                        "app_id": "vrmaster",
+                        "version": "4.1.0",
+                        "variant_id": "sha-master",
+                    },
+                    {"app_id": "vrpdv", "version": "3.2.0", "variant_id": "sha-pdv"},
+                ]
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertEqual(
+                    len(named_objects("importedPackageUltraChoiceDialog")), 1
+                )
+                use_button = window.findChild(
+                    QObject, "useImportedPackageInUltraButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
+                QTest.qWait(1)
                 self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
                 contexts = chat_bridge._ultra_application_contexts
                 self.assertEqual(len(contexts), 2)
@@ -5874,6 +5925,15 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertEqual(
                     {item["app_id"] for item in contexts}, {"vrmaster", "vrpdv"}
                 )
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
+                self.assertEqual(
+                    named_objects("useImportedPackageInUltraButton"), []
+                )
+                self.assertEqual(
+                    named_objects("chooseImportedPackageAppsButton"), []
+                )
 
                 # Escolher por aplicativo fecha a pergunta e mantém o catálogo.
                 chat_bridge._pending_ultra_package_choice_id = "pkg-one"
@@ -5881,16 +5941,22 @@ class QmlFrontendTest(unittest.TestCase):
                 apps_page.setProperty("navigationLevel", 1)
                 apps_page.setProperty("importToolsExpanded", True)
                 self.application.processEvents()
+                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
+                self.assertIsNotNone(dialog)
                 self.assertTrue(dialog.property("visible"))
                 before = [dict(item) for item in chat_bridge._ultra_application_contexts]
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
                 self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
-                self.application.processEvents()
-                self.assertFalse(dialog.property("visible"))
-                self.assertFalse(dialog.property("opened"))
+                QTest.qWait(1)
                 self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
                 self.assertEqual(apps_page.property("navigationLevel"), 0)
                 self.assertFalse(bool(apps_page.property("importToolsExpanded")))
                 self.assertEqual(chat_bridge._ultra_application_contexts, before)
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
             finally:
                 window.close()
                 engine.deleteLater()

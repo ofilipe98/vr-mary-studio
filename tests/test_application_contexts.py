@@ -552,7 +552,48 @@ def test_invalid_imported_package_composition_is_atomic(bridge):  # noqa: F811
     assert bridge.useImportedPackageInUltra("broken") is False
     assert bridge._ultra_application_contexts == before
     assert bridge.applicationsCatalogError
-    assert bridge.pendingImportedPackageForUltra == {}
+    assert bridge._pending_ultra_package_choice_id == "broken"
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == "broken"
+    assert pending["applicationCount"] == 1
+
+
+@pytest.mark.qml
+def test_pending_selection_disables_and_rearms_until_catalog_ready(bridge):  # noqa: F811
+    _, contexts = indexed_contexts(bridge._settings.root)
+    bridge.refreshApplicationsCatalog()
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    _arm_manual_context(bridge, contexts[0])
+    assert bridge.addSelectedApplicationContext()
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
+
+    _arm_manual_context(bridge, {
+        "app_id": "ghost", "version": "1.0", "variant_id": "v1", "package_id": "ghost-pkg"
+    })
+    assert bridge.addSelectedApplicationContext()
+    assert not bridge.codeAnalysisEnabled
+    assert bridge._code_analysis_auto_enable_pending
+
+    bridge._apps_catalog_data["data"]["applications"]["ghost"] = {
+        "name": "Ghost",
+        "versions": {
+            "1.0": {
+                "variants": {
+                    "v1": {
+                        "variant_id": "v1",
+                        "origin_packages": [
+                            {"package_id": "ghost-pkg", "index_state": "ready"}
+                        ],
+                    }
+                }
+            }
+        },
+    }
+    bridge._CodeAdmin_domain._sync_code_analysis_auto_enable()
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
+    assert not bridge._code_analysis_auto_enable_pending
 
 
 @pytest.mark.qml

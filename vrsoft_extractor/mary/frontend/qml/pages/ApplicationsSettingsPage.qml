@@ -3954,98 +3954,113 @@ Item {
         }
     }
 
-    Dialog {
-        id: importedPackageUltraChoiceDialog
-        objectName: "importedPackageUltraChoiceDialog"
-        anchors.centerIn: parent
-        width: Math.min(540, root.width - Theme.spaceLg * 2)
-        modal: true
-        closePolicy: Popup.NoAutoClose
-        title: "Usar o pacote importado no VR Ultra?"
-        standardButtons: Dialog.NoButton
+    Loader {
+        id: importedPackageUltraChoiceLoader
+        anchors.fill: parent
+        active: (chat.pendingImportedPackageForUltra.packageId || "").length > 0
+        sourceComponent: importedPackageUltraChoiceComponent
+    }
 
-        readonly property string packageId: chat.pendingImportedPackageForUltra.packageId || ""
-        readonly property int applicationCount: chat.pendingImportedPackageForUltra.applicationCount || 0
-        readonly property string packageName: chat.pendingImportedPackageForUltra.packageName || ""
-        visible: packageId.length > 0
+    Component {
+        id: importedPackageUltraChoiceComponent
 
-        contentItem: ColumnLayout {
-            spacing: Theme.spaceMd
+        Dialog {
+            id: importedPackageUltraChoiceDialog
+            objectName: "importedPackageUltraChoiceDialog"
+            anchors.centerIn: parent
+            width: Math.min(540, root.width - Theme.spaceLg * 2)
+            modal: true
+            closePolicy: Popup.NoAutoClose
+            title: "Usar o pacote importado no VR Ultra?"
+            standardButtons: Dialog.NoButton
 
-            Text {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: importedPackageUltraChoiceDialog.packageName
-                color: Theme.palette.headingText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeControl
-                font.weight: Font.DemiBold
-                wrapMode: Text.WordWrap
-            }
+            readonly property string packageId: chat.pendingImportedPackageForUltra.packageId || ""
+            readonly property int applicationCount: chat.pendingImportedPackageForUltra.applicationCount || 0
+            readonly property string packageName: chat.pendingImportedPackageForUltra.packageName || ""
+            visible: packageId.length > 0
 
-            Text {
-                objectName: "importedPackageUltraChoiceSummary"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: importedPackageUltraChoiceDialog.applicationCount
-                    + " aplicativo(s) nesta composição importada."
-                color: Theme.palette.brandOrange
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeControl
-                wrapMode: Text.WordWrap
-            }
+            contentItem: ColumnLayout {
+                spacing: Theme.spaceMd
 
-            Text {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: "Pacote completo usa todos estes aplicativos como escopo principal do VR Ultra, substituindo a seleção atual."
-                color: Theme.palette.headingText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeCaption
-                wrapMode: Text.WordWrap
-            }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: importedPackageUltraChoiceDialog.packageName
+                    color: Theme.palette.headingText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeControl
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
 
-            Text {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                text: "Escolher por aplicativo mantém a seleção manual atual."
-                color: Theme.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeCaption
-                wrapMode: Text.WordWrap
-            }
+                Text {
+                    objectName: "importedPackageUltraChoiceSummary"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: importedPackageUltraChoiceDialog.applicationCount
+                        + " aplicativo(s) nesta composição importada."
+                    color: Theme.palette.brandOrange
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeControl
+                    wrapMode: Text.WordWrap
+                }
 
-            Flow {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                Layout.preferredHeight: childrenRect.height
-                spacing: Theme.spaceSm
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: "Pacote completo usa todos estes aplicativos como escopo principal do VR Ultra, substituindo a seleção atual."
+                    color: Theme.palette.headingText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
 
-                VrButton {
-                    objectName: "chooseImportedPackageAppsButton"
-                    text: "Escolher por aplicativo"
-                    variant: "secondary"
-                    onClicked: {
-                        chat.dismissImportedPackageUltraChoice(importedPackageUltraChoiceDialog.packageId)
-                        root.navigationLevel = 0
-                        root.importToolsExpanded = false
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: "Escolher por aplicativo mantém a seleção manual atual."
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredHeight: childrenRect.height
+                    spacing: Theme.spaceSm
+
+                    VrButton {
+                        objectName: "chooseImportedPackageAppsButton"
+                        text: "Escolher por aplicativo"
+                        variant: "secondary"
+                        onClicked: {
+                            chat.dismissImportedPackageUltraChoice(importedPackageUltraChoiceDialog.packageId)
+                            root.navigationLevel = 0
+                            root.importToolsExpanded = false
+                        }
+                    }
+
+                    VrButton {
+                        objectName: "useImportedPackageInUltraButton"
+                        text: "Usar pacote completo"
+                        variant: "primary"
+                        onClicked: {
+                            var pendingPackageId = importedPackageUltraChoiceDialog.packageId
+                            if (chat.useImportedPackageInUltra(pendingPackageId))
+                                importedPackageUltraChoiceDialog.close()
+                        }
                     }
                 }
-
-                VrButton {
-                    objectName: "useImportedPackageInUltraButton"
-                    text: "Usar pacote completo"
-                    variant: "primary"
-                    onClicked: chat.useImportedPackageInUltra(importedPackageUltraChoiceDialog.packageId)
-                }
             }
-        }
 
-        background: Rectangle {
-            color: Theme.palette.surface
-            border.width: 1
-            border.color: Theme.palette.brandOrange
-            radius: Theme.radiusSmall
+            background: Rectangle {
+                color: Theme.palette.surface
+                border.width: 1
+                border.color: Theme.palette.brandOrange
+                radius: Theme.radiusSmall
+            }
         }
     }
 }

@@ -1017,3 +1017,40 @@ def test_dismiss_ultra_choice_clears_question_without_touching_contexts(bridge):
     assert bridge.ultraApplicationContexts == before
     assert not bridge.codeAnalysisEnabled
 
+
+@pytest.mark.qml
+def test_ultra_choice_counts_full_composition_and_rejects_invalid_items(bridge):
+    bridge._ultra_application_contexts = [{
+        "app_id": "vrapp",
+        "version": "1.0.0",
+        "variant_id": "sha-app",
+        "package_id": "one",
+    }]
+    bridge._CodeAdmin_domain._save_application_contexts()
+    bridge._apps_catalog_data = {
+        "data": {
+            "applications": {},
+            "packages": {
+                "one": {
+                    "package_id": "one",
+                    "name": "Pacote Misto",
+                    "composition": [
+                        {"app_id": "vrapp", "version": "1.0.0", "variant_id": "sha-app"},
+                        {"app_id": "vrdep", "version": "2.0.0"},
+                    ],
+                }
+            },
+        }
+    }
+    bridge._pending_ultra_package_choice_id = "one"
+    bridge.stateChanged.emit()
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+    before = [dict(item) for item in bridge._ultra_application_contexts]
+
+    assert bridge.useImportedPackageInUltra("one") is False
+    assert bridge._ultra_application_contexts == before
+    assert bridge._pending_ultra_package_choice_id == "one"
+    assert bridge.pendingImportedPackageForUltra["packageId"] == "one"
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+    assert bridge.applicationsCatalogError
+

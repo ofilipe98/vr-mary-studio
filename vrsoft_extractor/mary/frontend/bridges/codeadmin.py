@@ -105,17 +105,11 @@ class CodeAdminDomain:
         package = packages.get(package_id) if isinstance(packages, dict) else None
         if not isinstance(package, dict):
             return {}
-        composition = [
-            item for item in package.get("composition") or []
-            if isinstance(item, dict)
-            and item.get("app_id") and item.get("version") and item.get("variant_id")
-        ]
-        if not composition:
-            return {}
+        composition = package.get("composition")
         return {
             "packageId": package_id,
             "packageName": str(package.get("name") or package_id),
-            "applicationCount": len(composition),
+            "applicationCount": len(composition) if isinstance(composition, list) else 0,
         }
 
     def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
@@ -125,8 +119,9 @@ class CodeAdminDomain:
         packages = self._apps_catalog_data.get("data", {}).get("packages", {})
         package = packages.get(selected) if isinstance(packages, dict) else None
         contexts: list[dict[str, Any]] = []
-        if isinstance(package, dict):
-            for item in package.get("composition") or []:
+        composition = package.get("composition") if isinstance(package, dict) else None
+        if isinstance(composition, list):
+            for item in composition:
                 if not isinstance(item, dict):
                     contexts = []
                     break
@@ -143,7 +138,6 @@ class CodeAdminDomain:
                     "package_id": selected,
                 })
         if not contexts:
-            self._pending_ultra_package_choice_id = ""
             self._apps_catalog_error = (
                 "O pacote importado não possui composição válida para usar no Ultra."
             )
@@ -177,12 +171,22 @@ class CodeAdminDomain:
         self._sync_code_analysis_auto_enable()
 
     def _sync_code_analysis_auto_enable(self) -> None:
-        if not self._code_analysis_auto_enable_pending:
-            return
         if not self._ultra_application_contexts:
             self._set_code_analysis_auto_enable_pending(False)
+            if self._code_analysis_enabled:
+                self._code_analysis_enabled = False
+                self._preferences.setValue("research/code_analysis_enabled", False)
+                self._preferences.sync()
+                self.stateChanged.emit()
+            return
+        if not self._code_analysis_auto_enable_pending:
             return
         if not self.ultraApplicationContextsReady:
+            if self._code_analysis_enabled:
+                self._code_analysis_enabled = False
+                self._preferences.setValue("research/code_analysis_enabled", False)
+                self._preferences.sync()
+                self.stateChanged.emit()
             return
         self._code_analysis_enabled = True
         self._preferences.setValue("research/code_analysis_enabled", True)

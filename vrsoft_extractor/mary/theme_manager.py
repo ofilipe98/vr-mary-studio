@@ -436,8 +436,7 @@ for _tid, _spec in _T3_THEME_DATA.items():
         _palette.update({target: _colors[source] for target, source in _T3_ROLE_MAP.items()})
         _palette.update({"previewCanvas": _colors["canvas"], "previewAccent": _colors["accent"],
                          "previewAction": _colors["messageAction"], "controlBorder": _colors["input"],
-                         "mutedSurface": _colors["muted"], "overlaySurface": _colors["surfaceOverlay"],
-                         "previewSidebar": _colors["sidebar"],
+                         "mutedSurface": _colors["muted"], "previewSidebar": _colors["sidebar"],
                          "previewMessage": _colors["messageSurface"], "terminalBackground": _colors["terminalBackground"]})
         if _tid == "t3-code":
             # VR Code uses the Studio black/orange identity. Keep the persisted
