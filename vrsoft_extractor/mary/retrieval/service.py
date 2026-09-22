@@ -324,8 +324,9 @@ class RetrievalService:
         """Route a single documentary source through the shared router."""
         self._prepare_search()
         normalized_source = str(source or "").strip().casefold()
-        # The Wiki agent always validates vrwiki and endoo; a globally disabled
-        # origin cannot erase valid candidates found by the Ultra lane.
+        # Wiki source-wide preserves VRWiki + Endoo even when Endoo is
+        # globally disabled for legacy flows. Normal VR and the Ultra
+        # per-source fan-out share this rule.
         bundle = self._finalize_bundle(
             self._router.route_source(query, source),
             enforce_enabled_origin=normalized_source != "wiki",
@@ -400,6 +401,11 @@ class RetrievalService:
             candidates=tuple(candidates),
             source_reports=(report,),
             missing_sources=() if status == "found" else ("code",),
+            warnings=(
+                (f"Falha na trilha CODE: {error}",)
+                if status == "unavailable"
+                else ()
+            ),
         )
 
     def route_vr_sources(
@@ -414,16 +420,15 @@ class RetrievalService:
         self._prepare_search()
         profile = self._router.classify(query)
         bundles: list[EvidenceBundle] = []
-        warnings: list[str] = []
-        failed_sources: list[str] = []
         for source in ("wiki", "kb", "schema"):
             try:
                 bundles.append(self.route_source(query, source))
             except Exception as exc:
-                warnings.append(f"Falha na trilha {source.upper()}: {exc}")
-                failed_sources.append(source)
                 logging.getLogger(__name__).warning(
                     "Falha na trilha %s: %s", source.upper(), exc
+                )
+                bundles.append(
+                    self._unavailable_source_bundle(profile, source, exc)
                 )
         try:
             bundles.append(
@@ -435,25 +440,35 @@ class RetrievalService:
                 )
             )
         except Exception as exc:
-            warnings.append(f"Falha na trilha CODE: {exc}")
-            failed_sources.append("code")
             logging.getLogger(__name__).warning(
                 "Falha na trilha CODE: %s", exc
             )
-        bundle = self._merge_source_bundles(profile, bundles)
-        if failed_sources:
-            bundle = replace(
-                bundle,
-                missing_sources=tuple(
-                    dict.fromkeys((*bundle.missing_sources, *failed_sources))
+            bundles.append(
+                self._unavailable_source_bundle(profile, "code", exc)
+            )
+        return self._merge_source_bundles(profile, bundles)
+
+    @staticmethod
+    def _unavailable_source_bundle(
+        profile: QueryProfile,
+        source: str,
+        exc: Exception,
+    ) -> EvidenceBundle:
+        """Represent a technically failed lane with an explicit report."""
+        message = str(exc)
+        return EvidenceBundle(
+            profile=profile,
+            candidates=(),
+            source_reports=(
+                SourceSearchReport(
+                    source=source,
+                    status="unavailable",
+                    error=message,
                 ),
-            )
-        if warnings:
-            bundle = replace(
-                bundle,
-                warnings=tuple(dict.fromkeys((*bundle.warnings, *warnings))),
-            )
-        return bundle
+            ),
+            missing_sources=(source,),
+            warnings=(f"Falha na trilha {source.upper()}: {message}",),
+        )
 
     def _merge_source_bundles(
         self,

@@ -683,6 +683,15 @@ def test_vr_normal_bundle_covers_wiki_origins_kb_schema_and_code(tmp_path: Path)
         "schema",
         "code",
     }
+    assert [report.source for report in bundle.source_reports] == [
+        "wiki",
+        "kb",
+        "schema",
+        "code",
+    ]
+    assert all(
+        report.status != "unavailable" for report in bundle.source_reports
+    )
     wiki_report = bundle.source_report("wiki")
     assert wiki_report is not None
     assert {item.source_origin for item in wiki_report.origin_reports} == {
@@ -740,10 +749,82 @@ def test_vr_normal_isolates_single_source_failure(tmp_path: Path):
 
     bundle = service.route_vr_sources(VR_QUERY)
 
+    assert len(bundle.source_reports) == 4
+    assert [report.source for report in bundle.source_reports] == [
+        "wiki",
+        "kb",
+        "schema",
+        "code",
+    ]
+    kb_report = bundle.source_report("kb")
+    assert kb_report is not None
+    assert kb_report.status == "unavailable"
+    assert "kb fora do ar" in kb_report.error
+    assert any("KB" in warning for warning in bundle.warnings)
+    assert "kb" in bundle.missing_sources
+    for source in ("wiki", "schema", "code"):
+        report = bundle.source_report(source)
+        assert report is not None
+        assert report.status != "unavailable"
     assert {item.source for item in bundle.candidates} >= {
         "wiki",
         "schema",
         "code",
     }
-    assert any("KB" in warning for warning in bundle.warnings)
-    assert "kb" in bundle.missing_sources
+
+
+def test_vr_normal_code_lane_technical_failure_is_reported(
+    tmp_path: Path, monkeypatch
+):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+
+    def broken_code(*_args, **_kwargs):
+        raise RuntimeError("indice indisponivel")
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.retrieval.code_retrieval.retrieve_code_candidates",
+        broken_code,
+    )
+
+    bundle = service.route_vr_sources(VR_QUERY)
+
+    assert len(bundle.source_reports) == 4
+    assert [report.source for report in bundle.source_reports] == [
+        "wiki",
+        "kb",
+        "schema",
+        "code",
+    ]
+    code_report = bundle.source_report("code")
+    assert code_report is not None
+    assert code_report.status == "unavailable"
+    assert "indice indisponivel" in code_report.error
+    assert any("CODE" in warning for warning in bundle.warnings)
+    assert "code" in bundle.missing_sources
+    assert {item.source for item in bundle.candidates} >= {
+        "wiki",
+        "kb",
+        "schema",
+    }
+
+
+def test_vr_normal_code_lane_without_results_stays_exhausted(
+    tmp_path: Path, monkeypatch
+):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.retrieval.code_retrieval.retrieve_code_candidates",
+        lambda *_args, **_kwargs: ([], [], []),
+    )
+
+    bundle = service.route_vr_sources(VR_QUERY)
+
+    assert len(bundle.source_reports) == 4
+    code_report = bundle.source_report("code")
+    assert code_report is not None
+    assert code_report.status == "exhausted"
+    assert not any(
+        "Falha na trilha CODE" in warning for warning in bundle.warnings
+    )
+    assert "code" in bundle.missing_sources

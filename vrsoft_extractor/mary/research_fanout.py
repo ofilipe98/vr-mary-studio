@@ -33,9 +33,6 @@ ULTRA_DOCUMENT_SOURCES: tuple[str, ...] = ("wiki", "kb", "schema")
 ULTRA_MAX_PARALLEL_RESEARCHERS = 4
 RESEARCH_ATTEMPTS = 3
 RESEARCH_RETRY_BACKOFF_SECONDS = 3.0
-# Stagger researcher launches so flapping free-tier endpoints are not hit
-# by a simultaneous burst.
-RESEARCH_STAGGER_SECONDS = 1.0
 
 
 def resolve_model_ref(
