@@ -204,7 +204,8 @@ def _initial_banner(
         next_start, next_end = spans[position]
         if not body.startswith("//", next_start):
             break
-        if body[run_end:next_start].strip(_INITIAL_WHITESPACE) != "":
+        gap = body[run_end:next_start]
+        if not gap.startswith("\n") or gap[1:].strip(" \t") != "":
             break
         run_end = next_end
         position += 1
