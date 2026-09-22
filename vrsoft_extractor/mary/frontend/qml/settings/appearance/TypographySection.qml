@@ -64,7 +64,7 @@ ColumnLayout {
         }
         AppearanceRow {
             visible: !frontend.isMacOS
-            title: "Rasterização nativa"; description: "ClearType do Windows; desativado usa o rasterizador do Qt (texto mais uniforme, como no T3 Code)."
+            title: "Rasterização nativa"; description: "ClearType do Windows; desativado usa o rasterizador do Qt, com antialiasing mais uniforme (vale na próxima abertura)."
             resetKey: "textRendering"; resetVisible: frontend.textRenderingMode !== "qt"
             VrSwitch {
                 objectName: "appearanceNativeRenderingSwitch"

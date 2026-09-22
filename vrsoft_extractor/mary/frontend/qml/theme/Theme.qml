@@ -22,9 +22,6 @@ QtObject {
     // fontSmoothing toggle still drives the mode.
     readonly property int textRenderType: frontend.textRenderingMode === "native"
         ? Text.NativeRendering : Text.QtRendering
-    // Qt rendering hinting: vertical hinting keeps horizontal stems crisp
-    // without distorting glyph outlines the way full hinting does.
-    readonly property int fontHintingPreference: Font.PreferVerticalHinting
 
     readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120
@@ -70,7 +67,6 @@ QtObject {
     readonly property real fontSizeHeading: fontSize(18)
     readonly property real fontSizeSection: fontSize(20)
     readonly property real fontSizeTitle: fontSize(24)
-    readonly property real fontSizeDisplay: fontSize(30)
     readonly property real fontSizePageTitle: fontSize(26)
 
     // T3 landing hierarchy: text-2xl (24) below 640px, text-3xl (30) above it.
@@ -100,10 +96,9 @@ QtObject {
     readonly property real denseLineHeight: 1.35
     readonly property real headingLineHeight: 1.25
 
-    // T3 tracking: headings use tracking-tight (-0.025em); micro labels read
-    // wider. letterSpacing in QML is absolute, so scale by the pixel size.
+    // T3 tracking: headings use tracking-tight (-0.025em). letterSpacing in
+    // QML is absolute, so scale the ratio by the pixel size.
     readonly property real trackingTight: -0.025
-    readonly property real trackingWide: 0.05
     function tracking(pixelSize, ratio) {
         return Number(pixelSize) * ratio
     }
