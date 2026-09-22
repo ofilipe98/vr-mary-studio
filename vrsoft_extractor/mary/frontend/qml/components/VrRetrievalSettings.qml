@@ -13,7 +13,7 @@ ColumnLayout {
         text: "Busca local e relações entre fontes"
         color: Theme.palette.headingText
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSize(14)
+        font.pixelSize: Theme.fontSizeControl
         font.bold: true
     }
     VrComboBox {
@@ -52,6 +52,6 @@ ColumnLayout {
         color: Theme.palette.subtleText
         wrapMode: Text.WordWrap
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSize(12)
+        font.pixelSize: Theme.fontSizeCaption
     }
 }

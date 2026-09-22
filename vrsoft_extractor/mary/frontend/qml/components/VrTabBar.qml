@@ -82,7 +82,7 @@ Item {
                     color: root.currentIndex === tab.index
                         ? Theme.palette.text : Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: root.understated ? Theme.fontSize(13) : Theme.bodySize
+                    font.pixelSize: root.understated ? Theme.fontSizeControl : Theme.bodySize
                     font.weight: root.currentIndex === tab.index
                         ? Font.DemiBold : Font.Medium
                 }

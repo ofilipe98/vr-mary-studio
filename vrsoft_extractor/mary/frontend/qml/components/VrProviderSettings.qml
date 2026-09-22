@@ -169,7 +169,7 @@ Item {
                         color: Theme.palette.text
                         opacity: 0.7
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.Medium
                         Layout.fillWidth: true
                     }
@@ -281,7 +281,7 @@ Item {
                                         elide: Text.ElideRight
                                         color: Theme.palette.headingText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: root.selected.id === providerRow.modelData.id ? Font.DemiBold : Font.Medium
                                     }
 
@@ -425,7 +425,7 @@ Item {
                                                     elide: Text.ElideRight
                                                     color: Theme.palette.headingText
                                                     font.family: Theme.fontFamily
-                                                    font.pixelSize: Theme.fontSize(17)
+                                                    font.pixelSize: Theme.fontSizeBody
                                                     font.weight: Font.DemiBold
                                                 }
                                                 VrProviderStatus {
@@ -442,7 +442,7 @@ Item {
                                                 elide: Text.ElideRight
                                                 color: Theme.palette.subtleText
                                                 font.family: Theme.fontFamily
-                                                font.pixelSize: Theme.fontSize(12)
+                                                font.pixelSize: Theme.fontSizeCaption
                                                 Layout.fillWidth: true
                                             }
                                         }
@@ -456,7 +456,7 @@ Item {
                                                 text: root.selected.enabled ? "Ativado" : "Desativado"
                                                 color: root.selected.enabled ? Theme.palette.headingText : Theme.palette.mutedText
                                                 font.family: Theme.fontFamily
-                                                font.pixelSize: Theme.fontSize(12)
+                                                font.pixelSize: Theme.fontSizeCaption
                                             }
 
                                             VrSwitch {
@@ -494,7 +494,7 @@ Item {
                                         text: root.refreshFeedback
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         Accessible.name: text
                                     }
 
@@ -513,7 +513,7 @@ Item {
                                             text: "Nome de exibi\u00e7\u00e3o"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.Medium
                                             Layout.preferredWidth: Theme.scaledGeometry(140)
                                         }
@@ -550,7 +550,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.Medium
                         }
 
@@ -577,7 +577,7 @@ Item {
                                             text: "Estado da instala\u00e7\u00e3o"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                         }
 
@@ -586,7 +586,7 @@ Item {
                                             text: "Vers\u00e3o: " + (root.selected.installVersion || "")
                                             color: Theme.palette.mutedText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(12)
+                                            font.pixelSize: Theme.fontSizeCaption
                                         }
                                     }
 
@@ -631,7 +631,7 @@ Item {
                                             text: "Caminho do execut\u00e1vel"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                         }
 
@@ -695,7 +695,7 @@ Item {
                                         text: "Instale o runtime para utilizar este provedor."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                     }
 
@@ -708,7 +708,7 @@ Item {
                                         wrapMode: Text.WrapAnywhere
                                         color: root.selected.runtimeState === "error" ? Theme.palette.danger : Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         Accessible.name: text
                                     }
 
@@ -754,7 +754,7 @@ Item {
                                         text: "Instala\u00e7\u00e3o oficial para seu usu\u00e1rio. Ap\u00f3s instalar, entre na sua conta para usar o provedor."
                                         color: Theme.palette.subtleText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         wrapMode: Text.WordWrap
                                     }
                                 }
@@ -768,7 +768,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.Medium
                         }
 
@@ -790,7 +790,7 @@ Item {
                                         text: "Login via CLI oficial"
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -799,7 +799,7 @@ Item {
                                         text: "Entre na conta pelo CLI oficial. O login abre em um terminal e as credenciais ficam sob controle do provedor."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                     }
 
@@ -831,7 +831,7 @@ Item {
                                             text: "Conta Google Antigravity"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                             Layout.fillWidth: true
                                         }
@@ -866,7 +866,7 @@ Item {
                                             : "Entre com sua conta Google no navegador. A mesma conta ser\u00e1 usada nos modelos e nas conversas do Studio."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.Wrap
                                     }
 
@@ -935,7 +935,7 @@ Item {
                                             text: "Retorno manual (se o redirecionamento local n\u00e3o concluir):"
                                             color: Theme.palette.subtleText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(12)
+                                            font.pixelSize: Theme.fontSizeCaption
                                             wrapMode: Text.WordWrap
                                         }
 
@@ -981,7 +981,7 @@ Item {
                                         text: "A valida\u00e7\u00e3o confirma a conta e carrega os modelos, sem enviar uma mensagem."
                                         color: Theme.palette.subtleText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         wrapMode: Text.WordWrap
                                     }
                                 }
@@ -1002,7 +1002,7 @@ Item {
                                         text: "Status da conta"
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -1011,7 +1011,7 @@ Item {
                                         text: root.account || "Configura\u00e7\u00e3o padr\u00e3o do sistema."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                     }
                                 }
@@ -1025,7 +1025,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.Medium
                         }
 

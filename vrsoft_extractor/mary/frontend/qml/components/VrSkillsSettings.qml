@@ -50,7 +50,7 @@ Item {
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 VrButton {
@@ -194,7 +194,7 @@ Item {
                                     text: "$" + (skillItemRow.modelData.name || "")
                                     color: Theme.palette.brandOrange
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(13)
+                                    font.pixelSize: Theme.fontSizeControl
                                     font.weight: Font.DemiBold
                                 }
 
@@ -306,7 +306,7 @@ Item {
                     text: "Criar Nova Skill"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(15)
+                    font.pixelSize: Theme.fontSizeBody
                     font.weight: Font.DemiBold
                 }
 
@@ -508,7 +508,7 @@ Item {
                         text: "Editar Skill"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(15)
+                        font.pixelSize: Theme.fontSizeBody
                         font.weight: Font.DemiBold
                     }
 
@@ -516,7 +516,7 @@ Item {
                         text: "$" + (editSkillDialog.targetSkill ? (editSkillDialog.targetSkill.name || "") : "")
                         color: Theme.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.Bold
                     }
                 }

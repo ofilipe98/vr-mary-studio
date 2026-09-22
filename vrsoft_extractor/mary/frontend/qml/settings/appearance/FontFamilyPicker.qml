@@ -55,7 +55,7 @@ Popup {
                 highlighted: fontList.currentIndex===index
                 background: Rectangle { radius: Theme.scaledGeometry(6); color: parent.highlighted || parent.hovered ? Theme.palette.hover : "transparent" }
                 contentItem: Text {
-                    text: parent.text; font.family: parent.text; font.pixelSize: Theme.fontSize(13)
+                    text: parent.text; font.family: parent.text; font.pixelSize: Theme.fontSizeControl
                     color: picker.selectedFamily===parent.text ? Theme.palette.accessibleOrange : Theme.palette.text
                     elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
                 }

@@ -155,11 +155,11 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "Classificar seleção como:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
+            Text { text: "Classificar seleção como:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl }
             VrComboBox { id: videoModule; Layout.preferredWidth: Theme.scaledGeometry(180); model: ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"] }
             VrButton { text: "Aplicar módulo"; onClicked: studio.applyVideoModule(root.selectedIds, videoModule.currentText) }
             Item { Layout.fillWidth: true }
-            Text { text: root.selectedIds.length ? root.selectedIds.length + " item(ns) selecionado(s)" : ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+            Text { text: root.selectedIds.length ? root.selectedIds.length + " item(ns) selecionado(s)" : ""; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
 
         Rectangle {
@@ -172,7 +172,7 @@ Item {
                 anchors.leftMargin: Theme.scaledGeometry(12)
                 anchors.rightMargin: Theme.scaledGeometry(5)
                 spacing: Theme.scaledGeometry(3)
-                Text { Layout.fillWidth: true; text: studio.videoSummary; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                Text { Layout.fillWidth: true; text: studio.videoSummary; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; font.weight: Font.DemiBold; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
                 VrIconButton {
                     implicitWidth: Theme.scaledGeometry(26)
                     implicitHeight: Theme.scaledGeometry(26)
@@ -209,13 +209,13 @@ Item {
                         anchors.leftMargin: Theme.scaledGeometry(8)
                         anchors.rightMargin: Theme.scaledGeometry(8)
                         Item { Layout.preferredWidth: Theme.scaledGeometry(28) }
-                        Text { Layout.fillWidth: true; text: "Curso, pasta ou vídeo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
-                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+                        Text { Layout.fillWidth: true; text: "Curso, pasta ou vídeo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: "Fonte"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: "Módulo"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: "Situação"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: "Download"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Tamanho"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
+                        Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: "Confiança"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
                     }
                 }
                 ListView {
@@ -288,7 +288,7 @@ Item {
                                 text: videoRow.title
                                 color: frontend.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.weight: videoRow.depth < 2 ? Font.DemiBold : Font.Normal
                                 elide: Text.ElideRight
                                 TapHandler {
@@ -296,12 +296,12 @@ Item {
                                     onTapped: root.toggleNode(videoRow.nodeId)
                                 }
                             }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); elide: Text.ElideRight }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
-                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(110); text: videoRow.source; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(150); text: videoRow.module; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(105); text: videoRow.status; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; elide: Text.ElideRight }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(92); text: videoRow.download; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.size; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
+                            Text { Layout.preferredWidth: Theme.scaledGeometry(72); text: videoRow.confidence; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                         }
                     }
                     Row {
@@ -346,7 +346,7 @@ Item {
                     text: studio.videoLog.length ? studio.videoLog : "O inventário, as inscrições, os downloads e eventuais falhas aparecerão aqui."
                     color: frontend.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                     wrapMode: TextEdit.Wrap
                     background: Item { }
                 }

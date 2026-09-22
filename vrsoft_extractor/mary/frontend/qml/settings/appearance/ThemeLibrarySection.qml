@@ -54,7 +54,7 @@ ColumnLayout {
         Layout.fillWidth: true; Layout.leftMargin: Theme.scaledGeometry(16); Layout.rightMargin: Theme.scaledGeometry(16)
         columns: root.width < 460 * Theme.textScale ? 2 : 3
         columnSpacing: Theme.scaledGeometry(8); rowSpacing: Theme.scaledGeometry(10)
-        Text { text: "Temas"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); Layout.fillWidth: true; Layout.columnSpan: parent.columns === 2 ? 2 : 1 }
+        Text { text: "Temas"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; Layout.fillWidth: true; Layout.columnSpan: parent.columns === 2 ? 2 : 1 }
         AppearanceAction {
             objectName: "createThemeButton"; text: "Criar tema"; iconKind: "paintbrush"
             onClicked: root.editTheme({appearance:frontend.resolvedAppearance,palette:frontend.palette},false)

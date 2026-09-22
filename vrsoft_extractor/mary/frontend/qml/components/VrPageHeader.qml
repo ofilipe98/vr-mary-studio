@@ -9,14 +9,17 @@ ColumnLayout {
     property string subtitle
     property bool compact: false
 
+    readonly property real resolvedTitleSize: root.compact ? Theme.fontSizeTitle : Theme.titleSize
+
     spacing: Theme.scaledGeometry(3)
     Text {
         Layout.fillWidth: true
         text: root.title
         color: Theme.palette.text
         font.family: Theme.fontFamily
-        font.pixelSize: root.compact ? Theme.fontSize(24) : Theme.titleSize
+        font.pixelSize: root.resolvedTitleSize
         font.weight: Font.DemiBold
+        font.letterSpacing: Theme.tracking(root.resolvedTitleSize, Theme.trackingTight)
         lineHeight: Theme.headingLineHeight
         wrapMode: Text.WordWrap
         renderType: Theme.textRenderType
@@ -26,7 +29,7 @@ ColumnLayout {
         text: root.subtitle
         color: Theme.palette.mutedText
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSize(13)
+        font.pixelSize: Theme.fontSizeControl
         wrapMode: Text.WordWrap
         lineHeight: Theme.bodyLineHeight
         renderType: Theme.textRenderType

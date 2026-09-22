@@ -205,12 +205,12 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         QTest.qWait(100)
         window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
         QTest.qWait(50)
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 21
         frontend.setInterfaceTypography("Arial", 16)
         QTest.qWait(20)
         assert window.property("font").family() == "Arial"
         assert window.property("font").pixelSize() == 24
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 21
         assert not warnings
 
 

@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import "../../theme"
 ColumnLayout {
     spacing: Theme.scaledGeometry(14)
-    Text { text: "Esquema de cores"; Layout.leftMargin: Theme.scaledGeometry(16); font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); color: Theme.palette.text; opacity: .7 }
+    Text { text: "Esquema de cores"; Layout.leftMargin: Theme.scaledGeometry(16); font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; color: Theme.palette.text; opacity: .7 }
     RowLayout {
         Layout.fillWidth: true; spacing: Theme.scaledGeometry(12)
         Repeater {
@@ -40,7 +40,7 @@ ColumnLayout {
                     Text {
                         text: card.Accessible.name
                         Layout.alignment: Qt.AlignHCenter
-                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
+                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption
                         font.weight: card.selected ? Font.DemiBold : Font.Normal
                         color: card.selected ? Theme.palette.text : Theme.palette.mutedText
                     }

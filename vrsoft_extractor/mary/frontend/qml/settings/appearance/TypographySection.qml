@@ -6,8 +6,8 @@ ColumnLayout {
     spacing: Theme.scaledGeometry(14)
     RowLayout {
         Layout.fillWidth: true; Layout.leftMargin: Theme.scaledGeometry(16); Layout.rightMargin: Theme.scaledGeometry(16); spacing: Theme.scaledGeometry(8)
-        Text { text: "Tipografia"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); Layout.fillWidth: true }
-        Text { text: "Avançado"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+        Text { text: "Tipografia"; color: Theme.palette.text; opacity: .7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; Layout.fillWidth: true }
+        Text { text: "Avançado"; color: Theme.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         VrSwitch {
             thumbColor: Theme.palette.background
             inactiveColor: Theme.palette.controlBorder || Theme.palette.border

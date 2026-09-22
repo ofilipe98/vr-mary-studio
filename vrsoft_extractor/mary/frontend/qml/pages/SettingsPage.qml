@@ -127,7 +127,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -150,7 +150,7 @@ Item {
                                         text: "Repositório local de documentação"
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -158,7 +158,7 @@ Item {
                                         text: "Diretório local com a documentação do ecossistema VR. O Chat VR e os agentes consultam esta pasta para fundamentar respostas."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -199,7 +199,7 @@ Item {
                                         text: "Novo caminho salvo. Reinicie o VRStudio para usá-lo."
                                         color: Theme.palette.warning
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         font.weight: Font.Medium
                                         wrapMode: Text.WordWrap
                                     }
@@ -213,7 +213,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -238,7 +238,7 @@ Item {
                                             text: "Movidesk"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                             Layout.fillWidth: true
                                         }
@@ -254,7 +254,7 @@ Item {
                                             : "Credenciais para baixar chamados e documentação técnica Movidesk."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -326,7 +326,7 @@ Item {
                                             text: "Wiki Endoo"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                             Layout.fillWidth: true
                                         }
@@ -342,7 +342,7 @@ Item {
                                             : "Credenciais para sincronização automática da base de conhecimento Endoo."
                                         color: Theme.palette.mutedText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
                                     }
@@ -394,7 +394,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -441,7 +441,7 @@ Item {
                                         text: "Diagnóstico local"
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(13)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -475,7 +475,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -503,7 +503,7 @@ Item {
                                             text: "Manutenção do ambiente"
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                         }
 
@@ -511,7 +511,7 @@ Item {
                                             text: "Instale ferramentas portáteis, abra o ambiente no Codex ou salve as variáveis locais no arquivo .env."
                                             color: Theme.palette.mutedText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             wrapMode: Text.WordWrap
                                             Layout.fillWidth: true
                                         }
@@ -669,7 +669,7 @@ Item {
                                 text: "Escala da interface"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                                 wrapMode: Text.WordWrap
                             }
@@ -682,7 +682,7 @@ Item {
                                     : "Ajusta a leitura em todo o aplicativo. Textos e controles se adaptam à escala escolhida."
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -722,7 +722,7 @@ Item {
                                 text: "Aceleração gráfica de hardware"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                                 wrapMode: Text.WordWrap
                             }
@@ -735,7 +735,7 @@ Item {
                                     : "Desativada: renderização por software (CPU). O app opera sem exigir GPU dedicada e sem acionar a barra Game Ready da NVIDIA. (Requer reiniciar o app)"
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -783,7 +783,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -824,7 +824,7 @@ Item {
                             color: Theme.palette.text
                             opacity: 0.7
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                         }
 
                         AppearanceGroup {
@@ -928,7 +928,7 @@ Item {
                                 color: Theme.palette.text
                                 opacity: 0.7
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                             }
 
                             VrTextField {
@@ -1016,7 +1016,7 @@ Item {
                                             text: title
                                             color: Theme.palette.text
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideRight
                                         }
@@ -1027,7 +1027,7 @@ Item {
                                             text: (project ? project + " · " : "") + provider + " · " + updatedAt
                                             color: Theme.palette.mutedText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(12)
+                                            font.pixelSize: Theme.fontSizeCaption
                                             elide: Text.ElideRight
                                         }
                                     }
@@ -1077,7 +1077,7 @@ Item {
                                     text: archivedSearch.text.length ? "Nenhum resultado para esta busca." : "Nenhum projeto arquivado."
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(13)
+                                    font.pixelSize: Theme.fontSizeControl
                                     wrapMode: Text.WordWrap
                                 }
                             }
@@ -1163,7 +1163,7 @@ Item {
                         text: "Excluir conversa definitivamente?"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(15)
+                        font.pixelSize: Theme.fontSizeBody
                         font.weight: Font.DemiBold
                     }
                     Text {
@@ -1171,7 +1171,7 @@ Item {
                         text: "A conversa, o histórico e o workspace local associado serão removidos. Esta ação não pode ser desfeita."
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         wrapMode: Text.WordWrap
                     }
                 }
