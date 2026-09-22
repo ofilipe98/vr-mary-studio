@@ -90,6 +90,14 @@ Os transportes concretos ficam em `mary/provider_adapters/`; `mary/providers.py`
 preserva imports existentes. O fan-out e seus checkpoints ficam em
 `mary/execution/`; busca e ranking ficam em `mary/retrieval/`.
 
+No frontend, os ícones de linha usam a geometria oficial do Lucide em
+`frontend/qml/theme/LucidePaths.js`, compartilhada por todas as instâncias de
+`VrLineIcon`; somente os kinds sem equivalente Lucide continuam desenhados no
+componente. Os tamanhos seguem os tokens `Theme.iconMicro`/`iconCompact`/
+`iconSmall`/`iconMedium`/`iconSize` (escala 12/14/16/18/20 do T3 Code). A
+rasterização de texto vem da preferência `appearance/text_rendering` (`qt` ou
+`native`), aplicada em `create_engine` e exposta em Tipografia.
+
 Em VR e Ultra, o código do VRMaster (app central) é fallback do escopo
 selecionado: `code_context.master_fallback_context` resolve o contexto do mesmo
 pacote e a busca o consulta quando o escopo não retorna trechos, quando o texto
