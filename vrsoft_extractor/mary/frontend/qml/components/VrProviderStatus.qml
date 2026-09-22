@@ -31,7 +31,7 @@ RowLayout {
         Layout.fillWidth: true
         text: root.text
         color: root.tone === "danger" ? root.statusColor : Theme.palette.mutedText
-        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12)
+        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption
         elide: Text.ElideRight
     }
 }

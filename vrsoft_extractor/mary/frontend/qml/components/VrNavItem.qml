@@ -7,6 +7,7 @@ Item {
 
     property string title: ""
     property var iconSource: ""
+    property string iconKind: ""
     property bool selected: false
     property bool compact: false
     signal activated()
@@ -57,15 +58,27 @@ Item {
 
             Image {
                 id: navIcon
-                visible: root.iconSource ? true : false
+                visible: root.iconKind.length === 0 && root.iconSource.toString().length > 0
                 anchors.centerIn: parent
-                width: Theme.scaledGeometry(16)
-                height: Theme.scaledGeometry(16)
+                width: Theme.iconSmall
+                height: Theme.iconSmall
                 source: root.iconSource
                 sourceSize.width: 32
                 sourceSize.height: 32
                 fillMode: Image.PreserveAspectFit
                 opacity: root.selected ? 1.0 : (pointer.hovered ? 0.95 : 0.72)
+            }
+
+            // Official Lucide geometry (stroke 2) keeps the navigation aligned
+            // with every other line icon instead of the thinner 1.6 SVGs.
+            VrLineIcon {
+                visible: root.iconKind.length > 0
+                anchors.centerIn: parent
+                width: Theme.iconSmall
+                height: Theme.iconSmall
+                kind: root.iconKind
+                foreground: root.selected ? "#FFFFFF" : Theme.palette.navText
+                opacity: root.selected ? 1.0 : (pointer.hovered ? 0.95 : 0.78)
             }
         }
 
@@ -77,7 +90,7 @@ Item {
             text: root.title
             color: root.selected ? "#FFFFFF" : Theme.palette.navText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: Theme.fontSizeControl
             font.weight: root.selected ? Font.Medium : Font.Normal
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight

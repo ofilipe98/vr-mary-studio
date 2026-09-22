@@ -124,14 +124,14 @@ Popup {
                     text: "Choose project icon"
                     color: Theme.palette.text
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(17)
+                    font.pixelSize: Theme.fontSizeBody
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: "Choose an icon, emoji, or monogram."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
             }
             VrIconButton {
@@ -183,7 +183,7 @@ Popup {
                             text: tabPill.modelData.label
                             color: Theme.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
+                            font.pixelSize: Theme.fontSizeCaption
                             font.weight: tabPill.selected ? Font.DemiBold : Font.Medium
                         }
                         HoverHandler { id: tabHover; cursorShape: Qt.PointingHandCursor }
@@ -202,7 +202,7 @@ Popup {
             text: "Color"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12)
+            font.pixelSize: Theme.fontSizeCaption
             font.weight: Font.Medium
         }
 
@@ -261,7 +261,7 @@ Popup {
             leftPadding: Theme.scaledGeometry(30)
             placeholderText: "Search all Lucide icons"
             text: root.searchText
-            font.pixelSize: Theme.fontSize(12)
+            font.pixelSize: Theme.fontSizeCaption
             onTextChanged: if (root.searchText !== text) root.searchText = text
             Keys.onReturnPressed: {
                 if (root.filteredIcons.length) {
@@ -325,7 +325,7 @@ Popup {
                     text: "No icons found"
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                 }
             }
 
@@ -381,7 +381,7 @@ Popup {
                     placeholderText: "AB"
                     horizontalAlignment: Text.AlignHCenter
                     maximumLength: 2
-                    font.pixelSize: Theme.fontSize(16)
+                    font.pixelSize: Theme.fontSizeBody
                     font.weight: Font.DemiBold
                     onTextChanged: {
                         var upper = text.toUpperCase()

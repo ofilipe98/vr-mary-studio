@@ -6,7 +6,7 @@ ColumnLayout {
     spacing: Theme.scaledGeometry(36)
     ColumnLayout {
         Layout.fillWidth: true; spacing: Theme.scaledGeometry(14)
-        Text { text: "Interface"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
+        Text { text: "Interface"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl }
         AppearanceGroup {
             Layout.fillWidth: true
             AppearanceRow {
@@ -40,7 +40,7 @@ ColumnLayout {
     }
     ColumnLayout {
         Layout.fillWidth: true; spacing: Theme.scaledGeometry(14)
-        Text { text: "Movimento"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14) }
+        Text { text: "Movimento"; Layout.leftMargin: Theme.scaledGeometry(16); color: Theme.palette.text; opacity: 0.7; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl }
         AppearanceGroup {
             Layout.fillWidth: true
             AppearanceRow {

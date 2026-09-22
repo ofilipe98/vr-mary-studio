@@ -75,7 +75,7 @@ Item {
                             text: "Orquestrador: definido pelo seletor de provedor/modelo no compositor do Chat VR"
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
+                            font.pixelSize: Theme.fontSizeCaption
                             elide: Text.ElideRight
                         }
                     }
@@ -88,7 +88,7 @@ Item {
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 Rectangle {
@@ -170,7 +170,7 @@ Item {
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 Rectangle {
@@ -215,7 +215,7 @@ Item {
                                         text: chat.codeAnalysisEnabled ? "4 agentes" : "3 agentes"
                                         color: Theme.palette.brandOrange
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(12)
+                                        font.pixelSize: Theme.fontSizeCaption
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -244,7 +244,7 @@ Item {
                     color: Theme.palette.text
                     opacity: 0.7
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(14)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 Rectangle {
@@ -298,7 +298,7 @@ Item {
                                     text: chat.ultraApplicationContexts.length ? "Aplicativos incluídos na próxima análise:" : "Selecione uma versão, variante e origem em Aplicativos e versões e clique em Usar no Ultra."
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     wrapMode: Text.WordWrap
                                 }
 
@@ -317,7 +317,7 @@ Item {
                                                 text: modelData.label
                                                 color: Theme.palette.headingText
                                                 font.family: Theme.fontFamily
-                                                font.pixelSize: Theme.fontSize(13)
+                                                font.pixelSize: Theme.fontSizeControl
                                                 font.weight: Font.Medium
                                                 wrapMode: Text.WrapAnywhere
                                             }

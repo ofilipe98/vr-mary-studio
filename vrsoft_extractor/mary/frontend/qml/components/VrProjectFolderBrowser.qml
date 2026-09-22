@@ -152,7 +152,7 @@ Item {
                         text: folderRow.modelData.label
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         elide: Text.ElideRight
                     }
                 }
@@ -164,7 +164,7 @@ Item {
                 text: "Nenhuma subpasta disponível"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
             }
         }
 

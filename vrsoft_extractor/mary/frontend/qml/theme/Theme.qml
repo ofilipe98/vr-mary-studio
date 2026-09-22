@@ -67,6 +67,7 @@ QtObject {
     readonly property real fontSizeHeading: fontSize(18)
     readonly property real fontSizeSection: fontSize(20)
     readonly property real fontSizeTitle: fontSize(24)
+    readonly property real fontSizeDisplay: fontSize(30)
     readonly property real fontSizePageTitle: fontSize(26)
 
     // T3 landing hierarchy: text-2xl (24) below 640px, text-3xl (30) above it.

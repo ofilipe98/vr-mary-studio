@@ -27,7 +27,7 @@ Item {
                 spacing: Theme.scaledGeometry(4); Layout.fillWidth: true
                 Text {
                     text: root.title; color: Theme.palette.text
-                    font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold
+                    font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; font.weight: Font.DemiBold
                     wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.minimumWidth: 0
                 }
                 AppearanceAction {
@@ -39,7 +39,7 @@ Item {
             }
             Text {
                 text: root.description; color: Theme.palette.mutedText
-                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13)
+                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
                 lineHeight: Theme.bodyLineHeight
             }

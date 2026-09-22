@@ -95,7 +95,7 @@ Item {
                     color: projectSettingsBack.hovered
                         ? Theme.palette.text : Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                     verticalAlignment: Text.AlignVCenter
                 }
             }
@@ -105,14 +105,14 @@ Item {
             text: "/"
             color: Theme.palette.mutedText
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12)
+            font.pixelSize: Theme.fontSizeCaption
         }
         Text {
             Layout.fillWidth: true
             text: control.projectName
             color: Theme.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
+            font.pixelSize: Theme.fontSizeControl
             font.weight: Font.DemiBold
             elide: Text.ElideRight
         }
@@ -236,7 +236,7 @@ Item {
                 color: Theme.palette.text
                 opacity: 0.7
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(14)
+                font.pixelSize: Theme.fontSizeControl
             }
 
             Rectangle {
@@ -311,7 +311,7 @@ Item {
                 color: Theme.palette.text
                 opacity: 0.7
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(14)
+                font.pixelSize: Theme.fontSizeControl
             }
 
             Rectangle {
@@ -396,7 +396,7 @@ Item {
                 color: Theme.palette.text
                 opacity: 0.7
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(14)
+                font.pixelSize: Theme.fontSizeControl
             }
 
             Rectangle {
@@ -438,7 +438,7 @@ Item {
                         text: "No actions configured."
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                     }
                 }
             }
@@ -449,7 +449,7 @@ Item {
                 color: Theme.palette.text
                 opacity: 0.7
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(14)
+                font.pixelSize: Theme.fontSizeControl
             }
 
             Rectangle {
@@ -484,7 +484,7 @@ Item {
                                 spacing: 7
                                 Item { Layout.fillWidth: true }
                                 VrLineIcon { Layout.preferredWidth: 15; Layout.preferredHeight: 15; kind: "trash"; foreground: Theme.palette.danger }
-                                Text { text: "Remove project"; color: Theme.palette.danger; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
+                                Text { text: "Remove project"; color: Theme.palette.danger; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold }
                                 Item { Layout.fillWidth: true }
                             }
                             background: Rectangle {

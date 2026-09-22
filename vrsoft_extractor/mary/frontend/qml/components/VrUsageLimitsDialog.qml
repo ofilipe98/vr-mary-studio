@@ -40,7 +40,7 @@ Dialog {
                 text: "Usage limits"
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 font.weight: Font.DemiBold
             }
             Text {
@@ -148,7 +148,7 @@ Dialog {
                         text: root.formatAccountTitle(account.modelData)
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         elide: Text.ElideRight
                     }
                     Repeater {
@@ -171,7 +171,7 @@ Dialog {
                                 text: windowRow.modelData.label || "Session"
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 elide: Text.ElideRight
                             }
                             Text {
@@ -183,7 +183,7 @@ Dialog {
                                 text: windowRow.remaining < 0 ? "—" : Math.round(windowRow.remaining) + "% left"
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.weight: Font.DemiBold
                             }
                             Item {
@@ -267,7 +267,7 @@ Dialog {
                         : "Carregando informações de limite de uso…"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
         }

@@ -68,12 +68,12 @@ Item {
     }
 
     readonly property var sections: [
-        { title: "Dashboard", page: 0, icon: "nav-dashboard.svg" },
-        { title: "Conhecimento", page: 2, icon: "nav-knowledge.svg" },
-        { title: "Sincronizações", page: 3, icon: "nav-sync.svg" },
-        { title: "Revisão", page: 4, icon: "nav-review.svg" },
-        { title: "Vídeos", page: 5, icon: "nav-videos.svg" },
-        { title: "Logs", page: 6, icon: "nav-logs.svg" }
+        { title: "Dashboard", page: 0, iconKind: "layoutGrid" },
+        { title: "Conhecimento", page: 2, iconKind: "book" },
+        { title: "Sincronizações", page: 3, iconKind: "refreshCw" },
+        { title: "Revisão", page: 4, iconKind: "clipboardCheck" },
+        { title: "Vídeos", page: 5, iconKind: "video" },
+        { title: "Logs", page: 6, iconKind: "fileText" }
     ]
 
     // Visited pages stay alive: recreating heavy pages (Vídeos, Conhecimento)
@@ -254,7 +254,7 @@ Item {
                         leftPadding: Theme.scaledGeometry(35)
                         rightPadding: Theme.scaledGeometry(32)
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         placeholderText: root.settingsActive
                             ? "Pesquisar configurações" : "Pesquisar conversas"
                         placeholderTextColor: Theme.palette.navMuted
@@ -327,7 +327,7 @@ Item {
                             text: "/"
                             color: Theme.palette.navMuted
                             font.family: Theme.fontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeMicro
                             font.weight: Font.Medium
                             renderType: Theme.textRenderType
                         }
@@ -369,7 +369,7 @@ Item {
                         required property var modelData
                         Layout.fillWidth: true
                         title: modelData.title
-                        iconSource: Qt.resolvedUrl("../../../assets/" + modelData.icon)
+                        iconKind: modelData.iconKind
                         selected: frontend.currentPage === modelData.page
                         compact: false
                         onActivated: frontend.setCurrentPage(modelData.page)
@@ -413,7 +413,7 @@ Item {
                                     text: settingResult.modelData.title
                                     color: Theme.palette.navText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeControl
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -437,7 +437,7 @@ Item {
                         text: "Nenhuma configuração encontrada."
                         color: Theme.palette.navMuted
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                     }
@@ -472,7 +472,7 @@ Item {
                             color: settingsReturnButton.hovered
                                 ? Theme.palette.navText : Theme.palette.navMuted
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.DemiBold
                             verticalAlignment: Text.AlignVCenter
                         }

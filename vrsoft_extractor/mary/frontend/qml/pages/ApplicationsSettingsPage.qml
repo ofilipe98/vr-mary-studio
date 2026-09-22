@@ -269,7 +269,7 @@ Item {
                                 text: "Aplicativos e versões"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(17)
+                                font.pixelSize: Theme.fontSizeBody
                                 font.weight: Theme.weightDemiBold
                                 renderType: Theme.textRenderType
                             }
@@ -491,7 +491,7 @@ Item {
                                         ? Theme.palette.danger
                                         : Theme.palette.headingText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(14)
+                                    font.pixelSize: Theme.fontSizeControl
                                     font.weight: Font.DemiBold
                                     wrapMode: Text.WordWrap
                                 }
@@ -506,7 +506,7 @@ Item {
                                             : "Revise os componentes identificados no pacote antes de confirmar a inclusão no catálogo.")
                                     color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     wrapMode: Text.WordWrap
                                 }
                             }
@@ -764,7 +764,7 @@ Item {
                                                         text: modelData.application
                                                         color: Theme.palette.headingText
                                                         font.family: Theme.fontFamily
-                                                        font.pixelSize: Theme.fontSize(13)
+                                                        font.pixelSize: Theme.fontSizeControl
                                                         font.weight: Font.DemiBold
                                                         elide: Text.ElideRight
                                                     }
@@ -1096,7 +1096,7 @@ Item {
                         }
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WordWrap
                     }
 
@@ -1186,7 +1186,7 @@ Item {
                         text: chat.releaseSnapshotStatus
                         color: (text.indexOf("Não foi possível") === 0 || text.indexOf("não encontrada") !== -1 || text.indexOf("não encontrado") !== -1 || text.indexOf("não é um JAR") !== -1 || text.indexOf("mudaram após a prévia") !== -1 || text.indexOf("Erro") === 0) ? Theme.palette.warning : Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WordWrap
                     }
 
@@ -1233,14 +1233,14 @@ Item {
                     Text {
                         text: "›"
                         color: Theme.palette.mutedText
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                     }
 
                     Text {
                         text: root.activeAppId ? (root.activeAppId.toUpperCase()) : ""
                         color: root.navigationLevel === 1 ? Theme.palette.brandOrange : Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.DemiBold
                         MouseArea {
                             anchors.fill: parent
@@ -1254,7 +1254,7 @@ Item {
                         visible: root.navigationLevel >= 2
                         text: "›"
                         color: Theme.palette.mutedText
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                     }
 
                     Text {
@@ -1262,7 +1262,7 @@ Item {
                         text: "Versão: " + root.activeVersion
                         color: Theme.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.DemiBold
                     }
 
@@ -1294,7 +1294,7 @@ Item {
                         text: "Atualizando catálogo…"
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                     }
                 }
 
@@ -1310,7 +1310,7 @@ Item {
                         : "Nenhum aplicativo catalogado ainda. Abra Importar e preparar para adicionar um pacote VR, JAR ou código descompilado."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(13)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 VrAppSelector {
@@ -1436,7 +1436,7 @@ Item {
                                 text: "Descompilação e Indexação em Andamento..."
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                                 Layout.fillWidth: true
                             }
@@ -1446,7 +1446,7 @@ Item {
                                       chat.codeProcessingCoveredJars + "/" + chat.codeProcessingTotalJars + " JARs"
                                 color: Theme.palette.brandOrange
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.weight: Font.DemiBold
                             }
 
@@ -1725,7 +1725,7 @@ Item {
                                         : root.activeAppId
                                     color: Theme.palette.headingText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(17)
+                                    font.pixelSize: Theme.fontSizeBody
                                     font.weight: Theme.weightDemiBold
                                     elide: Text.ElideRight
                                     renderType: Theme.textRenderType
@@ -1795,7 +1795,7 @@ Item {
                                         text: "Versão " + modelData.version
                                         color: Theme.palette.headingText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(14)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -1835,7 +1835,7 @@ Item {
                                         + " · Origens " + modelData.originCount
                                     color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                             }
 
@@ -1922,7 +1922,7 @@ Item {
                                         text: "Versão " + root.activeVersion
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(17)
+                                        font.pixelSize: Theme.fontSizeBody
                                         font.weight: Theme.weightDemiBold
                                         elide: Text.ElideRight
                                         renderType: Theme.textRenderType
@@ -2172,7 +2172,7 @@ Item {
                                 text: "Metadados"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2253,7 +2253,7 @@ Item {
                                 text: "Status de Processamento Local"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2263,7 +2263,7 @@ Item {
                                 Layout.minimumWidth: 0
                                 text: chat.codeProcessingHardwareSummary || "Modo paralelo automático"
                                 color: Theme.palette.mutedText
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.Wrap
                             }
 
@@ -2273,7 +2273,7 @@ Item {
                                 Layout.minimumWidth: 0
                                 text: "Origem da tarefa: " + (chat.codeAnalysisRelease || "—") + "\n" + chat.codeProcessingStatus
                                 color: Theme.palette.text
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.Wrap
                             }
 
@@ -2292,7 +2292,7 @@ Item {
                                         + chat.codeProcessingCoveredJars + "/"
                                         + chat.codeProcessingTotalJars + " JARs"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     font.weight: Font.Medium
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
@@ -2417,7 +2417,7 @@ Item {
                                 Text {
                                     text: "Memória Máxima da JVM"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: heapPicker
@@ -2437,7 +2437,7 @@ Item {
                                 Text {
                                     text: "Timeout do Lote"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: timeoutPicker
@@ -2457,7 +2457,7 @@ Item {
                                 Text {
                                     text: "Núcleos de CPU"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: cpuPicker
@@ -2477,7 +2477,7 @@ Item {
                                 Text {
                                     text: "Multiplicador de Disco"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: diskPicker
@@ -2497,7 +2497,7 @@ Item {
                                 Text {
                                     text: "Janela de Processamento"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: windowPicker
@@ -2517,7 +2517,7 @@ Item {
                                 Text {
                                     text: "Lote para repetir"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: retryPicker
@@ -2608,7 +2608,7 @@ Item {
                                 text: "Comparar Versão " + root.activeVersion + " com outra versão"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2622,7 +2622,7 @@ Item {
                                 Text {
                                     text: "Versão de destino:"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
 
                                 VrComboBox {
@@ -3342,7 +3342,7 @@ Item {
                                 text: "Pacotes que contêm esta versão"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -3422,7 +3422,7 @@ Item {
                     + "Bancos compartilhados, releases ativas e JARs de origem serão preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3470,7 +3470,7 @@ Item {
                 text: "Deseja remover o pacote '" + (root.pendingUnlinkPackageName || root.pendingUnlinkPackageId) + "' do catálogo de aplicativos?\nOs JARs de origem serão preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
 
@@ -3553,7 +3553,7 @@ Item {
                 text: "Digite o novo nome para o pacote selecionado:"
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
             }
             VrTextField {
                 id: renamePackageInput
@@ -3604,7 +3604,7 @@ Item {
                     + "O código já descompilado e o índice no VRStudio continuarão funcionando normalmente e preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3649,7 +3649,7 @@ Item {
                 text: "Pacote portátil VRStudio (.zip)"
                 color: Theme.palette.brandOrange
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 font.weight: Font.DemiBold
                 wrapMode: Text.WordWrap
             }
@@ -3666,7 +3666,7 @@ Item {
                 ) : ""
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             Text {
@@ -3674,7 +3674,7 @@ Item {
                 text: "O código será indexado diretamente no VRStudio para buscas e análise sem necessitar de descompilador."
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3725,7 +3725,7 @@ Item {
                 text: "Configurações globais de JVM, limites de tempo e paralelismo aplicados na descompilação e indexação em lote dos arquivos JAR."
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
 
@@ -3755,7 +3755,7 @@ Item {
                             text: "Alocação do Processador e Memória"
                             color: Theme.palette.headingText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
+                            font.pixelSize: Theme.fontSizeCaption
                             font.weight: Font.DemiBold
                         }
                     }
@@ -3785,7 +3785,7 @@ Item {
                         text: "Memória Máxima da JVM"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3816,7 +3816,7 @@ Item {
                         text: "Timeout do Lote"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3847,7 +3847,7 @@ Item {
                         text: "Núcleos de CPU / Concorrência"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3878,7 +3878,7 @@ Item {
                         text: "Multiplicador de Disco"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3910,7 +3910,7 @@ Item {
                     text: "Janela de Processamento"
                     color: Theme.palette.headingText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
                 VrComboBox {

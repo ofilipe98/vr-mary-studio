@@ -50,7 +50,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.scaledGeometry(10)
-            Text { text: "Arquivo do Schema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13) }
+            Text { text: "Arquivo do Schema"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl }
             VrTextField { Layout.fillWidth: true; text: studio.schemaPath; readOnly: true }
             VrButton { text: "Escolher arquivo…"; onClicked: studio.chooseSchemaFile() }
         }
@@ -66,7 +66,7 @@ Item {
                 text: studio.syncStatus
                 color: frontend.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 font.weight: Font.DemiBold
                 verticalAlignment: Text.AlignVCenter
             }

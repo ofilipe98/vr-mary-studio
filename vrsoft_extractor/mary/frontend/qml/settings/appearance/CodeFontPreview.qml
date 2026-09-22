@@ -12,10 +12,10 @@ Rectangle {
     RowLayout {
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
         anchors.margins: Theme.scaledGeometry(14); spacing: Theme.scaledGeometry(8)
-        Text { text: "▣"; color: Theme.palette.focus; font.pixelSize: Theme.fontSize(16) }
-        Text { text: "src/formatUser.ts"; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); Layout.fillWidth: true }
-        Text { text: "-1"; color: Theme.palette.danger; font.family: frontend.codeFontFamily; font.pixelSize: Theme.fontSize(12) }
-        Text { text: "+1"; color: Theme.palette.success; font.family: frontend.codeFontFamily; font.pixelSize: Theme.fontSize(12) }
+        Text { text: "▣"; color: Theme.palette.focus; font.pixelSize: Theme.fontSizeBody }
+        Text { text: "src/formatUser.ts"; color: Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; Layout.fillWidth: true }
+        Text { text: "-1"; color: Theme.palette.danger; font.family: frontend.codeFontFamily; font.pixelSize: Theme.fontSizeCaption }
+        Text { text: "+1"; color: Theme.palette.success; font.family: frontend.codeFontFamily; font.pixelSize: Theme.fontSizeCaption }
     }
     ColumnLayout {
         id: lines
