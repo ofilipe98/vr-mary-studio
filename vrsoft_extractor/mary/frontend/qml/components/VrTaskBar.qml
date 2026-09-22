@@ -54,8 +54,8 @@ Rectangle {
                     Layout.preferredHeight: Theme.scaledGeometry(24)
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: Theme.scaledGeometry(12)
-                        height: Theme.scaledGeometry(12)
+                        width: Theme.iconMicro
+                        height: Theme.iconMicro
                         kind: "listTodo"
                         foreground: Theme.palette.mutedText
                     }
@@ -100,7 +100,7 @@ Rectangle {
                 }
                 VrLineIcon {
                     Layout.preferredWidth: Theme.scaledGeometry(24)
-                    Layout.preferredHeight: Theme.scaledGeometry(14)
+                    Layout.preferredHeight: Theme.iconCompact
                     kind: root.expanded ? "chevronDown" : "chevronUp"
                     foreground: Theme.palette.mutedText
                 }
@@ -146,8 +146,8 @@ Rectangle {
                             VrLineIcon {
                                 visible: modelData.state === "completed"
                                 anchors.centerIn: parent
-                                width: Theme.scaledGeometry(10)
-                                height: Theme.scaledGeometry(10)
+                                width: Theme.iconMicro
+                                height: Theme.iconMicro
                                 kind: "check"
                                 foreground: Theme.palette.success
                             }

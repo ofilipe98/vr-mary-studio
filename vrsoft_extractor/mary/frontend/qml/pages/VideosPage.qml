@@ -262,7 +262,7 @@ Item {
                                     visible: videoRow.expandable
                                     iconKind: root.nodeCollapsed(videoRow.nodeId)
                                         ? "chevronRight" : "chevronDown"
-                                    iconSize: 14
+                                    iconSize: Theme.iconCompact
                                     foreground: frontend.palette.mutedText
                                     Accessible.name: root.nodeCollapsed(videoRow.nodeId)
                                         ? "Expandir pasta" : "Recolher pasta"
@@ -309,8 +309,8 @@ Item {
                         visible: studio.videoLoading
                         spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            width: Theme.scaledGeometry(16)
-                            height: Theme.scaledGeometry(16)
+                            width: Theme.iconSmall
+                            height: Theme.iconSmall
                             kind: "auto"
                             foreground: frontend.palette.brandOrange
                         }

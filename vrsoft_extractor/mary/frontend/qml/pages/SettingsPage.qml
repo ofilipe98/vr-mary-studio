@@ -998,8 +998,8 @@ Item {
 
                                         VrLineIcon {
                                             anchors.centerIn: parent
-                                            width: Theme.scaledGeometry(16)
-                                            height: Theme.scaledGeometry(16)
+                                            width: Theme.iconSmall
+                                            height: Theme.iconSmall
                                             kind: "archive"
                                             foreground: Theme.palette.brandOrange
                                         }
@@ -1149,8 +1149,8 @@ Item {
                     Layout.alignment: Qt.AlignTop
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: Theme.scaledGeometry(18)
-                        height: Theme.scaledGeometry(18)
+                        width: Theme.iconMedium
+                        height: Theme.iconMedium
                         kind: "trash"
                         foreground: Theme.palette.danger
                     }
@@ -1178,7 +1178,7 @@ Item {
                 VrIconButton {
                     Layout.alignment: Qt.AlignTop
                     iconKind: "close"
-                    iconSize: 10
+                    iconSize: Theme.iconMicro
                     implicitWidth: Theme.scaledGeometry(26)
                     implicitHeight: Theme.scaledGeometry(26)
                     foreground: Theme.palette.mutedText

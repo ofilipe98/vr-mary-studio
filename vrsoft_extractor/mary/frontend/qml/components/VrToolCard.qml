@@ -57,8 +57,8 @@ Item {
                 anchors.rightMargin: Theme.scaledGeometry(6)
                 spacing: Theme.scaledGeometry(7)
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(16)
-                    Layout.preferredHeight: Theme.scaledGeometry(16)
+                    Layout.preferredWidth: Theme.iconSmall
+                    Layout.preferredHeight: Theme.iconSmall
                     kind: root.isError ? "close" : (root.isWaitingApproval ? "lock" : "hammer")
                     foreground: root.isError ? Theme.palette.danger : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText)
                     opacity: root.isError ? 0.65 : 1
@@ -82,8 +82,8 @@ Item {
                     color: Theme.palette.mutedText
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(10)
-                    Layout.preferredHeight: Theme.scaledGeometry(10)
+                    Layout.preferredWidth: Theme.iconMicro
+                    Layout.preferredHeight: Theme.iconMicro
                     kind: root.detailExpanded ? "chevronDown" : "chevronRight"
                     foreground: Theme.palette.mutedText
                 }

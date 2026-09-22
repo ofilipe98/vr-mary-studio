@@ -3354,7 +3354,11 @@ class QmlFrontendTest(unittest.TestCase):
         line_icon_qml = (
             MAIN_QML.parent / "components" / "VrLineIcon.qml"
         ).read_text(encoding="utf-8")
-        self.assertIn('kind === "expertTraining"', line_icon_qml)
+        lucide_paths_js = (
+            MAIN_QML.parent / "theme" / "LucidePaths.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"expertTraining"', lucide_paths_js)
+        self.assertIn("LucidePaths.paths[root.kind]", line_icon_qml)
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
@@ -5196,8 +5200,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "applicationSourceBrowserGrid"', apps_qml)
         self.assertIn('columns: width >= 900 ? 2 : 1', apps_qml)
         self.assertIn(
-            'studio.copyText(chat.applicationSources.body || "")', apps_qml
+            'studio.copyText(root.applicationSourceDisplayBody())', apps_qml
         )
+        self.assertIn('objectName: "applicationSourceCleanModeButton"', apps_qml)
+        self.assertIn('objectName: "applicationSourceRawModeButton"', apps_qml)
+        self.assertIn('objectName: "applicationSourceViewNote"', apps_qml)
+        self.assertIn('objectName: "applicationSourceKindNote"', apps_qml)
         self.assertIn('font.family: Theme.monospaceFontFamily', apps_qml)
         self.assertIn('wrapMode: TextEdit.NoWrap', apps_qml)
         self.assertNotIn('objectName: "applicationSourcePicker"', apps_qml)
@@ -5350,20 +5358,83 @@ class QmlFrontendTest(unittest.TestCase):
 
                 copy_button = window.findChild(QObject, "copyApplicationSourceButton")
                 self.assertIsNotNone(copy_button)
-                copy_point = copy_button.mapToScene(
-                    QPointF(copy_button.width() / 2, copy_button.height() / 2)
+                clean_button = window.findChild(
+                    QObject, "applicationSourceCleanModeButton"
                 )
-                QTest.mouseClick(
-                    window,
-                    Qt.LeftButton,
-                    Qt.NoModifier,
-                    QPoint(round(copy_point.x()), round(copy_point.y())),
-                )
-                self.application.processEvents()
+                raw_button = window.findChild(QObject, "applicationSourceRawModeButton")
+                view_note = window.findChild(QObject, "applicationSourceViewNote")
+                kind_note = window.findChild(QObject, "applicationSourceKindNote")
+                body_area = window.findChild(QObject, "applicationSourceBody")
+                self.assertIsNotNone(clean_button)
+                self.assertIsNotNone(raw_button)
+                self.assertIsNotNone(view_note)
+                self.assertIsNotNone(kind_note)
+                self.assertIsNotNone(body_area)
+
+                def click_control(control):
+                    point = control.mapToScene(
+                        QPointF(control.width() / 2, control.height() / 2)
+                    )
+                    QTest.mouseClick(
+                        window,
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                        QPoint(round(point.x()), round(point.y())),
+                    )
+                    self.application.processEvents()
+
+                click_control(copy_button)
                 self.assertEqual(
                     QApplication.clipboard().text(),
                     chat_bridge.applicationSources["body"],
                 )
+
+                # Drive the toggle from deliberately different isolated bodies.
+                chat_bridge._app_sources.update({
+                    "body": "RAW\nBODY\n",
+                    "clean_body": "CLEAN\nBODY\n",
+                    "clean_available": True,
+                    "clean_status": "cleaned",
+                    "clean_note": (
+                        "Visualização limpa gerada sem alterar identificadores, "
+                        "literais ou lógica."
+                    ),
+                    "source_kind": "type",
+                    "source_relative_path": "vr/app/App.java",
+                    "decompiler_tool": "vineflower",
+                })
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+
+                self.assertTrue(
+                    apps_page.property("cleanApplicationSourceMode")
+                )
+                self.assertEqual(body_area.property("text"), "CLEAN\nBODY\n")
+                self.assertTrue(view_note.property("visible"))
+
+                click_control(raw_button)
+                self.assertEqual(body_area.property("text"), "RAW\nBODY\n")
+                click_control(copy_button)
+                self.assertEqual(
+                    QApplication.clipboard().text(), "RAW\nBODY\n"
+                )
+                click_control(clean_button)
+                self.assertEqual(body_area.property("text"), "CLEAN\nBODY\n")
+
+                chat_bridge._app_sources["clean_available"] = False
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+                self.assertFalse(clean_button.property("enabled"))
+                self.assertTrue(raw_button.property("enabled"))
+                self.assertEqual(body_area.property("text"), "RAW\nBODY\n")
+
+                chat_bridge._app_sources["source_kind"] = "package_info"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+                self.assertTrue(kind_note.property("visible"))
 
                 window.setWidth(390)
                 window.setHeight(844)

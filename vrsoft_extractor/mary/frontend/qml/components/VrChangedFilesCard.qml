@@ -37,8 +37,8 @@ Rectangle {
             spacing: Theme.scaledGeometry(7)
 
             VrLineIcon {
-                Layout.preferredWidth: Theme.scaledGeometry(12)
-                Layout.preferredHeight: Theme.scaledGeometry(12)
+                Layout.preferredWidth: Theme.iconMicro
+                Layout.preferredHeight: Theme.iconMicro
                 kind: root.filesExpanded ? "chevronDown" : "chevronRight"
                 foreground: Theme.palette.mutedText
             }
@@ -88,8 +88,8 @@ Rectangle {
                     anchors.centerIn: parent
                     spacing: Theme.scaledGeometry(5)
                     VrLineIcon {
-                        Layout.preferredWidth: Theme.scaledGeometry(12)
-                        Layout.preferredHeight: Theme.scaledGeometry(12)
+                        Layout.preferredWidth: Theme.iconMicro
+                        Layout.preferredHeight: Theme.iconMicro
                         kind: "edit"
                         foreground: Theme.palette.mutedText
                     }
@@ -147,8 +147,8 @@ Rectangle {
                         spacing: Theme.scaledGeometry(6)
                         VrLineIcon {
                             anchors.verticalCenter: parent.verticalCenter
-                            width: Theme.scaledGeometry(12)
-                            height: Theme.scaledGeometry(12)
+                            width: Theme.iconMicro
+                            height: Theme.iconMicro
                             kind: "files"
                             foreground: Theme.palette.mutedText
                         }

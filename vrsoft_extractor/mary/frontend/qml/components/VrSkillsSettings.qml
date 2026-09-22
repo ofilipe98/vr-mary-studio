@@ -92,7 +92,7 @@ Item {
                 }
                 VrIconButton {
                     iconKind: "close"
-                    iconSize: 10
+                    iconSize: Theme.iconMicro
                     onClicked: root.feedbackMessage = ""
                 }
             }
@@ -312,7 +312,7 @@ Item {
 
                 VrIconButton {
                     iconKind: "close"
-                    iconSize: 11
+                    iconSize: Theme.iconMicro
                     implicitWidth: Theme.scaledGeometry(28)
                     implicitHeight: Theme.scaledGeometry(28)
                     foreground: Theme.palette.mutedText
@@ -523,7 +523,7 @@ Item {
 
                 VrIconButton {
                     iconKind: "close"
-                    iconSize: 11
+                    iconSize: Theme.iconMicro
                     implicitWidth: Theme.scaledGeometry(28)
                     implicitHeight: Theme.scaledGeometry(28)
                     foreground: Theme.palette.mutedText

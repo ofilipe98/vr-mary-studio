@@ -137,7 +137,7 @@ Popup {
             VrIconButton {
                 Layout.alignment: Qt.AlignTop
                 iconKind: "close"
-                iconSize: 11
+                iconSize: Theme.iconMicro
                 implicitWidth: Theme.scaledGeometry(28)
                 implicitHeight: Theme.scaledGeometry(28)
                 foreground: Theme.palette.mutedText
@@ -271,10 +271,10 @@ Popup {
             }
             VrLineIcon {
                 anchors.left: parent.left
-                anchors.leftMargin: Theme.scaledGeometry(8)
+                anchors.leftMargin: Theme.iconMicro
                 anchors.verticalCenter: parent.verticalCenter
-                width: Theme.scaledGeometry(14)
-                height: Theme.scaledGeometry(14)
+                width: Theme.iconCompact
+                height: Theme.iconCompact
                 kind: "search"
                 foreground: Theme.palette.mutedText
             }

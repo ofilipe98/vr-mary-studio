@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import sys
 from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import QSettings
@@ -10,6 +11,7 @@ from PySide6.QtGui import QGuiApplication
 from vrsoft_extractor.mary.theme_manager import (
     ThemeManager,
     BUILTIN_THEMES,
+    DEFAULT_TEXT_RENDERING,
     parse_imported_theme,
     _is_valid_hex,
 )
@@ -160,6 +162,27 @@ def test_simple_typography_inherits_and_advanced_restores_preferences(tmp_path):
     assert (restored.terminalFontFamily, restored.terminalFontSize) == ("Consolas", 15)
     restored.setTypographyAdvanced(True)
     assert (restored.terminalFontFamily, restored.terminalFontSize) == ("Courier New", 17)
+
+
+def test_text_rendering_mode_persists_and_resets(tmp_path):
+    mgr = _create_manager(tmp_path)
+    if sys.platform == "darwin":
+        # macOS keeps deriving the mode from the legacy smoothing toggle.
+        mgr.setFontSmoothing(False)
+        assert mgr.textRenderingMode == "qt"
+        mgr.setFontSmoothing(True)
+        assert mgr.textRenderingMode == "native"
+        return
+
+    assert mgr.textRenderingMode == DEFAULT_TEXT_RENDERING
+    mgr.setTextRenderingMode("native")
+    assert mgr.textRenderingMode == "native"
+    restored = _create_manager(tmp_path)
+    assert restored.textRenderingMode == "native"
+    restored.setTextRenderingMode("invalid")
+    assert restored.textRenderingMode == "native"
+    restored.resetSetting("textRendering")
+    assert restored.textRenderingMode == DEFAULT_TEXT_RENDERING
 
 
 def test_theme_lookup_and_duplication_are_independent_of_active_mode(tmp_path):

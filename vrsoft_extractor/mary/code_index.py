@@ -23,6 +23,7 @@ from .jvm_batches import (
     DecompilationBatchStore,
     _class_family,
 )
+from .source_cleaning import clean_decompiled_source
 
 
 CODE_INDEX_SCHEMA_VERSION = 6
@@ -862,8 +863,14 @@ class JavaCodeIndex:
             )
         return results[: max(1, int(limit))]
 
-    def browse_application_sources(self, context: dict[str, Any], *, query: str = "", offset: int = 0,
-                                   source_key: str = "") -> dict[str, Any]:
+    def browse_application_sources(
+        self,
+        context: dict[str, Any],
+        *,
+        query: str = "",
+        offset: int = 0,
+        source_key: str = "",
+    ) -> dict[str, Any]:
         """Browse an exact application artifact; paths and bodies come only from the index."""
         from .code_context import artifact_sql_filter
         self.initialize()
@@ -874,13 +881,32 @@ class JavaCodeIndex:
         with self.store.connect() as connection:
             if source_key:
                 row = connection.execute(
-                    f"SELECT s.qualified_name, s.body FROM code_sources s WHERE {predicate} AND s.source_key=?",
+                    f"""SELECT s.qualified_name, s.body, s.source_relative_path, s.tool
+                        FROM code_sources s WHERE {predicate} AND s.source_key=?""",
                     [*params, source_key]).fetchone()
                 if row is None:
                     raise DecompilationBatchError("A classe não pertence ao aplicativo e origem selecionados.")
                 body = str(row["body"])
-                return {"state": "ready", "title": row["qualified_name"], "source_key": source_key, "body": body[:200000],
-                        "truncated": len(body) > 200000, "context_label": context["label"]}
+                source_relative_path = str(row["source_relative_path"])
+                tool = str(row["tool"])
+                result = clean_decompiled_source(
+                    body, source_relative_path=source_relative_path, tool=tool
+                )
+                clean_display = result.body[:200000] if result.available else ""
+                basename = Path(source_relative_path).name
+                source_kind = (
+                    "package_info"
+                    if basename == "package-info.java"
+                    else "module_info"
+                    if basename == "module-info.java"
+                    else "type"
+                )
+                return {"state": "ready", "title": row["qualified_name"], "source_key": source_key,
+                        "body": body[:200000], "truncated": len(body) > 200000,
+                        "context_label": context["label"], "clean_body": clean_display,
+                        "clean_available": result.available, "clean_status": result.status,
+                        "clean_note": result.note, "source_relative_path": source_relative_path,
+                        "decompiler_tool": tool, "source_kind": source_kind}
             if query.strip():
                 predicate += " AND instr(lower(s.qualified_name), lower(?)) > 0"
                 params.append(query.strip())

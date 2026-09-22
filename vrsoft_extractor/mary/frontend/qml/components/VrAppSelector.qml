@@ -229,8 +229,8 @@ Item {
 
                         VrLineIcon {
                             anchors.centerIn: parent
-                            width: Theme.scaledGeometry(16)
-                            height: Theme.scaledGeometry(16)
+                            width: Theme.iconSmall
+                            height: Theme.iconSmall
                             kind: "search"
                             foreground: Theme.palette.brandOrange
                         }
@@ -350,8 +350,8 @@ Item {
 
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: Theme.scaledGeometry(14)
-                        height: Theme.scaledGeometry(14)
+                        width: Theme.iconCompact
+                        height: Theme.iconCompact
                         kind: selectorPopup.opened ? "chevronUp" : "chevronDown"
                         foreground: Theme.palette.mutedText
                     }
@@ -401,8 +401,8 @@ Item {
                     spacing: Theme.scaledGeometry(8)
 
                     VrLineIcon {
-                        Layout.preferredWidth: Theme.scaledGeometry(16)
-                        Layout.preferredHeight: Theme.scaledGeometry(16)
+                        Layout.preferredWidth: Theme.iconSmall
+                        Layout.preferredHeight: Theme.iconSmall
                         kind: "search"
                         foreground: Theme.palette.mutedText
                     }
@@ -443,8 +443,8 @@ Item {
 
                     VrLineIcon {
                         visible: control.searchText.length > 0
-                        Layout.preferredWidth: Theme.scaledGeometry(14)
-                        Layout.preferredHeight: Theme.scaledGeometry(14)
+                        Layout.preferredWidth: Theme.iconCompact
+                        Layout.preferredHeight: Theme.iconCompact
                         kind: "close"
                         foreground: searchCloseMouse.containsMouse ? Theme.palette.text : Theme.palette.mutedText
 
@@ -699,8 +699,8 @@ Item {
                                 }
 
                                 VrLineIcon {
-                                    Layout.preferredWidth: Theme.scaledGeometry(12)
-                                    Layout.preferredHeight: Theme.scaledGeometry(12)
+                                    Layout.preferredWidth: Theme.iconMicro
+                                    Layout.preferredHeight: Theme.iconMicro
                                     kind: "chevronRight"
                                     foreground: verVersoesMouse.containsMouse ? Theme.palette.brandOrange : Theme.palette.mutedText
                                 }
@@ -733,8 +733,8 @@ Item {
 
                     VrLineIcon {
                         Layout.alignment: Qt.AlignHCenter
-                        width: Theme.scaledGeometry(22)
-                        height: Theme.scaledGeometry(22)
+                        width: Theme.iconSize
+                        height: Theme.iconSize
                         kind: "search"
                         foreground: Theme.palette.mutedText
                     }

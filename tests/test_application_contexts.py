@@ -60,8 +60,15 @@ def test_scoped_search_relations_and_browser_exclude_other_app(tmp_path):
     assert evidence and all(context["label"] in item.title for item in evidence)
     sources = index.browse_application_sources(context)
     assert len(sources["sources"]) == 2
-    body = index.browse_application_sources(context, source_key=sources["sources"][0]["source_key"])
-    assert "public class Outer" in body["body"]
+    selected = index.browse_application_sources(context, source_key=sources["sources"][0]["source_key"])
+    assert "public class Outer" in selected["body"]
+    assert selected["clean_available"] is True
+    assert selected["clean_status"] in {"cleaned", "unchanged"}
+    assert isinstance(selected["clean_body"], str) and selected["clean_body"]
+    assert selected["clean_note"]
+    assert selected["source_relative_path"].endswith(".java")
+    assert selected["decompiler_tool"] == "vineflower"
+    assert selected["source_kind"] == "type"
     foreign = index.browse_application_sources(contexts[0])["sources"][0]["source_key"]
     with pytest.raises(Exception, match="não pertence"):
         index.browse_application_sources(context, source_key=foreign)

@@ -51,8 +51,8 @@ Rectangle {
                 spacing: Theme.scaledGeometry(6)
 
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(16)
-                    Layout.preferredHeight: Theme.scaledGeometry(16)
+                    Layout.preferredWidth: Theme.iconSmall
+                    Layout.preferredHeight: Theme.iconSmall
                     kind: root.headerIcon()
                     foreground: Theme.palette.mutedText
                 }

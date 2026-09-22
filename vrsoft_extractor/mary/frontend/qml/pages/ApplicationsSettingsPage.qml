@@ -8,6 +8,7 @@ import "../settings/appearance"
 Item {
     id: root
     property bool ultraContextAdded: false
+    property bool cleanApplicationSourceMode: true
     readonly property var selectedDistribution: {
         var details = chat.selectedVersionDetails
         var origins = details.origin_packages || []
@@ -63,6 +64,12 @@ Item {
 
     function formatCount(value) {
         return String(Math.round(Number(value) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")
+    }
+
+    function applicationSourceDisplayBody() {
+        if (root.cleanApplicationSourceMode === true && chat.applicationSources.clean_available === true)
+            return chat.applicationSources.clean_body || ""
+        return chat.applicationSources.body || ""
     }
 
     function sumCatalogCount(role) {
@@ -460,8 +467,8 @@ Item {
 
                                 VrLineIcon {
                                     anchors.centerIn: parent
-                                    width: Theme.scaledGeometry(18)
-                                    height: Theme.scaledGeometry(18)
+                                    width: Theme.iconMedium
+                                    height: Theme.iconMedium
                                     kind: chat.applicationImportPreview.error ? "warning" : "files"
                                     foreground: chat.applicationImportPreview.error
                                         ? Theme.palette.danger
@@ -1350,8 +1357,8 @@ Item {
                             spacing: Theme.spaceSm
 
                             VrLineIcon {
-                                Layout.preferredWidth: Theme.scaledGeometry(18)
-                                Layout.preferredHeight: Theme.scaledGeometry(18)
+                                Layout.preferredWidth: Theme.iconMedium
+                                Layout.preferredHeight: Theme.iconMedium
                                 kind: "play"
                                 foreground: Theme.palette.brandOrange
                             }
@@ -2693,8 +2700,8 @@ Item {
                                         spacing: Theme.scaledGeometry(8)
 
                                         VrLineIcon {
-                                            width: Theme.scaledGeometry(16)
-                                            height: Theme.scaledGeometry(16)
+                                            width: Theme.iconSmall
+                                            height: Theme.iconSmall
                                             kind: "browser"
                                             foreground: Theme.palette.warning
                                         }
@@ -3085,12 +3092,62 @@ Item {
                                         renderType: Theme.textRenderType
                                     }
                                     VrButton {
+                                        objectName: "applicationSourceCleanModeButton"
+                                        text: "Limpo"
+                                        enabled: !!chat.applicationSources.body
+                                            && !!chat.applicationSources.clean_available
+                                        variant: root.cleanApplicationSourceMode
+                                            && chat.applicationSources.clean_available
+                                                ? "primary" : "secondary"
+                                        onClicked: root.cleanApplicationSourceMode = true
+                                    }
+                                    VrButton {
+                                        objectName: "applicationSourceRawModeButton"
+                                        text: "Descompilado"
+                                        enabled: !!chat.applicationSources.body
+                                        variant: (!root.cleanApplicationSourceMode
+                                            || !chat.applicationSources.clean_available)
+                                                ? "primary" : "secondary"
+                                        onClicked: root.cleanApplicationSourceMode = false
+                                    }
+                                    VrButton {
                                         objectName: "copyApplicationSourceButton"
                                         text: "Copiar código"
                                         variant: "secondary"
-                                        enabled: !!chat.applicationSources.body
-                                        onClicked: studio.copyText(chat.applicationSources.body || "")
+                                        enabled: root.applicationSourceDisplayBody().length > 0
+                                        onClicked: studio.copyText(root.applicationSourceDisplayBody())
                                     }
+                                }
+
+                                Text {
+                                    objectName: "applicationSourceViewNote"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    visible: !!chat.applicationSources.body
+                                    text: root.cleanApplicationSourceMode
+                                        ? (chat.applicationSources.clean_note || "")
+                                        : "Exibindo o texto descompilado original armazenado no índice."
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeMicro
+                                    wrapMode: Text.WordWrap
+                                    renderType: Theme.textRenderType
+                                }
+
+                                Text {
+                                    objectName: "applicationSourceKindNote"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    visible: chat.applicationSources.source_kind === "package_info"
+                                        || chat.applicationSources.source_kind === "module_info"
+                                    text: chat.applicationSources.source_kind === "package_info"
+                                        ? "Metadado de pacote: este arquivo não representa uma classe de negócio."
+                                        : "Descritor de módulo Java: este arquivo não representa uma classe de negócio."
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSizeMicro
+                                    wrapMode: Text.WordWrap
+                                    renderType: Theme.textRenderType
                                 }
 
                                 Text {
@@ -3117,7 +3174,7 @@ Item {
                                         readOnly: true
                                         selectByMouse: true
                                         textFormat: TextEdit.PlainText
-                                        text: chat.applicationSources.body || ""
+                                        text: root.applicationSourceDisplayBody()
                                         color: Theme.palette.text
                                         font.family: Theme.monospaceFontFamily
                                         font.pixelSize: Theme.monospaceFontSize(12)
@@ -3689,8 +3746,8 @@ Item {
                     RowLayout {
                         spacing: Theme.scaledGeometry(6)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.scaledGeometry(14)
-                            Layout.preferredHeight: Theme.scaledGeometry(14)
+                            Layout.preferredWidth: Theme.iconCompact
+                            Layout.preferredHeight: Theme.iconCompact
                             kind: "settings"
                             foreground: Theme.palette.brandOrange
                         }

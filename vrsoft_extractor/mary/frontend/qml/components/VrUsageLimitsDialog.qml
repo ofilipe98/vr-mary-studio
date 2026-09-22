@@ -32,8 +32,8 @@ Dialog {
             spacing: Theme.scaledGeometry(6)
             VrLineIcon {
                 kind: "gauge"
-                Layout.preferredWidth: Theme.scaledGeometry(13)
-                Layout.preferredHeight: Theme.scaledGeometry(13)
+                Layout.preferredWidth: Theme.iconMicro
+                Layout.preferredHeight: Theme.iconMicro
                 foreground: Theme.palette.mutedText
             }
             Text {
@@ -54,7 +54,7 @@ Dialog {
             VrIconButton {
                 objectName: "usageLimitsClose"
                 iconKind: "close"
-                iconSize: 10
+                iconSize: Theme.iconMicro
                 implicitWidth: Theme.scaledGeometry(20)
                 implicitHeight: Theme.scaledGeometry(20)
                 foreground: Theme.palette.mutedText
@@ -232,8 +232,8 @@ Dialog {
                                 visible: Boolean(windowRow.modelData.resetInText)
                                 VrLineIcon {
                                     kind: "trendUp"
-                                    Layout.preferredWidth: Theme.scaledGeometry(12)
-                                    Layout.preferredHeight: Theme.scaledGeometry(12)
+                                    Layout.preferredWidth: Theme.iconMicro
+                                    Layout.preferredHeight: Theme.iconMicro
                                     foreground: Theme.palette.mutedText
                                 }
                                 Text {

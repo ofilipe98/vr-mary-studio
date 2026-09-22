@@ -191,7 +191,7 @@ Item {
                             Layout.preferredWidth: 30
                             Layout.preferredHeight: 30
                             boxSize: 30
-                            iconSize: 17
+                            iconSize: Theme.iconSmall
                             projectLabel: control.projectName
                             iconPath: control.projectIconPath
                             iconKind: control.projectIconKind
@@ -202,7 +202,7 @@ Item {
                         VrIconButton {
                             visible: control.isIconCustomized()
                             iconKind: "reset"
-                            iconSize: 13
+                            iconSize: Theme.iconMicro
                             implicitWidth: 28
                             implicitHeight: 28
                             foreground: Theme.palette.mutedText

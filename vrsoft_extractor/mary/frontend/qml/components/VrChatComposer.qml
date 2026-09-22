@@ -261,7 +261,7 @@ Item {
                             width: Theme.scaledGeometry(16)
                             height: Theme.scaledGeometry(16)
                             iconKind: "close"
-                            iconSize: 8
+                            iconSize: Theme.iconMicro
                             foreground: "#FFFFFF"
                             onClicked: composerCard.page.chatBridge.removeAttachment(thumbDelegate.index)
                         }
@@ -309,8 +309,8 @@ Item {
                     anchors.rightMargin: Theme.scaledGeometry(4)
                     spacing: Theme.scaledGeometry(5)
                     VrLineIcon {
-                        width: Theme.scaledGeometry(14)
-                        height: Theme.scaledGeometry(14)
+                        width: Theme.iconCompact
+                        height: Theme.iconCompact
                         anchors.verticalCenter: parent.verticalCenter
                         kind: "file"
                         foreground: Theme.palette.brandOrange
@@ -330,7 +330,7 @@ Item {
                         height: Theme.scaledGeometry(22)
                         anchors.verticalCenter: parent.verticalCenter
                         iconKind: "close"
-                        iconSize: 12
+                        iconSize: Theme.iconMicro
                         foreground: Theme.palette.mutedText
                         onClicked: composerCard.page.chatBridge.removeAttachment(attachmentChip.index)
                     }
@@ -452,7 +452,7 @@ Item {
                         height: Theme.scaledGeometry(22)
                         anchors.verticalCenter: parent.verticalCenter
                         iconKind: "close"
-                        iconSize: 12
+                        iconSize: Theme.iconMicro
                         foreground: Theme.palette.mutedText
                         onClicked: composerCard.page.chatBridge.removeActiveSkill(skillChip.index)
                     }
@@ -472,7 +472,7 @@ Item {
             implicitWidth: Theme.scaledGeometry(32)
             implicitHeight: Theme.scaledGeometry(32)
             iconKind: "attachment"
-            iconSize: 18
+            iconSize: Theme.iconMedium
             foreground: attachButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
             enabled: !composerCard.page.chatBridge.turnRunning
             Accessible.name: "Anexar arquivos"
@@ -539,7 +539,7 @@ Item {
                         ? Theme.vrAccent
                         : (vrModeButton.hovered ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12.5)
+                    font.pixelSize: Theme.fontSizeControl
                     font.weight: composerCard.page.chatBridge.vrMode !== "off" ? Font.Medium : Font.Normal
                     renderType: Theme.textRenderType
                     verticalAlignment: Text.AlignVCenter

@@ -193,8 +193,8 @@ Rectangle {
                     id: errIcon
                     x: 12
                     y: 12
-                    width: Theme.scaledGeometry(18)
-                    height: Theme.scaledGeometry(18)
+                    width: Theme.iconMedium
+                    height: Theme.iconMedium
                     kind: "warning"
                     foreground: Theme.palette.danger
                 }

@@ -64,8 +64,8 @@ Item {
                 spacing: Theme.scaledGeometry(7)
 
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(14)
-                    Layout.preferredHeight: Theme.scaledGeometry(14)
+                    Layout.preferredWidth: Theme.iconCompact
+                    Layout.preferredHeight: Theme.iconCompact
                     kind: root.resolveIcon()
                     foreground: root.isError
                         ? Theme.palette.danger
@@ -129,8 +129,8 @@ Item {
                 }
 
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(9)
-                    Layout.preferredHeight: Theme.scaledGeometry(9)
+                    Layout.preferredWidth: Theme.iconMicro
+                    Layout.preferredHeight: Theme.iconMicro
                     kind: root.groupExpanded ? "chevronDown" : "chevronRight"
                     foreground: Theme.palette.mutedText
                 }

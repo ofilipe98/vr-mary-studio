@@ -56,12 +56,12 @@ Button {
             text: control.compactLabel || "Medium"
             color: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(12.5)
+            font.pixelSize: Theme.fontSizeControl
             renderType: Theme.textRenderType
         }
         VrLineIcon {
-            Layout.preferredWidth: Theme.scaledGeometry(11)
-            Layout.preferredHeight: Theme.scaledGeometry(11)
+            Layout.preferredWidth: Theme.iconMicro
+            Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
             foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
