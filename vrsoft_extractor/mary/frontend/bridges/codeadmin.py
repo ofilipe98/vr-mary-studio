@@ -110,6 +110,7 @@ class CodeAdminDomain:
             "packageId": package_id,
             "packageName": str(package.get("name") or package_id),
             "applicationCount": len(composition) if isinstance(composition, list) else 0,
+            "error": str(self._pending_ultra_package_choice_error or ""),
         }
 
     def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
@@ -138,11 +139,12 @@ class CodeAdminDomain:
                     "package_id": selected,
                 })
         if not contexts:
-            self._apps_catalog_error = (
+            self._pending_ultra_package_choice_error = (
                 "O pacote importado não possui composição válida para usar no Ultra."
             )
             self.stateChanged.emit()
             return False
+        self._pending_ultra_package_choice_error = ""
         self._ultra_application_contexts = contexts
         self._pending_ultra_package_choice_id = ""
         self._save_application_contexts()
@@ -153,6 +155,7 @@ class CodeAdminDomain:
         selected = str(package_id or "").strip()
         if selected and selected == str(self._pending_ultra_package_choice_id or ""):
             self._pending_ultra_package_choice_id = ""
+            self._pending_ultra_package_choice_error = ""
             self.stateChanged.emit()
 
     def _set_code_analysis_auto_enable_pending(self, pending: bool) -> None:
@@ -1844,6 +1847,7 @@ class CodeAdminDomain:
         if bool(latest.get("ok")):
             if latest.get("offer_ultra_choice") and release_id:
                 self._pending_ultra_package_choice_id = release_id
+                self._pending_ultra_package_choice_error = ""
             self.refreshApplicationsCatalog()
             self._invalidate_release_coverage()
             self._refresh_code_analysis_releases()

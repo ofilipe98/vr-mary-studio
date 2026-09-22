@@ -541,6 +541,8 @@ def test_invalid_imported_package_composition_is_atomic(bridge):  # noqa: F811
     wait_until(lambda: bridge._apps_catalog_thread is None)
     _arm_manual_context(bridge, contexts[0])
     assert bridge.addSelectedApplicationContext()
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
     before = [dict(item) for item in bridge._ultra_application_contexts]
 
     bridge._apps_catalog_data["data"]["packages"]["broken"] = {
@@ -551,11 +553,21 @@ def test_invalid_imported_package_composition_is_atomic(bridge):  # noqa: F811
     bridge._pending_ultra_package_choice_id = "broken"
     assert bridge.useImportedPackageInUltra("broken") is False
     assert bridge._ultra_application_contexts == before
-    assert bridge.applicationsCatalogError
+    assert bridge._apps_catalog_error == ""
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
     assert bridge._pending_ultra_package_choice_id == "broken"
     pending = bridge.pendingImportedPackageForUltra
     assert pending["packageId"] == "broken"
     assert pending["applicationCount"] == 1
+    assert pending["error"]
+
+    bridge.dismissImportedPackageUltraChoice("broken")
+    assert bridge.pendingImportedPackageForUltra == {}
+    assert bridge._pending_ultra_package_choice_error == ""
+    assert bridge._ultra_application_contexts == before
+    assert bridge.ultraApplicationContextsReady
+    assert bridge.codeAnalysisEnabled
 
 
 @pytest.mark.qml

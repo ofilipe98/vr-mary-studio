@@ -940,6 +940,33 @@ def test_package_import_publishes_ultra_choice_after_catalog_loads(bridge, tmp_p
 
 
 @pytest.mark.qml
+def test_new_package_import_clears_previous_ultra_choice_error(bridge, tmp_path):
+    source = tmp_path / "package"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    bridge._pending_ultra_package_choice_error = (
+        "O pacote importado não possui composição válida para usar no Ultra."
+    )
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == bridge._pending_ultra_package_choice_id
+    assert pending["packageId"]
+    assert pending["applicationCount"] == 2
+    assert pending["error"] == ""
+
+
+@pytest.mark.qml
 def test_pending_ultra_choice_is_hidden_until_catalog_has_package(bridge):
     bridge._pending_ultra_package_choice_id = "one"
     bridge._apps_catalog_data = {}
@@ -1052,5 +1079,6 @@ def test_ultra_choice_counts_full_composition_and_rejects_invalid_items(bridge):
     assert bridge._pending_ultra_package_choice_id == "one"
     assert bridge.pendingImportedPackageForUltra["packageId"] == "one"
     assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
-    assert bridge.applicationsCatalogError
+    assert bridge.pendingImportedPackageForUltra["error"]
+    assert bridge._apps_catalog_error == ""
 

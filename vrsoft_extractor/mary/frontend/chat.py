@@ -291,6 +291,7 @@ class ChatBridge(QObject):
         self._code_processing_can_retry = False
         self._ultra_application_contexts: list[dict[str, Any]] = []
         self._pending_ultra_package_choice_id = ""
+        self._pending_ultra_package_choice_error = ""
         self._code_analysis_auto_enable_pending = False
         self._applications_catalog: list[dict[str, Any]] = []
         self._selected_app_id: str = ""

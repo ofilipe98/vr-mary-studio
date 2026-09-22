@@ -5836,7 +5836,48 @@ class QmlFrontendTest(unittest.TestCase):
 
                 chat_bridge._apps_catalog_data = {
                     "data": {
-                        "applications": {},
+                        "applications": {
+                            "vrmaster": {
+                                "name": "VRMaster",
+                                "versions": {
+                                    "4.1.0": {
+                                        "variants": {
+                                            "sha-master": {
+                                                "variant_id": "sha-master",
+                                                "origin_packages": [
+                                                    {
+                                                        "package_id": "pkg-ready",
+                                                        "index_state": "ready",
+                                                    },
+                                                    {
+                                                        "package_id": "pkg-one",
+                                                        "index_state": "ready",
+                                                    },
+                                                ],
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                            "vrpdv": {
+                                "name": "VRPdv",
+                                "versions": {
+                                    "3.2.0": {
+                                        "variants": {
+                                            "sha-pdv": {
+                                                "variant_id": "sha-pdv",
+                                                "origin_packages": [
+                                                    {
+                                                        "package_id": "pkg-one",
+                                                        "index_state": "ready",
+                                                    }
+                                                ],
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                        },
                         "packages": {
                             "pkg-one": {
                                 "package_id": "pkg-one",
@@ -5853,6 +5894,23 @@ class QmlFrontendTest(unittest.TestCase):
                         },
                     }
                 }
+                chat_bridge._ultra_application_contexts = [
+                    {
+                        "app_id": "vrmaster",
+                        "version": "4.1.0",
+                        "variant_id": "sha-master",
+                        "package_id": "pkg-ready",
+                    }
+                ]
+                chat_bridge._CodeAdmin_domain._save_application_contexts()
+                chat_bridge.setCodeAnalysisEnabled(True)
+                self.application.processEvents()
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+                ready_contexts = [
+                    dict(item) for item in chat_bridge._ultra_application_contexts
+                ]
+
                 chat_bridge._pending_ultra_package_choice_id = "pkg-one"
                 chat_bridge.stateChanged.emit()
                 self.application.processEvents()
@@ -5878,14 +5936,18 @@ class QmlFrontendTest(unittest.TestCase):
                     len(named_objects("importedPackageUltraChoiceDialog")), 1
                 )
 
-                # Composição estruturalmente inválida: falha e mantém a pergunta.
+                # Composição estruturalmente inválida: falha isolada, sem tocar
+                # no estado do catálogo nem na prontidão do escopo atual.
                 use_button = window.findChild(
                     QObject, "useImportedPackageInUltraButton"
                 )
                 self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
                 self.application.processEvents()
-                self.assertTrue(chat_bridge.applicationsCatalogError)
+                self.assertEqual(chat_bridge.applicationsCatalogError, "")
                 self.assertEqual(chat_bridge._pending_ultra_package_choice_id, "pkg-one")
+                self.assertTrue(
+                    chat_bridge.pendingImportedPackageForUltra.get("error")
+                )
                 self.assertEqual(
                     chat_bridge.pendingImportedPackageForUltra.get("packageId"),
                     "pkg-one",
@@ -5894,6 +5956,38 @@ class QmlFrontendTest(unittest.TestCase):
                 self.assertIsNotNone(dialog)
                 self.assertTrue(dialog.property("visible"))
                 self.assertTrue(dialog.property("opened"))
+                error_text = window.findChild(
+                    QObject, "importedPackageUltraChoiceError"
+                )
+                self.assertIsNotNone(error_text)
+                self.assertTrue(error_text.property("visible"))
+                self.assertIn("composição", error_text.property("text"))
+                self.assertEqual(chat_bridge._ultra_application_contexts, ready_contexts)
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+
+                # Escolher por aplicativo descarta a falha e preserva o escopo.
+                apps_page.setProperty("navigationLevel", 1)
+                apps_page.setProperty("importToolsExpanded", True)
+                self.application.processEvents()
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
+                QTest.qWait(1)
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                self.assertEqual(chat_bridge._pending_ultra_package_choice_error, "")
+                self.assertEqual(apps_page.property("navigationLevel"), 0)
+                self.assertFalse(bool(apps_page.property("importToolsExpanded")))
+                self.assertEqual(chat_bridge._ultra_application_contexts, ready_contexts)
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceError"), []
+                )
 
                 # Composição válida: resolve a pendência e destrói o diálogo.
                 chat_bridge._apps_catalog_data["data"]["packages"]["pkg-one"][
@@ -5906,6 +6000,7 @@ class QmlFrontendTest(unittest.TestCase):
                     },
                     {"app_id": "vrpdv", "version": "3.2.0", "variant_id": "sha-pdv"},
                 ]
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
                 chat_bridge.stateChanged.emit()
                 self.application.processEvents()
                 self.assertEqual(
@@ -5933,29 +6028,6 @@ class QmlFrontendTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     named_objects("chooseImportedPackageAppsButton"), []
-                )
-
-                # Escolher por aplicativo fecha a pergunta e mantém o catálogo.
-                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
-                chat_bridge.stateChanged.emit()
-                apps_page.setProperty("navigationLevel", 1)
-                apps_page.setProperty("importToolsExpanded", True)
-                self.application.processEvents()
-                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
-                self.assertIsNotNone(dialog)
-                self.assertTrue(dialog.property("visible"))
-                before = [dict(item) for item in chat_bridge._ultra_application_contexts]
-                choose_button = window.findChild(
-                    QObject, "chooseImportedPackageAppsButton"
-                )
-                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
-                QTest.qWait(1)
-                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
-                self.assertEqual(apps_page.property("navigationLevel"), 0)
-                self.assertFalse(bool(apps_page.property("importToolsExpanded")))
-                self.assertEqual(chat_bridge._ultra_application_contexts, before)
-                self.assertEqual(
-                    named_objects("importedPackageUltraChoiceDialog"), []
                 )
             finally:
                 window.close()

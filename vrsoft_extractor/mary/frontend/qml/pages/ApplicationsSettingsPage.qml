@@ -4025,6 +4025,18 @@ Item {
                     wrapMode: Text.WordWrap
                 }
 
+                Text {
+                    objectName: "importedPackageUltraChoiceError"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: text.length > 0
+                    text: chat.pendingImportedPackageForUltra.error || ""
+                    color: Theme.palette.warning
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
+
                 Flow {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
