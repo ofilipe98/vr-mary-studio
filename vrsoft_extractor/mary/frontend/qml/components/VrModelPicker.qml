@@ -18,7 +18,7 @@ Button {
     readonly property var frontierItems: filteredItems(false)
     readonly property var legacyItems: filteredItems(true)
     readonly property var visibleItems: showingLegacy ? legacyItems : frontierItems
-    property bool popupAbove: true
+    property bool popupAbove: false
     property bool outlined: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
@@ -54,9 +54,9 @@ Button {
         Text {
             Layout.fillWidth: !control.compact
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
-            color: control.compact
-                ? (control.hovered || pickerPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
-                : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+            // Keep the active model readable at rest: the composer control is
+            // filled, so the label no longer depends on hover to gain contrast.
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -67,16 +67,20 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
-        radius: control.compact ? 6 : 6
+        radius: Theme.scaledGeometry(6)
         color: control.down || control.hovered || pickerPopup.opened
-            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
-        border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
-        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
+            ? Theme.palette.hover : Theme.palette.chatControl
+        // The outline keeps the pill readable when the theme's toolbarControl
+        // sits too close to the composer surface.
+        border.width: 1
+        border.color: control.activeFocus
+            ? Theme.palette.focus
+            : (Theme.palette.controlBorder || Theme.palette.chatBorder)
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -87,10 +91,18 @@ Button {
         id: pickerPopup
         objectName: "modelPickerPopup"
         parent: control
+        // The list opens below the composer control and only flips up when the
+        // window has no usable room left; the height caps to the gap so the
+        // popup never leaves the viewport (the list scrolls instead).
+        readonly property real naturalHeight: Theme.scaledGeometry(400)
+        readonly property real minVisibleHeight: Theme.scaledGeometry(200)
+        readonly property real spaceBelow: Theme.viewportHeight
+            - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(16)
+        readonly property bool openAbove: control.popupAbove || spaceBelow < minVisibleHeight
         x: 0
-        y: control.popupAbove ? -height - 8 : control.height + 8
+        y: openAbove ? -height - 8 : control.height + 8
         width: Math.min(420, Theme.viewportWidth - 24)
-        height: Theme.scaledGeometry(400)
+        height: openAbove ? naturalHeight : Math.min(naturalHeight, spaceBelow)
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {

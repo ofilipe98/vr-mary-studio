@@ -21,6 +21,7 @@ Button {
         return "auto"
     }
 
+    property bool popupAbove: false
     property bool compact: false
     implicitHeight: compact ? 26 : Theme.compactControlHeight
     implicitWidth: compact
@@ -50,9 +51,9 @@ Button {
         }
         Text {
             text: control.currentItem.label || "Auto"
-            color: control.compact
-                ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
-                : (control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+            // Keep the active profile readable at rest: the composer control is
+            // filled, so the label no longer depends on hover to gain contrast.
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -61,16 +62,20 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
-        radius: control.compact ? 6 : 6
+        radius: Theme.scaledGeometry(6)
         color: control.down || control.hovered || optionsPopup.opened
-            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
-        border.width: control.activeFocus ? 1 : 0
-        border.color: Theme.palette.focus
+            ? Theme.palette.hover : Theme.palette.chatControl
+        // The outline keeps the pill readable when the theme's toolbarControl
+        // sits too close to the composer surface.
+        border.width: 1
+        border.color: control.activeFocus
+            ? Theme.palette.focus
+            : (Theme.palette.controlBorder || Theme.palette.chatBorder)
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -81,10 +86,16 @@ Button {
         id: optionsPopup
         objectName: "permissionPickerPopup"
         parent: control
+        // Opens below the composer control; flips up only when the options
+        // would not fit in the remaining window space (no content is clipped).
+        readonly property real naturalHeight: Theme.scaledGeometry(250)
+        readonly property real spaceBelow: Theme.viewportHeight
+            - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(14)
+        readonly property bool openAbove: control.popupAbove || spaceBelow < naturalHeight
         x: 0
-        y: -height - 7
+        y: openAbove ? -height - 7 : control.height + 7
         width: Math.min(372, Theme.viewportWidth - 24)
-        height: Theme.scaledGeometry(250)
+        height: naturalHeight
         padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 

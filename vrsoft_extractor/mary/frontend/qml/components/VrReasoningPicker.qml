@@ -10,7 +10,7 @@ Button {
     property var tierModel: []
     property int currentEffortIndex: 0
     property int currentTierIndex: 0
-    property bool popupAbove: true
+    property bool popupAbove: false
     property bool outlined: false
     readonly property var currentEffort: currentEffortIndex >= 0
         && currentEffortIndex < effortModel.length ? effortModel[currentEffortIndex] : ({})
@@ -54,7 +54,9 @@ Button {
         spacing: Theme.scaledGeometry(7)
         Text {
             text: control.compactLabel || "Medium"
-            color: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            // Keep the active effort readable at rest: the composer control is
+            // filled, so the label no longer depends on hover to gain contrast.
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -63,16 +65,20 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
         radius: Theme.scaledGeometry(6)
         color: control.down || control.hovered || optionsPopup.opened
-            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
-        border.width: control.outlined || control.activeFocus ? 1 : 0
-        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
+            ? Theme.palette.hover : Theme.palette.chatControl
+        // The outline keeps the pill readable when the theme's toolbarControl
+        // sits too close to the composer surface.
+        border.width: 1
+        border.color: control.activeFocus
+            ? Theme.palette.focus
+            : (Theme.palette.controlBorder || Theme.palette.chatBorder)
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -83,11 +89,17 @@ Button {
         id: optionsPopup
         objectName: "reasoningPickerPopup"
         parent: control
-        x: 0
-        y: control.popupAbove ? -height - 7 : control.height + 7
-        width: Theme.scaledGeometry(220)
-        height: 38 + control.effortModel.length * 32
+        // Opens below the composer control; flips up only when the sections
+        // would not fit in the remaining window space (no content is clipped).
+        readonly property real naturalHeight: 38 + control.effortModel.length * 32
             + (control.tierModel.length > 0 ? 34 + control.tierModel.length * 48 : 0)
+        readonly property real spaceBelow: Theme.viewportHeight
+            - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(14)
+        readonly property bool openAbove: control.popupAbove || spaceBelow < naturalHeight
+        x: 0
+        y: openAbove ? -height - 7 : control.height + 7
+        width: Theme.scaledGeometry(220)
+        height: naturalHeight
         padding: Theme.scaledGeometry(6)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
