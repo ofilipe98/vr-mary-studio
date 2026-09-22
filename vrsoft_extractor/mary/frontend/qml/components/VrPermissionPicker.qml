@@ -51,9 +51,8 @@ Button {
         }
         Text {
             text: control.currentItem.label || "Auto"
-            // Keep the active profile readable at rest: the composer control is
-            // filled, so the label no longer depends on hover to gain contrast.
-            color: Theme.palette.text
+            color: control.hovered || optionsPopup.opened
+                ? Theme.palette.text : Theme.palette.mutedText
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -62,20 +61,20 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || optionsPopup.opened
+                ? Theme.palette.text : Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
         radius: Theme.scaledGeometry(6)
+        // Ghost control like the T3 composer: no chrome at rest, only the
+        // hover/open tint; focus keeps an accessibility ring.
         color: control.down || control.hovered || optionsPopup.opened
-            ? Theme.palette.hover : Theme.palette.chatControl
-        // The outline keeps the pill readable when the theme's toolbarControl
-        // sits too close to the composer surface.
-        border.width: 1
-        border.color: control.activeFocus
-            ? Theme.palette.focus
-            : (Theme.palette.controlBorder || Theme.palette.chatBorder)
+            ? Theme.palette.hover : "transparent"
+        // Ring only for keyboard focus; mouse clicks stay chrome-free like T3.
+        border.width: control.visualFocus ? 1 : 0
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }

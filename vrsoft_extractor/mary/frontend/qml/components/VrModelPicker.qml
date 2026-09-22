@@ -73,14 +73,13 @@ Button {
 
     background: Rectangle {
         radius: Theme.scaledGeometry(6)
+        // Ghost control like the T3 composer: no chrome at rest, only the
+        // hover/open tint; focus keeps an accessibility ring.
         color: control.down || control.hovered || pickerPopup.opened
-            ? Theme.palette.hover : Theme.palette.chatControl
-        // The outline keeps the pill readable when the theme's toolbarControl
-        // sits too close to the composer surface.
-        border.width: 1
-        border.color: control.activeFocus
-            ? Theme.palette.focus
-            : (Theme.palette.controlBorder || Theme.palette.chatBorder)
+            ? Theme.palette.hover : "transparent"
+        // Ring only for keyboard focus; mouse clicks stay chrome-free like T3.
+        border.width: control.visualFocus ? 1 : 0
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
