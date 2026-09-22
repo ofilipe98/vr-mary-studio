@@ -113,6 +113,17 @@ class CodeAdminDomain:
             "error": str(self._pending_ultra_package_choice_error or ""),
         }
 
+    def requestImportedPackageForUltra(self, package_id: str) -> bool:  # noqa: N802
+        selected = str(package_id or "").strip()
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(selected) if isinstance(packages, dict) else None
+        if not selected or not isinstance(package, dict):
+            return False
+        self._pending_ultra_package_choice_id = selected
+        self._pending_ultra_package_choice_error = ""
+        self.stateChanged.emit()
+        return True
+
     def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
         selected = str(package_id or "").strip()
         if not selected or selected != str(self._pending_ultra_package_choice_id or ""):

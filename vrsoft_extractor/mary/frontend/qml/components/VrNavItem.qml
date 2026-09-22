@@ -12,6 +12,13 @@ Item {
     property bool compact: false
     signal activated()
 
+    // Resting fill keeps the hover RGB with zero alpha: ColorAnimation
+    // interpolates RGBA without premultiplying alpha, so animating from
+    // "transparent" (#00000000) would flash a dark box over the sidebar.
+    readonly property color navHoverFill: Theme.palette.navHover
+    readonly property color navRestFill: Qt.rgba(
+        navHoverFill.r, navHoverFill.g, navHoverFill.b, 0)
+
     implicitHeight: Theme.scaledGeometry(34)
     implicitWidth: compact ? 34 : navLabel.implicitWidth + 50
     focus: false
@@ -34,7 +41,7 @@ Item {
         radius: Theme.scaledGeometry(6)
         color: root.selected
             ? Theme.palette.chatControl
-            : (pointer.hovered || root.activeFocus ? Theme.palette.navHover : "transparent")
+            : (pointer.hovered || root.activeFocus ? root.navHoverFill : root.navRestFill)
         border.width: root.activeFocus ? 1 : (root.selected ? 1 : 0)
         border.color: root.activeFocus
             ? Theme.palette.focus

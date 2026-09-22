@@ -726,6 +726,10 @@ class ChatBridge(QObject):
         return self._CodeAdmin_domain.pending_imported_package_for_ultra()
 
     @Slot(str, result=bool)
+    def requestImportedPackageForUltra(self, package_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.requestImportedPackageForUltra(package_id)
+
+    @Slot(str, result=bool)
     def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
         return self._CodeAdmin_domain.useImportedPackageInUltra(package_id)
 

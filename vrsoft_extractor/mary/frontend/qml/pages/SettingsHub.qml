@@ -19,6 +19,11 @@ Item {
         : 0
     readonly property bool settingsSearching: settingsActive
         && settingsSearch.trim().length > 0
+    // Sidebar fills animate alpha only: animating from "transparent" would
+    // interpolate toward black RGB and flash a dark box during the fade.
+    readonly property color navHoverFill: Theme.palette.navHover
+    readonly property color navRestFill: Qt.rgba(
+        navHoverFill.r, navHoverFill.g, navHoverFill.b, 0)
     readonly property var settingsSearchItems: [
         { title: "Fonte de conhecimento VR", category: "Geral", tab: 0, icon: "folder" },
         { title: "Credenciais Movidesk", category: "Geral", tab: 0, icon: "settings" },
@@ -263,7 +268,8 @@ Item {
                             radius: Theme.scaledGeometry(6)
                             color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.chatControl
-                                : (settingsConversationSearch.hovered ? Theme.palette.navHover : "transparent")
+                                : (settingsConversationSearch.hovered
+                                    ? root.navHoverFill : root.navRestFill)
                             border.width: settingsConversationSearch.activeFocus ? 1 : 0
                             border.color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.focus : "transparent"
@@ -367,6 +373,7 @@ Item {
                     model: root.sections
                     delegate: VrNavItem {
                         required property var modelData
+                        objectName: "settingsNavItem"
                         Layout.fillWidth: true
                         title: modelData.title
                         iconKind: modelData.iconKind

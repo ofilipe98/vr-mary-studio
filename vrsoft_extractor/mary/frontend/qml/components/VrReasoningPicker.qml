@@ -31,6 +31,59 @@ Button {
         }
     }
 
+    // T3 keeps the section list on a neutral overlay: the selected row
+    // lightens the popup surface instead of tinting it with the brand accent.
+    readonly property color rowHighlight: frontend.resolvedAppearance === "light"
+        ? Qt.rgba(0, 0, 0, 0.05) : Qt.rgba(1, 1, 1, 0.09)
+    readonly property color rowHover: frontend.resolvedAppearance === "light"
+        ? Qt.rgba(0, 0, 0, 0.035) : Qt.rgba(1, 1, 1, 0.05)
+    // T3 keeps the section popup snug around its items instead of using a
+    // fixed menu width; measurements use the same font as the rows.
+    readonly property real chipReserve: Theme.scaledGeometry(52)
+
+    function labelAdvance(text) {
+        return labelFont.advanceWidth(String(text || ""))
+    }
+
+    function captionAdvance(text) {
+        return captionFont.advanceWidth(String(text || ""))
+    }
+
+    function rowWidth(label, withChip) {
+        return labelAdvance(label) + (withChip ? chipReserve : 0)
+    }
+
+    // The popup width is measured from the model lists; pass them as arguments
+    // so the binding re-evaluates when efforts or tiers arrive asynchronously.
+    function popupWidth(efforts, tiers) {
+        var widest = Math.max(labelAdvance("Raciocínio"), labelAdvance("Service Tier"))
+        for (var e = 0; e < efforts.length; ++e) {
+            var effort = efforts[e] || ({})
+            widest = Math.max(widest, rowWidth(effort.label, effort.default === true))
+            widest = Math.max(widest, captionAdvance(effort.description))
+        }
+        for (var t = 0; t < tiers.length; ++t) {
+            var tier = tiers[t] || ({})
+            widest = Math.max(widest, rowWidth(tier.label, tier.default === true))
+            widest = Math.max(widest, captionAdvance(tier.description))
+        }
+        return Math.max(Theme.scaledGeometry(148),
+            Math.min(Theme.scaledGeometry(280), widest + Theme.scaledGeometry(34)))
+    }
+
+    FontMetrics {
+        id: labelFont
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeControl
+        font.weight: Font.Medium
+    }
+
+    FontMetrics {
+        id: captionFont
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontSizeCaption
+    }
+
     implicitHeight: Theme.compactControlHeight
     implicitWidth: Math.max(96, compactRow.implicitWidth + 14)
     leftPadding: Theme.scaledGeometry(7)
@@ -90,16 +143,16 @@ Button {
         parent: control
         // Opens below the composer control; flips up only when the sections
         // would not fit in the remaining window space (no content is clipped).
-        readonly property real naturalHeight: 38 + control.effortModel.length * 32
-            + (control.tierModel.length > 0 ? 34 + control.tierModel.length * 48 : 0)
+        // The popup hugs its sections like T3 instead of reserving a fixed menu.
+        readonly property real naturalHeight: reasoningColumn.implicitHeight + 2 * padding
         readonly property real spaceBelow: Theme.viewportHeight
             - control.mapToItem(null, 0, 0).y - control.height - Theme.scaledGeometry(14)
         readonly property bool openAbove: control.popupAbove || spaceBelow < naturalHeight
         x: 0
         y: openAbove ? -height - 7 : control.height + 7
-        width: Theme.scaledGeometry(220)
+        width: control.popupWidth(control.effortModel, control.tierModel)
         height: naturalHeight
-        padding: Theme.scaledGeometry(6)
+        padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
         background: Rectangle {
@@ -110,6 +163,7 @@ Button {
         }
 
         contentItem: ColumnLayout {
+            id: reasoningColumn
             spacing: 2
 
             Text {
@@ -119,8 +173,9 @@ Button {
                 text: "Raciocínio"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: Theme.fontSizeCompact
                 font.weight: Theme.weightMedium
+                renderType: Theme.textRenderType
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -129,30 +184,35 @@ Button {
                 delegate: Rectangle {
                     required property int index
                     required property var modelData
+                    readonly property bool selected: control.currentEffortIndex === index
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Theme.scaledGeometry(30)
+                    Layout.preferredHeight: Theme.scaledGeometry(28)
                     radius: Theme.scaledGeometry(7)
-                    color: control.currentEffortIndex === index
-                        ? Theme.palette.chatControl : effortHover.hovered
-                            ? Theme.palette.surfaceRaised : "transparent"
+                    color: selected
+                        ? control.rowHighlight
+                        : effortHover.hovered ? control.rowHover : "transparent"
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: Theme.scaledGeometry(8)
                         anchors.rightMargin: Theme.scaledGeometry(8)
+                        spacing: Theme.scaledGeometry(8)
                         Text {
                             Layout.fillWidth: true
                             text: modelData.label
                             color: Theme.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
-                            font.weight: control.currentEffortIndex === index ? Font.DemiBold : Font.Normal
+                            font.pixelSize: Theme.fontSizeControl
+                            font.weight: selected ? Font.Medium : Font.Normal
+                            renderType: Theme.textRenderType
+                            elide: Text.ElideRight
                         }
                         Rectangle {
                             visible: modelData.default === true
-                            Layout.preferredWidth: defaultLabel.implicitWidth + 8
+                            Layout.preferredWidth: defaultLabel.implicitWidth + 12
                             Layout.preferredHeight: Theme.scaledGeometry(18)
-                            radius: Theme.scaledGeometry(5)
-                            color: Theme.palette.surfaceRaised
+                            radius: Theme.scaledGeometry(6)
+                            color: Qt.rgba(Theme.palette.focus.r, Theme.palette.focus.g,
+                                Theme.palette.focus.b, 0.14)
                             Text {
                                 id: defaultLabel
                                 anchors.centerIn: parent
@@ -160,6 +220,7 @@ Button {
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSizeMicro
+                                renderType: Theme.textRenderType
                             }
                         }
                     }
@@ -190,8 +251,9 @@ Button {
                 text: "Service Tier"
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: Theme.fontSizeCompact
                 font.weight: Theme.weightMedium
+                renderType: Theme.textRenderType
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -200,12 +262,13 @@ Button {
                 delegate: Rectangle {
                     required property int index
                     required property var modelData
+                    readonly property bool selected: control.currentTierIndex === index
                     Layout.fillWidth: true
-                    Layout.preferredHeight: modelData.description ? 46 : 32
+                    Layout.preferredHeight: modelData.description ? 44 : Theme.scaledGeometry(28)
                     radius: Theme.scaledGeometry(7)
-                    color: control.currentTierIndex === index
-                        ? Theme.palette.chatControl : tierHover.hovered
-                            ? Theme.palette.surfaceRaised : "transparent"
+                    color: selected
+                        ? control.rowHighlight
+                        : tierHover.hovered ? control.rowHover : "transparent"
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.leftMargin: Theme.scaledGeometry(8)
@@ -213,20 +276,24 @@ Button {
                         spacing: 1
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: Theme.scaledGeometry(8)
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.label
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
-                                font.weight: control.currentTierIndex === index ? Font.DemiBold : Font.Normal
+                                font.pixelSize: Theme.fontSizeControl
+                                font.weight: selected ? Font.Medium : Font.Normal
+                                renderType: Theme.textRenderType
+                                elide: Text.ElideRight
                             }
                             Rectangle {
                                 visible: modelData.default === true
-                                Layout.preferredWidth: tierDefault.implicitWidth + 8
+                                Layout.preferredWidth: tierDefault.implicitWidth + 12
                                 Layout.preferredHeight: Theme.scaledGeometry(18)
-                                radius: Theme.scaledGeometry(5)
-                                color: Theme.palette.surfaceRaised
+                                radius: Theme.scaledGeometry(6)
+                                color: Qt.rgba(Theme.palette.focus.r, Theme.palette.focus.g,
+                                    Theme.palette.focus.b, 0.14)
                                 Text {
                                     id: tierDefault
                                     anchors.centerIn: parent
@@ -234,6 +301,7 @@ Button {
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSizeMicro
+                                    renderType: Theme.textRenderType
                                 }
                             }
                         }
@@ -244,6 +312,7 @@ Button {
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSizeCaption
+                            renderType: Theme.textRenderType
                             elide: Text.ElideRight
                         }
                     }

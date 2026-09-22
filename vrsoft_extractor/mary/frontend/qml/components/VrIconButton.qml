@@ -7,6 +7,7 @@ Button {
 
     property url iconSource
     property string iconKind: ""
+    property bool iconFilled: false
     property string symbol: ""
     property bool round: false
     property color foreground: Theme.palette.text
@@ -41,6 +42,7 @@ Button {
             width: control.iconSize
             height: control.iconSize
             kind: control.iconKind
+            filled: control.iconFilled
             foreground: control.foreground
         }
         Text {

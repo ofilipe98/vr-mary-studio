@@ -4681,6 +4681,79 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(chat_settings)
             self.assertTrue(chat_settings.property("visible"))
 
+    def test_sidebar_hover_transition_never_darkens_below_its_endpoints(self):
+        from test_chat_presentation import find_items
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(root, theme="ocean", initial_page="Configurações")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            QTest.qWait(250)
+            self.assertFalse(bridge.reduceMotion)
+
+            items = {
+                item.property("title"): item
+                for item in find_items(window.contentItem(), "settingsNavItem")
+            }
+            self.assertIn("Revisão", items)
+            self.assertIn("Vídeos", items)
+            review = items["Revisão"]
+
+            def sample_row(item):
+                image = window.grabWindow()
+                ratio = image.devicePixelRatio()
+                point = item.mapToScene(QPointF(item.width() - 8, item.height() / 2))
+                return image.pixelColor(round(point.x() * ratio), round(point.y() * ratio))
+
+            def luminance(color):
+                return 0.2126 * color.redF() + 0.7152 * color.greenF() + 0.0722 * color.blueF()
+
+            rest = sample_row(review)
+            target = review.mapToScene(
+                QPointF(review.width() / 2, review.height() / 2)
+            ).toPoint()
+            QTest.mouseMove(window, target)
+            frames = []
+            for _ in range(24):
+                QTest.qWait(8)
+                frames.append(sample_row(review))
+            QTest.qWait(140)
+            hovered = sample_row(review)
+            self.assertGreater(luminance(hovered), luminance(rest))
+            floor = min(luminance(rest), luminance(hovered)) - 0.02
+            for index, frame in enumerate(frames):
+                self.assertGreaterEqual(
+                    luminance(frame),
+                    floor,
+                    f"hover frame {index} darker than the endpoints: {frame.name()}",
+                )
+
+            QTest.mouseMove(window, QPoint(1, 1))
+            window.close()
+            engine.deleteLater()
+            self.application.processEvents()
+
     def test_all_pages_load_in_engine_with_centered_page_column(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -6028,6 +6101,63 @@ class QmlFrontendTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     named_objects("chooseImportedPackageAppsButton"), []
+                )
+
+                # Pacote já importado: o cartão reabre a pergunta do Ultra.
+                chat_bridge._packages_catalog = [
+                    {
+                        "package_id": "pkg-one",
+                        "name": "Pacote Importado",
+                        "imported_at": "2026-01-01T00:00:00+00:00",
+                        "composition": [
+                            {
+                                "app_id": "vrmaster",
+                                "version": "4.1.0",
+                                "variant_id": "sha-master",
+                            },
+                            {
+                                "app_id": "vrpdv",
+                                "version": "3.2.0",
+                                "variant_id": "sha-pdv",
+                            },
+                        ],
+                    }
+                ]
+                chat_bridge.stateChanged.emit()
+                apps_page.setProperty("navigationLevel", 0)
+                apps_page.setProperty("packagesExpanded", True)
+                self.application.processEvents()
+                QTest.qWait(50)
+                def find_by_name(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_by_name(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                use_package_button = find_by_name(
+                    window.contentItem(), "usePackageInUltraButton"
+                )
+                self.assertIsNotNone(use_package_button)
+                self.assertTrue(
+                    QMetaObject.invokeMethod(use_package_button, "click")
+                )
+                self.application.processEvents()
+                QTest.qWait(1)
+                dialogs = named_objects("importedPackageUltraChoiceDialog")
+                self.assertEqual(len(dialogs), 1)
+                self.assertEqual(dialogs[0].property("packageId"), "pkg-one")
+                self.assertTrue(dialogs[0].property("visible"))
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
+                QTest.qWait(1)
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
                 )
             finally:
                 window.close()

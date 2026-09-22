@@ -1082,3 +1082,43 @@ def test_ultra_choice_counts_full_composition_and_rejects_invalid_items(bridge):
     assert bridge.pendingImportedPackageForUltra["error"]
     assert bridge._apps_catalog_error == ""
 
+
+@pytest.mark.qml
+def test_request_imported_package_reopens_ultra_choice(bridge):
+    bridge._apps_catalog_data = {
+        "data": {
+            "applications": {},
+            "packages": {
+                "one": {
+                    "package_id": "one",
+                    "name": "Pacote A",
+                    "composition": [
+                        {"app_id": "vrapp", "version": "1.0.0", "variant_id": "sha-app"},
+                        {"app_id": "vrdep", "version": "2.0.0", "variant_id": "sha-dep"},
+                    ],
+                }
+            },
+        }
+    }
+    bridge._pending_ultra_package_choice_id = ""
+    bridge._pending_ultra_package_choice_error = ""
+    before = [dict(item) for item in bridge._ultra_application_contexts]
+
+    assert bridge.requestImportedPackageForUltra("missing") is False
+    assert bridge.pendingImportedPackageForUltra == {}
+    assert bridge._pending_ultra_package_choice_id == ""
+
+    assert bridge.requestImportedPackageForUltra("one") is True
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == "one"
+    assert pending["packageName"] == "Pacote A"
+    assert pending["applicationCount"] == 2
+    assert pending["error"] == ""
+    assert bridge._ultra_application_contexts == before
+
+    assert bridge.useImportedPackageInUltra("one") is True
+    contexts = bridge._ultra_application_contexts
+    assert len(contexts) == 2
+    assert all(item["package_id"] == "one" for item in contexts)
+    assert bridge.pendingImportedPackageForUltra == {}
+

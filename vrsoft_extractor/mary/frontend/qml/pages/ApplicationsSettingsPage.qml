@@ -1621,6 +1621,16 @@ Item {
                                         spacing: Theme.spaceXs
 
                                         VrButton {
+                                            objectName: "usePackageInUltraButton"
+                                            text: "Usar no Ultra"
+                                            variant: "secondary"
+                                            implicitHeight: Theme.scaledGeometry(28)
+                                            enabled: !chat.releaseSnapshotRunning
+                                                && !chat.codeProcessingRunning
+                                            onClicked: chat.requestImportedPackageForUltra(modelData.package_id)
+                                        }
+
+                                        VrButton {
                                             objectName: "exportDecompiledPackageButton"
                                             text: "Exportar pacote descompilado"
                                             variant: "secondary"
