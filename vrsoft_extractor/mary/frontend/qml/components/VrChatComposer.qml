@@ -142,11 +142,9 @@ Item {
         border.width: 1
         border.color: composerCard.page.composerDropActive
             ? (composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange)
-            : (composerCard.vrActive && !composerCard.isCompact)
-                ? (composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45))
-                : (composerInput.activeFocus
-                    ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
-                    : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
+            : (composerInput.activeFocus
+                ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
+                : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
         z: 1
 
         Behavior on border.color {

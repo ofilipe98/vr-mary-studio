@@ -4138,16 +4138,13 @@ class QmlFrontendTest(unittest.TestCase):
             theme_qml = (
                 MAIN_QML.parent / "theme" / "Theme.qml"
             ).read_text(encoding="utf-8")
-            # VR/VR Ultra keep the fixed orange identity (ring/halo/border/label)
+            # VR/VR Ultra keep the fixed orange identity (ring/halo/label)
             # instead of inheriting the theme's remapped accent.
             self.assertIn("readonly property color vrAccent", theme_qml)
-            self.assertIn(
-                "composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45)",
-                composer_qml,
-            )
-            # O realce laranja do VR só vale no composer expandido; no retraído
-            # o campo mantém a borda neutra.
-            self.assertIn("composerCard.vrActive && !composerCard.isCompact", composer_qml)
+            # A aura laranja saiu do contorno do composer: em repouso e no foco
+            # o campo mantém a borda neutra; o laranja fica só no arraste.
+            self.assertNotIn("composerCard.vrActive && !composerCard.isCompact", composer_qml)
+            self.assertNotIn("Qt.alpha(Theme.vrAccent, 0.45)", composer_qml)
             self.assertIn("composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange", composer_qml)
             self.assertIn("? Theme.vrAccent", composer_qml)
             self.assertIn("Qt.alpha(Theme.vrAccent, 0.12)", chat_preview_qml)
