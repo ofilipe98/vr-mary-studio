@@ -2,7 +2,7 @@
 
 ## 1. Visão Geral e Aceite
 Implementação do **Plano Auditado de Acesso Unificado — OFF, VR e ULTRA** no repositório `D:\Codex\VRStudio` (HEAD `afc7d98`).
-O objetivo central foi atingido: **o modo controla a estratégia de resposta; todos os modos oferecem acesso uniforme às mesmas fontes locais configuradas e disponíveis** (Wiki, KB, Schema e Código Java descompilado), mantendo em modo OFF o comportamento funcional idêntico ao ChatGPT Web para projetos, instruções e fontes.
+O objetivo central foi atingido: **o modo controla a estratégia de resposta; todos os modos oferecem acesso uniforme às mesmas fontes locais configuradas e disponíveis** (Wiki, KB, Schema e Código Java descompilado), mantendo em modo OFF o comportamento de produto equivalente ao ChatGPT Web para projetos, instruções e fontes: os materiais ficam disponíveis à conversa, sem retrieval automático obrigatório. A equivalência pretendida é de comportamento de produto, não de implementação interna.
 
 ---
 
@@ -41,11 +41,12 @@ O objetivo central foi atingido: **o modo controla a estratégia de resposta; to
 - **OpenCode** ([opencode.py](file:///D:/Codex/VRStudio/vrsoft_extractor/mary/provider_adapters/opencode.py)):
   - Configura o MCP `mary_local_kb` em `_opencode_environment`.
 - **Codex** ([base.py](file:///D:/Codex/VRStudio/vrsoft_extractor/mary/provider_adapters/base.py) & [orchestrator.py](file:///D:/Codex/VRStudio/vrsoft_extractor/mary/orchestrator.py)):
-  - Dynamic tools registradas para Codex em todos os modos (`effective_vr or native_vr_search_enabled`).
+  - Dynamic tools (`vr_sources`, `vr_search`, `vr_read`) registradas para Codex independentemente do modo.
 
-### 2.6. Orquestrador e Modo OFF como ChatGPT Web
+### 2.6. Orquestrador e Modo OFF com comportamento de produto equivalente ao ChatGPT Web
 - **Orquestrador**: [orchestrator.py](file:///D:/Codex/VRStudio/vrsoft_extractor/mary/orchestrator.py)
   - `_enrich_off_prompt`: Injeta instruções do projeto (`INSTRUCTIONS.md`/`instructions.md`), lista de arquivos do workspace do projeto e aviso de ferramentas locais sob demanda.
+  - As tools locais são registradas em todos os modos; OFF não executa retrieval automático nem fan-out e não injeta todo o corpus no prompt — o conteúdo é buscado/lido sob demanda, dentro dos limites das tools.
   - Isolamento estrito: workspaces de conversas gerenciadas (`is_managed_conversation_workspace`) não herdam instruções indevidas.
 
 ### 2.7. Script Portátil vr-search.ps1

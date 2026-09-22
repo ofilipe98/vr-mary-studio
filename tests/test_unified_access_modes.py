@@ -78,7 +78,6 @@ def _setup_test_env(tmp_path: Path):
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "mary").resolve(),
         old_root=(tmp_path / "old").resolve(),
-        native_vr_search_enabled=True,
     )
     settings.app_dir.mkdir(parents=True, exist_ok=True)
     settings.root.mkdir(parents=True, exist_ok=True)
@@ -516,6 +515,15 @@ def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
         tmp_path, "off"
     )
     calls = _mode_calls(orchestrator)
+    turn_options: list = []
+    original_options = orchestrator._conversation_options
+
+    def capture_options(conversation_id, **kwargs):
+        options = original_options(conversation_id, **kwargs)
+        turn_options.append(options)
+        return options
+
+    orchestrator._conversation_options = capture_options
 
     _run_mode(orchestrator, cid, events, use_vr=False)
 
@@ -526,7 +534,14 @@ def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
         "route_vr_sources": 0,
         "ultra": 0,
     }
-    assert "research_started" not in [event.kind for event in events]
+    kinds = [event.kind for event in events]
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
+    assert turn_options, "o turno OFF não produziu opções"
+    tool_names = {tool.get("name") for tool in turn_options[-1].dynamic_tools}
+    assert VR_SOURCES_TOOL_NAME in tool_names
+    assert VR_SEARCH_TOOL_NAME in tool_names
+    assert VR_READ_TOOL_NAME in tool_names
 
 
 def test_vr_normal_uses_four_fixed_sources_without_agents(tmp_path: Path):

@@ -62,8 +62,7 @@ Cada lote pode ser dividido em mudanças menores revisáveis. Não juntar extra�
 
 ## 5. Contratos que todas as etapas preservam
 
-- Modos persistidos `off`, `vr` e `ultra`: `off` não consulta nem expande a base; `vr` faz retrieval direto pelas quatro fontes fixas (Wiki, KB, Schema e Código) sem agentes; `ultra` faz fan-out por fonte com agentes. Não existe comando público de pesquisa multiagente.
-- `off` não consulta nem expande a base local.
+- Modos persistidos `off`, `vr` e `ultra`: `off` não executa retrieval automático nem fan-out — as fontes locais permanecem disponíveis sob demanda; `vr` faz retrieval direto pelas quatro fontes fixas (Wiki, KB, Schema e Código) sem agentes; `ultra` faz fan-out por fonte com agentes. Não existe comando público de pesquisa multiagente.
 - Separação entre execução local, run de pesquisa, tentativa do provedor e mensagem. Mapear os IDs existentes antes de acrescentar campos.
 - Mensagens intermediárias públicas permanecem ordenadas e identificadas; seu término não encerra o turno.
 - Eventos internos de pesquisadores/revisores não viram mensagens públicas. Eventos atrasados não alteram outra tentativa ou execução.

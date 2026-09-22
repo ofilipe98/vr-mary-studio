@@ -161,6 +161,22 @@ Os scripts visuais usam dados isolados. `benchmark_v2_retrieval.py` mantém o co
 congelado em `tests/fixtures/` e exige os modelos e dependências semânticas indicados
 no script. Essas verificações manuais complementam a suíte automatizada.
 
+## Modos de resposta (OFF, VR e ULTRA)
+
+Contrato canônico dos modos, alinhado ao runtime:
+
+- `off`: sem retrieval automático e sem agentes; projeto, anexos e fontes
+  internas continuam acessíveis sob demanda por tools (`vr_sources`,
+  `vr_search` e `vr_read`).
+- `vr`: retrieval automático direto por Wiki/Endoo, KB, Schema e Código, sem
+  agentes.
+- `ultra`: fan-out por fonte com agentes, DEV Java opcional e síntese final.
+
+"OFF" desativa a estratégia automática VR, não o conhecimento interno.
+Disponibilidade de fonte e estratégia de retrieval são conceitos diferentes:
+as fontes locais são registradas em todos os modos e cada modo decide apenas
+quando e quanto recuperar automaticamente.
+
 ## VRMonitor
 
 O adapter opcional do VRMonitor reutiliza os providers e o orquestrador existentes. A

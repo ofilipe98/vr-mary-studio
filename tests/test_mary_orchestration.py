@@ -15,7 +15,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from vrsoft_extractor.mary.config import MarySettings
+from vrsoft_extractor.mary.config import MarySettings, load_vr_settings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.knowledge import extract_knowledge_entities
 from vrsoft_extractor.mary.knowledge_router import (
@@ -1895,8 +1895,8 @@ def _tool_names(options: ConversationOptions | None) -> set[str]:
     }
 
 
-def test_native_turn_registers_vr_search_only_when_opt_in(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, native_vr_search_enabled=False)
+def test_off_turn_registers_all_local_tools(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
     provider = FakeProvider("codex")
@@ -1908,39 +1908,63 @@ def test_native_turn_registers_vr_search_only_when_opt_in(tmp_path: Path) -> Non
 
     orchestrator.send(
         conversation_id,
-        "Pergunta nativa sem busca local",
+        "Pergunta nativa com acesso local sob demanda",
         lambda event: completed.set() if event.kind == "turn_completed" else None,
         use_vr=False,
     )
     assert completed.wait(5)
 
-    assert "vr_search" not in _tool_names(provider.start_options[0])
-    assert "vr_search" not in _tool_names(provider.sent[0]["options"])
-
-    # VR turns keep the tool regardless of the opt-in.
-    completed.clear()
-    orchestrator.send(
-        conversation_id,
-        "Pergunta com base local",
-        lambda event: completed.set() if event.kind == "turn_completed" else None,
-        use_vr=True,
+    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
+        provider.start_options[0]
     )
-    assert completed.wait(5)
-    assert "vr_search" in _tool_names(provider.sent[-1]["options"])
+    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
+        provider.sent[0]["options"]
+    )
+    assert len(provider.sent) == 1
 
 
-def test_native_opt_in_registers_vr_search_for_provider_decided_calls(
-    tmp_path: Path,
+def test_legacy_vr_native_search_env_does_not_remove_off_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings = MarySettings(
-        app_dir=(tmp_path / "app").resolve(),
+    monkeypatch.setenv("VR_NATIVE_SEARCH_ENABLED", "0")
+    app_dir = (tmp_path / "app").resolve()
+    app_dir.mkdir(parents=True)
+    settings = load_vr_settings(
+        app_dir=app_dir,
         root=(tmp_path / "mary").resolve(),
         old_root=(tmp_path / "old").resolve(),
-        native_vr_search_enabled=True,
     )
-    settings.app_dir.mkdir(parents=True)
     settings.old_root.mkdir(parents=True)
     settings.ensure_dirs()
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Pergunta nativa com a variável legada desligada",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+    )
+    assert completed.wait(5)
+
+    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
+        provider.start_options[0]
+    )
+    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
+        provider.sent[0]["options"]
+    )
+
+
+def test_off_turn_registers_local_tools_for_provider_decided_calls(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
     provider = FakeProvider("codex")
@@ -2022,12 +2046,11 @@ class ToolCallingProvider(FakeProvider):
         )
 
 
-def test_native_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
+def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
     settings = MarySettings(
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "mary").resolve(),
         old_root=(tmp_path / "old").resolve(),
-        native_vr_search_enabled=True,
     )
     settings.app_dir.mkdir(parents=True)
     settings.old_root.mkdir(parents=True)
@@ -2069,6 +2092,7 @@ def test_native_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> No
     assert not any(event.kind == "knowledge_routed" for event in events)
     assert not any(event.kind == "intent_analysis_started" for event in events)
     orchestrator.drain_turn_finalizations()
+    assert database.messages(conversation_id)[-1]["response_mode"] == "native"
     assert conversation_id not in orchestrator._external_callbacks
     assert conversation_id not in orchestrator._callback_generations
     assert not orchestrator._dynamic_tool_callbacks

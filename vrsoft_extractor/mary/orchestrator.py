@@ -257,11 +257,6 @@ class ChatOrchestrator:
         self._turn_dynamic_candidates: dict[str, list[EvidenceCandidate]] = {}
         self._turn_access_paths: dict[str, str] = {}
         self._turn_tool_usage: dict[str, tuple[int, int]] = {}
-        # Opt-in: native turns may expose vr_search so the provider pulls local
-        # evidence on demand instead of receiving the upfront VR pipeline.
-        self.native_vr_search_enabled = bool(
-            getattr(settings, "native_vr_search_enabled", False)
-        )
         from .lifecycle import ConversationTrash
         self._trash_lifecycle = ConversationTrash(
             settings, database, lambda row, action: self._sync_codex_lifecycle(row, action),
@@ -290,9 +285,6 @@ class ChatOrchestrator:
             repository=self.research_repository,
             collect_evidence=self._collect_research_evidence,
         )
-
-    def set_native_vr_search(self, enabled: bool) -> None:
-        self.native_vr_search_enabled = bool(enabled)
 
     def provider_status(self) -> dict[str, bool]:
         return {name: provider.available() for name, provider in self.providers.items()}
@@ -3232,16 +3224,12 @@ class ChatOrchestrator:
             for tool_id in selected["dynamic"]
             if tool_id in definitions
         )
-        effective_vr = (
-            bool(row["vr_enabled"]) if use_vr is None else bool(use_vr)
-        )
         # In all modes (OFF, VR, ULTRA), register vr_sources, vr_search, vr_read
-        # so the model has uniform access to all local knowledge and code.
-        # native_vr_search_enabled defaults to True; if explicitly False, native OFF turns do not expose tools.
-        if effective_vr or self.native_vr_search_enabled:
-            for spec in all_vr_tools_specs():
-                if not any(d.get("name") == spec.get("name") for d in dynamic):
-                    dynamic = (*dynamic, spec)
+        # so the model has on-demand access to local knowledge and code. The
+        # mode only selects the retrieval strategy, never source availability.
+        for spec in all_vr_tools_specs():
+            if not any(d.get("name") == spec.get("name") for d in dynamic):
+                dynamic = (*dynamic, spec)
         if self._monitor_adapter is not None:
             dynamic = tuple(
                 spec for spec in dynamic if spec.get("name") not in MONITOR_TOOL_NAMES

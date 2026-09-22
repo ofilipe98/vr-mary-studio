@@ -3,6 +3,8 @@ Plano auditado de acesso unificado — OFF, VR e ULTRA
 
 Entrega para implementação pelo Gemini 3.8. Auditoria em 09/09/2026, sobre o checkout `D:\Codex\VRStudio`, HEAD `afc7d98`, incluindo as alterações locais existentes. Este documento especifica a implementação; o código de produção não foi alterado nesta auditoria. As linhas citadas correspondem a esse estado e devem ser conferidas novamente antes da edição.
 
+**Estado atual (após a implementação).** O antigo opt-in exclusivo do OFF foi removido: `native_vr_search_enabled` e `VR_NATIVE_SEARCH_ENABLED` não existem mais no runtime, e as tools locais (`vr_sources`, `vr_search`, `vr_read`) são registradas em todos os modos. OFF continua sem retrieval automático nem fan-out; o acesso às fontes internas é sob demanda pelo provedor. As menções a essas chaves neste documento descrevem apenas o estado auditado em 09/09/2026 e não representam o contrato atual.
+
 **Problema.** O plano original aponta a direção correta, mas suas quatro fases ainda não garantem que os três modos consultem Wiki, KB, Schema e Java. Faltam transporte efetivo nos provedores, descoberta e leitura além do primeiro resultado da busca, limites compartilhados de evidências, tratamento de conversas existentes e persistência das fontes de código.
 
 O requisito de aceite é: **o modo controla a estratégia de resposta; todos os modos oferecem acesso às mesmas fontes locais configuradas e disponíveis**. Isso inclui todos os arquivos de conhecimento dessas fontes e o código descompilado dos aplicativos e dependências dos contextos consultados. A busca inicial pode selecionar poucos trechos, mas nenhum arquivo elegível pode ficar inacessível por causa de OFF, VR ou ULTRA.
@@ -32,6 +34,8 @@ Aplicar essa referência ao VRStudio com os seguintes critérios de produto; sã
 **Causa raiz.** O acesso está acoplado a controles de modo em pontos diferentes. OFF pula a recuperação automática, seus adaptadores também restringem a exposição da base e sua ferramenta local é opt-in. O Java está encapsulado na execução de pesquisa do ULTRA. Além disso, busca dinâmica, RAG e script portátil utilizam caminhos de recuperação distintos. Alterar apenas o `if` do orquestrador não harmoniza esses contratos.
 
 **Localização.** Achados confirmados no código atual:
+
+**Nota de estado histórico.** A tabela abaixo registra achados da auditoria em 09/09/2026 (HEAD `afc7d98`). Referências a `native_vr_search_enabled` e `VR_NATIVE_SEARCH_ENABLED` são históricas e não representam o contrato atual: o opt-in exclusivo do OFF foi removido e as tools locais são registradas independentemente do modo.
 
 | Prioridade | Local | Achado e consequência para o plano |
 | --- | --- | --- |
