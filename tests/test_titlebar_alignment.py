@@ -1,9 +1,17 @@
 from unittest.mock import patch
 import pytest
+from PySide6.QtGui import QColor
 from test_chat_presentation import (
     QApplication, QSettings, QTest, QObject, MarySettings, MaryDatabase,
     FrontendBridge, ChatBridge, StudioBridge, create_engine,
 )
+
+
+def _find_items(item, name):
+    result = [item] if item.objectName() == name else []
+    for child in item.childItems():
+        result.extend(_find_items(child, name))
+    return result
 
 @pytest.mark.qml
 def test_titlebar_and_settings_hub_divider_pixel_alignment(tmp_path):
@@ -95,6 +103,70 @@ def test_titlebar_and_chat_sidebar_divider_pixel_alignment(tmp_path):
             assert chat_center_line is not None
             assert chat_center_line.property("height") > 0
             assert chat_center_line.property("width") == 1
+    finally:
+        if window is not None:
+            window.close()
+        if engine is not None:
+            engine.deleteLater()
+        studio.close()
+        chat.close()
+
+
+@pytest.mark.qml
+def test_chat_divider_slices_match_each_boundary_background(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "old")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    frontend = FrontendBridge(settings, prefs, initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    engine = None
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits"):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(900)
+            frontend.setReduceMotion(True)
+            QTest.qWait(400)
+
+            chat_page = window.findChild(QObject, "chatPage")
+            assert chat_page is not None
+            chat_page.setProperty("surfaceVisible", True)
+            QTest.qWait(250)
+
+            panel = window.findChild(QObject, "surfacePanel")
+            assert panel is not None and panel.isVisible()
+            panel_x = panel.mapToItem(window.contentItem(), 0, 0).x()
+            assert panel_x > 0
+
+            left_slices = _find_items(window.contentItem(), "chatSplitLeftSlice")
+            right_slices = _find_items(window.contentItem(), "chatSplitRightSlice")
+            assert len(left_slices) == len(right_slices) == 2
+
+            def window_x(rect):
+                return rect.mapToItem(window.contentItem(), 0, 0).x()
+
+            # The handle left of the panel mirrors its slices: chat on the
+            # left, sidebar-colored panel on the right, without a color band.
+            surface_left = max(left_slices, key=window_x)
+            surface_right = max(right_slices, key=window_x)
+            assert window_x(surface_left) + surface_left.width() <= panel_x
+            assert QColor(frontend.palette["chatBackground"]) == surface_left.property("color")
+            assert QColor(frontend.palette["chatSidebar"]) == surface_right.property("color")
+
+            # The sidebar handle keeps the default sidebar|chat pair.
+            sidebar_left = min(left_slices, key=window_x)
+            sidebar_right = min(right_slices, key=window_x)
+            assert QColor(frontend.palette["chatSidebar"]) == sidebar_left.property("color")
+            assert QColor(frontend.palette["chatBackground"]) == sidebar_right.property("color")
+
+            frontend.setTheme("light")
+            QTest.qWait(150)
+            assert QColor(frontend.palette["chatBackground"]) == surface_left.property("color")
+            assert QColor(frontend.palette["chatSidebar"]) == surface_right.property("color")
     finally:
         if window is not None:
             window.close()

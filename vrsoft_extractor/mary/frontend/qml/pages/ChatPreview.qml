@@ -274,22 +274,35 @@ Item {
             implicitWidth: Theme.scaledGeometry(7)
             color: "transparent"
 
-            // Left slice matches sidebar background
+            // The same delegate serves the sidebar|chat and chat|surface
+            // boundaries. Only the surface edge has the panel on the right,
+            // so its slices mirror the default sidebar-left pair.
+            readonly property bool leftOfSurfacePanel: surfaceDock.visible
+                && surfaceDock.width > 0.5
+                && Math.abs((x + width) - surfaceDock.x) < 2
+
+            // Left slice matches the adjacent background
             Rectangle {
+                objectName: "chatSplitLeftSlice"
                 anchors.left: parent.left
                 anchors.right: chatCenterLine.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: Theme.palette.chatSidebar
+                color: chatSplitHandle.leftOfSurfacePanel
+                    ? Theme.palette.chatBackground
+                    : Theme.palette.chatSidebar
             }
 
-            // Right slice matches content background
+            // Right slice matches the adjacent background
             Rectangle {
+                objectName: "chatSplitRightSlice"
                 anchors.left: chatCenterLine.right
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: Theme.palette.chatBackground
+                color: chatSplitHandle.leftOfSurfacePanel
+                    ? Theme.palette.chatSidebar
+                    : Theme.palette.chatBackground
             }
 
             // Crisp 1px hairline divider
