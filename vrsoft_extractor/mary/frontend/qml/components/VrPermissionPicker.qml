@@ -17,17 +17,12 @@ Button {
         var key = String(value || "auto")
         if (key === "supervised") return "lock"
         if (key === "auto_edits") return "edit"
-        if (key === "full_access") return "unlock"
+        if (key === "full_access") return "lock"
         return "auto"
     }
 
-    readonly property color rowHighlight: Theme.palette.appearance === "light"
-        ? Qt.rgba(0, 0, 0, 0.05) : Qt.rgba(1, 1, 1, 0.09)
-    readonly property color rowHover: Theme.palette.appearance === "light"
-        ? Qt.rgba(0, 0, 0, 0.035) : Qt.rgba(1, 1, 1, 0.05)
-
     property bool compact: false
-    implicitHeight: compact ? Theme.scaledGeometry(26) : Theme.scaledGeometry(28)
+    implicitHeight: compact ? 26 : Theme.compactControlHeight
     implicitWidth: compact
         ? (compactRow.implicitWidth + leftPadding + rightPadding)
         : Math.max(106, compactRow.implicitWidth + 14)
@@ -55,7 +50,9 @@ Button {
         }
         Text {
             text: control.currentItem.label || "Auto"
-            color: Theme.palette.text
+            color: control.compact
+                ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
+                : (control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -64,14 +61,14 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: Theme.palette.mutedText
+            foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
     }
 
     background: Rectangle {
-        radius: Theme.scaledGeometry(6)
+        radius: control.compact ? 6 : 6
         color: control.down || control.hovered || optionsPopup.opened
-            ? Theme.palette.hover : Theme.palette.chatControl
+            ? Qt.rgba(255, 255, 255, 0.07) : "transparent"
         border.width: control.activeFocus ? 1 : 0
         border.color: Theme.palette.focus
         Behavior on color {
@@ -86,8 +83,8 @@ Button {
         parent: control
         x: 0
         y: -height - 7
-        width: Math.min(Theme.scaledGeometry(360), Theme.viewportWidth - 24)
-        height: permissionColumn.implicitHeight + 2 * padding
+        width: Math.min(372, Theme.viewportWidth - 24)
+        height: Theme.scaledGeometry(250)
         padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
@@ -99,36 +96,34 @@ Button {
         }
 
         contentItem: ColumnLayout {
-            id: permissionColumn
             spacing: 2
             Repeater {
                 model: control.model
                 delegate: Rectangle {
                     required property int index
                     required property var modelData
-                    readonly property bool selected: control.currentIndex === index
                     Layout.fillWidth: true
-                    implicitHeight: Math.max(Theme.scaledGeometry(54),
-                        permissionContent.implicitHeight + Theme.scaledGeometry(14))
-                    radius: Theme.scaledGeometry(8)
-                    color: selected
-                        ? control.rowHighlight
-                        : permissionHover.hovered ? control.rowHover : "transparent"
+                    Layout.fillHeight: true
+                    radius: Theme.scaledGeometry(7)
+                    color: control.currentIndex === index
+                        ? Theme.palette.chatControl : permissionHover.hovered
+                            ? Theme.palette.surfaceRaised : "transparent"
+                    border.width: control.currentIndex === index ? 1 : 0
+                    border.color: Theme.palette.chatBorder
 
                     RowLayout {
-                        id: permissionContent
                         anchors.fill: parent
-                        anchors.leftMargin: Theme.scaledGeometry(9)
-                        anchors.rightMargin: Theme.scaledGeometry(9)
-                        anchors.topMargin: Theme.scaledGeometry(7)
-                        anchors.bottomMargin: Theme.scaledGeometry(7)
+                        anchors.leftMargin: Theme.scaledGeometry(8)
+                        anchors.rightMargin: Theme.scaledGeometry(8)
                         spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
                             Layout.preferredWidth: Theme.iconSmall
                             Layout.preferredHeight: Theme.iconSmall
                             Layout.alignment: Qt.AlignTop
+                            Layout.topMargin: Theme.scaledGeometry(5)
                             kind: control.permissionIconKind(modelData.value)
-                            foreground: Theme.palette.mutedText
+                            foreground: control.currentIndex === index
+                                ? Theme.palette.text : Theme.palette.mutedText
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -138,17 +133,15 @@ Button {
                                 text: modelData.label
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeControl
+                                font.pixelSize: Theme.fontSize(13)
                                 font.weight: Font.DemiBold
-                                renderType: Theme.textRenderType
                             }
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.description || ""
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeCompact
-                                renderType: Theme.textRenderType
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.WordWrap
                             }
                         }
