@@ -117,7 +117,7 @@ class KnowledgeRepositoryMixin:
                     updated_at=excluded.updated_at,
                     synced_at=excluded.synced_at,revision=excluded.revision,
                     content_hash=excluded.content_hash,markdown=excluded.markdown,
-                    ocr_text=excluded.ocr_text,local_path=excluded.local_path,
+                    ocr_text='',local_path=excluded.local_path,
                     assets_json=excluded.assets_json""",
                 (
                     document.source,
@@ -137,7 +137,7 @@ class KnowledgeRepositoryMixin:
                     document.revision,
                     document.content_hash,
                     document.markdown,
-                    document.ocr_text,
+                    "",
                     document.local_path,
                     json.dumps(document.assets, ensure_ascii=False),
                 ),
@@ -173,7 +173,6 @@ class KnowledgeRepositoryMixin:
         chunks = split_knowledge_document(
             document.title,
             document.markdown,
-            document.ocr_text,
             source=document.source,
         )
         connection.execute(
@@ -406,7 +405,6 @@ class KnowledgeRepositoryMixin:
                            d.content_hash AS document_content_hash,
                            d.category AS document_category,
                            d.product AS document_product,
-                           d.ocr_text AS document_ocr_text,
                            d.local_path AS document_local_path,
                            d.assets_json AS document_assets_json
                     FROM classification_reviews r
@@ -569,7 +567,6 @@ class KnowledgeRepositoryMixin:
             category=str(review["document_category"] or ""),
             product=str(review["document_product"] or ""),
             assets=[str(asset) for asset in assets],
-            ocr_text=str(review["document_ocr_text"] or ""),
             local_path=str(review["document_local_path"] or ""),
         )
 
@@ -667,8 +664,7 @@ class KnowledgeRepositoryMixin:
             where.append(
                 """lower(
                      d.title || ' ' || d.source_id || ' ' || d.product || ' ' ||
-                     d.category || ' ' || r.reasons_json || ' ' || d.markdown ||
-                     ' ' || d.ocr_text
+                     d.category || ' ' || r.reasons_json || ' ' || d.markdown
                    ) LIKE ? ESCAPE '\\'"""
             )
             params.append(needle)
@@ -729,7 +725,7 @@ class KnowledgeRepositoryMixin:
                 f"""SELECT r.*,d.source_id,d.title,d.source,d.source_origin,d.url,
                            d.module AS current_module,d.review_status,
                            d.category,d.product,d.created_at,d.updated_at AS document_updated_at,
-                           d.synced_at,d.markdown,d.ocr_text,d.local_path,d.assets_json,
+                           d.synced_at,d.markdown,d.local_path,d.assets_json,
                            CASE WHEN EXISTS(
                              SELECT 1 FROM classification_reviews newer
                              WHERE newer.document_id=r.document_id AND newer.id>r.id
@@ -802,7 +798,6 @@ class KnowledgeRepositoryMixin:
                     title=str(row["title"]),
                     url=str(row["url"]),
                     markdown=str(row["markdown"]),
-                    ocr_text=str(row["ocr_text"]),
                     module=str(row["module"]),
                     product=str(row["product"]),
                     category=str(row["category"]),
@@ -906,7 +901,6 @@ class KnowledgeRepositoryMixin:
                     if value
                 ),
                 "markdown": str(raw.get("content") or ""),
-                "ocr_text": "",
             }
             candidate = _score_search_row(
                 candidate_row,
@@ -1056,7 +1050,9 @@ class KnowledgeRepositoryMixin:
         with self.connect() as connection:
             params = [_fts_and_query(terms), *filter_params, exact_limit]
             for row in connection.execute(sql, params).fetchall():
-                rows_by_id[int(row["id"])] = dict(row)
+                candidate = dict(row)
+                candidate["ocr_text"] = ""
+                rows_by_id[int(candidate["id"])] = candidate
             results = _score_search_rows(rows_by_id.values(), terms)
             _expand_reference_results(
                 connection,
@@ -1068,7 +1064,9 @@ class KnowledgeRepositoryMixin:
             if len(results) < max(1, int(limit)):
                 params = [_fts_query(query), *filter_params, broad_limit]
                 for row in connection.execute(sql, params).fetchall():
-                    rows_by_id.setdefault(int(row["id"]), dict(row))
+                    candidate = dict(row)
+                    candidate["ocr_text"] = ""
+                    rows_by_id.setdefault(int(candidate["id"]), candidate)
                 results = _score_search_rows(rows_by_id.values(), terms)
                 _expand_reference_results(
                     connection,
@@ -1085,8 +1083,9 @@ class KnowledgeRepositoryMixin:
         )
         selected = results[: max(1, int(limit))]
         for result in selected:
+            result.pop("ocr_text", None)
             result["excerpt"] = search_excerpt(
-                result.get("markdown") or str(result.get("ocr_text") or ""),
+                result.get("markdown") or "",
                 terms,
             )
         return selected
@@ -1159,8 +1158,9 @@ class KnowledgeRepositoryMixin:
             ).fetchall()
         results = [dict(row) for row in rows]
         for result in results:
+            result.pop("ocr_text", None)
             result["excerpt"] = search_excerpt(
-                result.get("markdown") or str(result.get("ocr_text") or ""),
+                result.get("markdown") or "",
                 terms,
             )
         return results, total

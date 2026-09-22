@@ -115,13 +115,12 @@ Item {
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width < Theme.scaledGeometry(480) ? 2 : 4
+            columns: width < Theme.scaledGeometry(480) ? 2 : 3
             columnSpacing: Theme.scaledGeometry(6)
             Repeater {
                 model: [
                     { label: "Documentos", value: studio.dashboardMetrics.documents || "0" },
                     { label: "Pendentes", value: studio.dashboardMetrics.reviews || "0" },
-                    { label: "OCR", value: studio.dashboardMetrics.ocr || "0" },
                     { label: "Conversas", value: studio.dashboardMetrics.conversations || "0" }
                 ]
                 delegate: Rectangle {

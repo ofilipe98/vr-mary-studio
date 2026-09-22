@@ -102,10 +102,6 @@ class MarySettings:
         return self.root / "logs"
 
     @property
-    def tesseract_dir(self) -> Path:
-        return self.root / "tools" / "tesseract"
-
-    @property
     def movidesk_state_path(self) -> Path:
         return self.state_dir / "movidesk.json"
 
@@ -133,7 +129,6 @@ class MarySettings:
             self.work_dir,
             self.videos_dir,
             self.logs_dir,
-            self.tesseract_dir,
         ]
         for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV"):
             directories.extend(

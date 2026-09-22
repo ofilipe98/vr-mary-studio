@@ -1192,7 +1192,7 @@ class KnowledgeRouter:
     @staticmethod
     def _legacy_candidate_row(item: dict[str, Any]) -> dict[str, Any]:
         document_id = int(item.get("id") or 0)
-        content = str(item.get("markdown") or item.get("ocr_text") or "")
+        content = str(item.get("markdown") or "")
         entities = extract_knowledge_entities(
             f"{item.get('title') or ''}\n{content}"
         )

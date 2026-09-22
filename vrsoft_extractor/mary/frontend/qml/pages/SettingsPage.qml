@@ -524,14 +524,6 @@ Item {
                                         Layout.alignment: Qt.AlignRight
 
                                         VrButton {
-                                            objectName: "installOcrAction"
-                                            text: "Instalar OCR portátil"
-                                            variant: "secondary"
-                                            implicitHeight: Theme.scaledGeometry(32)
-                                            onClicked: studio.runSync("ocr")
-                                        }
-
-                                        VrButton {
                                             objectName: "openCodexAction"
                                             text: "Abrir no Codex"
                                             variant: "secondary"

@@ -34,6 +34,7 @@ from vrsoft_extractor.mary.frontend.chat import (
 )
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.models import RuntimeEvent
+from vrsoft_extractor.mary.settings_service import diagnostic_text
 
 pytestmark = pytest.mark.qml
 
@@ -1828,6 +1829,41 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', apps_qml)
         self.assertIn("chat.codeProcessingCoveredJars", apps_qml)
         self.assertIn("enabled: chat.codeProcessingRunning", apps_qml)
+
+    def test_ocr_removed_from_settings_and_dashboard_ui(self):
+        qml_root = MAIN_QML.parent
+        settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
+            encoding="utf-8"
+        )
+        dashboard_qml = (qml_root / "pages" / "DashboardPreview.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("install" + "OcrAction", settings_qml)
+        self.assertNotIn('runSync("' + "ocr" + '")', settings_qml)
+        self.assertNotIn("dashboardMetrics." + "ocr", dashboard_qml)
+        self.assertNotIn('label: "OCR"', dashboard_qml)
+        self.assertIn('label: "Documentos"', dashboard_qml)
+        self.assertIn('label: "Pendentes"', dashboard_qml)
+        self.assertIn('label: "Conversas"', dashboard_qml)
+        self.assertIn(
+            "columns: width < Theme.scaledGeometry(480) ? 2 : 3",
+            dashboard_qml,
+        )
+        knowledge_qml = (qml_root / "pages" / "KnowledgePage.qml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("OCR", knowledge_qml)
+
+    def test_diagnostic_text_does_not_mention_ocr(self):
+        with TemporaryDirectory() as temporary:
+            settings = self._settings(Path(temporary))
+
+            text = diagnostic_text(settings)
+
+        self.assertIn("Projeto Codex", text)
+        self.assertNotIn("OCR", text)
+        self.assertNotIn("Tesseract", text)
 
     def test_background_state_properties_do_not_block_or_poll_the_ui_thread(self):
         with TemporaryDirectory() as temporary:

@@ -64,7 +64,6 @@ class KnowledgeDocument:
     category: str = ""
     product: str = ""
     assets: list[str] = field(default_factory=list)
-    ocr_text: str = ""
     local_path: str = ""
 
     def __post_init__(self) -> None:

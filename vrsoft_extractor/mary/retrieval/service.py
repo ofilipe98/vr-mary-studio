@@ -242,7 +242,7 @@ class RetrievalService:
             with self._router.database.connect() as conn:
                 row = conn.execute("SELECT * FROM documents WHERE source=? AND source_id=?", (doc.source, doc.source_id)).fetchone()
             payload = self._document_payload(dict(row))
-            text = doc.markdown or doc.ocr_text or ""
+            text = doc.markdown
             content = text[cursor:cursor + limit]
             more = cursor + len(content) < len(text)
             return {**payload, "state": "available", "reference": reference, "content": content,

@@ -21,7 +21,7 @@ Item {
         VrPageHeader {
             Layout.fillWidth: true
             title: "Conhecimento"
-            subtitle: "Pesquisa local FTS5 em textos, metadados e OCR."
+            subtitle: "Pesquisa local FTS5 em textos e metadados."
         }
 
         Rectangle {

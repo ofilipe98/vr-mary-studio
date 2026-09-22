@@ -20,7 +20,6 @@ from .content import (
 from .db import MaryDatabase
 from .indexer import export_catalog
 from .models import KnowledgeDocument, SyncStats, utc_now
-from .ocr import OcrManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -37,7 +36,6 @@ class WikiSync:
         self.settings = settings
         self.database = database
         self.progress = progress or (lambda _message: None)
-        self.ocr = OcrManager(settings.tesseract_dir)
 
     def sync(self, limit: int | None = None) -> SyncStats:
         run_id = self.database.start_sync("wiki", "vrwiki")
@@ -169,16 +167,12 @@ class WikiSync:
         markdown, image_urls = html_to_markdown(parsed.get("text", ""), url)
         asset_paths: list[Path] = []
         replacements: dict[str, str] = {}
-        ocr_parts: list[str] = []
         for image_url in image_urls:
             try:
                 local = download_asset(image_url, self.settings.assets_dir / "wiki")
                 asset_paths.append(local)
                 relative = Path("..") / ".." / ".." / ".." / "assets" / "wiki" / local.name
                 replacements[image_url] = str(relative)
-                result = self.ocr.extract(local)
-                if result.text:
-                    ocr_parts.append(f"### {local.name}\n\n{result.text}")
             except Exception:
                 LOGGER.warning("Não foi possível baixar imagem Wiki: %s", image_url)
         markdown = replace_asset_urls(markdown, replacements)
@@ -205,11 +199,8 @@ class WikiSync:
             revision=revision,
             category=" / ".join(categories),
             assets=[str(path) for path in asset_paths],
-            ocr_text="\n\n".join(ocr_parts),
         )
-        document.content_hash = sha256_text(
-            "\n".join([document.title, markdown, document.ocr_text])
-        )
+        document.content_hash = sha256_text("\n".join([document.title, markdown]))
         return document
 
     def _api(self, params: dict[str, str]) -> dict[str, Any]:

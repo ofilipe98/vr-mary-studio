@@ -1,5 +1,4 @@
 import json
-import io
 import os
 import queue
 import shutil
@@ -34,6 +33,8 @@ from vrsoft_extractor.mary.content import (
     write_document,
 )
 from vrsoft_extractor.mary.db import MaryDatabase, _fts_query
+from vrsoft_extractor.mary.knowledge import split_knowledge_document
+from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.migration import build_manifest, migrate
 from vrsoft_extractor.mary.models import (
     APPROVAL_PRESETS,
@@ -54,11 +55,7 @@ from vrsoft_extractor.mary.providers import (
     normalize_effort,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
-from vrsoft_extractor.mary.ocr import (
-    _download_file,
-    latest_github_installer_url,
-    latest_windows_installer_url,
-)
+from vrsoft_extractor.mary.retrieval import RetrievalService
 from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
 from vrsoft_extractor.mary.search import search_terms
 from vrsoft_extractor.mary.workspace import initialize_workspace
@@ -625,6 +622,72 @@ class MaryCoreTest(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(versions, 1)
 
+    def test_legacy_ocr_column_is_cleared_when_document_is_upserted(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-1",
+            title="Documento legado",
+            url="https://example.com/wiki/legacy-ocr-1",
+            markdown="Conteúdo normal do documento.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-hash",
+        )
+        database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE source=? AND source_id=?",
+                ("SENTINELA-OCR-LEGADO", "wiki", "legacy-ocr-1"),
+            )
+
+        database.upsert_document(document)
+
+        with database.connect() as connection:
+            stored = connection.execute(
+                "SELECT ocr_text FROM documents WHERE source=? AND source_id=?",
+                ("wiki", "legacy-ocr-1"),
+            ).fetchone()
+        self.assertEqual(stored["ocr_text"], "")
+
+    def test_split_knowledge_document_indexes_only_provided_markdown(self):
+        chunks = split_knowledge_document(
+            "Título",
+            "# Seção\n\nConteúdo documental confiável.",
+            source="wiki",
+        )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("Conteúdo documental confiável.", chunks[0].content)
+        with self.assertRaises(TypeError):
+            split_knowledge_document("Título", "Conteúdo", "texto de imagem")
+
+    def test_legacy_ocr_text_is_not_returned_by_retrieval_read(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-read-1",
+            title="Documento legado",
+            url="https://example.com/wiki/legacy-read-1",
+            markdown="Conteúdo documental íntegro.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-read-hash",
+        )
+        database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE source=? AND source_id=?",
+                ("SENTINELA-OCR-LEGADO", "wiki", "legacy-read-1"),
+            )
+        service = RetrievalService(KnowledgeRouter(database, self.settings.root))
+
+        payload = service.read("wiki:legacy-read-1")
+
+        self.assertEqual(payload["state"], "available")
+        self.assertIn("Conteúdo documental íntegro.", payload["content"])
+        self.assertNotIn("SENTINELA-OCR-LEGADO", payload["content"])
+
     def test_search_page_reports_and_reaches_results_beyond_legacy_cap(self):
         database = MaryDatabase(self.settings.database_path)
         for index in range(501):
@@ -1068,39 +1131,6 @@ class MaryCoreTest(unittest.TestCase):
 
         self.assertFalse((self.settings.root / "fora").exists())
 
-    def test_incomplete_ocr_download_does_not_replace_existing_file(self):
-        target = self.root / "por.traineddata"
-        target.write_bytes(b"previous version")
-        with (
-            patch(
-                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
-                return_value=io.BytesIO(b"curto"),
-            ),
-            self.assertRaisesRegex(RuntimeError, "Download incompleto"),
-        ):
-            _download_file("https://example.com/por", target, minimum_bytes=100)
-
-        self.assertEqual(target.read_bytes(), b"previous version")
-
-    def test_oversized_ocr_download_does_not_replace_existing_file(self):
-        target = self.root / "eng.traineddata"
-        target.write_bytes(b"previous version")
-        with (
-            patch(
-                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
-                return_value=io.BytesIO(b"oversized"),
-            ),
-            self.assertRaisesRegex(RuntimeError, "excede o limite"),
-        ):
-            _download_file(
-                "https://example.com/eng",
-                target,
-                minimum_bytes=1,
-                maximum_bytes=3,
-            )
-
-        self.assertEqual(target.read_bytes(), b"previous version")
-
     def test_classification_audit_refreshes_review_without_changing_module(self):
         database = MaryDatabase(self.settings.database_path)
         document = KnowledgeDocument(
@@ -1373,6 +1403,25 @@ class MaryCoreTest(unittest.TestCase):
         self.assertNotIn("Signature", rendered)
         self.assertIn("id=7", rendered)
 
+    def test_canonical_markdown_has_no_ocr_sections(self):
+        document = KnowledgeDocument(
+            source="kb",
+            source_id="7",
+            title="Artigo",
+            url="https://example.com/artigo",
+            markdown="Conteúdo da fonte.",
+            module="PDV",
+            content_hash="abc",
+        )
+
+        rendered = canonical_markdown(document)
+
+        self.assertIn("Conteúdo da fonte.", rendered)
+        self.assertIn("## Procedência", rendered)
+        self.assertNotIn("OCR", rendered)
+        self.assertNotIn("Texto reconhecido", rendered)
+        self.assertNotIn("Texto extraído das imagens", rendered)
+
     def test_migration_is_allowlist_and_rejects_mojibake(self):
         (self.old / "AGENTS.md").write_text("# Mary", encoding="utf-8")
         (self.old / "VRWiki").mkdir()
@@ -1447,33 +1496,6 @@ class MaryCoreTest(unittest.TestCase):
         ):
             provider.list_models()
         self.assertEqual(rpc.call_args.kwargs["timeout"], 10)
-
-    def test_selects_latest_tesseract_windows_installer(self):
-        listing = (
-            '<a href="tesseract-ocr-w64-setup-5.9.0.exe">old</a>'
-            '<a href="tesseract-ocr-w64-setup-5.10.0.exe">new</a>'
-        )
-        url = latest_windows_installer_url(listing, "https://example.com/tesseract/")
-        self.assertEqual(
-            url,
-            "https://example.com/tesseract/tesseract-ocr-w64-setup-5.10.0.exe",
-        )
-
-    def test_selects_trusted_tesseract_installer_from_github_fallback(self):
-        url = latest_github_installer_url(
-            {
-                "assets": [
-                    {
-                        "name": "tesseract-ocr-w64-setup-5.4.0.exe",
-                        "browser_download_url": (
-                            "https://github.com/UB-Mannheim/tesseract/releases/download/"
-                            "v5.4.0/tesseract-ocr-w64-setup-5.4.0.exe"
-                        ),
-                    }
-                ]
-            }
-        )
-        self.assertTrue(url.endswith("tesseract-ocr-w64-setup-5.4.0.exe"))
 
     def test_codex_send_resumes_thread_after_app_restart(self):
         provider = CodexProvider()
