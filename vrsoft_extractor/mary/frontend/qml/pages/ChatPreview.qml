@@ -38,7 +38,7 @@ Item {
                 Layout.preferredWidth: Theme.scaledGeometry(24)
                 Layout.preferredHeight: Theme.scaledGeometry(24)
                 boxSize: 24
-                iconSize: 14
+                iconSize: Theme.iconCompact
                 projectLabel: entry.text
                 iconPath: entry.iconPath
                 iconKind: entry.iconKind
@@ -422,8 +422,8 @@ Item {
                                 anchors.left: parent.left
                                 anchors.leftMargin: Theme.scaledGeometry(7)
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Theme.scaledGeometry(16)
-                                height: Theme.scaledGeometry(16)
+                                width: Theme.iconSmall
+                                height: Theme.iconSmall
                                 kind: "search"
                                 foreground: conversationSearch.activeFocus
                                     ? Theme.palette.text : Theme.palette.mutedText
@@ -470,7 +470,7 @@ Item {
                                     objectName: "addProjectButton"
                                     implicitWidth: Theme.scaledGeometry(32)
                                     implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: 16
+                                    iconSize: Theme.iconSmall
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -487,7 +487,7 @@ Item {
                                     objectName: "newChatButton"
                                     implicitWidth: Theme.scaledGeometry(32)
                                     implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: 16
+                                    iconSize: Theme.iconSmall
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -564,8 +564,8 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: Theme.scaledGeometry(5)
                                 VrLineIcon {
-                                    Layout.preferredWidth: Theme.scaledGeometry(16)
-                                    Layout.preferredHeight: Theme.scaledGeometry(16)
+                                    Layout.preferredWidth: Theme.iconSmall
+                                    Layout.preferredHeight: Theme.iconSmall
                                     kind: conversationItem.editing ? "edit" : "folder"
                                     foreground: conversationItem.editing
                                         ? "#F3C74E" : Theme.palette.mutedText
@@ -617,8 +617,8 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: Theme.scaledGeometry(16)
-                                    Layout.preferredHeight: Theme.scaledGeometry(16)
+                                    Layout.preferredWidth: Theme.iconSmall
+                                    Layout.preferredHeight: Theme.iconSmall
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
@@ -662,7 +662,7 @@ Item {
                                     implicitWidth: Theme.scaledGeometry(18)
                                     implicitHeight: Theme.scaledGeometry(18)
                                     iconKind: "close"
-                                    iconSize: 10
+                                    iconSize: Theme.iconMicro
                                     round: true
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -1127,6 +1127,9 @@ Item {
                 y: composerCard.y - root.usagePanelHeight - height - 24
                 width: Math.min(parent.width - 48, 720)
                 spacing: Theme.scaledGeometry(8)
+                // T3 hierarchy: text-2xl (24) below 640px, text-3xl (30) above.
+                readonly property real headingSize: root.width < 640
+                    ? Theme.fontSizeLandingCompact : Theme.fontSizeLanding
                 RowLayout {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min(implicitWidth, parent.width)
@@ -1138,7 +1141,10 @@ Item {
                             ? "Como posso ajudar no projeto" : "Como posso ajudar no"
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(22)
+                        font.pixelSize: landing.headingSize
+                        font.weight: Font.Normal
+                        font.letterSpacing: Theme.tracking(landing.headingSize, Theme.trackingTight)
+                        lineHeight: Theme.headingLineHeight
                         wrapMode: Text.WordWrap
                     }
                     VrButton {
@@ -1166,17 +1172,58 @@ Item {
                             : "Como posso ajudar no seu projeto?"
                         Accessible.name: text
                         Accessible.description: "Selecionar a pasta do projeto"
-                        contentItem: Text {
-                            text: landingProjectButton.projectLabel.length ? "<u>"
-                                + landingProjectButton.projectLabel.replace(/&/g, "&amp;")
-                                    .replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</u>?"
-                                : "<u>seu projeto</u>?"
-                            textFormat: Text.RichText
-                            color: Theme.palette.text
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(22)
-                            horizontalAlignment: Text.AlignLeft
-                            wrapMode: Text.WordWrap
+                        contentItem: Item {
+                            implicitWidth: linkText.implicitWidth
+                            implicitHeight: linkText.implicitHeight
+                            Text {
+                                id: linkText
+                                text: landingProjectButton.projectLabel.length
+                                    ? "<font color=\"" + Theme.palette.mutedText.toString() + "\">"
+                                        + landingProjectButton.projectLabel.replace(/&/g, "&amp;")
+                                            .replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                                        + "</font>?"
+                                    : "<font color=\"" + Theme.palette.mutedText.toString() + "\">seu projeto</font>?"
+                                textFormat: Text.RichText
+                                color: Theme.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: landing.headingSize
+                                font.weight: Font.Normal
+                                font.letterSpacing: Theme.tracking(landing.headingSize, Theme.trackingTight)
+                                horizontalAlignment: Text.AlignLeft
+                                wrapMode: Text.WordWrap
+                            }
+                            // T3 underlines only the project picker, with a
+                            // dotted border. QML rich text has no dotted
+                            // underline, so draw it under the measured name.
+                            TextMetrics {
+                                id: linkNameMetrics
+                                font: linkText.font
+                                text: landingProjectButton.projectLabel.length
+                                    ? landingProjectButton.projectLabel : "seu projeto"
+                            }
+                            Canvas {
+                                id: linkDots
+                                anchors.left: linkText.left
+                                anchors.top: linkText.bottom
+                                width: linkNameMetrics.advanceWidth
+                                height: Theme.scaledGeometry(2)
+                                visible: linkText.lineCount === 1 && width > 2
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.reset()
+                                    ctx.fillStyle = Theme.palette.mutedText
+                                    for (var x = 1; x < width; x += 3)
+                                        ctx.fillRect(x, 0, 1, 1)
+                                }
+                                Connections {
+                                    target: linkNameMetrics
+                                    function onAdvanceWidthChanged() { linkDots.requestPaint() }
+                                }
+                                Connections {
+                                    target: frontend
+                                    function onThemeChanged() { linkDots.requestPaint() }
+                                }
+                            }
                         }
                         onClicked: {
                             if (landingProjectMenu.opened) {
@@ -1246,7 +1293,8 @@ Item {
                     text: root.greetingPrompt()
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(13)
+                    font.pixelSize: Theme.fontSizeControl
+                    lineHeight: Theme.bodyLineHeight
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                 }
@@ -1325,8 +1373,8 @@ Item {
                     spacing: Theme.scaledGeometry(6)
                     VrLineIcon {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Theme.scaledGeometry(12)
-                        height: Theme.scaledGeometry(12)
+                        width: Theme.iconMicro
+                        height: Theme.iconMicro
                         kind: "chevronDown"
                         foreground: Theme.palette.mutedText
                     }
@@ -1639,8 +1687,8 @@ Item {
                                         id: tabContent
                                         spacing: Theme.scaledGeometry(7)
                                         VrLineIcon {
-                                            Layout.preferredWidth: Theme.scaledGeometry(17)
-                                            Layout.preferredHeight: Theme.scaledGeometry(17)
+                                            Layout.preferredWidth: Theme.iconSmall
+                                            Layout.preferredHeight: Theme.iconSmall
                                             kind: surfaceTab.modelData.kind
                                             foreground: surfaceTab.selected
                                                 ? Theme.palette.text : Theme.palette.mutedText
@@ -1653,8 +1701,8 @@ Item {
                                             font.weight: Font.DemiBold
                                         }
                                         VrLineIcon {
-                                            Layout.preferredWidth: Theme.scaledGeometry(14)
-                                            Layout.preferredHeight: Theme.scaledGeometry(14)
+                                            Layout.preferredWidth: Theme.iconCompact
+                                            Layout.preferredHeight: Theme.iconCompact
                                             kind: "close"
                                             foreground: Theme.palette.mutedText
                                             visible: surfaceTab.hovered || surfaceTab.selected
@@ -1711,7 +1759,7 @@ Item {
                         anchors.rightMargin: Theme.scaledGeometry(6)
                         implicitWidth: Theme.scaledGeometry(32)
                         implicitHeight: Theme.scaledGeometry(32)
-                        iconSize: 17
+                        iconSize: Theme.iconSmall
                         iconKind: "panelRight"
                         foreground: Theme.palette.mutedText
                         Accessible.name: "Recolher painel direito"
@@ -1754,8 +1802,8 @@ Item {
                                     anchors.rightMargin: Theme.scaledGeometry(8)
                                     spacing: Theme.scaledGeometry(8)
                                     VrLineIcon {
-                                        Layout.preferredWidth: Theme.scaledGeometry(16)
-                                        Layout.preferredHeight: Theme.scaledGeometry(16)
+                                        Layout.preferredWidth: Theme.iconSmall
+                                        Layout.preferredHeight: Theme.iconSmall
                                         kind: surfaceChoice.modelData.kind
                                         foreground: Theme.palette.mutedText
                                     }
@@ -2035,8 +2083,8 @@ Item {
                                     spacing: Theme.scaledGeometry(5)
                                     VrLineIcon {
                                         visible: fileTreeRow.modelData.isDirectory === true
-                                        Layout.preferredWidth: Theme.scaledGeometry(12)
-                                        Layout.preferredHeight: Theme.scaledGeometry(12)
+                                        Layout.preferredWidth: Theme.iconMicro
+                                        Layout.preferredHeight: Theme.iconMicro
                                         kind: root.expandedFileFolders[fileTreeRow.modelData.label]
                                             ? "chevronDown" : "chevronRight"
                                         foreground: Theme.palette.mutedText
@@ -2047,8 +2095,8 @@ Item {
                                         Layout.preferredHeight: Theme.scaledGeometry(11)
                                     }
                                     VrLineIcon {
-                                        Layout.preferredWidth: Theme.scaledGeometry(15)
-                                        Layout.preferredHeight: Theme.scaledGeometry(15)
+                                        Layout.preferredWidth: Theme.iconCompact
+                                        Layout.preferredHeight: Theme.iconCompact
                                         kind: fileTreeRow.modelData.isDirectory === true ? "folder" : "files"
                                         foreground: fileTreeRow.modelData.isDirectory === true
                                             ? Theme.palette.brandOrange : Theme.palette.mutedText
@@ -2458,7 +2506,7 @@ Item {
                             Layout.preferredWidth: Theme.scaledGeometry(30)
                             Layout.preferredHeight: Theme.scaledGeometry(30)
                             boxSize: 30
-                            iconSize: 17
+                            iconSize: Theme.iconSmall
                             projectLabel: String(newProjectItem.modelData.label || "")
                             iconPath: String(newProjectItem.modelData.icon || "")
                             iconKind: String(newProjectItem.modelData.iconKind || "")
@@ -2647,8 +2695,8 @@ Item {
                         anchors.rightMargin: Theme.scaledGeometry(9)
                         spacing: Theme.scaledGeometry(9)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.scaledGeometry(18)
-                            Layout.preferredHeight: Theme.scaledGeometry(18)
+                            Layout.preferredWidth: Theme.iconMedium
+                            Layout.preferredHeight: Theme.iconMedium
                             kind: sourceRow.modelData.icon
                             foreground: sourceRow.modelData.enabled
                                 ? Theme.palette.text : Theme.palette.mutedText
@@ -2794,7 +2842,7 @@ Item {
                     color: menuHover.hovered ? Theme.palette.chatControl : "transparent"
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: Theme.scaledGeometry(9); anchors.rightMargin: Theme.scaledGeometry(9); spacing: Theme.scaledGeometry(8)
-                        VrLineIcon { Layout.preferredWidth: Theme.scaledGeometry(16); Layout.preferredHeight: Theme.scaledGeometry(16); kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
+                        VrLineIcon { Layout.preferredWidth: Theme.iconSmall; Layout.preferredHeight: Theme.iconSmall; kind: conversationAction.modelData.kind; foreground: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.mutedText }
                         Text { Layout.fillWidth: true; text: conversationAction.modelData.action === "pin" ? (root.conversationMenuConversationId ? (root.chatBridge.isConversationPinned(root.conversationMenuConversationId) ? "Desafixar conversa" : "Fixar conversa") : conversationAction.modelData.label) : conversationAction.modelData.label; color: conversationAction.modelData.action === "delete" ? Theme.palette.danger : Theme.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold }
                     }
                     HoverHandler { id: menuHover }
@@ -3054,8 +3102,8 @@ Item {
                     Layout.alignment: Qt.AlignTop
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: Theme.scaledGeometry(18)
-                        height: Theme.scaledGeometry(18)
+                        width: Theme.iconMedium
+                        height: Theme.iconMedium
                         kind: "trash"
                         foreground: Theme.palette.danger
                     }
@@ -3083,7 +3131,7 @@ Item {
                 VrIconButton {
                     Layout.alignment: Qt.AlignTop
                     iconKind: "close"
-                    iconSize: 10
+                    iconSize: Theme.iconMicro
                     implicitWidth: Theme.scaledGeometry(26)
                     implicitHeight: Theme.scaledGeometry(26)
                     foreground: Theme.palette.mutedText
@@ -3417,8 +3465,7 @@ Item {
             {label:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
             {label:"/usage-limits",description:"Ver limites de uso e quotas do provedor",action:"usage-limits"},
             {label:"/tools",description:"Ver tools e MCP",action:"tools"},
-            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"},
-            {label:"/pesquisa",description:"Pesquisa multiagente: /pesquisa <pergunta>",action:"pesquisa"}
+            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
@@ -3510,11 +3557,6 @@ Item {
         else if (item.action === "effort" && root.chatBridge.supportsReasoning) effortSelector.openPicker()
         else if (item.action === "permissions") approvalSelector.openPicker()
         else if (item.action === "vr") root.chatBridge.cycleVrMode()
-        else if (item.action === "pesquisa") {
-            composerInput.text = "/pesquisa "
-            composerInput.cursorPosition = composerInput.length
-            composerInput.forceActiveFocus()
-        }
         else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
         else if (item.action === "reference") {
             var before = composerInput.text.substring(0, item.start)

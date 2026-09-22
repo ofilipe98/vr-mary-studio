@@ -656,7 +656,7 @@ Item {
                                                 objectName: "copyProviderPath"
                                                 implicitWidth: Theme.scaledGeometry(28)
                                                 implicitHeight: Theme.scaledGeometry(28)
-                                                iconSize: 14
+                                                iconSize: Theme.iconCompact
                                                 iconKind: root.copied ? "check" : "copy"
                                                 opacity: pathHover.hovered || hovered || activeFocus || root.copied ? 1 : 0.6
                                                 Accessible.name: root.copied ? "Caminho copiado" : "Copiar caminho do execut\u00e1vel"

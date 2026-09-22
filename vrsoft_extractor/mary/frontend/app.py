@@ -158,12 +158,12 @@ def create_engine(
     # Single rendering policy: global follows the stored fontSmoothing so it
     # matches Theme.textRenderType from the first frame.
     try:
-        smoothing = bool(getattr(bridge, "fontSmoothing", True))
+        mode = str(bridge.textRenderingMode)
     except Exception:
-        smoothing = True
+        mode = "native" if bool(getattr(bridge, "fontSmoothing", True)) else "qt"
     QQuickWindow.setTextRenderType(
         QQuickWindow.TextRenderType.NativeTextRendering
-        if smoothing
+        if mode == "native"
         else QQuickWindow.TextRenderType.QtTextRendering
     )
     if bootstrap_bridge is None:
@@ -196,7 +196,8 @@ def schedule_antigravity_restore(studio_bridge: StudioBridge | None) -> None:
 def _apply_application_font(app: QApplication) -> None:
     """Match the current Studio typography and stabilize headless rendering."""
 
-    QQuickWindow.setTextRenderType(QQuickWindow.TextRenderType.NativeTextRendering)
+    # The text render type is applied once the bridge exists (create_engine),
+    # from the appearance/text_rendering preference.
 
     if sys.platform == "win32":
         for candidate in (

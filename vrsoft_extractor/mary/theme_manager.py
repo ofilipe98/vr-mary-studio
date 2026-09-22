@@ -49,6 +49,11 @@ DEFAULT_CODE_FONT_SIZE = 13        # 10 to 18
 DEFAULT_TERMINAL_FONT_SIZE = 12    # 8 to 20
 DEFAULT_WORD_WRAP = True
 DEFAULT_FONT_SMOOTHING = True
+# Windows defaults to the Qt rasterizer (subpixel positioning + vertical
+# hinting), the closest match to T3/Chromium on Windows; ClearType stays
+# available as "native". macOS keeps the legacy fontSmoothing contract.
+DEFAULT_TEXT_RENDERING = "qt" if sys.platform == "win32" else "native"
+TEXT_RENDERING_MODES = ("qt", "native")
 DEFAULT_ENVIRONMENT_IDENTIFICATION = "pill"
 
 
@@ -615,6 +620,7 @@ class ThemeManager(QObject):
     glassOpacityChanged = Signal()
     motionChanged = Signal()
     typographyChanged = Signal()
+    textRenderingChanged = Signal()
     themeImportStatus = Signal(bool, str)  # success, message
     environmentIdentificationChanged = Signal()
 
@@ -688,6 +694,15 @@ class ThemeManager(QObject):
         )
         self._font_smoothing = bool(
             p.value("appearance/font_smoothing", DEFAULT_FONT_SMOOTHING) in (True, "true", "1", 1)
+        )
+        saved_rendering = str(
+            p.value("appearance/text_rendering", DEFAULT_TEXT_RENDERING)
+            or DEFAULT_TEXT_RENDERING
+        ).strip().lower()
+        self._text_rendering = (
+            saved_rendering
+            if saved_rendering in TEXT_RENDERING_MODES
+            else DEFAULT_TEXT_RENDERING
         )
         self._environment_identification = str(
             p.value("appearance/environment_identification", DEFAULT_ENVIRONMENT_IDENTIFICATION) or DEFAULT_ENVIRONMENT_IDENTIFICATION
@@ -906,6 +921,13 @@ class ThemeManager(QObject):
     def fontSmoothing(self) -> bool:  # noqa: N802
         return self._font_smoothing
 
+    @Property(str, notify=textRenderingChanged)
+    def textRenderingMode(self) -> str:  # noqa: N802
+        """Effective text rendering mode: "qt" or "native"."""
+        if sys.platform == "darwin":
+            return "native" if self._font_smoothing else "qt"
+        return self._text_rendering
+
     @Property(bool, notify=typographyChanged)
     def isMacOS(self) -> bool:  # noqa: N802
         return sys.platform == "darwin"
@@ -1106,6 +1128,17 @@ class ThemeManager(QObject):
         self._preferences.setValue("appearance/font_smoothing", val)
         self._preferences.sync()
         self.typographyChanged.emit()
+        self.textRenderingChanged.emit()
+
+    @Slot(str)
+    def setTextRenderingMode(self, mode: str) -> None:  # noqa: N802
+        val = str(mode or "").strip().lower()
+        if val not in TEXT_RENDERING_MODES or val == self._text_rendering:
+            return
+        self._text_rendering = val
+        self._preferences.setValue("appearance/text_rendering", val)
+        self._preferences.sync()
+        self.textRenderingChanged.emit()
 
     @Slot(bool)
     def setWordWrap(self, enabled: bool) -> None:  # noqa: N802
@@ -1135,6 +1168,8 @@ class ThemeManager(QObject):
             self.setTerminalTypography("", DEFAULT_TERMINAL_FONT_SIZE)
         elif setting_name == "wordWrap":
             self.setWordWrap(DEFAULT_WORD_WRAP)
+        elif setting_name == "textRendering":
+            self.setTextRenderingMode(DEFAULT_TEXT_RENDERING)
         elif setting_name in ("environment", "environmentIdentification"):
             self.setEnvironmentIdentification(DEFAULT_ENVIRONMENT_IDENTIFICATION)
 

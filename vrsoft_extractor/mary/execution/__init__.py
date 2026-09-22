@@ -20,8 +20,6 @@ from .cancellation import (
 )
 from .contracts import (
     ExecutionContext,
-    ResearchFanoutPlan,
-    ResearchFanoutResult,
     ResearchStagePlan,
     StageExecutionResult,
     StageStatus,
@@ -44,8 +42,6 @@ __all__ = [
     "ExecutionContext",
     "ExecutionCancelledError",
     "ExecutionRunner",
-    "ResearchFanoutPlan",
-    "ResearchFanoutResult",
     "ResearchRepository",
     "ResearchStagePlan",
     "StageExecutionResult",

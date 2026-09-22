@@ -47,8 +47,8 @@ Button {
         id: pickerContentRow
         spacing: control.compact ? 5 : 7
         VrProviderIcon {
-            Layout.preferredWidth: control.compact ? 14 : 17
-            Layout.preferredHeight: control.compact ? 14 : 17
+            Layout.preferredWidth: control.compact ? Theme.iconCompact : Theme.iconSmall
+            Layout.preferredHeight: control.compact ? Theme.iconCompact : Theme.iconSmall
             provider: control.currentItem.provider || "codex"
         }
         Text {
@@ -58,14 +58,14 @@ Button {
                 ? (control.hovered || pickerPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
                 : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
             elide: control.compact ? Text.ElideNone : Text.ElideRight
             verticalAlignment: Text.AlignVCenter
         }
         VrLineIcon {
-            Layout.preferredWidth: control.compact ? 10 : 11
-            Layout.preferredHeight: control.compact ? 10 : 11
+            Layout.preferredWidth: Theme.iconMicro
+            Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
             foreground: control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
@@ -155,8 +155,8 @@ Button {
                                 VrLineIcon {
                                     visible: modelData.kind.length > 0
                                     anchors.centerIn: parent
-                                    width: Theme.scaledGeometry(18)
-                                    height: Theme.scaledGeometry(18)
+                                    width: Theme.iconMedium
+                                    height: Theme.iconMedium
                                     kind: modelData.kind
                                     foreground: modelData.key === "favorites" && control.providerFilter === "favorites"
                                         ? Theme.palette.brandOrange : Theme.palette.text
@@ -196,8 +196,8 @@ Button {
                         anchors.rightMargin: Theme.scaledGeometry(10)
                         spacing: Theme.scaledGeometry(7)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.scaledGeometry(18)
-                            Layout.preferredHeight: Theme.scaledGeometry(18)
+                            Layout.preferredWidth: Theme.iconMedium
+                            Layout.preferredHeight: Theme.iconMedium
                             kind: "search"
                             foreground: Theme.palette.mutedText
                         }
@@ -293,8 +293,8 @@ Button {
                                 }
                             }
                             VrLineIcon {
-                                Layout.preferredWidth: Theme.scaledGeometry(16)
-                                Layout.preferredHeight: Theme.scaledGeometry(16)
+                                Layout.preferredWidth: Theme.iconSmall
+                                Layout.preferredHeight: Theme.iconSmall
                                 kind: "chevronRight"
                             }
                         }

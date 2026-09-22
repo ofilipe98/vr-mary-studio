@@ -64,7 +64,7 @@ Rectangle {
             visible: !root.panelVisible
             implicitWidth: Theme.scaledGeometry(32)
             implicitHeight: Theme.scaledGeometry(32)
-            iconSize: 17
+            iconSize: Theme.iconSmall
             iconKind: "panelRight"
             foreground: Theme.palette.mutedText
             Accessible.name: "Expandir painel direito"

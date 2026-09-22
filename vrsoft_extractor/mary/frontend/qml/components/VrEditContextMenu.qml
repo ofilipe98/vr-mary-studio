@@ -47,7 +47,7 @@ Menu {
                 text: entry.text
                 color: entry.enabled ? Theme.palette.text : Theme.palette.subtleText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12.5)
+                font.pixelSize: Theme.fontSizeControl
                 renderType: Theme.textRenderType
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter

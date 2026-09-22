@@ -98,7 +98,7 @@ Item {
             implicitWidth: 32
             implicitHeight: 32
             iconKind: "panelLeft"
-            iconSize: 16
+            iconSize: Theme.iconSmall
             focusPolicy: Qt.NoFocus
             foreground: Theme.palette.mutedText
             Accessible.name: (root.chatPage && root.chatPage.conversationSidebarVisible)
@@ -199,7 +199,7 @@ Item {
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
             boxSize: 20
-            iconSize: 12
+            iconSize: Theme.iconMicro
             projectLabel: {
                 if (!root.chatPage || !root.chatPage.chatBridge) return ""
                 var bridge = root.chatPage.chatBridge
@@ -352,7 +352,7 @@ Item {
             visible: root.isChatPage && root.chatPage !== null
             implicitWidth: 32
             implicitHeight: 32
-            iconSize: 16
+            iconSize: Theme.iconSmall
             iconKind: "panelRight"
             focusPolicy: Qt.NoFocus
             foreground: (root.chatPage && root.chatPage.surfaceVisible)

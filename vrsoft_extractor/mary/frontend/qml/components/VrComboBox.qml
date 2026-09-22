@@ -60,7 +60,7 @@ ComboBox {
             VrLineIcon {
                 visible: control.showSettingsAction
                 Layout.preferredWidth: visible ? 14 : 0
-                Layout.preferredHeight: Theme.scaledGeometry(14)
+                Layout.preferredHeight: Theme.iconCompact
                 kind: "folder"
                 foreground: Theme.palette.mutedText
             }
@@ -84,8 +84,8 @@ ComboBox {
                 Layout.preferredHeight: Theme.scaledGeometry(30)
                 VrLineIcon {
                     anchors.centerIn: parent
-                    width: Theme.scaledGeometry(14)
-                    height: Theme.scaledGeometry(14)
+                    width: Theme.iconCompact
+                    height: Theme.iconCompact
                     kind: "settings"
                     foreground: settingsMouse.containsMouse
                         ? Theme.palette.text : Theme.palette.mutedText

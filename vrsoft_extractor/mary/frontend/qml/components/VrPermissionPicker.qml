@@ -43,8 +43,8 @@ Button {
         id: compactRow
         spacing: control.compact ? 5 : 7
         VrLineIcon {
-            Layout.preferredWidth: control.compact ? 13 : 16
-            Layout.preferredHeight: control.compact ? 13 : 16
+            Layout.preferredWidth: control.compact ? Theme.iconCompact : Theme.iconSmall
+            Layout.preferredHeight: control.compact ? Theme.iconCompact : Theme.iconSmall
             kind: control.permissionIconKind(control.currentItem.value)
             foreground: Theme.palette.mutedText
         }
@@ -54,12 +54,12 @@ Button {
                 ? (control.hovered || optionsPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
                 : (control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
             font.family: Theme.fontFamily
-            font.pixelSize: control.compact ? Theme.fontSize(11.5) : Theme.fontSize(12.5)
+            font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
         }
         VrLineIcon {
-            Layout.preferredWidth: control.compact ? 10 : 11
-            Layout.preferredHeight: control.compact ? 10 : 11
+            Layout.preferredWidth: Theme.iconMicro
+            Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
             foreground: control.hovered || optionsPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
         }
@@ -117,8 +117,8 @@ Button {
                         anchors.rightMargin: Theme.scaledGeometry(8)
                         spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.scaledGeometry(17)
-                            Layout.preferredHeight: Theme.scaledGeometry(17)
+                            Layout.preferredWidth: Theme.iconSmall
+                            Layout.preferredHeight: Theme.iconSmall
                             Layout.alignment: Qt.AlignTop
                             Layout.topMargin: Theme.scaledGeometry(5)
                             kind: control.permissionIconKind(modelData.value)

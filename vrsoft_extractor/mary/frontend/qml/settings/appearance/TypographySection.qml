@@ -63,6 +63,19 @@ ColumnLayout {
             VrSwitch { thumbColor: Theme.palette.background; inactiveColor: Theme.palette.controlBorder || Theme.palette.border; checked: frontend.fontSmoothing; onToggled: frontend.setFontSmoothing(checked) }
         }
         AppearanceRow {
+            visible: !frontend.isMacOS
+            title: "Rasterização nativa"; description: "ClearType do Windows; desativado usa o rasterizador do Qt (texto mais uniforme, como no T3 Code)."
+            resetKey: "textRendering"; resetVisible: frontend.textRenderingMode !== "qt"
+            VrSwitch {
+                objectName: "appearanceNativeRenderingSwitch"
+                thumbColor: Theme.palette.background
+                inactiveColor: Theme.palette.controlBorder || Theme.palette.border
+                checked: frontend.textRenderingMode === "native"
+                Accessible.name: "Rasterização nativa (ClearType)"
+                onToggled: frontend.setTextRenderingMode(checked ? "native" : "qt")
+            }
+        }
+        AppearanceRow {
             title: "Quebra de linha"; description: "Quebre linhas longas em códigos, tabelas, diferenças e prévias de arquivos."
             resetKey: "wordWrap"; resetVisible: !frontend.wordWrap; divider: false
             VrSwitch { objectName: "appearanceWordWrapSwitch"; thumbColor: Theme.palette.background; inactiveColor: Theme.palette.controlBorder || Theme.palette.border; checked: frontend.wordWrap; onToggled: frontend.setWordWrap(checked) }

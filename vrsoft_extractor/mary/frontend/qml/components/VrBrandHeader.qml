@@ -25,7 +25,7 @@ Item {
             implicitWidth: 28
             implicitHeight: 28
             iconKind: "panelLeft"
-            iconSize: 16
+            iconSize: Theme.iconSmall
             foreground: root.toggleColor
             Accessible.name: "Voltar para o Chat VR"
             onClicked: {

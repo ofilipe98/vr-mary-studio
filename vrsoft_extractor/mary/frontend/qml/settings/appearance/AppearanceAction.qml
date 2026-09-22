@@ -26,7 +26,7 @@ Button {
         VrLineIcon {
             visible: control.iconKind !== ""
             kind: control.iconKind
-            Layout.preferredWidth: Theme.scaledGeometry(14); Layout.preferredHeight: Theme.scaledGeometry(14)
+            Layout.preferredWidth: Theme.iconCompact; Layout.preferredHeight: Theme.iconCompact
             foreground: Theme.palette.mutedText
         }
         Text {

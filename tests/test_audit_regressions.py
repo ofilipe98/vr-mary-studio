@@ -12,7 +12,7 @@ import test_mary_vr_ultra as ultra
 from vrsoft_extractor.endoo_client import EndooReadClient, EndooError, EndooPermissionDenied
 from vrsoft_extractor.mary.models import RuntimeEvent, EvidenceBundle, EvidenceCandidate, QueryProfile
 from vrsoft_extractor.mary.providers import CodexProvider
-from vrsoft_extractor.mary.research_fanout import parse_researcher_output
+from vrsoft_extractor.mary.research_fanout import parse_source_researcher_output
 from vrsoft_extractor.mary.supervision import (
     FinalDraft, ResponseContract, validate_fanout_draft,
 )
@@ -222,9 +222,9 @@ def test_codex_reconnect_does_not_reaccept_failed_turn():
 
 @pytest.mark.parametrize("status,success", [("found", True), ("exhausted", True), ("unavailable", False)])
 def test_researcher_status_and_unsupported_claims_are_not_promoted(status, success):
-    result = parse_researcher_output(json.dumps({"source_status": status, "findings": [
+    result = parse_source_researcher_output(json.dumps({"source_status": status, "findings": [
         {"claim": "UNSUPPORTED", "kind": "fact", "confidence": .99, "evidence_ids": ["unknown"]}
-    ]}), worker_id="w", worker_name="W", module="Fiscal", allowed_evidence_ids=("known",))
+    ]}), worker_id="ultra_wiki", worker_name="Agente Wiki", source="wiki", allowed_evidence_ids=("known",))
     assert result.succeeded is success
     assert result.report.source_report.status == status
     if status == "found":

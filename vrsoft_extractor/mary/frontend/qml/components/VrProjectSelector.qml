@@ -138,7 +138,7 @@ Button {
             width: 22
             height: 22
             boxSize: 22
-            iconSize: 16
+            iconSize: Theme.iconSmall
             flat: true
             projectLabel: String(control.currentItem.label || "")
             iconPath: String(control.currentItem.icon || "")
@@ -157,7 +157,7 @@ Button {
                 Layout.preferredWidth: 24
                 Layout.preferredHeight: 24
                 boxSize: 24
-                iconSize: 15
+                iconSize: Theme.iconCompact
                 projectLabel: String(control.currentItem.label || "")
                 iconPath: String(control.currentItem.icon || "")
                 iconKind: String(control.currentItem.iconKind || control.currentItem.icon_kind || "")
@@ -359,7 +359,7 @@ Button {
                             Layout.preferredWidth: 20
                             Layout.preferredHeight: 20
                             boxSize: 20
-                            iconSize: 14
+                            iconSize: Theme.iconCompact
                             flat: true
                             projectLabel: String(projectRow.modelData.label || "")
                             iconPath: String(projectRow.modelData.icon || "")
@@ -392,7 +392,7 @@ Button {
                             Layout.preferredWidth: visible ? 24 : 0
                             Layout.preferredHeight: 24
                             iconKind: "settings"
-                            iconSize: 14
+                            iconSize: Theme.iconCompact
                             foreground: hovered ? "#ffffff" : Qt.rgba(150/255, 156/255, 166/255, 1.0)
                             Accessible.name: "Configurar " + projectRow.modelData.label
                             onClicked: projectRow.activateSettings()

@@ -360,10 +360,10 @@ class KnowledgeRouter:
             rows: list[dict[str, Any]] = []
             executed_queries: tuple[str, ...] = ()
             errors: list[str] = []
-            # The Wiki agent always validates both origins, even when one is
-            # globally disabled. That exception belongs exclusively to the
-            # Ultra per-source fan-out; _enabled_origins and route() keep
-            # honoring the global origin configuration.
+            # Wiki source-wide retrieval always validates both origins, even
+            # when one is globally disabled. Normal VR and the Ultra
+            # per-source fan-out share this exception; _enabled_origins and
+            # route() keep honoring the global origin configuration.
             origins = WIKI_SOURCE_ORIGINS
             for origin in origins:
                 try:

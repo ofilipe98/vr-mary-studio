@@ -951,7 +951,7 @@ class OrchestratorBenchmarkExecutor:
         code_events = [
             event
             for event in events
-            if str(event.payload.get("worker_id") or "") == "fanout_codigo"
+            if str(event.payload.get("worker_id") or "") == "ultra_code"
         ]
         code_citations = [
             str(citation)

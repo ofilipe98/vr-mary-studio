@@ -18,5 +18,4 @@ def fast_research(request, monkeypatch):
         return
     from vrsoft_extractor.mary.execution import runner
 
-    monkeypatch.setattr(runner, "RESEARCH_STAGGER_SECONDS", 0.0)
     monkeypatch.setattr(runner, "RESEARCH_RETRY_BACKOFF_SECONDS", 0.0)

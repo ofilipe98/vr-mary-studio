@@ -113,7 +113,6 @@ def test_p0_1_composer_key_contracts_simulation():
             if text.startswith("/"):
                 # Slash commands
                 self.suggestions.append({"type": "command", "name": "usage-limits", "description": "Limites de uso"})
-                self.suggestions.append({"type": "command", "name": "pesquisa", "description": "Pesquisa local"})
                 for s in available_skills:
                     self.suggestions.append({"type": "skill", "name": s["name"], "skill": s})
                 self.visible = len(self.suggestions) > 0

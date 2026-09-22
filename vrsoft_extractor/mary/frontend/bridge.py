@@ -92,6 +92,7 @@ class FrontendBridge(QObject):
     uiScaleChanged = Signal()
     hardwareAccelerationChanged = Signal()
     typographyChanged = Signal()
+    textRenderingChanged = Signal()
     browserPreferencesChanged = Signal()
 
     # T3 Code Appearance Parity Signals
@@ -133,6 +134,7 @@ class FrontendBridge(QObject):
         self._theme_manager.motionChanged.connect(self.motionChanged)
         self._theme_manager.motionChanged.connect(self.reduceMotionChanged)
         self._theme_manager.typographyChanged.connect(self.typographyChanged)
+        self._theme_manager.textRenderingChanged.connect(self.textRenderingChanged)
         self._theme_manager.themeImportStatus.connect(self.themeImportStatus)
         self._theme_manager.environmentIdentificationChanged.connect(self.environmentIdentificationChanged)
 
@@ -382,6 +384,10 @@ class FrontendBridge(QObject):
     def fontSmoothing(self) -> bool:  # noqa: N802
         return self._theme_manager.fontSmoothing
 
+    @Property(str, notify=textRenderingChanged)
+    def textRenderingMode(self) -> str:  # noqa: N802
+        return self._theme_manager.textRenderingMode
+
     @Property(bool, notify=typographyChanged)
     def isMacOS(self) -> bool:  # noqa: N802
         return self._theme_manager.isMacOS
@@ -521,14 +527,24 @@ class FrontendBridge(QObject):
     def setFontSmoothing(self, enabled: bool) -> None:  # noqa: N802
         self._theme_manager.setFontSmoothing(enabled)
         # Single rendering policy: keep the QQuickWindow global in sync with
-        # Theme.textRenderType so plain Texts (global) and shared components
+        # the effective mode so plain Texts (global) and shared components
         # (Theme.textRenderType) never diverge without explicit reason.
+        self._apply_text_render_type()
+
+    @Slot(str)
+    def setTextRenderingMode(self, mode: str) -> None:  # noqa: N802
+        self._theme_manager.setTextRenderingMode(mode)
+        self._apply_text_render_type()
+
+    def _apply_text_render_type(self) -> None:
+        """Apply the effective render mode to the QQuickWindow default."""
         try:
             from PySide6.QtQuick import QQuickWindow
 
+            native = self._theme_manager.textRenderingMode == "native"
             QQuickWindow.setTextRenderType(
                 QQuickWindow.TextRenderType.NativeTextRendering
-                if enabled
+                if native
                 else QQuickWindow.TextRenderType.QtTextRendering
             )
         except Exception:

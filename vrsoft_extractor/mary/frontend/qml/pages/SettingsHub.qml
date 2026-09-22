@@ -301,10 +301,10 @@ Item {
 
                     VrLineIcon {
                         anchors.left: parent.left
-                        anchors.leftMargin: Theme.scaledGeometry(10)
+                        anchors.leftMargin: Theme.iconMicro
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Theme.scaledGeometry(16)
-                        height: Theme.scaledGeometry(16)
+                        width: Theme.iconSmall
+                        height: Theme.iconSmall
                         kind: "search"
                         foreground: settingsConversationSearch.activeFocus
                             ? Theme.palette.navText : Theme.palette.navMuted
@@ -347,7 +347,7 @@ Item {
                         width: Theme.scaledGeometry(26)
                         height: Theme.scaledGeometry(26)
                         iconKind: "close"
-                        iconSize: 11
+                        iconSize: Theme.iconMicro
                         foreground: Theme.palette.mutedText
                         Accessible.name: "Limpar pesquisa"
                         onClicked: settingsConversationSearch.clear()
@@ -400,8 +400,8 @@ Item {
                             anchors.rightMargin: Theme.scaledGeometry(8)
                             spacing: Theme.scaledGeometry(9)
                             VrLineIcon {
-                                Layout.preferredWidth: Theme.scaledGeometry(16)
-                                Layout.preferredHeight: Theme.scaledGeometry(16)
+                                Layout.preferredWidth: Theme.iconSmall
+                                Layout.preferredHeight: Theme.iconSmall
                                 kind: settingResult.modelData.icon
                                 foreground: Theme.palette.navMuted
                             }
@@ -460,8 +460,8 @@ Item {
                     contentItem: RowLayout {
                         spacing: Theme.scaledGeometry(8)
                         VrLineIcon {
-                            Layout.preferredWidth: Theme.scaledGeometry(16)
-                            Layout.preferredHeight: Theme.scaledGeometry(16)
+                            Layout.preferredWidth: Theme.iconSmall
+                            Layout.preferredHeight: Theme.iconSmall
                             kind: "back"
                             foreground: settingsReturnButton.hovered
                                 ? Theme.palette.navText : Theme.palette.navMuted

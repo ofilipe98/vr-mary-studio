@@ -338,7 +338,7 @@ def retrieve_code_candidates(
                 evidence_ids=(evidence_id,),
                 kind="fact",
                 confidence=code_confidence,
-                worker_id="fanout_codigo",
+                worker_id="ultra_code",
             )
         )
 
@@ -367,7 +367,7 @@ def retrieve_code_candidates(
                 evidence_ids=(related_candidate.evidence_id,),
                 kind="fact",
                 confidence=related_candidate.confidence,
-                worker_id="fanout_codigo",
+                worker_id="ultra_code",
             )
         )
 

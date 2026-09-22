@@ -68,19 +68,24 @@ def test_thousand_line_composer_sends_and_stop_button_remains_reachable(qml_env,
     assert not chat.turnRunning
 
 
-def test_rejected_send_keeps_thousand_lines_and_shows_reason(qml_env):
+def test_rejected_send_keeps_thousand_lines_and_shows_reason(qml_env, monkeypatch):
     app, engine, frontend, chat, studio = qml_env
     chat._vr_mode = "off"
+
+    def fail_new_conversation(*args, **kwargs):
+        raise RuntimeError("provedor indisponível")
+
+    monkeypatch.setattr(chat._orchestrator, "new_conversation", fail_new_conversation)
     window = engine.rootObjects()[0]
     window.show()
     QTest.qWait(150)
     field = find(window.contentItem(), "chatComposerInput")
     button = find(window.contentItem(), "chatSendButton")
-    text = "/pesquisa " + "\n".join(f"linha {i}" for i in range(1000))
+    text = "\n".join(f"linha {i}: texto de teste" for i in range(1000))
     field.setProperty("text", text)
     QTest.qWait(300)
     click(window, button)
     assert field.property("text") == text
     warning = find(window.contentItem(), "chatSubmissionError")
     assert warning.isVisible()
-    assert "Ative o VR" in warning.property("text")
+    assert "Falha" in warning.property("text")

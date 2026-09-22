@@ -2827,19 +2827,6 @@ class ChatBridge(QObject):
             return False
         if not content:
             content = "Analise os anexos enviados."
-        force_research = False
-        if content.lower().startswith("/pesquisa"):
-            argument = content[len("/pesquisa"):].strip()
-            if self._vr_mode == "off":
-                self._status_text = "Ative o VR para pesquisar na base local."
-                self.stateChanged.emit()
-                return False
-            if not argument:
-                self._status_text = "Use: /pesquisa <pergunta>"
-                self.stateChanged.emit()
-                return False
-            content = argument
-            force_research = True
         selected_extensions = [
             item
             for item in self._extension_items
@@ -3005,7 +2992,6 @@ class ChatBridge(QObject):
                 self._vr_mode != "off",
                 image_paths=[] if resume_run_id else image_paths,
                 vr_mode=self._vr_mode,
-                force_research=force_research,
                 code_analysis_enabled=(
                     self._code_analysis_enabled
                     and bool(self._ultra_application_contexts)

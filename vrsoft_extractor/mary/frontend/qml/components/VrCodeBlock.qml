@@ -104,7 +104,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: Theme.scaledGeometry(26)
                 implicitHeight: Theme.scaledGeometry(26)
-                iconSize: 14
+                iconSize: Theme.iconCompact
                 iconKind: "wrapText"
                 checkable: true
                 checked: frontend.wordWrap
@@ -122,7 +122,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: Theme.scaledGeometry(26)
                 implicitHeight: Theme.scaledGeometry(26)
-                iconSize: 14
+                iconSize: Theme.iconCompact
                 iconKind: root.copied ? "check" : "copy"
                 foreground: root.copied
                     ? (Theme.palette.success || "#34d399")

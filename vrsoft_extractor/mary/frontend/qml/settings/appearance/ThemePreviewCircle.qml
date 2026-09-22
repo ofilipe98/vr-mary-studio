@@ -42,7 +42,7 @@ AbstractButton {
             width: Theme.scaledGeometry(20); height: Theme.scaledGeometry(20); radius: Theme.scaledGeometry(10)
             color: Theme.palette.background; border.color: Theme.palette.border
             VrLineIcon {
-                anchors.centerIn: parent; width: Theme.scaledGeometry(12); height: Theme.scaledGeometry(12)
+                anchors.centerIn: parent; width: Theme.iconMicro; height: Theme.iconMicro
                 kind: root.mode === "light" ? "sun" : "moon"; foreground: Theme.palette.text
             }
         }

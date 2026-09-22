@@ -3,8 +3,8 @@ Testes de validação integrada end-to-end e entrega final (Lote L8).
 
 Valida os requisitos de PLANO_V2_ULTRA_BUSCA_ARQUITETURA.md:
 1. Fluxo integrado completo do Ultra com orçamento global (ExecutionBudget),
-   cancelamento cooperativo (CancellationToken), persistência SQLite (ResearchRepository)
-   e retomada segura com reaproveitamento (status reused).
+   cancelamento cooperativo (CancellationToken) e persistência SQLite
+   (ResearchRepository).
 2. Busca híbrida (FTS5 + SemanticIndex via RRF) alimentando o EvidenceBundle.
 3. Expansão limitada de contexto (ContextExpander) recuperando relações de 1º grau.
 4. Síntese final produzindo resposta fundamentada com citações verificáveis e envelope estruturado.
@@ -34,6 +34,7 @@ from vrsoft_extractor.mary.models import (
     EvidenceCandidate,
     KnowledgeDocument,
     QueryProfile,
+    SourceSearchReport,
 )
 from vrsoft_extractor.mary.retrieval import (
     DocumentRelation,
@@ -42,6 +43,34 @@ from vrsoft_extractor.mary.retrieval import (
     SemanticIndex,
 )
 from vrsoft_extractor.mary.supervision import ResponseIntent, build_response_contract
+
+
+class _SourceRetrievalStub:
+    """Deterministic per-source retrieval used by the Ultra executor."""
+
+    def __init__(self, profile: QueryProfile, candidates: dict[str, EvidenceCandidate]):
+        self.profile = profile
+        self.candidates = candidates
+
+    def classify(self, _query: str) -> QueryProfile:
+        return self.profile
+
+    def route_source(self, _query: str, source: str) -> EvidenceBundle:
+        candidate = self.candidates[source]
+        return EvidenceBundle(
+            profile=self.profile,
+            candidates=(candidate,),
+            source_reports=(
+                SourceSearchReport(
+                    source=source,
+                    status="found",
+                    selected_evidence_ids=(candidate.evidence_id,),
+                ),
+            ),
+        )
+
+    def prompt_for_role(self, _bundle, _role, module: str = "") -> str:
+        return "Trecho de evidência relevante."
 
 
 class TestUltraEndToEndIntegration:
@@ -95,7 +124,7 @@ class TestUltraEndToEndIntegration:
         research_repo = ResearchRepository(db_path)
         return settings, db, sem_index, rel_repo, research_repo
 
-    def test_full_ultra_lifecycle_with_budget_cancellation_and_resumption(
+    def test_full_ultra_lifecycle_with_budget_and_persistence(
         self,
         environment,
     ) -> None:
@@ -106,12 +135,13 @@ class TestUltraEndToEndIntegration:
 
         def mock_ephemeral_turn(cid, run_id, agent_id, *args, **kwargs):
             ephemeral_invocations.append(agent_id)
+            source = agent_id.rsplit("_", 1)[-1]
             return json.dumps({
                 "source_status": "found",
                 "findings": [
                     {
                         "claim": f"Achado do agente {agent_id}",
-                        "evidence_ids": ["wiki-icms"],
+                        "evidence_ids": [evidence_ids[source]],
                         "kind": "fact",
                         "confidence": 0.95,
                     }
@@ -119,7 +149,7 @@ class TestUltraEndToEndIntegration:
                 "conflicts": [],
                 "missing_information": [],
                 "warnings": [],
-                "sources": ["wiki-icms"],
+                "sources": [evidence_ids[source]],
             })
 
         def mock_buffered_turn(*args, **kwargs):
@@ -138,21 +168,37 @@ class TestUltraEndToEndIntegration:
         def event_emitter(cid, kind, text, payload):
             events_emitted.append((kind, text, payload))
 
-        # Build retrieval service
-        mock_router = MagicMock()
-        mock_router.database = db
-        mock_router.prompt_for_role.return_value = "Trecho de evidência relevante."
-
-        retrieval_service = RetrievalService(
-            router=mock_router,
-            semantic_index=sem_index,
-            relation_repository=rel_repo,
+        profile = QueryProfile(
+            query="apuracao icms tabelas", intents={}, module="Fiscal"
         )
+        evidence_ids = {
+            "wiki": "wiki-icms",
+            "kb": "kb-inventario",
+            "schema": "schema-tb-nfe",
+        }
+        candidates = {
+            source: EvidenceCandidate(
+                evidence_id=evidence_ids[source],
+                source=source,
+                source_id=evidence_ids[source],
+                document_id=1,
+                chunk_id=1,
+                title=f"Doc {source}",
+                heading="H",
+                content_type="section",
+                module="Fiscal",
+                product="",
+                excerpt="conteudo relevante",
+                url="",
+            )
+            for source in ("wiki", "kb", "schema")
+        }
+        retrieval_stub = _SourceRetrievalStub(profile, candidates)
 
         runner = ExecutionRunner(
             settings=settings,
             providers={},
-            retrieval=retrieval_service,
+            retrieval=retrieval_stub,
             event_emitter=event_emitter,
             ephemeral_turn_runner=mock_ephemeral_turn,
             buffered_turn_runner=mock_buffered_turn,
@@ -172,111 +218,69 @@ class TestUltraEndToEndIntegration:
             cancellation=cancellation,
         )
 
-        # Build evidence candidates and expand
-        primary_cand = EvidenceCandidate(
-            evidence_id="wiki-icms",
-            source="wiki",
-            source_id="wiki-icms",
-            document_id=1,
-            chunk_id=0,
-            title="Apuração de ICMS",
-            heading="",
-            content_type="wiki",
-            module="Fiscal",
-            product="VRMaster",
-            excerpt="Apuração de ICMS mensal.",
-            score=0.9,
+        # Build evidence candidates and expand through the retrieval service.
+        primary_cand = candidates["wiki"]
+        mock_router = MagicMock()
+        mock_router.database = db
+        mock_router.retrieval_revision.get.return_value = ""
+        mock_router._enabled_origins.side_effect = lambda source: {
+            "wiki": ("vrwiki", "endoo"),
+            "kb": ("movidesk",),
+            "schema": ("schema",),
+        }.get(source, ())
+        retrieval_service = RetrievalService(
+            router=mock_router,
+            semantic_index=sem_index,
+            relation_repository=rel_repo,
         )
         expanded_candidates = retrieval_service.expand_candidates([primary_cand])
-
-        bundle = EvidenceBundle(
-            profile=QueryProfile(query="apuracao icms tabelas", intents={}, module="Fiscal"),
-            candidates=tuple(expanded_candidates),
-        )
+        assert {item.evidence_id for item in expanded_candidates} == {
+            "wiki-icms",
+            "schema-tb-nfe",
+        }
 
         intent = ResponseIntent(topic="Fiscal", user_goal="answer_question")
         contract = build_response_contract(intent)
         options = ConversationOptions(vr_mode="ultra")
 
         # -------------------------------------------------------------
-        # PHASE 1: Run with module Fiscal -> Executes fanout & records in SQLite
+        # PHASE 1: Run the Ultra source fan-out and persist each step
         # -------------------------------------------------------------
-        res_fanout_1 = runner.execute_fanout(
+        res_fanout_1 = runner.execute_ultra_source_fanout(
             context=context_1,
             conversation={"provider": "codex", "model": "gpt-5"},
             native_id="native-1",
             provider=MagicMock(),
             options=options,
             skills=[],
-            bundle=bundle,
             intent=intent,
             contract=contract,
-            modules=("Fiscal",),
             request="apuracao icms",
         )
 
-        assert "vr_fanout_fiscal" in ephemeral_invocations
-        assert len(res_fanout_1.ordered) == 1
-        assert res_fanout_1.ordered[0].module == "Fiscal"
-        assert len(res_fanout_1.ordered[0].report.findings) >= 1
-        assert res_fanout_1.ordered[0].report.structured is True
+        assert set(ephemeral_invocations) == {
+            "vr_fanout_ultra_wiki",
+            "vr_fanout_ultra_kb",
+            "vr_fanout_ultra_schema",
+        }
+        assert len(res_fanout_1.reports) == 3
         assert budget.remaining_calls() < 10
-        ephemeral_invocations.clear()
 
-        # Check that step is stored in SQLite
+        # Check that steps are stored in SQLite
         steps_run_1 = research_repo.get_steps_for_run("run-step-1")
-        assert len(steps_run_1) == 1
-        assert steps_run_1[0]["status"] == "completed"
+        assert len(steps_run_1) == 3
+        assert {step["status"] for step in steps_run_1} == {"completed"}
+        assert {step["worker_id"] for step in steps_run_1} == {
+            "ultra_wiki",
+            "ultra_kb",
+            "ultra_schema",
+        }
 
         # Check synthesis output
         assert res_fanout_1.draft is not None
         assert res_fanout_1.draft.answer_status == "answered"
         assert "TB_NFE_CABECALHO" in res_fanout_1.draft.answer_markdown
         assert "wiki-icms" in res_fanout_1.draft.used_evidence_ids
-
-        # -------------------------------------------------------------
-        # PHASE 2: Resume the same investigation with (Fiscal, Contabil)
-        # Fiscal MUST be reused from SQLite (status='reused') without calling model!
-        # Contabil MUST be executed on model!
-        # -------------------------------------------------------------
-        context_2 = ExecutionContext(
-            conversation_id="conv-ultra-1",
-            run_id="run-step-1",
-            workspace=settings.root,
-            budget=budget,
-            cancellation=cancellation,
-            metadata={"resume_run_id": "run-step-1"},
-        )
-
-        res_fanout_2 = runner.execute_fanout(
-            context=context_2,
-            conversation={"provider": "codex", "model": "gpt-5"},
-            native_id="native-2",
-            provider=MagicMock(),
-            options=options,
-            skills=[],
-            bundle=bundle,
-            intent=intent,
-            contract=contract,
-            modules=("Fiscal", "Contabil"),
-            request="apuracao icms",
-        )
-
-        # Fiscal was NOT called again on ephemeral runner
-        assert "vr_fanout_fiscal" not in ephemeral_invocations
-        # Contabil was called
-        assert "vr_fanout_contabil" in ephemeral_invocations
-
-        # Verify resumption status in repository
-        assert context_2.run_id == context_1.run_id
-        steps_run_2 = research_repo.get_steps_for_run(context_2.run_id)
-        fiscal_reused_step = next(s for s in steps_run_2 if s["module"] == "Fiscal")
-        assert fiscal_reused_step["status"] == "reused"
-
-        # Verify draft of resumed run is grounded
-        assert res_fanout_2.draft is not None
-        assert res_fanout_2.draft.answer_status == "answered"
-        assert "TB_NFE_CABECALHO" in res_fanout_2.draft.answer_markdown
 
     def test_cooperative_cancellation_stops_execution_cleanly(self, environment) -> None:
         settings, db, sem_index, rel_repo, research_repo = environment
@@ -303,27 +307,18 @@ class TestUltraEndToEndIntegration:
             budget=budget,
             cancellation=cancellation,
         )
-
-        bundle = EvidenceBundle(
-            profile=QueryProfile(query="cancel query", intents={}, module="Fiscal"),
-            candidates=(),
-        )
         intent = ResponseIntent(topic="Fiscal", user_goal="answer_question")
-        contract = build_response_contract(intent)
-        options = ConversationOptions(vr_mode="ultra")
 
         # Must raise ExecutionCancelledError and stop immediately without orphan threads
         with pytest.raises(ExecutionCancelledError):
-            runner.execute_fanout(
+            runner.execute_ultra_source_fanout(
                 context=context,
                 conversation={"provider": "codex", "model": "gpt-5"},
                 native_id="native-cancel",
                 provider=MagicMock(),
-                options=options,
+                options=ConversationOptions(vr_mode="ultra"),
                 skills=[],
-                bundle=bundle,
                 intent=intent,
-                contract=contract,
-                modules=("Fiscal", "Contabil"),
+                contract=build_response_contract(intent),
                 request="cancel query",
             )

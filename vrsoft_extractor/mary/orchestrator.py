@@ -55,9 +55,6 @@ from .providers import (
 )
 from .execution import ExecutionBudget, ExecutionContext, ExecutionCancelledError
 from .research_fanout import (
-    GLOBAL_MODULE_LABEL,
-    MAX_PARALLEL_RESEARCHERS,
-    SCHEMA_MODULE_LABEL,
     ULTRA_MAX_PARALLEL_RESEARCHERS,
     resolve_model_ref,
 )
@@ -203,7 +200,7 @@ def vr_sessions_note(native_id: Any, native_id_vr: Any) -> str:
     return ""
 
 
-from .execution.runner import _code_scope_queries as _code_scope_queries
+from .retrieval.code_retrieval import _code_scope_queries as _code_scope_queries
 
 
 class ChatOrchestrator:
@@ -431,7 +428,6 @@ class ChatOrchestrator:
         use_vr: bool = True,
         image_paths: list[str] | None = None,
         vr_mode: str = "",
-        force_research: bool = False,
         code_analysis_enabled: bool = False,
         code_analysis_release: str = "current",
         code_analysis_manifest_sha256: str = "",
@@ -456,7 +452,7 @@ class ChatOrchestrator:
             text = resume_record["request_text"]
             search_text = str(saved_context.get("search_scope") or text)
             display_text = "Retomar investigação" + (" (+15 chamadas, +300 s)" if grant_budget else "")
-            use_vr, vr_mode, force_research = True, "ultra", True
+            use_vr, vr_mode = True, "ultra"
             image_paths, skills = [], []
         provider = self._provider(conversation["provider"])
         workspace = self.settings.resolve_path(conversation["workspace"])
@@ -672,14 +668,18 @@ class ChatOrchestrator:
                     response_contract: ResponseContract | None = None
                     if use_vr:
                         if not ultra_source_fanout:
+                            # Normal VR answers directly from the four fixed
+                            # source lanes; only Ultra runs source agents.
                             try:
-                                evidence_bundle = self.retrieval_service.route(
-                                    local_query, **({
-                                        "application_contexts": application_contexts,
-                                        "code_analysis_release": code_analysis_release,
-                                        "code_analysis_manifest_sha256": code_analysis_manifest_sha256,
-                                    } if application_contexts is not None or code_analysis_release != "current"
-                                       or code_analysis_manifest_sha256 else {})
+                                evidence_bundle = (
+                                    self.retrieval_service.route_vr_sources(
+                                        local_query,
+                                        application_contexts=application_contexts,
+                                        code_analysis_release=code_analysis_release,
+                                        code_analysis_manifest_sha256=(
+                                            code_analysis_manifest_sha256
+                                        ),
+                                    )
                                 )
                             except Exception:
                                 LOGGER.exception(
@@ -824,25 +824,11 @@ class ChatOrchestrator:
                         response_intent,
                         evidence_bundle,
                     )
-                    # VR Ultra uses fixed source specialists. /pesquisa in
-                    # normal VR keeps the legacy module fan-out.
-                    fanout_allowed = force_research and resolved_vr_mode == "vr"
+                    # VR Ultra uses fixed source specialists with the optional
+                    # DEV Java agent; normal VR answers directly from the four
+                    # fixed source lanes.
                     explicit_code_analysis = (
                         code_analysis_enabled and resolved_vr_mode == "ultra"
-                    )
-                    fanout_modules = (
-                        self._fanout_modules(
-                            evidence_bundle,
-                            response_intent,
-                            has_images=bool(image_paths),
-                            force_deep=force_research,
-                        )
-                        if (
-                            use_vr
-                            and fanout_allowed
-                            and getattr(self.settings, "vr_research_fanout", False)
-                        )
-                        else None
                     )
                     with self._agent_run_lock:
                         if (self._pending_user_messages.get(conversation_id) != message_id
@@ -865,30 +851,6 @@ class ChatOrchestrator:
                             code_analysis_release=code_analysis_release,
                             application_contexts=application_contexts,
                             code_analysis_manifest_sha256=code_analysis_manifest_sha256,
-                            search_scope=local_query,
-                            resume_run_id=resume_run_id,
-                            grant_budget=grant_budget,
-                        )
-                    elif fanout_modules:
-                        self._run_module_fanout(
-                            conversation_id,
-                            dict(conversation),
-                            native_id,
-                            workspace,
-                            orchestration_request,
-                            provider,
-                            turn_options,
-                            skills or [],
-                            evidence_bundle,
-                            response_intent,
-                            response_contract,
-                            fanout_modules,
-                            code_analysis_enabled=explicit_code_analysis,
-                            code_analysis_release=code_analysis_release,
-                            application_contexts=application_contexts,
-                            code_analysis_manifest_sha256=(
-                                code_analysis_manifest_sha256
-                            ),
                             search_scope=local_query,
                             resume_run_id=resume_run_id,
                             grant_budget=grant_budget,
@@ -1138,45 +1100,6 @@ class ChatOrchestrator:
             completed_payload=result.completed_payload,
         )
 
-    def _fanout_modules(
-        self,
-        bundle: EvidenceBundle | None,
-        intent: ResponseIntent | None,
-        *,
-        has_images: bool,
-        force_deep: bool = False,
-    ) -> tuple[str, ...] | None:
-        """Decide the module fan-out trigger deterministically."""
-        if has_images or bundle is None or intent is None:
-            return None
-        ranked_decisions = sorted(
-            [item for item in bundle.module_routing if item.selected],
-            key=lambda item: (-getattr(item, "confidence", 0.0), item.module),
-        )
-        selected = [item.module for item in ranked_decisions]
-        deep_request = force_deep or intent.purpose == "implementation" or (
-            intent.requested_detail == "very_high"
-            and intent.purpose in {"troubleshooting", "training_manual"}
-        ) or (
-            intent.requires_step_by_step
-            and intent.requested_detail in {"high", "very_high"}
-        )
-        if len(selected) < 2 and not deep_request:
-            return None
-        modules: list[str] = list(dict.fromkeys(selected))[:2]
-        candidates = bundle.candidates
-        if any(item.source == "schema" for item in candidates):
-            modules.append(SCHEMA_MODULE_LABEL)
-        if any(
-            str(item.module or "").casefold() == "multimodulo"
-            for item in candidates
-        ):
-            modules.append(GLOBAL_MODULE_LABEL)
-        if not modules and (candidates or deep_request):
-            # Deep request without module routing: research the global lane.
-            modules.append(GLOBAL_MODULE_LABEL)
-        return tuple(modules[:MAX_PARALLEL_RESEARCHERS]) or None
-
     def _run_ultra_source_fanout(
         self,
         conversation_id: str,
@@ -1390,135 +1313,6 @@ class ChatOrchestrator:
                 ),
                 run_id=run_id,
             )
-        finally:
-            with self._agent_run_lock:
-                if self._research_contexts.get(run_id) is context:
-                    if self._active_orchestration_runs.get(conversation_id) == run_id:
-                        self._active_orchestration_runs.pop(conversation_id, None)
-                    self._research_evidence.pop(run_id, None)
-                    self._research_contexts.pop(run_id, None)
-
-    def _run_module_fanout(
-        self,
-        conversation_id: str,
-        conversation: dict[str, Any],
-        native_id: str,
-        workspace: Path,
-        request: str,
-        provider: AgentProvider,
-        options: ConversationOptions,
-        skills: list[dict[str, Any]],
-        bundle: EvidenceBundle,
-        intent: ResponseIntent,
-        contract: ResponseContract,
-        modules: tuple[str, ...],
-        *,
-        code_analysis_enabled: bool = False,
-        code_analysis_release: str = "current",
-        code_analysis_manifest_sha256: str = "",
-        application_contexts: list[dict[str, Any]] | None = None,
-        search_scope: str = "",
-        resume_run_id: str = "",
-        grant_budget: bool = False,
-    ) -> None:
-        """Execute the shared runner; retain ownership, evidence and final publication here."""
-        run_id = resume_run_id or uuid.uuid4().hex
-        previous_run = self.research_repository.get_run(run_id) if resume_run_id else None
-        code_scope_error = ""
-        if code_analysis_enabled:
-            try:
-                if application_contexts is not None:
-                    from .code_context import freeze_application_contexts
-                    application_contexts = freeze_application_contexts(self.settings.root, application_contexts)
-                    code_analysis_release = ""
-                    code_analysis_manifest_sha256 = ""
-                release_status = (ErpReleaseCatalog(self.settings.root).status(code_analysis_release, full_hash=True)
-                                  if application_contexts is None else {"release_id": "", "release_manifest_sha256": ""})
-                code_analysis_release = str(release_status["release_id"])
-                actual_manifest = str(release_status["release_manifest_sha256"])
-                if code_analysis_manifest_sha256 and actual_manifest != code_analysis_manifest_sha256:
-                    raise ProviderError("Manifesto da release mudou; selecione novamente a release de código.")
-                code_analysis_manifest_sha256 = actual_manifest
-            except Exception as exc:
-                code_scope_error = str(exc)
-        else:
-            code_analysis_release = ""
-        context = ExecutionContext(
-            conversation_id=conversation_id, run_id=run_id, workspace=workspace,
-            owner_message_id=self._pending_user_messages.get(conversation_id),
-            budget=ExecutionBudget(
-                max_parallel=self._research_max_parallel,
-                reserved_synthesis_calls=6, reserved_synthesis_seconds=45,
-            ),
-        )
-        context.metadata.update(
-            resume_run_id=resume_run_id, grant_budget=grant_budget, search_scope=search_scope,
-            scope_signature=self.retrieval_service.scope_signature(),
-            permissions={"approval_profile": options.approval_profile, "tools": list(options.mcp_tools)},
-            code_analysis_enabled=code_analysis_enabled, code_analysis_release=code_analysis_release,
-            code_analysis_manifest_sha256=code_analysis_manifest_sha256,
-            application_contexts=application_contexts,
-            code_scope_error=code_scope_error,
-            model={"provider": conversation["provider"], "model": conversation["model"]},
-        )
-        with self._agent_run_lock:
-            self._active_orchestration_runs[conversation_id] = run_id
-            self._research_contexts[run_id] = context
-            self._research_evidence[run_id] = {c.evidence_id: c for c in bundle.candidates}
-        self._pending_evidence_bundles[conversation_id] = bundle
-        self._pending_response_modes[conversation_id] = "vr"
-        import copy
-        runner = copy.copy(self.execution_runner)
-        runner.providers = dict(self.providers)
-        runner.research_pool = self._research_pool
-        runner.research_max_parallel = self._research_max_parallel
-        try:
-            if previous_run and previous_run["status"] == "completed":
-                saved = json.loads(previous_run["result_json"] or "{}")
-                old_context = json.loads(previous_run["context_json"])
-                compatible = all(old_context.get(k) == context.metadata.get(k) for k in (
-                    "scope_signature", "permissions", "model", "code_analysis_release", "code_analysis_manifest_sha256", "application_contexts", "code_scope_error"))
-                if saved.get("publication_text") and compatible:
-                    self.research_repository.claim_resume(run_id, conversation_id, execution_id=context.owner_message_id or 0)
-                    self.research_repository.set_context(run_id, context.metadata, context.owner_message_id or 0)
-                    self.research_repository.update_run_status(run_id, "completed")
-                    self._pending_used_evidence_ids[conversation_id] = tuple(saved.get("used_evidence_ids", ()))
-                    self._pending_evidence_bundles[conversation_id] = replace(bundle, candidates=tuple(
-                        EvidenceCandidate(**c) for c in saved.get("publication_candidates", [])))
-                    self._publish_final_response(conversation_id, saved["publication_text"], run_id=run_id)
-                    return
-            result = runner.execute_fanout(
-                context=context, conversation=conversation, native_id=native_id,
-                provider=provider, options=options, skills=skills, bundle=bundle,
-                intent=intent, contract=contract, modules=modules, request=request,
-                code_analysis_enabled=code_analysis_enabled,
-                code_analysis_release=code_analysis_release,
-                code_analysis_manifest_sha256=code_analysis_manifest_sha256,
-                application_contexts=application_contexts,
-                search_scope=search_scope,
-            )
-            self._raise_if_cancelled(conversation_id)
-            if code_analysis_enabled and application_contexts is not None and not code_scope_error:
-                from .code_context import validate_application_contexts
-                validate_application_contexts(self.settings.root, application_contexts)
-            if self._pending_user_messages.get(conversation_id) != context.owner_message_id:
-                raise OrchestrationCancelled("O turno foi substituído.")
-            self._publish_research_result(conversation_id, run_id, result)
-        except ExecutionCancelledError as exc:
-            raise OrchestrationCancelled(str(exc)) from exc
-        except ProviderRateLimited as exc:
-            self._publish_final_response(conversation_id, str(exc), run_id=run_id)
-        except Exception as exc:
-            LOGGER.exception("Execução de pesquisa falhou.")
-            self._emit_orchestration_event(
-                conversation_id, "research_failed", "A pesquisa não pôde ser concluída.",
-                {"run_id": run_id, "error": str(exc)[:400], "budget": context.budget.to_dict()},
-            )
-            # An unbudgeted direct provider call would bypass both limits and final validation.
-            self._pending_used_evidence_ids[conversation_id] = ()
-            self._publish_final_response(conversation_id, build_controlled_failure(
-                FinalResponseValidation(verdict="reject", reasons=(RefinementReason.INVALID_OUTPUT,)),
-            ), run_id=run_id)
         finally:
             with self._agent_run_lock:
                 if self._research_contexts.get(run_id) is context:
@@ -1843,7 +1637,7 @@ class ChatOrchestrator:
                 except Exception as exc:
                     provider.respond_dynamic_tool(event.payload["request_id"], [{"type": "inputText", "text": str(exc)}], False)
                 return
-            if event.kind == "tool_event" and agent_id != "vr_fanout_codigo":
+            if event.kind == "tool_event":
                 from .evidence_reads import capture_read
                 with self._agent_run_lock:
                     registry = self._research_evidence.get(run_id)

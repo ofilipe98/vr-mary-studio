@@ -2586,7 +2586,49 @@ class QmlFrontendTest(unittest.TestCase):
                 any(item["path"] == str(folder.resolve()) for item in bridge.projectItems)
             )
 
-    def test_pesquisa_command_requires_vr(self):
+    def test_pesquisa_literal_follows_normal_send_path(self):
+        def send_call_for(text: str):
+            with TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                settings = self._settings(root)
+                database = MaryDatabase(
+                    settings.database_path,
+                    root=settings.root,
+                    backup_portable_migration=False,
+                )
+                preferences = QSettings(
+                    str(root / "preferences.ini"), QSettings.IniFormat
+                )
+                bridge = ChatBridge(settings, database, preferences)
+                bridge.setVrMode("off")
+                conversation_id = database.create_conversation(
+                    "Conversa", "codex", "gpt-5", settings.root
+                )
+                bridge.refresh()
+                bridge.selectConversationId(conversation_id)
+                with patch.object(bridge._orchestrator, "send") as send_mock:
+                    self.assertTrue(bridge.sendMessage(text))
+                send_mock.assert_called_once()
+                call = send_mock.call_args
+                self.assertEqual(call.args[0], conversation_id)
+                self.assertNotIn("force_research", call.kwargs)
+                return call, bridge
+
+        literal, literal_bridge = send_call_for("/pesquisa onde grava o SPED")
+        plain, plain_bridge = send_call_for("onde grava o SPED")
+
+        self.assertEqual(literal.args[1], "/pesquisa onde grava o SPED")
+        self.assertEqual(literal.args[4], "/pesquisa onde grava o SPED")
+        self.assertEqual(literal.args[5], "/pesquisa onde grava o SPED")
+        self.assertEqual(len(literal.args), len(plain.args), "mesmo caminho de envio")
+        self.assertEqual(literal.args[3], plain.args[3])
+        self.assertEqual(literal.args[6], plain.args[6])
+        self.assertEqual(sorted(literal.kwargs), sorted(plain.kwargs))
+        self.assertNotIn("Ative o VR", literal_bridge._status_text)
+        self.assertEqual(literal_bridge._status_text, "Executando…")
+        self.assertEqual(literal_bridge._status_text, plain_bridge._status_text)
+
+    def test_command_palette_does_not_offer_pesquisa(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
@@ -2598,13 +2640,39 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
-            bridge = ChatBridge(settings, database, preferences)
-            bridge.setVrMode("off")
-
-            bridge.sendMessage("/pesquisa onde grava o SPED")
-
-            self.assertIn("Ative o VR", bridge._status_text)
-            self.assertEqual(len(database.list_conversations()), 0)
+            chat_bridge = ChatBridge(settings, database, preferences)
+            frontend_bridge = self._bridge(root, initial_page="Chat VR")
+            engine = create_engine(frontend_bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.show()
+            QTest.qWait(150)
+            try:
+                page = window.findChild(QObject, "chatPage")
+                composer = window.findChild(QObject, "chatComposerInput")
+                self.assertIsNotNone(page)
+                self.assertIsNotNone(composer)
+                composer.setProperty("text", "/")
+                QTest.qWait(50)
+                with patch.object(
+                    chat_bridge, "skillSuggestions", return_value=[]
+                ):
+                    self.assertTrue(
+                        QMetaObject.invokeMethod(page, "updateComposerSuggestions")
+                    )
+                suggestions = page.property("composerSuggestions")
+                if hasattr(suggestions, "toVariant"):
+                    suggestions = suggestions.toVariant()
+                self.assertTrue(suggestions, "o palette deveria listar comandos")
+                labels = {str(item.get("label") or "") for item in suggestions}
+                self.assertNotIn("/pesquisa", labels)
+                actions = {str(item.get("action") or "") for item in suggestions}
+                self.assertNotIn("pesquisa", actions)
+                self.assertIn("/vr", labels)
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
 
     def test_effort_and_service_tier_options_follow_selected_model_metadata(self):
         with TemporaryDirectory() as temporary:
@@ -3286,7 +3354,11 @@ class QmlFrontendTest(unittest.TestCase):
         line_icon_qml = (
             MAIN_QML.parent / "components" / "VrLineIcon.qml"
         ).read_text(encoding="utf-8")
-        self.assertIn('kind === "expertTraining"', line_icon_qml)
+        lucide_paths_js = (
+            MAIN_QML.parent / "theme" / "LucidePaths.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"expertTraining"', lucide_paths_js)
+        self.assertIn("LucidePaths.paths[root.kind]", line_icon_qml)
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
@@ -5128,8 +5200,12 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "applicationSourceBrowserGrid"', apps_qml)
         self.assertIn('columns: width >= 900 ? 2 : 1', apps_qml)
         self.assertIn(
-            'studio.copyText(chat.applicationSources.body || "")', apps_qml
+            'studio.copyText(root.applicationSourceDisplayBody())', apps_qml
         )
+        self.assertIn('objectName: "applicationSourceCleanModeButton"', apps_qml)
+        self.assertIn('objectName: "applicationSourceRawModeButton"', apps_qml)
+        self.assertIn('objectName: "applicationSourceViewNote"', apps_qml)
+        self.assertIn('objectName: "applicationSourceKindNote"', apps_qml)
         self.assertIn('font.family: Theme.monospaceFontFamily', apps_qml)
         self.assertIn('wrapMode: TextEdit.NoWrap', apps_qml)
         self.assertNotIn('objectName: "applicationSourcePicker"', apps_qml)
@@ -5282,20 +5358,83 @@ class QmlFrontendTest(unittest.TestCase):
 
                 copy_button = window.findChild(QObject, "copyApplicationSourceButton")
                 self.assertIsNotNone(copy_button)
-                copy_point = copy_button.mapToScene(
-                    QPointF(copy_button.width() / 2, copy_button.height() / 2)
+                clean_button = window.findChild(
+                    QObject, "applicationSourceCleanModeButton"
                 )
-                QTest.mouseClick(
-                    window,
-                    Qt.LeftButton,
-                    Qt.NoModifier,
-                    QPoint(round(copy_point.x()), round(copy_point.y())),
-                )
-                self.application.processEvents()
+                raw_button = window.findChild(QObject, "applicationSourceRawModeButton")
+                view_note = window.findChild(QObject, "applicationSourceViewNote")
+                kind_note = window.findChild(QObject, "applicationSourceKindNote")
+                body_area = window.findChild(QObject, "applicationSourceBody")
+                self.assertIsNotNone(clean_button)
+                self.assertIsNotNone(raw_button)
+                self.assertIsNotNone(view_note)
+                self.assertIsNotNone(kind_note)
+                self.assertIsNotNone(body_area)
+
+                def click_control(control):
+                    point = control.mapToScene(
+                        QPointF(control.width() / 2, control.height() / 2)
+                    )
+                    QTest.mouseClick(
+                        window,
+                        Qt.LeftButton,
+                        Qt.NoModifier,
+                        QPoint(round(point.x()), round(point.y())),
+                    )
+                    self.application.processEvents()
+
+                click_control(copy_button)
                 self.assertEqual(
                     QApplication.clipboard().text(),
                     chat_bridge.applicationSources["body"],
                 )
+
+                # Drive the toggle from deliberately different isolated bodies.
+                chat_bridge._app_sources.update({
+                    "body": "RAW\nBODY\n",
+                    "clean_body": "CLEAN\nBODY\n",
+                    "clean_available": True,
+                    "clean_status": "cleaned",
+                    "clean_note": (
+                        "Visualização limpa gerada sem alterar identificadores, "
+                        "literais ou lógica."
+                    ),
+                    "source_kind": "type",
+                    "source_relative_path": "vr/app/App.java",
+                    "decompiler_tool": "vineflower",
+                })
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+
+                self.assertTrue(
+                    apps_page.property("cleanApplicationSourceMode")
+                )
+                self.assertEqual(body_area.property("text"), "CLEAN\nBODY\n")
+                self.assertTrue(view_note.property("visible"))
+
+                click_control(raw_button)
+                self.assertEqual(body_area.property("text"), "RAW\nBODY\n")
+                click_control(copy_button)
+                self.assertEqual(
+                    QApplication.clipboard().text(), "RAW\nBODY\n"
+                )
+                click_control(clean_button)
+                self.assertEqual(body_area.property("text"), "CLEAN\nBODY\n")
+
+                chat_bridge._app_sources["clean_available"] = False
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+                self.assertFalse(clean_button.property("enabled"))
+                self.assertTrue(raw_button.property("enabled"))
+                self.assertEqual(body_area.property("text"), "RAW\nBODY\n")
+
+                chat_bridge._app_sources["source_kind"] = "package_info"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(60)
+                self.assertTrue(kind_note.property("visible"))
 
                 window.setWidth(390)
                 window.setHeight(844)

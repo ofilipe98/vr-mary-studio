@@ -4,6 +4,8 @@ Data: 06/09/2026. Projeto: VR Norte Studio, `D:\Codex\vr-mary-studio`.
 
 Status em 08/09/2026: implementação L0–L8 e auditoria final concluídas no checkout `D:\Codex\VRStudio`, com as evidências e ressalvas em [V2_IMPLEMENTACAO.md](V2_IMPLEMENTACAO.md). Busca híbrida permanece opcional; Claude sem validação de resposta real por ausência de assinatura. O histórico abaixo preserva o plano original.
 
+Estado atual (VRNORMAL-001-v2): o comando público `pesquisa` foi removido do produto. O modo `vr` responde em um único turno do modelo principal com retrieval direto pelas quatro fontes fixas (Wiki source-wide, KB, Schema e Código determinístico), sem agentes e sem separação por módulo. O modo `ultra` mantém o fan-out por fonte com agentes (Wiki, KB, Schema e o agente DEV Java opcional) e a síntese única validada.
+
 Responsáveis: Gemini 3.8 Flash implementa todos os lotes; Codex revisa integralmente as alterações entregues, verifica as evidências e corrige os problemas encontrados na auditoria final. O nome do modelo identifica o executor escolhido pelo usuário, sem alterar os modelos configurados no produto.
 
 ## 1. Resultado esperado e limites
@@ -60,7 +62,7 @@ Cada lote pode ser dividido em mudanças menores revisáveis. Não juntar extra�
 
 ## 5. Contratos que todas as etapas preservam
 
-- Modos persistidos `off`, `vr` e `ultra`, incluindo o encaminhamento atual de `/pesquisa`.
+- Modos persistidos `off`, `vr` e `ultra`: `off` não consulta nem expande a base; `vr` faz retrieval direto pelas quatro fontes fixas (Wiki, KB, Schema e Código) sem agentes; `ultra` faz fan-out por fonte com agentes. Não existe comando público de pesquisa multiagente.
 - `off` não consulta nem expande a base local.
 - Separação entre execução local, run de pesquisa, tentativa do provedor e mensagem. Mapear os IDs existentes antes de acrescentar campos.
 - Mensagens intermediárias públicas permanecem ordenadas e identificadas; seu término não encerra o turno.
@@ -86,7 +88,7 @@ Criar fixtures sintéticas com eventos representativos e documentar os contratos
 Criar módulos pequenos por responsabilidade, com nomes orientativos:
 
 - `execution/contracts.py`: contexto de execução e resultados de etapa, sem dependência de Qt.
-- `execution/runner.py`: extração da coordenação hoje concentrada em `_run_module_fanout` e dos pontos de chamada necessários.
+- `execution/runner.py`: extração da coordenação do fan-out de pesquisa e dos pontos de chamada necessários.
 - `retrieval/service.py`: contrato para recuperação e refinamento, inicialmente delegando ao `KnowledgeRouter` atual.
 
 Manter as entradas atuais como fachadas durante a transição. Injetar repositório, relógio, mecanismo de cancelamento e acesso aos provedores nos limites que precisam de isolamento. Não criar um contêiner genérico de serviços.

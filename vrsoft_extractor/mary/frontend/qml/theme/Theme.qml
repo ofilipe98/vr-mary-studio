@@ -14,13 +14,17 @@ QtObject {
     readonly property string promptFontFamily: frontend.promptFontFamily
     readonly property string terminalFontFamily: frontend.terminalFontFamily
     // Single text-rendering policy (Windows consistent).
-    // Every textual surface must use Theme.textRenderType; hardcoded
-    // Text.NativeRendering is not allowed in components. `fontSmoothing on`
-    // keeps Windows ClearType (previous hardcoded look, stored default);
-    // off selects the Qt rasterizer. T3's `-webkit-font-smoothing` reference
-    // is macOS-only and is not used as justification for Windows changes.
-    readonly property int textRenderType: frontend.fontSmoothing
+    // Every textual surface must use Theme.textRenderType; hardcoded render
+    // types are not allowed in components. The effective mode comes from the
+    // bridge (appearance/text_rendering): "qt" uses the Qt rasterizer with
+    // subpixel positioning and vertical hinting, matching T3/Chromium on
+    // Windows; "native" keeps Windows ClearType. On macOS the legacy
+    // fontSmoothing toggle still drives the mode.
+    readonly property int textRenderType: frontend.textRenderingMode === "native"
         ? Text.NativeRendering : Text.QtRendering
+    // Qt rendering hinting: vertical hinting keeps horizontal stems crisp
+    // without distorting glyph outlines the way full hinting does.
+    readonly property int fontHintingPreference: Font.PreferVerticalHinting
 
     readonly property real baseTextScale: 1.00
     property real viewportWidth: 1120
@@ -66,7 +70,12 @@ QtObject {
     readonly property real fontSizeHeading: fontSize(18)
     readonly property real fontSizeSection: fontSize(20)
     readonly property real fontSizeTitle: fontSize(24)
+    readonly property real fontSizeDisplay: fontSize(30)
     readonly property real fontSizePageTitle: fontSize(26)
+
+    // T3 landing hierarchy: text-2xl (24) below 640px, text-3xl (30) above it.
+    readonly property real fontSizeLandingCompact: fontSize(24)
+    readonly property real fontSizeLanding: fontSize(30)
 
     // Semantic aliases for consistency
     readonly property real microSize: fontSizeMicro
@@ -90,6 +99,14 @@ QtObject {
     readonly property real bodyLineHeight: 1.45
     readonly property real denseLineHeight: 1.35
     readonly property real headingLineHeight: 1.25
+
+    // T3 tracking: headings use tracking-tight (-0.025em); micro labels read
+    // wider. letterSpacing in QML is absolute, so scale by the pixel size.
+    readonly property real trackingTight: -0.025
+    readonly property real trackingWide: 0.05
+    function tracking(pixelSize, ratio) {
+        return Number(pixelSize) * ratio
+    }
 
     // Contrast and Glass Opacity tokens
     readonly property int contrast: frontend.appearanceContrast
@@ -142,7 +159,9 @@ QtObject {
     readonly property int composerRadius: scaledGeometry(16)
     readonly property int messageGap: scaledGeometry(8)
 
-    // Lucide-style presence: 16px metadata actions, 18px inline affordances, 20px navigation
+    // Lucide-style presence on T3's size scale (12/14/16/18/20)
+    readonly property int iconMicro: scaledGeometry(12)
+    readonly property int iconCompact: scaledGeometry(14)
     readonly property int iconSmall: scaledGeometry(16)
     readonly property int iconMedium: scaledGeometry(18)
     readonly property int iconSize: scaledGeometry(20)
