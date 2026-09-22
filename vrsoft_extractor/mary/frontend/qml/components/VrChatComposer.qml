@@ -105,7 +105,7 @@ Item {
     anchors.bottomMargin: composerCard.page.messageListHandle.count > 0 ? (composerCard.page.expertStripHeight + 36) : 0
     y: composerCard.page.messageListHandle.count > 0 ? 0
         : Math.max(composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 32,
-            (parent.height + composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 24 - height - composerCard.page.expertStripHeight) / 2)
+            (parent.height - height) / 2)
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: isCompact ? compactHeight : normalHeight
     readonly property bool vrActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode !== "off")
