@@ -1,7 +1,7 @@
 ---
-name: Adaptive
+name: adaptive
 display_name: Adaptativa
-description: "Especialista adaptativo para respostas funcionais e técnicas no VR"
+description: "Perfil especialista adaptativo usado exclusivamente nos modos VR e Ultra"
 user-invocable: false
 agent-invocable: true
 invocation-mode: injected

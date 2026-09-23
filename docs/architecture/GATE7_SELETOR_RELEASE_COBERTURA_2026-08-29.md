@@ -2,6 +2,9 @@
 
 Data: 2026-08-29
 
+> Registro histórico: este documento descreve o estado de 29/08/2026. O contrato
+> atual de perfis está em `docs/DEVELOPMENT.md`.
+
 ## Decisão
 
 A análise de código do VR Ultra só pode ser ativada quando existe uma release
@@ -83,5 +86,5 @@ auditoria em vez de ser descartada ou apresentada como parse perfeito.
 - selecionar explicitamente e planejar os demais JARs da release quando a
   cobertura dos 46 artefatos for autorizada para a rodada;
 - validar chamados reais com o Agente de Código ligado e desligado;
-- medir custo, latência, precisão e ganho com o perfil Adaptativa;
+- medir custo, latência, precisão e ganho por modo sênior;
 - adicionar busca semântica aos sinais AST e ao grafo sintático.

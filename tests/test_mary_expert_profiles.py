@@ -41,7 +41,7 @@ def test_adaptive_is_builtin_vr_skill_injected_by_the_app() -> None:
     assert profile.invocation_mode == "injected"
     assert profile.source == "app_managed"
     assert profile.metadata["builtin_profile"] is True
-    assert profile.metadata["name"] == "Adaptive"
+    assert profile.metadata["name"] == "adaptive"
     assert profile.metadata["display_name"] == "Adaptativa"
     assert profile.metadata["user-invocable"] is False
     assert profile.metadata["agent-invocable"] is True
@@ -69,7 +69,7 @@ def test_adaptive_loads_packaged_markdown_frontmatter() -> None:
         "agent-invocable",
         "invocation-mode",
     }
-    assert metadata["name"] == "Adaptive"
+    assert metadata["name"] == "adaptive"
     assert metadata["display_name"] == "Adaptativa"
     assert metadata["user-invocable"] is False
     assert metadata["agent-invocable"] is True

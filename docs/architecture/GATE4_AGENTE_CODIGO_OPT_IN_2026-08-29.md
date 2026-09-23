@@ -2,6 +2,9 @@
 
 Data: 2026-08-29
 
+> Registro histórico: este documento descreve o estado de 29/08/2026. O contrato
+> atual de perfis está em `docs/DEVELOPMENT.md`.
+
 ## Decisão
 
 O Agente de Código é opcional e fica desligado por padrão. A configuração é
@@ -53,4 +56,4 @@ Implantação e Treinamento.
 - adicionar embeddings ao AST tolerante e ao grafo sintático entregues no Gate 5;
 - seletor de releases inventariadas entregue no Gate 7;
 - medir tokens e latência do quarto agente por perfil de usuário;
-- validar em uso real o perfil Adaptativa e os modos formalizados no Gate 6.
+- validar em uso real o perfil sênior e os modos formalizados no Gate 6.

@@ -137,7 +137,7 @@ Item {
                                 implicitHeight: Theme.scaledGeometry(34)
                                 enabled: chat.expertProfileEnabled
                                 model: [
-                                    { "label": "Adaptativa — identifica a abordagem adequate pelo contexto", "value": "auto" },
+                                    { "label": "Adaptativa — identifica a abordagem adequada pelo contexto", "value": "auto" },
                                     { "label": "Treinamento — foco didático, passo a passo e regras de negócio", "value": "training" },
                                     { "label": "Suporte — diagnóstico ágil, causa raiz e ação corretiva", "value": "support" },
                                     { "label": "Implantação — homologação, pré-requisitos e validações", "value": "implementation" }

@@ -3542,6 +3542,17 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
         self.assertIn('"Como posso ajudar no projeto " + projectLabel + "?"', chat_qml)
 
+    def test_vr_ultra_adaptive_option_uses_correct_portuguese_label(self):
+        settings_qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"label": "Adaptativa — identifica a abordagem adequada pelo contexto"',
+            settings_qml,
+        )
+        self.assertNotIn("abordagem adequate", settings_qml)
+
     def test_trashing_a_conversation_does_not_block_the_ui_thread(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
