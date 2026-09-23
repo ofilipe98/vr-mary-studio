@@ -688,6 +688,105 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("Conteúdo documental íntegro.", payload["content"])
         self.assertNotIn("SENTINELA-OCR-LEGADO", payload["content"])
 
+    def test_legacy_ocr_text_does_not_match_document_search(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-search-1",
+            title="Documento documental",
+            url="https://example.com/wiki/legacy-ocr-search-1",
+            markdown="Conteúdo documental confiável.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-search-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-SOMENTE", document_id),
+            )
+
+        results = database.search(
+            "SENTINELA-OCR-SOMENTE", include_unvalidated=True
+        )
+        page, total = database.search_page(
+            "SENTINELA-OCR-SOMENTE", include_unvalidated=True
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(page, [])
+        self.assertEqual(total, 0)
+
+    def test_legacy_ocr_text_does_not_match_review_filter(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-review-1",
+            title="Documento para revisão",
+            url="https://example.com/wiki/legacy-ocr-review-1",
+            markdown="Conteúdo documental para revisão.",
+            module="Revisar",
+            review_status="pending",
+            product="Produto documental",
+            category="Categoria documental",
+            content_hash="legacy-ocr-review-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        database.queue_review(
+            document_id,
+            "PDV",
+            0.5,
+            ["evidência documental"],
+            "Revisar",
+        )
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-REVIEW", document_id),
+            )
+
+        page = database.query_reviews(
+            ReviewFilters(
+                query="SENTINELA-OCR-REVIEW", status="all", limit=10
+            )
+        )
+
+        self.assertEqual(page.total, 0)
+        self.assertEqual(page.items, [])
+
+    def test_backfill_chunks_ignores_legacy_ocr_text(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-backfill-1",
+            title="Documento para backfill",
+            url="https://example.com/wiki/legacy-ocr-backfill-1",
+            markdown="## Procedimento\n\nConteúdo documental para backfill.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-backfill-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-BACKFILL", document_id),
+            )
+            connection.execute(
+                "DELETE FROM knowledge_chunks WHERE document_id=?",
+                (document_id,),
+            )
+
+        created = database.backfill_knowledge_chunks()
+        chunks = database.document_chunks(document_id)
+        content = "\n".join(str(chunk["content"]) for chunk in chunks)
+
+        self.assertEqual(created, 1)
+        self.assertTrue(chunks)
+        self.assertIn("Conteúdo documental para backfill.", content)
+        self.assertNotIn("SENTINELA-OCR-BACKFILL", content)
+
     def test_search_page_reports_and_reaches_results_beyond_legacy_cap(self):
         database = MaryDatabase(self.settings.database_path)
         for index in range(501):

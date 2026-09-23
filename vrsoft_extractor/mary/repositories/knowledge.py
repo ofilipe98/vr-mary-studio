@@ -25,8 +25,10 @@ from .common import (
     _escape_like,
     _review_signature,
     _fts_query,
+    _document_fts_query,
     _last_insert_id,
     _fts_and_query,
+    _document_fts_and_query,
     _score_search_row,
     _score_search_rows,
     _expand_reference_results,
@@ -1040,7 +1042,11 @@ class KnowledgeRepositoryMixin:
         exact_limit = max(60, min(240, int(limit) * 10))
         broad_limit = max(140, min(500, int(limit) * 24))
         sql = f"""
-            SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+            SELECT d.id,d.source,d.source_origin,d.source_id,d.title,d.url,
+                   d.module,d.classification_confidence,d.review_status,d.status,
+                   d.category,d.product,d.created_at,d.updated_at,d.synced_at,
+                   d.revision,d.content_hash,d.markdown,d.local_path,d.assets_json,
+                   bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
               FROM knowledge_fts
               JOIN documents d ON d.id=knowledge_fts.rowid
              WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
@@ -1048,10 +1054,9 @@ class KnowledgeRepositoryMixin:
         """
         rows_by_id: dict[int, dict[str, Any]] = {}
         with self.connect() as connection:
-            params = [_fts_and_query(terms), *filter_params, exact_limit]
+            params = [_document_fts_and_query(terms), *filter_params, exact_limit]
             for row in connection.execute(sql, params).fetchall():
                 candidate = dict(row)
-                candidate["ocr_text"] = ""
                 rows_by_id[int(candidate["id"])] = candidate
             results = _score_search_rows(rows_by_id.values(), terms)
             _expand_reference_results(
@@ -1062,10 +1067,9 @@ class KnowledgeRepositoryMixin:
                 filter_params,
             )
             if len(results) < max(1, int(limit)):
-                params = [_fts_query(query), *filter_params, broad_limit]
+                params = [_document_fts_query(query), *filter_params, broad_limit]
                 for row in connection.execute(sql, params).fetchall():
                     candidate = dict(row)
-                    candidate["ocr_text"] = ""
                     rows_by_id.setdefault(int(candidate["id"]), candidate)
                 results = _score_search_rows(rows_by_id.values(), terms)
                 _expand_reference_results(
@@ -1083,7 +1087,6 @@ class KnowledgeRepositoryMixin:
         )
         selected = results[: max(1, int(limit))]
         for result in selected:
-            result.pop("ocr_text", None)
             result["excerpt"] = search_excerpt(
                 result.get("markdown") or "",
                 terms,
@@ -1134,7 +1137,7 @@ class KnowledgeRepositoryMixin:
             filters.append(f"d.source NOT IN ({placeholders})")
             filter_params.extend(ignored)
         where = " AND ".join(filters)
-        match_query = _fts_query(query)
+        match_query = _document_fts_query(query)
         page_limit = max(1, int(limit))
         page_offset = max(0, int(offset))
         with self.connect() as connection:
@@ -1148,7 +1151,11 @@ class KnowledgeRepositoryMixin:
                 ).fetchone()[0]
             )
             rows = connection.execute(
-                f"""SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                f"""SELECT d.id,d.source,d.source_origin,d.source_id,d.title,d.url,
+                              d.module,d.classification_confidence,d.review_status,d.status,
+                              d.category,d.product,d.created_at,d.updated_at,d.synced_at,
+                              d.revision,d.content_hash,d.markdown,d.local_path,d.assets_json,
+                              bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
                       FROM knowledge_fts
                       JOIN documents d ON d.id=knowledge_fts.rowid
                      WHERE knowledge_fts MATCH ? AND {where}
@@ -1158,7 +1165,6 @@ class KnowledgeRepositoryMixin:
             ).fetchall()
         results = [dict(row) for row in rows]
         for result in results:
-            result.pop("ocr_text", None)
             result["excerpt"] = search_excerpt(
                 result.get("markdown") or "",
                 terms,

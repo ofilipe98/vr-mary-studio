@@ -386,6 +386,18 @@ def _fts_literal(value: str) -> str:
     return '"' + str(value).replace('"', '""') + '"'
 
 
+def _document_fts_term(term: str) -> str:
+    return f"{{title markdown module category product}} : {_fts_literal(term)}"
+
+
+def _document_fts_query(query: str) -> str:
+    return " OR ".join(_document_fts_term(term) for term in search_terms(query))
+
+
+def _document_fts_and_query(terms: list[str]) -> str:
+    return " AND ".join(_document_fts_term(term) for term in terms)
+
+
 def _score_search_row(
     row: dict[str, Any],
     terms: list[str],
@@ -400,9 +412,7 @@ def _score_search_row(
     )
     normalized_title = normalize_search_text(title)
     normalized_metadata = normalize_search_text(metadata)
-    normalized_content = normalize_search_text(
-        markdown + " " + str(row.get("ocr_text") or "")
-    )
+    normalized_content = normalize_search_text(markdown)
     title_matches = [term for term in terms if term in normalized_title]
     matched = [
         term
@@ -485,13 +495,17 @@ def _expand_reference_results(
                 target_terms = search_terms(target_key)
                 if target_terms:
                     sql = f"""
-                        SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                        SELECT d.id,d.source,d.source_origin,d.source_id,d.title,d.url,
+                               d.module,d.classification_confidence,d.review_status,d.status,
+                               d.category,d.product,d.created_at,d.updated_at,d.synced_at,
+                               d.revision,d.content_hash,d.markdown,d.local_path,d.assets_json,
+                               bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
                           FROM knowledge_fts
                           JOIN documents d ON d.id=knowledge_fts.rowid
                          WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
                          ORDER BY rank LIMIT 30
                     """
-                    params = [_fts_and_query(target_terms), *filter_params]
+                    params = [_document_fts_and_query(target_terms), *filter_params]
                     for row in connection.execute(sql, params).fetchall():
                         candidate = dict(row)
                         if normalize_search_text(candidate.get("title") or "") != target_key:
