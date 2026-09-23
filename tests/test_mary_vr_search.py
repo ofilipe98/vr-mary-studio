@@ -380,6 +380,41 @@ def test_read_endoo_reference_when_endoo_disabled(tmp_path: Path) -> None:
     assert "Endoo" in payload["content"]
 
 
+def test_read_wiki_rejects_origin_outside_source_wide_allowlist(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+    service._router.database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="sped-outra-origem",
+            source_origin="outra-origem",
+            title="SPED Fiscal Outra Origem",
+            url="https://outra.example/sped",
+            markdown="SPED Fiscal em outra origem.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="sped-outra-origem",
+        )
+    )
+
+    payload = service.read("wiki:sped-outra-origem")
+
+    assert payload == {
+        "state": "no_results",
+        "reference": "wiki:sped-outra-origem",
+        "error": "Documento indisponível ou fora do escopo permitido.",
+    }
+    listed = service.sources(source="wiki", limit=20)
+    searched = service.search("SPED Fiscal", source="wiki", limit=20)
+    assert "sped-outra-origem" not in {
+        item["source_id"] for item in listed["results"]
+    }
+    assert "sped-outra-origem" not in {
+        item["source_id"] for item in searched["results"]
+    }
+
+
 def test_knowledge_router_search_returns_compact_results(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)

@@ -358,6 +358,9 @@ class RetrievalService:
             require_review=True,
             enforce_enabled_origin=reference_source != "wiki",
         )
+        if doc is not None and reference_source == "wiki":
+            if doc.source_origin not in WIKI_SOURCE_ORIGINS:
+                doc = None
         if doc is not None:
             with self._router.database.connect() as conn:
                 row = conn.execute("SELECT * FROM documents WHERE source=? AND source_id=?", (doc.source, doc.source_id)).fetchone()

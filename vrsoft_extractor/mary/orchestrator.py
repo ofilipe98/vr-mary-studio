@@ -660,6 +660,9 @@ class ChatOrchestrator:
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None
                     response_contract: ResponseContract | None = None
+                    ultra_direct_fallback = (
+                        resolved_vr_mode == "ultra" and not ultra_source_fanout
+                    )
                     if use_vr:
                         if resolved_vr_mode == "vr":
                             # Tool-driven VR: the main model starts the turn
@@ -673,7 +676,7 @@ class ChatOrchestrator:
                                 ),
                                 candidates=(),
                             )
-                        elif not ultra_source_fanout and resolved_vr_mode == "ultra":
+                        elif ultra_direct_fallback:
                             # Ultra without fan-out keeps the pre-9d048bc direct
                             # fallback: route the fixed source lanes before the
                             # main call instead of reusing the empty VR
@@ -698,6 +701,20 @@ class ChatOrchestrator:
                                     or conversation_id in self._cancelled_conversations
                                     or conversation_id in self._finalized_turns):
                                 return
+                        evidence_degraded = ultra_direct_fallback and (
+                            evidence_bundle is None
+                            or not evidence_bundle.candidates
+                        )
+                        if evidence_degraded:
+                            self._emit_orchestration_event(
+                                conversation_id,
+                                "knowledge_fallback_used",
+                                "Busca completa indisponível; usando busca simplificada.",
+                                {
+                                    "router_failed": evidence_bundle is None,
+                                    "query": local_query or text[:200],
+                                },
+                            )
                         self._emit_orchestration_event(
                             conversation_id,
                             "intent_analysis_started",
@@ -724,6 +741,12 @@ class ChatOrchestrator:
                         response_contract = build_response_contract(
                             response_intent
                         )
+                        if evidence_degraded:
+                            response_contract = replace(
+                                response_contract,
+                                requires_sources=False,
+                                sources_position="none",
+                            )
                         self._emit_orchestration_event(
                             conversation_id,
                             "intent_analysis_completed",
@@ -765,11 +788,19 @@ class ChatOrchestrator:
                     if code_scope_warning:
                         enriched = code_scope_warning + "\n\n" + enriched
                     if evidence_bundle is not None:
-                        # Tool-driven VR registers the turn accumulator before
-                        # the provider call; there is no routed bundle to announce.
+                        # Keep the empty tool-driven VR accumulator distinct
+                        # from the routed Ultra fallback bundle; only the latter
+                        # is announced here.
                         self._pending_evidence_bundles[
                             conversation_id
                         ] = evidence_bundle
+                        if ultra_direct_fallback:
+                            self._emit_orchestration_event(
+                                conversation_id,
+                                "knowledge_routed",
+                                "Fontes VR filtradas pela intenção da pergunta.",
+                                self.knowledge_router.summary(evidence_bundle),
+                            )
                     if use_vr:
                         visible_plan = self._display_response_plan(
                             text,
@@ -777,6 +808,11 @@ class ChatOrchestrator:
                             response_intent,
                             response_contract,
                         )
+                        if evidence_degraded:
+                            visible_plan = [
+                                *visible_plan,
+                                "Fontes completas indisponíveis — busca simplificada aplicada.",
+                            ]
                         self._emit_orchestration_event(
                             conversation_id,
                             "response_plan_created",

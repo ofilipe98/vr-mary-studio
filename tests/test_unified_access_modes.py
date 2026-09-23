@@ -651,7 +651,10 @@ def test_ultra_mode_without_fanout_uses_direct_vr_sources_fallback(
     assert calls["ultra"] == 0
     assert calls["route_vr_sources"] == 1
     assert calls["route"] == 0
-    assert "research_started" not in [event.kind for event in events]
+    kinds = [event.kind for event in events]
+    assert "research_started" not in kinds
+    assert "knowledge_routed" in kinds
+    assert "knowledge_fallback_used" not in kinds
     assistant = [
         row for row in database.messages(cid) if row["role"] == "assistant"
     ]

@@ -9,6 +9,7 @@ from typing import Any
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.models import (
+    EvidenceBundle,
     KnowledgeDocument,
     ModelRef,
     RuntimeEvent,
@@ -246,9 +247,97 @@ def test_ultra_without_fanout_keeps_direct_vr_sources_fallback(
     kinds = [e.kind for e in events]
     assert calls == [QUESTION]
     assert "research_started" not in kinds
-    assert "agent_started" not in kinds
+    assert not any(
+        kind in {"agent_started", "agent_completed", "agent_failed"}
+        for kind in kinds
+    )
+    routed = [event for event in events if event.kind == "knowledge_routed"]
+    assert routed
+    assert routed[0].payload["selected_evidence"]
+    assert "knowledge_fallback_used" not in kinds
     row = [r for r in database.messages(cid) if r["role"] == "assistant"]
     assert row and "Resposta Ultra" in row[-1]["content"]
+
+
+def test_ultra_without_fanout_degrades_empty_bundle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings_value, database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+
+    def empty_bundle(query, **_kwargs):
+        return EvidenceBundle(
+            profile=orchestrator.retrieval_service.classify(query)
+        )
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", empty_bundle
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [event.kind for event in events]
+    fallback = next(
+        event for event in events if event.kind == "knowledge_fallback_used"
+    )
+    assert fallback.payload["router_failed"] is False
+    assert fallback.payload["query"] == QUESTION
+    contract = next(
+        event for event in events if event.kind == "response_contract_created"
+    )
+    assert contract.payload["contract"]["requires_sources"] is False
+    assert contract.payload["contract"]["sources_position"] == "none"
+    plan = next(
+        event for event in events if event.kind == "response_plan_created"
+    )
+    assert "Fontes completas indisponíveis — busca simplificada aplicada." in plan.payload[
+        "steps"
+    ]
+    assert "knowledge_fallback_used" in kinds
+    assert "knowledge_routed" in kinds
+
+
+def test_ultra_without_fanout_degrades_when_router_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings_value, database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+
+    def broken_router(*_args, **_kwargs):
+        raise RuntimeError("router indisponível")
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", broken_router
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [event.kind for event in events]
+    fallback = next(
+        event for event in events if event.kind == "knowledge_fallback_used"
+    )
+    assert fallback.payload["router_failed"] is True
+    assert fallback.payload["query"] == QUESTION
+    contract = next(
+        event for event in events if event.kind == "response_contract_created"
+    )
+    assert contract.payload["contract"]["requires_sources"] is False
+    assert contract.payload["contract"]["sources_position"] == "none"
+    plan = next(
+        event for event in events if event.kind == "response_plan_created"
+    )
+    assert "Fontes completas indisponíveis — busca simplificada aplicada." in plan.payload[
+        "steps"
+    ]
+    assert "knowledge_routed" not in kinds
 
 
 def test_code_scope_prefers_original_business_term_over_follow_up_wording() -> None:
