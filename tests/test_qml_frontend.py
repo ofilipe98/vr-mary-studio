@@ -353,15 +353,53 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(add_project_popup.property("visible"))
             chat_page = window.findChild(QObject, "chatPage")
             self.assertIsNotNone(chat_page)
-            chat_bridge.setSeniorProfileEnabled(True)
+            profiles = chat_page.property("expertProfiles").toVariant()
+            self.assertEqual(profiles[0]["key"], "adaptive")
+            self.assertEqual(profiles[0]["label"], "Adaptativa")
+            self.assertEqual(profiles[0]["icon"], "expertSenior")
+            chat_bridge.setVrMode("vr")
+            self.application.processEvents()
+            for profile_key, response_mode in (
+                ("adaptive", "auto"),
+                ("training", "training"),
+                ("support", "support"),
+                ("implementation", "implementation"),
+            ):
+                chat_page.activateExpertProfile(profile_key)
+                self.assertTrue(chat_bridge.expertProfileEnabled)
+                self.assertEqual(chat_bridge.vrResponseMode, response_mode)
+                self.assertTrue(chat_page.expertProfileSelected(profile_key))
+                self.assertEqual(
+                    [
+                        item["key"]
+                        for item in profiles
+                        if chat_page.expertProfileSelected(item["key"])
+                    ],
+                    [profile_key],
+                )
+                chat_page.activateExpertProfile(profile_key)
+                self.assertFalse(chat_bridge.expertProfileEnabled)
+                self.assertEqual(chat_bridge.vrResponseMode, "auto")
+                self.assertFalse(
+                    any(chat_page.expertProfileSelected(item["key"]) for item in profiles)
+                )
+            chat_bridge.setExpertProfileEnabled(True)
             chat_bridge.setVrResponseMode("support")
-            chat_page.activateExpertProfile("support")
-            self.assertFalse(chat_bridge.seniorProfileEnabled)
-            self.assertEqual(chat_bridge.vrResponseMode, "auto")
-            chat_page.activateExpertProfile("training")
-            self.assertTrue(chat_bridge.seniorProfileEnabled)
-            self.assertEqual(chat_bridge.vrResponseMode, "training")
-            self.assertTrue(chat_page.expertProfileSelected("training"))
+            chat_bridge.setVrMode("off")
+            QTest.qWait(300)
+            self.application.processEvents()
+            expert_profile_strip = window.findChild(QObject, "expertProfileStrip")
+            self.assertIsNotNone(expert_profile_strip)
+            self.assertFalse(expert_profile_strip.property("visible"))
+            self.assertFalse(expert_profile_strip.property("enabled"))
+            self.assertTrue(chat_bridge.expertProfileEnabled)
+            self.assertFalse(chat_page.expertProfileSelected("support"))
+            chat_page.activateExpertProfile("adaptive")
+            self.assertTrue(chat_bridge.expertProfileEnabled)
+            self.assertEqual(chat_bridge.vrResponseMode, "support")
+            chat_bridge.setVrMode("vr")
+            self.assertTrue(chat_page.expertProfileSelected("support"))
+            chat_bridge.setExpertProfileEnabled(False)
             self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
@@ -549,7 +587,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsScroll"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraSeniorProfileCard"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraExpertProfileCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeAnalysisCard"))
 
             manage_apps_btn = window.findChild(QObject, "vrUltraManageAppsButton")
@@ -2649,7 +2687,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.codeAnalysisRelease, "")
             self.assertEqual(bridge.codeAnalysisReleaseItems, [])
 
-    def test_senior_profile_unlocks_and_persists_explicit_response_mode(self):
+    def test_expert_profile_unlocks_and_persists_explicit_response_mode(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
@@ -2663,21 +2701,21 @@ class QmlFrontendTest(unittest.TestCase):
             )
             bridge = ChatBridge(settings, database, preferences)
 
-            self.assertFalse(bridge.seniorProfileEnabled)
+            self.assertFalse(bridge.expertProfileEnabled)
             self.assertEqual(bridge.vrResponseMode, "auto")
             bridge.setVrResponseMode("support")
             self.assertEqual(bridge.vrResponseMode, "auto")
 
-            bridge.setSeniorProfileEnabled(True)
+            bridge.setExpertProfileEnabled(True)
             bridge.setVrResponseMode("implementation")
-            self.assertTrue(bridge.seniorProfileEnabled)
+            self.assertTrue(bridge.expertProfileEnabled)
             self.assertEqual(bridge.vrResponseMode, "implementation")
 
             reopened = ChatBridge(settings, database, preferences)
-            self.assertTrue(reopened.seniorProfileEnabled)
+            self.assertTrue(reopened.expertProfileEnabled)
             self.assertEqual(reopened.vrResponseMode, "implementation")
 
-            reopened.setSeniorProfileEnabled(False)
+            reopened.setExpertProfileEnabled(False)
             self.assertEqual(reopened.vrResponseMode, "auto")
 
     def test_project_folder_browser_lists_directories_and_adds_current_path(self):
@@ -3472,6 +3510,8 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "expertProfileStrip"', chat_qml)
         self.assertIn("Behavior on expertReveal", chat_qml)
         self.assertIn("VrProfileIcon", chat_qml)
+        self.assertIn('key: "adaptive"', chat_qml)
+        self.assertIn('label: "Adaptativa"', chat_qml)
         self.assertIn("expertSenior", chat_qml)
         self.assertIn("expertTraining", chat_qml)
         self.assertIn('"Treinamento"', chat_qml)

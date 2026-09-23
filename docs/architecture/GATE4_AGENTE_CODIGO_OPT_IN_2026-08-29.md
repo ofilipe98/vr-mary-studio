@@ -53,4 +53,4 @@ Implantação e Treinamento.
 - adicionar embeddings ao AST tolerante e ao grafo sintático entregues no Gate 5;
 - seletor de releases inventariadas entregue no Gate 7;
 - medir tokens e latência do quarto agente por perfil de usuário;
-- validar em uso real o perfil sênior e os modos formalizados no Gate 6.
+- validar em uso real o perfil Adaptativa e os modos formalizados no Gate 6.

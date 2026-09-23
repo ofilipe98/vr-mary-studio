@@ -324,10 +324,10 @@ def main():
             frontend.setUiScale("100")
             page.setProperty("tabIndex", 2)
             QTest.qWait(80)
-            toggle = window.findChild(QObject, "vrUltraSeniorProfileToggle")
+            toggle = window.findChild(QObject, "vrUltraExpertProfileToggle")
             toggle.forceActiveFocus()
             QTest.keyClick(window, Qt.Key_Space)
-            assert chat.seniorProfileEnabled
+            assert chat.expertProfileEnabled
             picker = window.findChild(QObject, "vrUltraResponseModePicker")
             picker.activated.emit(2)
             assert chat.vrResponseMode == "support"

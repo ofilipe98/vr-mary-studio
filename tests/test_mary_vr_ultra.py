@@ -85,6 +85,7 @@ class _UltraFakeProvider:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.calls: list[str] = []
+        self.messages: list[tuple[str, str]] = []
         self.active: set[str] = set()
         self.parallel_peak = 0
 
@@ -110,6 +111,7 @@ class _UltraFakeProvider:
                      message, callback, options=None, skills=None, image_paths=None):
         with self.lock:
             self.calls.append(conversation_id)
+            self.messages.append((conversation_id, message))
         output = SYNTHESIS
         if ":vr_fanout_" not in conversation_id and not any(
             marker in message for marker in ("sintetizador final", "Reescreva integralmente")
@@ -369,6 +371,91 @@ def test_explicit_response_mode_is_applied_before_contract_and_fanout(tmp_path: 
     assert intent_event.payload["intent"]["purpose"] == "implementation"
     assert contract_event.payload["contract"]["purpose"] == "implementation"
     assert "mapeamento de dados" in contract_event.payload["contract"]["must_include"]
+
+
+def test_adaptive_reaches_ultra_fanout_without_changing_graph_or_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from vrsoft_extractor.mary.execution.runner import ExecutionRunner
+
+    _settings, _database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    captured: dict[str, Any] = {}
+    original = ExecutionRunner.execute_ultra_source_fanout
+
+    def spy(self, **kwargs):
+        captured["request"] = str(kwargs.get("request") or "")
+        captured["search_scope"] = str(kwargs.get("search_scope") or "")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ExecutionRunner, "execute_ultra_source_fanout", spy)
+
+    _run_send(orchestrator, cid, events, response_mode="adaptive")
+
+    request = captured["request"]
+    header = "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:"
+    assert header in request
+    assert "Atue como especialista funcional e técnico adaptativo" in request
+    assert "worker permanece restrito à lane atribuída" in request
+    assert request.index(header) < request.index(QUESTION)
+    assert captured["search_scope"] == QUESTION
+    assert header not in captured["search_scope"]
+    research = next(event for event in events if event.kind == "research_started")
+    assert research.payload["sources"] == ["wiki", "kb", "schema"]
+    plan = next(event for event in events if event.kind == "plan_created")
+    stages = {stage["id"]: stage for stage in plan.payload["runtime_stages"]}
+    assert set(stages) == {
+        "ultra_wiki",
+        "ultra_kb",
+        "ultra_schema",
+        "ultra_synthesis",
+    }
+    assert {stage["source"] for stage in stages.values() if not stage["final"]} == {
+        "wiki",
+        "kb",
+        "schema",
+    }
+    started = {
+        event.payload["agent_id"]
+        for event in events
+        if event.kind == "agent_started"
+    }
+    assert {"ultra_wiki", "ultra_kb", "ultra_schema"} <= started
+    assert all(
+        event.payload.get("parent_id") == "vr_ultra_fanout"
+        for event in events
+        if event.kind in {"agent_started", "agent_completed", "agent_failed"}
+    )
+
+
+def test_ultra_adaptive_without_fanout_keeps_direct_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings, _database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+    calls: list[str] = []
+    original = orchestrator.retrieval_service.route_vr_sources
+
+    def spy(query, **kwargs):
+        calls.append(query)
+        return original(query, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", spy
+    )
+
+    _run_send(orchestrator, cid, events, response_mode="adaptive")
+
+    assert calls == [QUESTION]
+    assert not any(event.kind == "research_started" for event in events)
+    main_prompt = next(message for cid_, message in provider.messages if cid_ == cid)
+    assert "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:" in main_prompt
+    assert "Atue como especialista funcional e técnico adaptativo" in main_prompt
 
 
 def test_vr_mode_never_triggers_fanout(tmp_path: Path) -> None:

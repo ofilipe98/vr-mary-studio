@@ -222,7 +222,13 @@ class ResponseIntent:
         return asdict(self)
 
 
-VALID_RESPONSE_MODES = {"auto", "training", "support", "implementation"}
+VALID_RESPONSE_MODES = {
+    "auto",
+    "adaptive",
+    "training",
+    "support",
+    "implementation",
+}
 
 
 def normalize_response_mode(value: object) -> str:
@@ -234,7 +240,7 @@ def apply_response_mode(intent: ResponseIntent, mode: object) -> ResponseIntent:
     """Apply an explicit presentation mode without treating it as authorization."""
 
     selected = normalize_response_mode(mode)
-    if selected == "auto":
+    if selected in {"auto", "adaptive"}:
         return intent
     if selected == "training":
         return replace(

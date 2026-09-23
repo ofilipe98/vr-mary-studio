@@ -615,6 +615,46 @@ def test_vr_normal_prompt_exposes_three_tools_without_automatic_context(
     } <= tool_names
 
 
+def test_vr_adaptive_keeps_tool_driven_execution_and_three_tools(
+    tmp_path: Path,
+):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator, provider, conversation_id = _vr_normal_orchestrator(
+        settings, database, service
+    )
+    calls = _mode_calls(orchestrator)
+    events: list[RuntimeEvent] = []
+
+    _send_vr_query(
+        orchestrator,
+        conversation_id,
+        events,
+        response_mode="adaptive",
+    )
+
+    assert calls == {
+        "route": 0,
+        "route_source": [],
+        "route_code_source": 0,
+        "route_vr_sources": 0,
+        "ultra": 0,
+    }
+    kinds = {event.kind for event in events}
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
+    assert len(provider.calls) == 1
+    prompt = provider.calls[0][1]
+    assert "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:" in prompt
+    assert "Atue como especialista funcional e técnico adaptativo" in prompt
+    options = orchestrator._conversation_options(conversation_id, use_vr=True)
+    tool_names = {tool.get("name") for tool in options.dynamic_tools}
+    assert {
+        VR_SOURCES_TOOL_NAME,
+        VR_SEARCH_TOOL_NAME,
+        VR_READ_TOOL_NAME,
+    } <= tool_names
+
+
 def test_ultra_mode_uses_source_fanout_without_route_vr_sources(tmp_path: Path):
     from test_mary_vr_ultra import _orchestrator
 
@@ -709,7 +749,13 @@ def _vr_normal_orchestrator(settings, database, service):
     return orchestrator, provider, conversation_id
 
 
-def _send_vr_query(orchestrator, conversation_id, events, query: str = VR_QUERY):
+def _send_vr_query(
+    orchestrator,
+    conversation_id,
+    events,
+    query: str = VR_QUERY,
+    **send_kwargs,
+):
     done = threading.Event()
 
     def callback(event):
@@ -722,6 +768,7 @@ def _send_vr_query(orchestrator, conversation_id, events, query: str = VR_QUERY)
         query,
         callback,
         use_vr=True,
+        **send_kwargs,
     )
     assert done.wait(30), "turno não concluiu"
 

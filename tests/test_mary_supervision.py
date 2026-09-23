@@ -24,6 +24,7 @@ from vrsoft_extractor.mary.supervision import (
     combine_final_validations,
     combine_supervision,
     deterministic_supervision,
+    normalize_response_mode,
     parse_final_draft,
     parse_worker_report,
     render_sources,
@@ -95,13 +96,17 @@ def test_implementation_intent_has_mapping_diff_risk_and_validation_contract() -
     assert "riscos e plano de reversão" in contract.must_include
 
 
-def test_explicit_senior_response_modes_override_presentation_not_sources() -> None:
+def test_explicit_response_modes_override_presentation_not_sources() -> None:
     base = analyze_response_intent("Como funciona a venda?", _profile("venda"))
 
+    adaptive = apply_response_mode(base, "adaptive")
     training = apply_response_mode(base, "training")
     support = apply_response_mode(base, "support")
     implementation = apply_response_mode(base, "implementation")
 
+    assert normalize_response_mode("adaptive") == "adaptive"
+    assert adaptive is base
+    assert adaptive.to_dict() == base.to_dict()
     assert training.purpose == "training_manual"
     assert training.audience == "beginner"
     assert support.purpose == "troubleshooting"
@@ -109,7 +114,7 @@ def test_explicit_senior_response_modes_override_presentation_not_sources() -> N
     assert implementation.purpose == "implementation"
     assert implementation.audience == "implementation_team"
     assert all(
-        item.requires_sources for item in (training, support, implementation)
+        item.requires_sources for item in (adaptive, training, support, implementation)
     )
     assert apply_response_mode(base, "invalid") == base
 

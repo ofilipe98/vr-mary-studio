@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.expert_profiles import expert_profile_instructions
 from vrsoft_extractor.mary.models import (
     EvidenceBundle,
     EvidenceCandidate,
@@ -99,6 +100,7 @@ class TestPromptPrefixCache:
         ):
             prompt = orchestrator._enrich_prompt("pergunta", evidence_bundle=None)
         assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in prompt
+        assert "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:" not in prompt
         assert "CONSULTA SOB DEMANDA" in prompt
         assert "CONTEXTO LOCAL VR RECUPERADO" not in prompt
         for name in ("vr_sources", "vr_search", "vr_read"):
@@ -169,6 +171,48 @@ class TestPromptPrefixCache:
             assert name in prompt
         assert "vr-search.ps1" not in prompt
         assert str(orchestrator.settings.root.resolve()) not in prompt
+
+    def test_adaptive_profile_is_injected_after_tool_policy_before_access_notes(
+        self, tmp_path: Path
+    ) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        instructions = expert_profile_instructions("adaptive")
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompts = (
+                orchestrator._enrich_prompt(
+                    "pergunta",
+                    expert_profile_instructions=instructions,
+                    supports_native_tools=True,
+                ),
+                orchestrator._enrich_prompt(
+                    "pergunta",
+                    expert_profile_instructions=instructions,
+                    supports_native_tools=False,
+                ),
+                orchestrator._enrich_prompt(
+                    "olha o print",
+                    has_images=True,
+                    expert_profile_instructions=instructions,
+                    supports_native_tools=True,
+                ),
+            )
+
+        expected_section = (
+            "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:\n" + instructions
+        )
+        for prompt in prompts:
+            header = prompt.index("PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:")
+            access = prompt.index("ACESSO À FONTE VR")
+            request = prompt.index("<user_request>")
+            assert prompt.index(VRMASTER_TOOL_DRIVEN_ACCESS_POLICY) < header
+            assert header < access < request
+            assert instructions in prompt
+            assert prompt[header:access].rstrip() == expected_section
+            for name in ("vr_sources", "vr_search", "vr_read"):
+                assert name in prompt
+        assert "ANEXO VISUAL" in prompts[2]
 
     def test_prefix_is_byte_identical_across_questions(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)

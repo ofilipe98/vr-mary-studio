@@ -888,15 +888,30 @@ class ProviderSettingsDomain:
         if not self._code_analysis_release_items and self._code_analysis_enabled:
             self._code_analysis_enabled = False
             self._preferences.setValue("research/code_analysis_enabled", False)
-        self._preferences.sync()
-        self._senior_profile_enabled = self._stored_bool(
-            self._preferences.value("research/senior_profile_enabled", False),
+        expert_profile_preference = "research/expert_profile_enabled"
+        has_expert_profile_preference = self._preferences.contains(
+            expert_profile_preference
+        )
+        stored_expert_profile = self._preferences.value(
+            expert_profile_preference
+            if has_expert_profile_preference
+            else "research/senior_profile_enabled",
             False,
         )
+        self._expert_profile_enabled = self._stored_bool(
+            stored_expert_profile,
+            False,
+        )
+        if not has_expert_profile_preference:
+            self._preferences.setValue(
+                expert_profile_preference,
+                self._expert_profile_enabled,
+            )
         saved_mode = self._normalize_response_mode(
             self._preferences.value("research/response_mode", "auto")
         )
-        self._vr_response_mode = saved_mode if self._senior_profile_enabled else "auto"
+        self._vr_response_mode = saved_mode if self._expert_profile_enabled else "auto"
+        self._preferences.sync()
 
 
     def _apply_research_config(self) -> None:

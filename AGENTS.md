@@ -22,6 +22,12 @@ A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki`
 
 ---
 
+## Perfis especialistas
+
+Perfis especialistas são skills built-in injetadas exclusivamente nos modos VR e Ultra. Eles orientam apenas o comportamento e nunca alteram fontes, retrieval, tools ou fan-out. O modo OFF não exibe perfil ativo, não envia modo de perfil e não injeta política de perfil.
+
+---
+
 ## Investigate Before Asking
 
 Investigue antes de perguntar.

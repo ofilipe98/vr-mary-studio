@@ -354,7 +354,7 @@ class ChatBridge(QObject):
         ] = queue.SimpleQueue()
         self._code_processing_status_threads: set[threading.Thread] = set()
         self._code_processing_status_threads_lock = threading.Lock()
-        self._senior_profile_enabled = False
+        self._expert_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
@@ -1089,8 +1089,8 @@ class ChatBridge(QObject):
         return f"ETA local: {duration} · confiança {confidence} · {samples} execução(ões)"
 
     @Property(bool, notify=stateChanged)
-    def seniorProfileEnabled(self) -> bool:  # noqa: N802
-        return self._senior_profile_enabled
+    def expertProfileEnabled(self) -> bool:  # noqa: N802
+        return self._expert_profile_enabled
 
     @Property(str, notify=stateChanged)
     def vrResponseMode(self) -> str:  # noqa: N802
@@ -2227,7 +2227,7 @@ class ChatBridge(QObject):
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items = []
-        self._senior_profile_enabled = False
+        self._expert_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
@@ -2625,14 +2625,14 @@ class ChatBridge(QObject):
         )
 
     @Slot(bool)
-    def setSeniorProfileEnabled(self, enabled: bool) -> None:  # noqa: N802
-        self._senior_profile_enabled = bool(enabled)
-        if not self._senior_profile_enabled:
+    def setExpertProfileEnabled(self, enabled: bool) -> None:  # noqa: N802
+        self._expert_profile_enabled = bool(enabled)
+        if not self._expert_profile_enabled:
             self._vr_response_mode = "auto"
             self._preferences.setValue("research/response_mode", "auto")
         self._preferences.setValue(
-            "research/senior_profile_enabled",
-            self._senior_profile_enabled,
+            "research/expert_profile_enabled",
+            self._expert_profile_enabled,
         )
         self._preferences.sync()
         self.stateChanged.emit()
@@ -2640,7 +2640,7 @@ class ChatBridge(QObject):
     @Slot(str)
     def setVrResponseMode(self, mode: str) -> None:  # noqa: N802
         selected = self._normalize_response_mode(mode)
-        if not self._senior_profile_enabled:
+        if not self._expert_profile_enabled:
             selected = "auto"
         if selected == self._vr_response_mode:
             return
@@ -2990,6 +2990,13 @@ class ChatBridge(QObject):
         self.stateChanged.emit()
         self.selectionChanged.emit()
         try:
+            use_vr = self._vr_mode != "off"
+            if not use_vr or not self._expert_profile_enabled:
+                effective_response_mode = "auto"
+            elif self._vr_response_mode == "auto":
+                effective_response_mode = "adaptive"
+            else:
+                effective_response_mode = self._vr_response_mode
             selected_code_release = self._selected_code_analysis_release_item()
             self._orchestrator.send(
                 conversation_id,
@@ -2998,7 +3005,7 @@ class ChatBridge(QObject):
                 skills,
                 content,
                 content,
-                self._vr_mode != "off",
+                use_vr,
                 image_paths=[] if resume_run_id else image_paths,
                 vr_mode=self._vr_mode,
                 code_analysis_enabled=(
@@ -3016,11 +3023,7 @@ class ChatBridge(QObject):
                     if self._code_analysis_enabled
                     else ""
                 ),
-                response_mode=(
-                    self._vr_response_mode
-                    if self._senior_profile_enabled
-                    else "auto"
-                ),
+                response_mode=effective_response_mode,
                 **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
             )
             self._draft_records.pop(conversation_id, None)

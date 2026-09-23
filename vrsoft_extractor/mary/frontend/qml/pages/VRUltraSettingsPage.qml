@@ -81,9 +81,10 @@ Item {
                     }
                 }
 
-                // Section 1: Perfil especialista sênior
+                // Section 1: Perfis especialistas
                 Text {
-                    text: "Perfil especialista sênior"
+                    text: "Perfis especialistas"
+                    visible: chat.vrMode === "vr" || chat.vrMode === "ultra"
                     Layout.leftMargin: Theme.scaledGeometry(16)
                     color: Theme.palette.text
                     opacity: 0.7
@@ -92,17 +93,18 @@ Item {
                 }
 
                 Rectangle {
-                    objectName: "vrUltraSeniorProfileCard"
+                    objectName: "vrUltraExpertProfileCard"
+                    visible: chat.vrMode === "vr" || chat.vrMode === "ultra"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    implicitHeight: vrUltraSeniorProfileCardContent.implicitHeight + 2
+                    implicitHeight: vrUltraExpertProfileCardContent.implicitHeight + 2
                     radius: Theme.scaledGeometry(14)
                     color: Theme.palette.background
                     border.width: 1
                     border.color: Theme.palette.border
 
                     ColumnLayout {
-                        id: vrUltraSeniorProfileCardContent
+                        id: vrUltraExpertProfileCardContent
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
@@ -110,16 +112,16 @@ Item {
                         spacing: 0
 
                         AppearanceRow {
-                            title: "Ativar perfil especialista sênior"
-                            description: "Aplica diretrizes de nível sênior em suporte, treinamento e implantação VR."
+                            title: "Ativar perfil especialista"
+                            description: "Aplica a skill comportamental escolhida sem alterar fontes, ferramentas ou retrieval."
                             divider: true
 
                             VrSwitch {
                                 subdued: true
-                                objectName: "vrUltraSeniorProfileToggle"
-                                Accessible.name: "Ativar perfil especialista sênior"
-                                checked: chat.seniorProfileEnabled
-                                onToggled: chat.setSeniorProfileEnabled(checked)
+                                objectName: "vrUltraExpertProfileToggle"
+                                Accessible.name: "Ativar perfil especialista"
+                                checked: chat.expertProfileEnabled
+                                onToggled: chat.setExpertProfileEnabled(checked)
                             }
                         }
 
@@ -133,9 +135,9 @@ Item {
                                 objectName: "vrUltraResponseModePicker"
                                 Layout.preferredWidth: Theme.scaledGeometry(320)
                                 implicitHeight: Theme.scaledGeometry(34)
-                                enabled: chat.seniorProfileEnabled
+                                enabled: chat.expertProfileEnabled
                                 model: [
-                                    { "label": "Automático — detecta a melhor abordagem pelo contexto", "value": "auto" },
+                                    { "label": "Adaptativa — identifica a abordagem adequate pelo contexto", "value": "auto" },
                                     { "label": "Treinamento — foco didático, passo a passo e regras de negócio", "value": "training" },
                                     { "label": "Suporte — diagnóstico ágil, causa raiz e ação corretiva", "value": "support" },
                                     { "label": "Implantação — homologação, pré-requisitos e validações", "value": "implementation" }

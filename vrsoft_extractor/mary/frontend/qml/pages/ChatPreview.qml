@@ -130,7 +130,7 @@ Item {
     property bool composerDropActive: false
     property real clockNow: Date.now() / 1000
     property var expertProfiles: [
-        { key: "senior", label: "Sênior", icon: "expertSenior" },
+        { key: "adaptive", label: "Adaptativa", icon: "expertSenior" },
         { key: "training", label: "Treinamento", icon: "expertTraining" },
         { key: "support", label: "Suporte", icon: "expertSupport" },
         { key: "implementation", label: "Implantação", icon: "expertImplementation" }
@@ -1414,6 +1414,7 @@ Item {
                 objectName: "expertProfileStrip"
                 z: 20
                 visible: root.expertReveal > 0.001
+                enabled: root.expertReveal > 0.001
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 y: composerCard.y + composerCard.height
                     + 8 - (1.0 - root.expertReveal) * 8
@@ -3599,18 +3600,20 @@ Item {
     }
 
     function expertProfileSelected(key) {
-        if (!root.chatBridge.seniorProfileEnabled) return false
-        if (key === "senior") return root.chatBridge.vrResponseMode === "auto"
+        if (root.chatBridge.vrMode === "off"
+                || !root.chatBridge.expertProfileEnabled) return false
+        if (key === "adaptive") return root.chatBridge.vrResponseMode === "auto"
         return root.chatBridge.vrResponseMode === key
     }
 
     function activateExpertProfile(key) {
+        if (root.chatBridge.vrMode === "off") return
         if (root.expertProfileSelected(key)) {
-            root.chatBridge.setSeniorProfileEnabled(false)
+            root.chatBridge.setExpertProfileEnabled(false)
             return
         }
-        root.chatBridge.setSeniorProfileEnabled(true)
-        root.chatBridge.setVrResponseMode(key === "senior" ? "auto" : key)
+        root.chatBridge.setExpertProfileEnabled(true)
+        root.chatBridge.setVrResponseMode(key === "adaptive" ? "auto" : key)
     }
 
     function navigateBrowser(value) {

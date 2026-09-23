@@ -47,14 +47,48 @@ três modos.
 “Fontes disponíveis” não significa “fontes pré-carregadas”. O backend otimiza a
 consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
 `vr_search`), mas não pesquisa automaticamente antes da resposta.
-Prefetch/cache de consulta não pertencem a este contrato. Perfis de atendimento
-(senior, implantação, suporte e treinamento) serão uma camada posterior sobre o
-mesmo mecanismo de retrieval.
+Prefetch/cache de consulta não pertencem a este contrato.
 
 A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre VRWiki +
 Endoo, mesmo quando o toggle legado de Endoo está desligado. Cada origem é
 consultada em bloco de erro independente: uma falha parcial mantém os hits da
 outra origem e a lane só fica indisponível quando todas as origens falham.
+
+## Perfis especialistas
+
+Perfis especialistas são uma camada comportamental sobre o mesmo mecanismo de
+acesso dos modos VR e Ultra. A composição de um turno é:
+
+1. política base do modo e identidade do produto;
+2. política tool-driven do VR;
+3. no máximo uma skill built-in de perfil especialista;
+4. skills opcionais escolhidas pelo usuário;
+5. solicitação e evidências disponíveis no turno.
+
+Eles existem somente quando o modo resolvido é `vr` ou `ultra`. No modo OFF, o
+seletor fica oculto e inativo, `response_mode="auto"` é enviado ao orquestrador e
+nenhuma política de perfil é injetada. A preferência persistida não é apagada ao
+alternar temporariamente para OFF e pode voltar a valer em VR/Ultra.
+
+Um perfil não habilita, desabilita, prioriza ou remove fontes; não altera o
+contrato de `vr_sources`, `vr_search` ou `vr_read`; não cria agentes; e não muda
+fontes, workers, paralelismo, ranqueamento, retries, orçamento ou fan-out do
+Ultra. VR normal continua decidindo no modelo quando e se consultará uma tool.
+
+**Adaptativa** é o primeiro perfil built-in e usa o identificador interno
+`adaptive`. Sua skill não força template, propósito, público ou nível técnico:
+ela preserva a `ResponseIntent` detectada automaticamente e orienta como
+investigar, aplicar evidências, tratar conflitos e estruturar a resposta.
+
+Treinamento, Suporte e Implantação continuam usando os contratos atuais nesta
+entrega. Skills normais escolhidas pelo usuário coexistem com o perfil e não são
+convertidas em política de perfil.
+
+Os perfis built-in são empacotados em `vrsoft_extractor/mary/data/` e
+materializados como `SkillDefinition` com `scope="vr"`,
+`invocation_mode="injected"` e `source="app_managed"`. Eles não são arquivos
+editáveis em `VRProject` ou no workspace e não aparecem no gerenciador comum de
+skills. Adaptativa não é um agente independente.
 
 ## Instalação e testes
 

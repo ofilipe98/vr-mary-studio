@@ -9,14 +9,17 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QSettings
+
 from vrsoft_extractor.mary.config import MarySettings, load_vr_settings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.frontend.chat import ChatBridge
 from vrsoft_extractor.mary.knowledge import extract_knowledge_entities
 from vrsoft_extractor.mary.knowledge_router import (
     KnowledgeRouter,
@@ -356,6 +359,88 @@ def test_vr_off_bypasses_personality_base_and_orchestration(tmp_path: Path) -> N
     assert provider.start_options[0].vr_enabled is False
     assert not any(":vr:" in item["conversation_id"] for item in provider.sent)
     assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+
+
+def test_expert_profile_preference_migrates_legacy_key_without_rewriting_it(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    preferences = QSettings(
+        str(tmp_path / "preferences.ini"),
+        QSettings.IniFormat,
+    )
+    preferences.setValue("research/senior_profile_enabled", True)
+    preferences.sync()
+    tracked_preferences = MagicMock(wraps=preferences)
+    bridge = ChatBridge(settings, database, tracked_preferences)
+
+    try:
+        assert bridge.expertProfileEnabled is True
+        assert preferences.value("research/expert_profile_enabled", False) is True
+        migrated_writes = [
+            call.args[0] for call in tracked_preferences.setValue.call_args_list
+        ]
+        assert "research/expert_profile_enabled" in migrated_writes
+        assert "research/senior_profile_enabled" not in migrated_writes
+
+        tracked_preferences.setValue.reset_mock()
+        bridge.setExpertProfileEnabled(False)
+        bridge.setExpertProfileEnabled(True)
+        bridge.setVrResponseMode("support")
+        new_writes = [
+            call.args[0] for call in tracked_preferences.setValue.call_args_list
+        ]
+        assert "research/expert_profile_enabled" in new_writes
+        assert "research/response_mode" in new_writes
+        assert "research/senior_profile_enabled" not in new_writes
+        assert preferences.value("research/senior_profile_enabled", False) is True
+    finally:
+        bridge.close()
+
+
+def test_chat_bridge_sends_effective_expert_profile_mode(tmp_path: Path) -> None:
+    cases = (
+        (False, "support", "vr", "auto"),
+        (True, "auto", "vr", "adaptive"),
+        (True, "training", "vr", "training"),
+        (True, "support", "ultra", "support"),
+        (True, "implementation", "ultra", "implementation"),
+        (True, "support", "off", "auto"),
+    )
+
+    for index, (enabled, response_mode, vr_mode, expected) in enumerate(cases):
+        case_root = tmp_path / f"profile-{index}"
+        settings = _settings(case_root)
+        database = MaryDatabase(settings.database_path, root=settings.root)
+        conversation_id = database.create_conversation(
+            f"Perfil {index}",
+            "codex",
+            "sol",
+            settings.root,
+            vr_enabled=vr_mode != "off",
+            vr_mode=vr_mode,
+        )
+        preferences = QSettings(
+            str(case_root / "preferences.ini"),
+            QSettings.IniFormat,
+        )
+        preferences.setValue("chat/vr_mode", vr_mode)
+        preferences.setValue("research/expert_profile_enabled", enabled)
+        preferences.setValue("research/response_mode", response_mode)
+        preferences.sync()
+        bridge = ChatBridge(settings, database, preferences)
+        bridge.selectConversationId(conversation_id)
+
+        try:
+            with patch.object(bridge._orchestrator, "send") as send_mock:
+                assert bridge.sendMessage(f"Pergunta do perfil {index}") is True
+            assert send_mock.call_args.kwargs["response_mode"] == expected
+            assert send_mock.call_args.args[6] is (vr_mode != "off")
+            if enabled and response_mode == "auto" and vr_mode != "off":
+                assert preferences.value("research/response_mode") == "auto"
+        finally:
+            bridge.close()
 
 
 @pytest.mark.parametrize("provider_name", ("codex", "opencode"))

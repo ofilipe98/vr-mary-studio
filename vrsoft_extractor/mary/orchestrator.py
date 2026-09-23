@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from .config import MarySettings
 from .code_index import JavaCodeIndex as JavaCodeIndex
 from .erp_releases import ErpReleaseCatalog
+from .expert_profiles import expert_profile_instructions
 from .db import MaryDatabase
 from .chat_tools import (
     ToolExecutionError,
@@ -660,6 +661,8 @@ class ChatOrchestrator:
                     evidence_bundle: EvidenceBundle | None = None
                     response_intent: ResponseIntent | None = None
                     response_contract: ResponseContract | None = None
+                    effective_response_mode = "auto"
+                    profile_instructions = ""
                     ultra_direct_fallback = (
                         resolved_vr_mode == "ultra" and not ultra_source_fanout
                     )
@@ -741,6 +744,11 @@ class ChatOrchestrator:
                         response_contract = build_response_contract(
                             response_intent
                         )
+                        profile_instructions = (
+                            expert_profile_instructions(effective_response_mode)
+                            if resolved_vr_mode in {"vr", "ultra"}
+                            else ""
+                        )
                         if evidence_degraded:
                             response_contract = replace(
                                 response_contract,
@@ -772,6 +780,7 @@ class ChatOrchestrator:
                             evidence_bundle=evidence_bundle,
                             has_images=bool(image_paths),
                             supports_native_tools=str(conversation["provider"]) == "codex",
+                            expert_profile_instructions=profile_instructions,
                         )
                         if use_vr
                         else self._enrich_off_prompt(
@@ -846,6 +855,15 @@ class ChatOrchestrator:
                                 or conversation_id in self._finalized_turns):
                             return
                     if ultra_source_fanout:
+                        if profile_instructions:
+                            orchestration_request = (
+                                "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:\n"
+                                + profile_instructions
+                                + "\n\nEsta política orienta a análise e a síntese. "
+                                "Cada worker permanece restrito à lane atribuída e não "
+                                "pode consultar outra fonte.\n\n"
+                                + orchestration_request
+                            )
                         self._run_ultra_source_fanout(
                             conversation_id,
                             dict(conversation),
@@ -1945,6 +1963,7 @@ class ChatOrchestrator:
         evidence_bundle: EvidenceBundle | None = None,
         has_images: bool = False,
         supports_native_tools: bool = False,
+        expert_profile_instructions: str = "",
     ) -> str:
         # Stable prefix first: identical across turns so provider prompt
         # caching applies. Variable context comes next; the user request
@@ -1986,11 +2005,18 @@ class ChatOrchestrator:
             fallback_note = (
                 f" O fallback estruturado `{search_tool}` e a leitura da pasta continuam disponíveis."
             )
+        profile_note = ""
+        if expert_profile_instructions.strip():
+            profile_note = (
+                "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:\n"
+                + expert_profile_instructions.strip()
+            )
         prefix = (
             "MODO VR ATIVO — CONTRATO DE IDENTIDADE:\n"
             + VRMASTER_DIRECT_RESPONSE_POLICY
             + "\n\n"
             + VRMASTER_TOOL_DRIVEN_ACCESS_POLICY
+            + ("\n\n" + profile_note if profile_note else "")
             + "\n\n"
             + access_note
             + "A pasta de trabalho da conversa é o projeto atual e é independente da fonte VR."

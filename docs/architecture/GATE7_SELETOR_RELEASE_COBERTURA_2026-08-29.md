@@ -83,5 +83,5 @@ auditoria em vez de ser descartada ou apresentada como parse perfeito.
 - selecionar explicitamente e planejar os demais JARs da release quando a
   cobertura dos 46 artefatos for autorizada para a rodada;
 - validar chamados reais com o Agente de Código ligado e desligado;
-- medir custo, latência, precisão e ganho por modo sênior;
+- medir custo, latência, precisão e ganho com o perfil Adaptativa;
 - adicionar busca semântica aos sinais AST e ao grafo sintático.

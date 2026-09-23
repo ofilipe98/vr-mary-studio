@@ -1,58 +1,74 @@
-# Gate 6 — Perfil sênior e modos de resposta
+# Gate 6 — Perfis especialistas e modos de resposta
 
 Data: 2026-08-29
 
 ## Resultado
 
-O Studio agora possui um perfil especialista sênior, desligado por padrão e
-salvo nas preferências do usuário. Quando ativo, ele libera uma seleção manual
-de quatro comportamentos:
+O Studio possui uma camada de perfis especialistas para os modos VR e Ultra. A
+seleção é uma preferência local, começa desligada e oferece quatro opções:
 
-- Automático: mantém a classificação da intenção;
+- Adaptativa: injeta a skill built-in `adaptive` sem impor template nem
+  substituir a intenção detectada automaticamente;
 - Treinamento: resposta pedagógica, passo a passo e reutilizável em onboarding;
 - Suporte: diagnóstico técnico, causa confirmada ou hipóteses qualificadas e
   validação da correção;
 - Implantação: mapeamento de dados, diferenças de schema/configuração, sequência,
   riscos, reversão e checklist.
 
-O perfil é uma preferência de trabalho local, não um mecanismo de segurança ou
-autorização. Desligá-lo força o modo Automático e impede que uma seleção manual
-antiga continue atuando silenciosamente.
+Adaptativa é materializada como `SkillDefinition` com `scope="vr"`,
+`invocation_mode="injected"` e `source="app_managed"`. Seu arquivo é empacotado
+em `vrsoft_extractor/mary/data/` e não é uma skill editável pelo usuário. A
+seleção persistida usa `research/expert_profile_enabled`; internamente,
+Adaptativa continua representada por esse estado ligado e
+`research/response_mode="auto"`, sem persistir `adaptive` como template.
 
 ## Integração com o harness
 
 1. O `ChatBridge` lê perfil e modo no começo da execução.
-2. A análise automática de intenção sempre ocorre.
-3. Quando o perfil sênior está ativo, o modo explícito transforma a intenção
-   antes da criação do contrato de resposta.
-4. O contrato transformado orienta workers, síntese, supervisão e profundidade.
-5. A trilha de eventos grava o modo selecionado junto da intenção efetiva.
+2. A análise automática de intenção sempre ocorre nos modos VR e Ultra.
+3. `response_mode="adaptive"` preserva todos os campos da `ResponseIntent`.
+4. A skill Adaptativa é injetada no VR tool-driven e no contexto de
+   análise/síntese do Ultra.
+5. Treinamento, Suporte e Implantação continuam aplicando seus contratos
+   explícitos antes da criação do contrato de resposta.
+6. A trilha de eventos grava o modo efetivo junto da intenção resultante.
 
-O modo Implantação é considerado investigação crítica no VR Ultra e pode abrir
-o fan-out mesmo quando a consulta inicial aponta somente um módulo. Isso permite
-cruzar schema e documentação sem tornar todo atendimento comum multiagente.
+O perfil Adaptativa não habilita nem desabilita fontes, não modifica o contrato
+das três tools VR, não cria agentes e não altera plano, workers, paralelismo,
+retry, orçamento, DEV Java ou síntese do Ultra.
+
+## Isolamento do modo OFF
+
+Quando o modo resolvido é `off`, o seletor fica oculto e inativo. O bridge envia
+`response_mode="auto"`, o `_enrich_off_prompt` não recebe política de perfil e
+nenhuma skill de perfil é injetada. A preferência persistida não é apagada; ao
+voltar para VR ou Ultra, a última seleção pode voltar a ser aplicada.
 
 ## Classificação automática
 
-Mesmo sem o perfil sênior, termos como implantação, migração, mapeamento de
+Mesmo sem perfil explícito, termos como implantação, migração, mapeamento de
 dados, diff de schema e virada de sistema criam o contrato de Implantação. O
-seletor existe para remover ambiguidade, não para substituir a classificação.
+seletor explícito existe para remover ambiguidade. Adaptativa não substitui essa
+classificação: ela apenas orienta a profundidade, a investigação e a forma da
+resposta depois que a intenção automática já foi determinada.
 
 ## Validação
 
-- perfil desativado mantém `auto` e rejeita seleção manual;
-- perfil e modo persistem ao reabrir a interface;
-- desligar o perfil limpa o modo manual;
-- os três modos geram propósitos, públicos e níveis técnicos distintos;
-- Implantação exige mapeamento, diff, risco/reversão e checklist;
-- o override ocorre antes do contrato e do fan-out;
-- tela VR Ultra validada renderizada em 1480 × 900, com o seletor desabilitado no
-  estado padrão.
+- Adaptativa é uma skill built-in VR, app-managed e injected;
+- a chave canônica de preferência substitui a nomenclatura anterior;
+- preferências de instalações antigas são lidas uma vez e migradas;
+- perfil desativado mantém `auto` e impede seleção manual;
+- `adaptive` preserva a identidade e todos os campos da intenção;
+- VR mantém zero retrieval antecipado e continua tool-driven;
+- Ultra mantém as mesmas fontes e o mesmo grafo de workers;
+- o texto Adaptativa não entra em `search_scope`;
+- OFF envia `auto` e não injeta política;
+- skills normais do usuário permanecem independentes.
 
 ## Próximos passos
 
-- validar com usuários reais se o nome “perfil sênior” é o mais claro;
-- avaliar política administrada por equipe caso a opção deixe de ser apenas uma
-  preferência local;
-- executar o benchmark com chamados resolvidos e materiais reais dos três modos;
-- adicionar busca vetorial por provedor configurável, sem remover FTS5/grafo.
+- avaliar novas políticas built-in sem permitir que alterem retrieval ou
+  fan-out;
+- executar benchmarks com chamados reais para Adaptativa, Treinamento, Suporte e
+  Implantação;
+- adicionar avaliação de qualidade por intenção preservada, sem template fixo.

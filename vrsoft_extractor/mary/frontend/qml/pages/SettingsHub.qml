@@ -33,7 +33,7 @@ Item {
         { title: "Provedores e modelos", category: "Provedores", tab: 1, icon: "models" },
         { title: "Agentes VR Ultra", category: "VR Ultra", tab: 2, icon: "agents" },
         { title: "Modelos dos pesquisadores", category: "VR Ultra", tab: 2, icon: "models" },
-        { title: "Perfil especialista sênior", category: "VR Ultra", tab: 2, icon: "settings" },
+        { title: "Perfis especialistas", category: "VR Ultra", tab: 2, icon: "settings" },
         { title: "Contexto de código no VR Ultra", category: "VR Ultra", tab: 2, icon: "files" },
         { title: "Catálogo de aplicativos e versões", category: "Aplicativos e versões", tab: 3, icon: "package" },
         { title: "Importação de pacotes e JARs", category: "Aplicativos e versões", tab: 3, icon: "folder" },
