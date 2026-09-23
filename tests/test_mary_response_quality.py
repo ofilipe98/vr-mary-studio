@@ -141,13 +141,34 @@ class TestPromptPrefixCache:
         opencode_prompt = orchestrator._enrich_prompt(
             "pergunta", supports_native_tools=False
         )
-        assert "ferramenta `vr_search`" in codex_prompt
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in codex_prompt
+        # Native providers never see the folder path nor the search script.
+        assert "vr-search.ps1" not in codex_prompt
+        assert str(orchestrator.settings.root.resolve()) not in codex_prompt
         # Providers without the native dynamic-tool cycle keep the structured
         # local search/read script as a transport fallback, not as retrieval.
         assert "vr-search.ps1" in opencode_prompt
+        assert str(orchestrator.settings.root.resolve()) in opencode_prompt
         assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in opencode_prompt
         assert "O fallback estruturado" in opencode_prompt
         assert "O fallback estruturado" not in codex_prompt
+
+    def test_native_image_prompt_keeps_tools_without_folder_or_script(
+        self, tmp_path: Path
+    ) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        prompt = orchestrator._enrich_prompt(
+            "olha o print",
+            evidence_bundle=None,
+            has_images=True,
+            supports_native_tools=True,
+        )
+        assert "ANEXO VISUAL" in prompt
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in prompt
+        assert "vr-search.ps1" not in prompt
+        assert str(orchestrator.settings.root.resolve()) not in prompt
 
     def test_prefix_is_byte_identical_across_questions(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)
@@ -170,6 +191,40 @@ class TestPromptPrefixCache:
             assert "stderr" in prompt
         else:
             assert "cmd /c" not in prompt
+
+
+# ------------------------------------------------------------ plano visível
+
+
+def test_display_response_plan_empty_bundle_is_on_demand(tmp_path: Path) -> None:
+    _settings, orchestrator = _orchestrator(tmp_path)
+    empty = EvidenceBundle(
+        profile=QueryProfile(query="pergunta", intents={"functional": 1.0})
+    )
+
+    plan = orchestrator._display_response_plan(
+        "Como exportar SPED?", empty, None, None
+    )
+
+    text = "\n".join(plan)
+    assert "Cruzar" not in text
+    assert "Confirmar o que a base local permite afirmar" not in text
+    assert "sob demanda" in text
+
+
+def test_display_response_plan_with_candidates_lists_retrieved_sources(
+    tmp_path: Path,
+) -> None:
+    _settings, orchestrator = _orchestrator(tmp_path)
+
+    plan = orchestrator._display_response_plan(
+        "Como exportar SPED?", _bundle(), None, None
+    )
+
+    text = "\n".join(plan)
+    assert "Cruzar" in text
+    assert "Wiki" in text
+    assert "Validar a seção" in text
 
 
 # ---------------------------------------------------------------- #5 validação

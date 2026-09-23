@@ -394,7 +394,13 @@ def test_vr_on_direct_adds_identity_and_local_base(
     assert "vr_sources" in prompt
     assert "vr_search" in prompt
     assert "vr_read" in prompt
-    assert str(settings.root) in prompt
+    if provider_name == "codex":
+        # Native dynamic tools keep the folder path and the script out of the
+        # prompt; providers without that cycle keep the folder/script fallback.
+        assert str(settings.root) not in prompt
+        assert "vr-search.ps1" not in prompt
+    else:
+        assert str(settings.root) in prompt
     assert provider.sent[0]["options"].vr_enabled is True
     assert provider.start_options[0].vr_enabled is True
     assert not any(":vr:" in item["conversation_id"] for item in provider.sent)

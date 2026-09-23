@@ -16,6 +16,12 @@ Este arquivo define as diretrizes de engenharia, qualidade e investigação para
 
 ---
 
+## Lane Wiki (VRWiki + Endoo)
+
+A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki` + `endoo`; o toggle legado de Endoo não restringe esse caminho. Falha de uma origem não elimina os resultados da outra: cada origem é consultada em bloco de erro independente e a lane só fica `unavailable` quando todas as origens falham.
+
+---
+
 ## Investigate Before Asking
 
 Investigue antes de perguntar.

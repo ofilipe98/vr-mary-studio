@@ -661,7 +661,7 @@ class ChatOrchestrator:
                     response_intent: ResponseIntent | None = None
                     response_contract: ResponseContract | None = None
                     if use_vr:
-                        if not ultra_source_fanout:
+                        if resolved_vr_mode == "vr":
                             # Tool-driven VR: the main model starts the turn
                             # with no pre-loaded evidence and decides when to
                             # consult vr_sources/vr_search/vr_read. This empty
@@ -673,6 +673,26 @@ class ChatOrchestrator:
                                 ),
                                 candidates=(),
                             )
+                        elif not ultra_source_fanout and resolved_vr_mode == "ultra":
+                            # Ultra without fan-out keeps the pre-9d048bc direct
+                            # fallback: route the fixed source lanes before the
+                            # main call instead of reusing the empty VR
+                            # tool-driven accumulator.
+                            try:
+                                evidence_bundle = (
+                                    self.retrieval_service.route_vr_sources(
+                                        local_query,
+                                        application_contexts=application_contexts,
+                                        code_analysis_release=code_analysis_release,
+                                        code_analysis_manifest_sha256=(
+                                            code_analysis_manifest_sha256
+                                        ),
+                                    )
+                                )
+                            except Exception:
+                                LOGGER.exception(
+                                    "Falha ao rotear as fontes de conhecimento VR"
+                                )
                         with self._agent_run_lock:
                             if (self._pending_user_messages.get(conversation_id) != message_id
                                     or conversation_id in self._cancelled_conversations
@@ -1823,31 +1843,38 @@ class ChatOrchestrator:
             "Fiscal": "Fiscal",
             "PDV": "PDV",
         }
-        source_scope = " e ".join(source_labels[:3]) or "a documentação local"
-        module_scope = " e ".join(module_labels.get(item, item) for item in modules[:3])
-        steps.append(
-            f"Cruzar {source_scope} nos módulos {module_scope}."
-            if module_scope
-            else f"Cruzar {source_scope} para a solicitação."
-        )
-
-        focus = next(
-            (
-                compact(candidate.heading, 76)
-                for candidate in candidates
-                if compact(candidate.heading)
-                and compact(candidate.heading).casefold()
-                != compact(candidate.title).casefold()
-            ),
-            "",
-        )
-        if not focus and candidates:
-            focus = compact(candidates[0].title, 76)
-        steps.append(
-            f"Validar a seção “{focus}”."
-            if focus
-            else "Confirmar o que a base local permite afirmar."
-        )
+        if candidates:
+            # Describe the sources actually retrieved for this turn.
+            source_scope = " e ".join(source_labels[:3]) or "a documentação local"
+            module_scope = " e ".join(module_labels.get(item, item) for item in modules[:3])
+            steps.append(
+                f"Cruzar {source_scope} nos módulos {module_scope}."
+                if module_scope
+                else f"Cruzar {source_scope} para a solicitação."
+            )
+            focus = next(
+                (
+                    compact(candidate.heading, 76)
+                    for candidate in candidates
+                    if compact(candidate.heading)
+                    and compact(candidate.heading).casefold()
+                    != compact(candidate.title).casefold()
+                ),
+                "",
+            )
+            if not focus:
+                focus = compact(candidates[0].title, 76)
+            steps.append(f"Validar a seção “{focus}”.")
+        else:
+            # Tool-driven VR starts without pre-loaded evidence: the plan is
+            # on-demand and never promises an automatic cross-check.
+            steps.append(
+                "Consultar sob demanda as fontes internas do VR se a resposta "
+                "exigir informação interna."
+            )
+            steps.append(
+                "Aprofundar a leitura com `vr_search`/`vr_read` somente se necessário."
+            )
 
         answer_type = (
             evidence_bundle.profile.answer_type
@@ -1883,21 +1910,6 @@ class ChatOrchestrator:
         has_images: bool = False,
         supports_native_tools: bool = False,
     ) -> str:
-        knowledge_root = self.settings.root.resolve()
-        search_tool = knowledge_root / "tools" / "vr-search.ps1"
-        if supports_native_tools:
-            pull_hint = (
-                "Também está disponível a ferramenta `vr_search`, que consulta a base "
-                + "indexada e devolve trechos com fonte e confiança; prefira-a quando as "
-                + "evidências fornecidas não forem suficientes para responder com segurança. "
-            )
-        else:
-            # Providers without a native tool cycle research through file
-            # reading or the structured search script instead.
-            pull_hint = (
-                "Quando as evidências fornecidas não forem suficientes, pesquise "
-                + f"diretamente na pasta com leitura/busca ou execute `{search_tool}`. "
-            )
         # Stable prefix first: identical across turns so provider prompt
         # caching applies. Variable context comes next; the user request
         # always closes the prompt.
@@ -1908,26 +1920,48 @@ class ChatOrchestrator:
                 "(ex.: `java -version`) retornam código 1 quando a saída é redirecionada com `2>&1` — "
                 'para checar versões use `cmd /c "java -version"`.'
             )
+        if supports_native_tools:
+            # Providers with a native dynamic-tool cycle use only the
+            # traceable vr_sources/vr_search/vr_read path. The folder path and
+            # the search script stay out of this transport.
+            access_note = (
+                "ACESSO À FONTE VR: use somente as ferramentas nativas `vr_sources`, "
+                + "`vr_search` e `vr_read` para descobrir fontes e contextos, buscar "
+                + "trechos e aprofundar a leitura. Essas tools são o caminho canônico "
+                + "de conhecimento: não leia a pasta da base diretamente nem execute "
+                + "scripts de busca. "
+            )
+            follow_up = "use `vr_search`"
+            fallback_note = ""
+        else:
+            # Providers without a native tool cycle research through file
+            # reading or the structured search script instead.
+            knowledge_root = self.settings.root.resolve()
+            search_tool = knowledge_root / "tools" / "vr-search.ps1"
+            access_note = (
+                "ACESSO À FONTE VR: a base local completa está em "
+                + f"`{knowledge_root}`. Trate essa pasta como somente leitura. "
+                + "Você pode usar leitura, busca de arquivos e pesquisa textual diretamente nela. "
+                + f"Para uma busca estruturada, use `{search_tool}`. "
+                + "Quando as evidências fornecidas não forem suficientes, pesquise "
+                + f"diretamente na pasta com leitura/busca ou execute `{search_tool}`. "
+            )
+            follow_up = f"use `{search_tool}` ou leitura da pasta"
+            fallback_note = (
+                f" O fallback estruturado `{search_tool}` e a leitura da pasta continuam disponíveis."
+            )
         prefix = (
             "MODO VR ATIVO — CONTRATO DE IDENTIDADE:\n"
             + VRMASTER_DIRECT_RESPONSE_POLICY
             + "\n\n"
             + VRMASTER_TOOL_DRIVEN_ACCESS_POLICY
-            + "\n\nACESSO À FONTE VR: a base local completa está em "
-            + f"`{knowledge_root}`. Trate essa pasta como somente leitura. "
-            + "Você pode usar leitura, busca de arquivos e pesquisa textual diretamente nela. "
-            + f"Para uma busca estruturada, use `{search_tool}`. "
-            + pull_hint
+            + "\n\n"
+            + access_note
             + "A pasta de trabalho da conversa é o projeto atual e é independente da fonte VR."
             + environment_note
         )
         middle_parts: list[str] = []
         if has_images:
-            follow_up = (
-                "use `vr_search`"
-                if supports_native_tools
-                else f"use `{search_tool}` ou leitura da pasta"
-            )
             middle_parts.append(
                 "ANEXO VISUAL: esta mensagem inclui imagem(ns). Priorize-a como "
                 "descrição do problema real. Nenhuma evidência local foi pré-"
@@ -1937,17 +1971,12 @@ class ChatOrchestrator:
         elif evidence_bundle is not None and evidence_bundle.candidates:
             middle_parts.append(self.knowledge_router.prompt(evidence_bundle))
         else:
-            fallback = (
-                ""
-                if supports_native_tools
-                else f" O fallback estruturado `{search_tool}` e a leitura da pasta continuam disponíveis."
-            )
             middle_parts.append(
                 "CONSULTA SOB DEMANDA: nenhuma evidência foi pré-carregada neste "
                 "turno. Use `vr_sources` para descobrir fontes e contextos, "
                 "`vr_search` para buscar trechos e `vr_read` para aprofundar "
                 "(search -> read) quando a resposta depender de informação "
-                "interna do VR." + fallback
+                "interna do VR." + fallback_note
             )
         middle = "\n\n".join(part for part in middle_parts if part)
         return (

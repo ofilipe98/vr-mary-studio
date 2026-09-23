@@ -633,7 +633,7 @@ def test_ultra_mode_uses_source_fanout_without_route_vr_sources(tmp_path: Path):
     assert research.payload["sources"] == ["wiki", "kb", "schema"]
 
 
-def test_ultra_mode_falls_back_to_direct_tool_driven_path_when_flag_disabled(
+def test_ultra_mode_without_fanout_uses_direct_vr_sources_fallback(
     tmp_path: Path,
 ):
     from test_mary_vr_ultra import _orchestrator
@@ -649,7 +649,7 @@ def test_ultra_mode_falls_back_to_direct_tool_driven_path_when_flag_disabled(
     _run_mode(orchestrator, cid, events, use_vr=True)
 
     assert calls["ultra"] == 0
-    assert calls["route_vr_sources"] == 0
+    assert calls["route_vr_sources"] == 1
     assert calls["route"] == 0
     assert "research_started" not in [event.kind for event in events]
     assistant = [

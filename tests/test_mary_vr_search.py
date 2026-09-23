@@ -187,7 +187,7 @@ def test_search_without_source_isolates_lane_failure(
 
     def lane(query, lane_name, **kwargs):
         if lane_name == "kb":
-            return [], "unavailable", "kb fora do ar"
+            raise RuntimeError("kb fora do ar")
         return (
             [{"reference": f"{lane_name}:1", "source": lane_name}],
             "available",
@@ -246,6 +246,138 @@ def test_search_with_source_document_error_is_reported_per_lane(
     assert payload["source_states"]["schema"] == "unavailable"
     assert payload["errors"]["wiki"] == "indice indisponivel"
     assert "code" in payload["source_states"]
+
+
+def _wiki_service(
+    tmp_path: Path, *, disabled: tuple[str, ...] = ("endoo",)
+) -> RetrievalService:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed(database)
+    for origin, source_id, title, text in (
+        (
+            "vrwiki",
+            "sped-vrwiki",
+            "SPED Fiscal VRWiki",
+            "Como gerar o SPED Fiscal no VRWiki com período e loja.",
+        ),
+        (
+            "endoo",
+            "sped-endoo",
+            "SPED Fiscal Endoo",
+            "Como gerar o SPED Fiscal no Endoo com período e loja.",
+        ),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_id=source_id,
+                source_origin=origin,
+                title=title,
+                url=f"https://{origin}.example/sped",
+                markdown=text,
+                module="Fiscal",
+                review_status="approved",
+                content_hash=source_id,
+            )
+        )
+    router = KnowledgeRouter(
+        database, settings.root, disabled_origins=disabled
+    )
+    return RetrievalService(router)
+
+
+def test_search_wiki_source_keeps_both_origins_when_endoo_disabled(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    assert service.enabled_origins("wiki") == ("vrwiki",)
+
+    wiki_only = service.search("Como gerar SPED Fiscal no VR", source="wiki", limit=10)
+    assert wiki_only["source_states"]["wiki"] == "available"
+    assert wiki_only["errors"] == {}
+    assert {hit["source_origin"] for hit in wiki_only["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+    consolidated = service.search("Como gerar SPED Fiscal no VR", limit=10)
+    assert consolidated["source_states"]["wiki"] == "available"
+    assert {hit["source_origin"] for hit in consolidated["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+
+def test_search_wiki_source_isolates_origin_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _wiki_service(tmp_path)
+    original = service._router.database.search_page
+
+    def flaky(query, *, source="", module="", source_origin="", limit=6):
+        if source == "wiki" and source_origin == "endoo":
+            raise RuntimeError("endoo fora do ar")
+        return original(
+            query,
+            source=source,
+            module=module,
+            source_origin=source_origin,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(service._router.database, "search_page", flaky)
+
+    payload = service.search("Como gerar SPED Fiscal no VR", source="wiki", limit=10)
+
+    assert payload["source_states"]["wiki"] == "available"
+    assert payload["errors"]["wiki"] == "endoo: endoo fora do ar"
+    assert payload["results"]
+    assert all(
+        hit["source_origin"] == "vrwiki" for hit in payload["results"]
+    )
+
+
+def test_search_wiki_source_reports_unavailable_when_all_origins_fail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("wiki fora do ar")
+
+    monkeypatch.setattr(service._router.database, "search_page", broken)
+
+    payload = service.search("Como gerar SPED Fiscal no VR", source="wiki")
+
+    assert payload["source_states"]["wiki"] == "unavailable"
+    assert payload["results"] == []
+    assert "wiki fora do ar" in payload["errors"]["wiki"]
+
+
+def test_sources_wiki_lists_both_origins_when_endoo_disabled(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    payload = service.sources(source="wiki", limit=10)
+
+    assert payload["state"] == "available"
+    assert {hit["source_origin"] for hit in payload["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+
+def test_read_endoo_reference_when_endoo_disabled(tmp_path: Path) -> None:
+    service = _wiki_service(tmp_path)
+
+    payload = service.read("wiki:sped-endoo")
+
+    assert payload["state"] == "available"
+    assert payload["source_origin"] == "endoo"
+    assert "Endoo" in payload["content"]
 
 
 def test_knowledge_router_search_returns_compact_results(tmp_path: Path) -> None:

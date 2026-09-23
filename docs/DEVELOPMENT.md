@@ -51,6 +51,11 @@ Prefetch/cache de consulta não pertencem a este contrato. Perfis de atendimento
 (senior, implantação, suporte e treinamento) serão uma camada posterior sobre o
 mesmo mecanismo de retrieval.
 
+A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre VRWiki +
+Endoo, mesmo quando o toggle legado de Endoo está desligado. Cada origem é
+consultada em bloco de erro independente: uma falha parcial mantém os hits da
+outra origem e a lane só fica indisponível quando todas as origens falham.
+
 ## Instalação e testes
 
 ```powershell
@@ -186,22 +191,6 @@ sozinho, sem relatórios de execuções anteriores:
 Os scripts visuais usam dados isolados. `benchmark_v2_retrieval.py` mantém o corpus
 congelado em `tests/fixtures/` e exige os modelos e dependências semânticas indicados
 no script. Essas verificações manuais complementam a suíte automatizada.
-
-## Modos de resposta (OFF, VR e ULTRA)
-
-Contrato canônico dos modos, alinhado ao runtime:
-
-- `off`: sem retrieval automático e sem agentes; projeto, anexos e fontes
-  internas continuam acessíveis sob demanda por tools (`vr_sources`,
-  `vr_search` e `vr_read`).
-- `vr`: retrieval automático direto por Wiki/Endoo, KB, Schema e Código, sem
-  agentes.
-- `ultra`: fan-out por fonte com agentes, DEV Java opcional e síntese final.
-
-"OFF" desativa a estratégia automática VR, não o conhecimento interno.
-Disponibilidade de fonte e estratégia de retrieval são conceitos diferentes:
-as fontes locais são registradas em todos os modos e cada modo decide apenas
-quando e quanto recuperar automaticamente.
 
 ## VRMonitor
 

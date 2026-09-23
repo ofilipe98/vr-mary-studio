@@ -18,7 +18,7 @@ from pathlib import Path
 from dataclasses import replace
 from .generations import GenerationSemanticIndex, document_signature
 
-from ..knowledge_router import KnowledgeRouter
+from ..knowledge_router import KnowledgeRouter, WIKI_SOURCE_ORIGINS
 from ..models import (
     EvidenceBundle,
     EvidenceCandidate,
@@ -179,7 +179,13 @@ class RetrievalService:
                     for lane in lanes
                 }
                 for future in as_completed(futures):
-                    lane_results[futures[future]] = future.result()
+                    lane = futures[future]
+                    try:
+                        lane_results[lane] = future.result()
+                    except Exception as exc:
+                        # An unhandled worker exception marks only its own lane
+                        # unavailable; every other future keeps running.
+                        lane_results[lane] = ([], "unavailable", str(exc))
         # Rebuild in the fixed wiki, kb, schema, code order regardless of the
         # workers' completion order. Completion time is never a ranking signal.
         results: list[list[dict[str, Any]]] = []
@@ -247,6 +253,12 @@ class RetrievalService:
         try:
             if document_error is not None:
                 raise document_error
+            if lane == "wiki":
+                # Source-wide Wiki always covers VRWiki + Endoo, even when the
+                # legacy Endoo toggle disables the origin in other flows.
+                return self._search_wiki_origins(
+                    query, module=module, needed=needed, revision=revision
+                )
             rows = []
             for origin in self.enabled_origins(lane):
                 page, _ = self._router.database.search_page(query, source=lane, module=module,
@@ -257,6 +269,36 @@ class RetrievalService:
             return hits, ("available" if hits else "no_results"), ""
         except Exception as exc:
             return [], "unavailable", str(exc)
+
+    def _search_wiki_origins(
+        self,
+        query: str,
+        *,
+        module: str,
+        needed: int,
+        revision: str,
+    ) -> tuple[list[dict[str, Any]], str, str]:
+        """Query both Wiki origins, isolating the failure of each one."""
+        rows: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for origin in WIKI_SOURCE_ORIGINS:
+            try:
+                page, _ = self._router.database.search_page(
+                    query, source="wiki", module=module,
+                    source_origin=origin, limit=needed,
+                )
+                rows.extend(r for r in page if not revision or r.get("revision") == revision)
+            except Exception as exc:
+                errors.append(f"{origin}: {exc}")
+        rows.sort(key=lambda r: (float(r.get("rank", 0)), str(r["source_id"])))
+        hits = [self._document_payload(r) for r in rows[:needed]]
+        error = "; ".join(errors)
+        if hits:
+            # A partial failure never discards valid hits from the other origin.
+            return hits, "available", error
+        if errors and len(errors) == len(WIKI_SOURCE_ORIGINS):
+            return [], "unavailable", error
+        return [], "no_results", error
 
     @staticmethod
     def _document_payload(row: dict) -> dict:
@@ -282,7 +324,13 @@ class RetrievalService:
                     "code_availability": check_code_availability(self._router.root, application_contexts=application_contexts)}
         if source not in {"wiki", "kb", "schema"}:
             raise ValueError("Fonte desconhecida")
-        origins = self.enabled_origins(source)
+        # Source-wide Wiki keeps VRWiki + Endoo listed even when the legacy
+        # Endoo toggle is disabled; KB and Schema keep enabled_origins.
+        origins = (
+            WIKI_SOURCE_ORIGINS
+            if source == "wiki"
+            else self.enabled_origins(source)
+        )
         with self._router.database.connect() as conn:
             rows = conn.execute("SELECT * FROM documents WHERE source=? AND status='active' "
                 "AND review_status IN ('approved','kept') AND module<>'Revisar' AND source_origin IN (" +
@@ -301,7 +349,15 @@ class RetrievalService:
             from .project_sources import read_source
             return read_source(project_workspace, reference, cursor=cursor, limit=limit)
         # Resolve documentary references before considering legacy Java FQCNs.
-        doc = self.resolve_document(reference, require_review=True)
+        # Wiki references stay readable in the source-wide/tool-driven path
+        # even with the legacy Endoo toggle disabled; KB and Schema keep the
+        # current enabled-origin validation.
+        reference_source = reference.partition(":")[0]
+        doc = self.resolve_document(
+            reference,
+            require_review=True,
+            enforce_enabled_origin=reference_source != "wiki",
+        )
         if doc is not None:
             with self._router.database.connect() as conn:
                 row = conn.execute("SELECT * FROM documents WHERE source=? AND source_id=?", (doc.source, doc.source_id)).fetchone()

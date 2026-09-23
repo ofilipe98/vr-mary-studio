@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -218,6 +219,36 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert "agent_started" in persisted_kinds
     assert "agent_completed" in persisted_kinds
     assert "agent_usage" in persisted_kinds
+
+
+def test_ultra_without_fanout_keeps_direct_vr_sources_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+    calls: list[str] = []
+    original = orchestrator.retrieval_service.route_vr_sources
+
+    def spy(query, **kwargs):
+        calls.append(query)
+        return original(query, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", spy
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [e.kind for e in events]
+    assert calls == [QUESTION]
+    assert "research_started" not in kinds
+    assert "agent_started" not in kinds
+    row = [r for r in database.messages(cid) if r["role"] == "assistant"]
+    assert row and "Resposta Ultra" in row[-1]["content"]
 
 
 def test_code_scope_prefers_original_business_term_over_follow_up_wording() -> None:
