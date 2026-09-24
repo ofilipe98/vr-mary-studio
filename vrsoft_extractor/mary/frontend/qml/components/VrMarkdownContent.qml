@@ -26,6 +26,8 @@ TextEdit {
         var value = String(link)
         if (value.indexOf("vr-file:") === 0 || value.indexOf("file:") === 0) {
             if (typeof chat !== "undefined" && chat) chat.openFileReference(value)
+        } else if (value.indexOf("vr-code:") === 0) {
+            if (typeof chat !== "undefined" && chat) chat.openDecompiledReference(value)
         } else if (studio) {
             studio.openExternalUrl(value)
         }

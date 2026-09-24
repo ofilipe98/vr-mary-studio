@@ -110,14 +110,14 @@ class CodeSyntaxHighlighter(QSyntaxHighlighter):
 FENCE_START_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
 
 # Kept local to avoid a circular import with file_links (which reuses fences).
-_FILE_REFERENCE_SCHEMES = ("vr-file:", "file:")
+_INLINE_CODE_REFERENCE_SCHEMES = ("vr-file:", "file:", "vr-code:")
 
 
-def _is_file_reference_anchor(fragment_format: QTextCharFormat) -> bool:
+def _is_inline_code_reference_anchor(fragment_format: QTextCharFormat) -> bool:
     if not fragment_format.isAnchor():
         return False
     href = str(fragment_format.anchorHref() or "").strip().casefold()
-    return href.startswith(_FILE_REFERENCE_SCHEMES)
+    return href.startswith(_INLINE_CODE_REFERENCE_SCHEMES)
 
 
 def fenced_blocks(markdown: str) -> list[dict[str, str]]:
@@ -546,7 +546,7 @@ def _apply_message_document_style(
                 fragment_format.setProperty(QTextFormat.FontPixelSize, round(base_px * 0.9))
                 fragment_format.setForeground(code_text)
                 fragment_format.setBackground(code_background)
-            elif _is_file_reference_anchor(fragment_format):
+            elif _is_inline_code_reference_anchor(fragment_format):
                 # t3code parity: the chip reads like inline code and follows the
                 # active theme foreground instead of the fixed link accent.
                 fragment_format.setFontFamilies([monospace_family])

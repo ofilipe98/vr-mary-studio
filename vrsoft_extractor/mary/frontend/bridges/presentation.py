@@ -10,6 +10,7 @@ from PySide6.QtCore import (
 )
 from ..text_rendering import fenced_blocks, code_language_badge
 from ..file_links import linkify_file_references
+from ..code_links import linkify_code_references
 from ...code_processing_hardware import detect_code_processing_hardware
 
 """Read-only presentation models for the first QML Chat VR migration slice."""
@@ -122,6 +123,7 @@ def markdown_for_display(markdown: str) -> str:
 
     Recognized inline-code file references are rewritten as ``vr-file:`` links
     so the QML chat can render them as clickable chips (t3code parity).
+    Recognized decompiled Java code references are rewritten as ``vr-code:`` links.
     """
 
     result = []
@@ -134,7 +136,8 @@ def markdown_for_display(markdown: str) -> str:
                 part if index % 2 else _GLUED_SENTENCE_RE.sub(" ", part)
                 for index, part in enumerate(parts)
             )
-            result.append(linkify_file_references(repaired))
+            file_linkified = linkify_file_references(repaired)
+            result.append(linkify_code_references(file_linkified))
     return "".join(result)
 
 

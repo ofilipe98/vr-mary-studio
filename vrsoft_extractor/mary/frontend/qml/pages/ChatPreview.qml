@@ -112,7 +112,8 @@ Item {
         { title: "Terminal", kind: "terminal", page: 2, description: "Executar comandos neste projeto." },
         { title: "Arquivos", kind: "files", page: 3, description: "Navegar pelos arquivos do projeto." },
         { title: "Contexto", kind: "context", page: 4, description: "Consultar arquivos e contexto local." },
-        { title: "Agentes", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." }
+        { title: "Agentes", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." },
+        { title: "Código", kind: "code", page: 6, description: "Inspecionar código Java descompilado da release." }
     ]
     property var approvalPayload: ({})
     property var composerSuggestions: []
@@ -123,6 +124,7 @@ Item {
     property string surfaceFilePreview: ""
     property int surfaceFileLine: 0
     property int surfaceFileColumn: 0
+    property var surfaceDecompiledPayload: ({})
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
@@ -227,6 +229,9 @@ Item {
         }
         function onFilePreviewRequested(path, line, column) {
             root.openFileSurface(path, line, column)
+        }
+        function onDecompiledPreviewRequested(payload) {
+            root.openDecompiledSurface(payload)
         }
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
@@ -2309,6 +2314,19 @@ Item {
                             }
                         }
                     }
+                    VrDecompiledSourceView {
+                        id: decompiledSurfaceView
+                        objectName: "decompiledSurfaceView"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        payload: root.surfaceDecompiledPayload
+                        frontendBridge: root.frontendBridge
+                        onCandidateSelected: function(candidate) {
+                            if (root.chatBridge) {
+                                root.chatBridge.openDecompiledReference("vr-code:" + candidate)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3023,6 +3041,9 @@ Item {
         }
         if (page === 5 && root.selectedAgentIndex < 0 && root.chatBridge.agentItems.length)
             root.selectedAgentIndex = 0
+        if (page === 6 && (!root.surfaceDecompiledPayload || !root.surfaceDecompiledPayload.state)) {
+            root.surfaceDecompiledPayload = root.chatBridge ? root.chatBridge.decompiledPreviewPayload : ({})
+        }
     }
 
     // Open a chat file reference in the Arquivos surface and reveal its line.
@@ -3036,6 +3057,18 @@ Item {
         root.surfaceFileColumn = Math.max(0, Number(column || 0))
         root.surfaceFilePreview = root.chatBridge.readFilePreview(target)
         Qt.callLater(root.scrollFilePreviewToLine)
+    }
+
+    function openDecompiledSurface(payload) {
+        var data = payload || (root.chatBridge ? root.chatBridge.decompiledPreviewPayload : ({}))
+        root.surfaceDecompiledPayload = data
+        root.openSurface(6)
+        Qt.callLater(function() {
+            if (decompiledSurfaceView) {
+                decompiledSurfaceView.payload = data
+                decompiledSurfaceView.scrollToTargetLine()
+            }
+        })
     }
 
     function revealFileFolder(path) {

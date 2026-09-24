@@ -187,6 +187,15 @@ as mesmas cercas para preservar o conteúdo do código durante streaming.
 `frontend/file_links.py` reconhece caminhos de arquivo em inline code e os
 converte em links `vr-file:`; o clique chama `ChatBridge.openFileReference`, que
 abre o arquivo na superfície Arquivos pelo sinal `filePreviewRequested`.
+
+`frontend/code_links.py` e `code_references.py` reconhecem referências a classes e
+métodos Java em inline code do chat e as convertem em links `vr-code:`; o clique
+chama `ChatBridge.openDecompiledReference`, que resolve a referência de forma assíncrona
+no `JavaCodeIndex` da release ativa (ou atual) via `CodePreviewDomain` (`bridges/codepreview.py`),
+com proteção contra respostas obsoletas por geração incremental. A prévia é exibida
+na superfície Código (`VrDecompiledSourceView.qml`) na barra lateral direita com fonte
+monoespaçada, realce Java, numeração de linhas, alternância entre código limpo e bruto,
+posicionamento no símbolo identificado e lista de desambiguação para referências ambíguas.
 `VrAssistantMessage.qml` atualiza os blocos existentes, preservando os controles
 de quebra de linha e ampliação. `VrTableBlock.qml` mantém seleção nativa, rolagem
 horizontal e cópia em Markdown, CSV ou TSV; as divisórias seguem as posições

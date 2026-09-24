@@ -89,6 +89,7 @@ from .bridges.codeadmin import CodeAdminDomain
 from .bridges.providersettings import ProviderSettingsDomain
 from .bridges.activity import ActivityDomain
 from .bridges.conversations import ConversationsDomain
+from .bridges.codepreview import CodePreviewDomain
 
 class ChatBridge(QObject):
     @property
@@ -107,6 +108,10 @@ class ChatBridge(QObject):
     def _Conversations_domain(self):
         return ConversationsDomain(self)
 
+    @property
+    def _CodePreview_domain(self):
+        return CodePreviewDomain(self)
+
     """Expose existing conversation reads without changing domain behavior."""
 
     conversationsChanged = Signal()
@@ -120,6 +125,7 @@ class ChatBridge(QObject):
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     filePreviewRequested = Signal(str, int, int)
+    decompiledPreviewRequested = Signal("QVariantMap")
     conversationArchived = Signal(str)
     draftRestored = Signal(str)
     browserNavigationRequested = Signal(str)
@@ -244,6 +250,10 @@ class ChatBridge(QObject):
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items: list[dict[str, Any]] = []
+        self._decompiled_preview_payload: dict[str, Any] = {}
+        self._decompiled_preview_generation = 0
+        self._decompiled_preview_lock = threading.Lock()
+        self._decompiled_preview_threads: set[threading.Thread] = set()
         self._release_coverage_root = settings.root
         self._release_coverage_generation = 0
         self._release_coverage_thread: threading.Thread | None = None
@@ -1551,6 +1561,13 @@ class ChatBridge(QObject):
             self._application_preview_thread.join(timeout=1.0)
         if self._package_operation_thread is not None:
             self._package_operation_thread.join(timeout=2.0)
+        if hasattr(self, "_decompiled_preview_lock"):
+            with self._decompiled_preview_lock:
+                self._decompiled_preview_generation += 1
+                decompiled_threads = list(self._decompiled_preview_threads)
+            for thread in decompiled_threads:
+                if thread is not threading.current_thread() and thread.is_alive():
+                    thread.join(timeout=1.0)
         self._orchestrator.close()
         self._active_turns.clear()
         if hasattr(self, "_timeline_reducers"):
@@ -1908,6 +1925,15 @@ class ChatBridge(QObject):
                 return "Este arquivo não possui uma visualização textual compatível."
         except OSError as exc:
             return f"Não foi possível ler o arquivo: {exc}"
+
+    @Property("QVariantMap", notify=decompiledPreviewRequested)
+    def decompiledPreviewPayload(self) -> dict[str, Any]:  # noqa: N802
+        return dict(self._decompiled_preview_payload)
+
+    @Slot(str)
+    def openDecompiledReference(self, value: str) -> None:  # noqa: N802
+        """Resolve a decompiled Java code reference and request its preview."""
+        return self._CodePreview_domain.openDecompiledReference(value)
 
     @Slot(str)
     def openFileReference(self, value: str) -> None:  # noqa: N802
