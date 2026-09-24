@@ -1038,7 +1038,6 @@ Item {
                                     markdown: messageItem.displayContent
                                     messageKey: messageItem.messageKey
                                     streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
-                                    onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
                                     onAnchorRequested: messageList.anchorMessage(messageItem)
                                     onTransitionFinished: messageList.finishAnchor(messageItem)
                                     onToggled: (expanded, heightDelta) => {

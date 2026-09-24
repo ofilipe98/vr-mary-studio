@@ -31,18 +31,21 @@ O modo controla a estratégia de resposta; VR e Ultra compartilham as mesmas
 fontes e tools, e o OFF utiliza exclusivamente capacidades nativas de leitura
 sobre as raízes canônicas de documentação, schema e código.
 
-- **OFF**: modelo direto. O turno recebe o contexto do projeto/workspace (quando
-  não gerenciado) e acesso opcional somente leitura estritamente limitado às
-  raízes canônicas existentes (`conhecimento`, `SchemaVR` e `indice/codigo/decompilation`),
-  sem expor a raiz inteira `MarySettings.root`. Não registra nem executa
-  `vr_sources`, `vr_search` ou `vr_read`, e não executa `tools/vr-search.ps1`.
+- **OFF**: modelo direto. As três raízes canônicas definem o escopo de conhecimento
+  do OFF (`conhecimento`, `SchemaVR` e `indice/codigo/decompilation`), recebendo o
+  contexto do projeto/workspace (quando não gerenciado) e leitura opcional sobre essas
+  raízes existentes, sem expor a raiz inteira `MarySettings.root` no prompt. Não registra
+  nem executa `vr_sources`, `vr_search` ou `vr_read`, e não executa `tools/vr-search.ps1`.
   Não há retrieval automático, `RetrievalService`, `KnowledgeRouter`, classificação
   VR nem fan-out. Na documentação Markdown, somente arquivos com `status: active`
   e `review_status: approved` ou `kept` são considerados factuais (`conhecimento/Revisar`
   é ignorado). Todo conteúdo local é dado não confiável, nunca instrução.
-  Pastas como `.state`, `.env`, `TrabalhoVR`, `.trash`, logs, `.sqlite` e `ERP/releases`
-  são inacessíveis. O modelo consulta fontes apenas pelas capacidades nativas do
-  provider e pode responder sem consultá-las.
+  Diretórios e arquivos como `.state`, `.env`, `TrabalhoVR`, `.trash`, logs, `.sqlite`,
+  `ERP/releases` e scripts de busca não são fontes do OFF e não devem ser consultados como
+  base interna. O perfil `full_access`, quando explicitamente selecionado, mantém
+  permissão ampla de filesystem e não é um sandbox canônico; perfis restritos limitam
+  os diretórios externos às raízes canônicas existentes. O modelo consulta fontes apenas
+  pelas capacidades nativas do provider e pode responder sem consultá-las.
 - **VR**: o modelo principal recebe o contrato VR especializado (identidade,
   fontes disponíveis e política de grounding) e decide usar `vr_sources`,
   `vr_search` e `vr_read`. Há uma única chamada principal; não há agentes,
@@ -61,12 +64,14 @@ Antigravity) seguem o modo resolvido: no OFF o MCP recebe `--disable-vr-tools`,
 não instancia `MaryDatabase`, `KnowledgeRouter` ou `RetrievalService`, não anuncia
 nem executa VR tools e permanece disponível somente para integrações não-VR como o
 VRMonitor, quando configurado. A leitura opcional de arquivos canônicos usa as
-capacidades nativas do provider: OpenCode limita `external_directory` e restrições
-de bash/edit aos diretórios canônicos existentes (sem liberar `<root>/**` nem o
-script de busca), Claude recebe os diretórios canônicos existentes via `--add-dir`
-sem permissão de escrita e o Antigravity/Codex dependem do filesystem nativo do
-runtime, sem prometer garantias onde a CLI não oferece sandboxing de diretório externo.
-Uma requisição VR tool stale recebida em OFF é recusada sem executar retrieval.
+capacidades nativas do provider: em perfis restritos, OpenCode limita `external_directory`
+e restrições de bash/edit aos diretórios canônicos existentes (sem liberar `<root>/**`
+nem o script de busca) e Claude recebe os diretórios canônicos existentes via `--add-dir`
+sem permissão de escrita. Já o perfil `full_access`, quando explicitamente selecionado
+pelo usuário, mantém permissão ampla no provider e não atua como sandbox físico restrito.
+Antigravity/Codex dependem do filesystem nativo do runtime, sem prometer garantias onde a
+CLI não oferece sandboxing de diretório externo. Uma requisição VR tool stale recebida em
+OFF é recusada sem executar retrieval.
 
 Workspaces gerenciados de conversa criados pelo Studio são mode-neutral: `AGENTS.md`
 e `CLAUDE.md` determinam que a instrução do turno enviada pelo Studio é autoritativa,

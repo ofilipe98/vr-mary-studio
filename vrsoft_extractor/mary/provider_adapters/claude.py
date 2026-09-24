@@ -97,8 +97,8 @@ class ClaudeProvider(AgentProvider):
             if root not in readable_roots:
                 readable_roots.append(root)
         if self.knowledge_root and self.knowledge_root not in readable_roots:
-            # The configured source root stays natively readable in every mode;
-            # only the VR tools follow the mode.
+            # In VR mode, the configured source root is natively readable;
+            # in OFF mode, only canonical direct source roots are exposed below.
             readable_roots.append(self.knowledge_root)
         allowed_tools = [
             f"{tool}({root}/**)"

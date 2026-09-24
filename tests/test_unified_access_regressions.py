@@ -135,6 +135,42 @@ def test_opencode_mcp_command_follows_vr_mode_without_losing_read_access(
         assert permission["bash"][f"*{conhecimento_norm}*"] == "deny"
 
 
+@pytest.mark.parametrize("profile", ["auto", "research_readonly", "full_access"])
+def test_opencode_off_environment_per_profile(tmp_path, profile):
+    knowledge = (tmp_path / "mary").resolve()
+    knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
+    config = json.loads(
+        _opencode_environment(
+            profile, knowledge, vr_tools_enabled=False
+        )["OPENCODE_CONFIG_CONTENT"]
+    )
+    command = config["mcp"]["vr-mary-studio"]["command"]
+    assert "--disable-vr-tools" in command
+    permission = config["permission"]
+
+    # In all profiles, verify absence of vr-search.ps1 exception
+    bash_perms = permission.get("bash", {}) if isinstance(permission, dict) else {}
+    assert not any("vr-search.ps1" in key for key in bash_perms.keys())
+
+    if profile == "full_access":
+        # full_access maintains broad filesystem permission and is deliberately not a canonical sandbox
+        assert permission == "allow"
+    else:
+        for capability in ("read", "glob", "grep", "list"):
+            assert permission[capability] == "allow"
+        pattern = str(conhecimento).replace("\\", "/") + "/**"
+        root_pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert root_pattern not in permission["external_directory"]
+        if "edit" in permission:
+            assert permission["edit"][pattern] == "deny"
+        if "bash" in permission:
+            conhecimento_norm = str(conhecimento).replace("\\", "/")
+            assert permission["bash"][f"*{conhecimento_norm}*"] == "deny"
+
+
 def test_mcp_real_process_obeys_frozen_scope_and_reads_returned_reference(tmp_path):
     index, contexts = indexed_contexts(tmp_path / "mary")
     scope_path = create_scope()

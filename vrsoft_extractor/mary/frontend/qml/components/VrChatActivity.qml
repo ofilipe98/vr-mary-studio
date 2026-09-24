@@ -48,8 +48,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Theme.scaledGeometry(28)
             radius: Theme.scaledGeometry(6)
-            color: headerHover.hovered ? Theme.palette.hover : "transparent"
-            Behavior on color { ColorAnimation { duration: Theme.fastDuration } }
+            color: "transparent"
 
             RowLayout {
                 anchors.fill: parent

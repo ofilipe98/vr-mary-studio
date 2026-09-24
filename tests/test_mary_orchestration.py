@@ -1745,8 +1745,10 @@ def test_claude_receives_project_and_knowledge_as_distinct_readable_roots(
     assert "--disable-vr-tools" not in mcp["vr-mary-studio"]["args"]
 
 
+@pytest.mark.parametrize("profile", ["auto", "research_readonly", "full_access"])
 def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
     tmp_path: Path,
+    profile: str,
 ) -> None:
     knowledge = (tmp_path / "VR_Mary_V2").resolve()
     project = (tmp_path / "projeto").resolve()
@@ -1772,13 +1774,18 @@ def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
             project,
             "mensagem nativa",
             lambda _event: None,
-            ConversationOptions(vr_enabled=False, approval_profile="supervised"),
+            ConversationOptions(vr_enabled=False, approval_profile=profile),
         )
 
     command = popen.call_args.args[0]
     assert "mensagem nativa" not in command
     assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
-    assert "--permission-mode" not in command
+    if profile == "full_access":
+        assert command[command.index("--permission-mode") + 1] == "bypassPermissions"
+    elif profile == "auto":
+        assert command[command.index("--permission-mode") + 1] == "acceptEdits"
+    else:
+        assert "--permission-mode" not in command
     add_dirs = [
         command[index + 1]
         for index, value in enumerate(command)

@@ -66,7 +66,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: Theme.scaledGeometry(28)
             radius: Theme.scaledGeometry(6)
-            color: hover.hovered ? Theme.palette.hover : "transparent"
+            color: "transparent"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: root.titleText + (root.isError ? ", falhou" : "")
@@ -75,7 +75,6 @@ Item {
             border.color: Theme.palette.focus
             Keys.onReturnPressed: { if (root.canExpand) root.detailExpanded = !root.detailExpanded }
             Keys.onSpacePressed: { if (root.canExpand) root.detailExpanded = !root.detailExpanded }
-            Behavior on color { ColorAnimation { duration: Theme.fastDuration } }
 
             RowLayout {
                 anchors.fill: parent
