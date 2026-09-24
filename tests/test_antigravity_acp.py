@@ -100,20 +100,29 @@ def test_catalog_comes_from_acp_session(fake_runtime):
     assert [m for m, _ in FakeClient.instances[0].calls] == ["authenticate", "session/new"]
 
 
-def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, tmp_path):
+@pytest.mark.parametrize("native", ["", "acp:native"])
+@pytest.mark.parametrize("vr_enabled", [False, True])
+def test_stdio_mcp_is_registered_without_optional_capability_flag(
+    fake_runtime, tmp_path, native, vr_enabled
+):
     from vrsoft_extractor.mary.models import ConversationOptions
     provider = AntigravityProvider(tmp_path)
     done = threading.Event()
-    provider.send_message("conversation", "", "gemini-test", "auto", tmp_path, "Hello",
+    provider.send_message("conversation", native, "gemini-test", "auto", tmp_path, "Hello",
         lambda e: done.set() if e.kind == "turn_completed" else None,
-        ConversationOptions(knowledge_context_path="frozen-turn.json"))
+        ConversationOptions(knowledge_context_path="frozen-turn.json", vr_enabled=vr_enabled))
     assert done.wait(2)
-    params = next(params for method, params in FakeClient.instances[0].calls if method == "session/new")
+    calls = FakeClient.instances[0].calls
+    params = next(
+        params
+        for method, params in calls
+        if method in {"session/new", "session/resume", "session/load"}
+    )
     server = params["mcpServers"][0]
     assert server["env"] == []
-    assert server["args"][-4:] == [
-        "--context", "frozen-turn.json", "--monitor-session", "conversation"
-    ]
+    assert server["args"][server["args"].index("--context") + 1] == "frozen-turn.json"
+    assert server["args"][server["args"].index("--monitor-session") + 1] == "conversation"
+    assert ("--disable-vr-tools" in server["args"]) is not vr_enabled
     assert "additionalDirectories" not in params
 
 

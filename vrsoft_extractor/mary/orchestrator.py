@@ -2863,6 +2863,8 @@ class ChatOrchestrator:
         if approved:
             tool_name = str(tool.get("name"))
             if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+                if self._refuse_vr_tool_in_off(event):
+                    return
                 self._execute_vr_native_tool(event, tool_name)
             elif tool_name in MONITOR_TOOL_NAMES:
                 self._execute_monitor_tool(event, tool_name)
@@ -3476,10 +3478,28 @@ class ChatOrchestrator:
             except Exception:
                 LOGGER.exception("Não foi possível registrar a recuperação pendente.")
 
+    def _persisted_vr_mode(self, conversation_id: str) -> str:
+        row = self._conversation(conversation_id)
+        mode = str(row["vr_mode"] or "").strip().casefold()
+        if mode not in ConversationOptions.VALID_VR_MODES:
+            mode = "vr" if bool(row["vr_enabled"]) else "off"
+        return mode
+
+    def _refuse_vr_tool_in_off(self, event: RuntimeEvent) -> bool:
+        """Refuse stale VR tool requests without touching retrieval in OFF."""
+        if self._persisted_vr_mode(event.conversation_id) != "off":
+            return False
+        self._respond_dynamic_tool(
+            event, "Tool VR indisponível no modo OFF.", False
+        )
+        return True
+
     def _handle_dynamic_tool(self, event: RuntimeEvent) -> None:
         self._remember_dynamic_tool_callback(event)
         name = str(event.payload.get("tool") or event.text)
         if name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+            if self._refuse_vr_tool_in_off(event):
+                return
             self._handle_vr_native_tool(event, name)
             return
         if name in MONITOR_TOOL_NAMES:

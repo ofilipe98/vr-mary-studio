@@ -168,6 +168,99 @@ def test_mcp_transport_allows_more_than_forty_vr_calls(tmp_path, monkeypatch):
     assert not any(reply["isError"] for reply in replies)
 
 
+def _mcp_replies(tmp_path, monkeypatch, requests, **kwargs):
+    from io import StringIO
+    from vrsoft_extractor.mary import mcp_server
+
+    monkeypatch.setattr(mcp_server, "MaryDatabase", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "KnowledgeRouter", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "RetrievalService", lambda *a: Pages())
+    monkeypatch.setattr(mcp_server, "load_scope", lambda path: {})
+    monkeypatch.setattr(
+        mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests))
+    )
+    output = StringIO()
+    monkeypatch.setattr(mcp_server.sys, "stdout", output)
+    mcp_server.run_mcp_server(tmp_path, **kwargs)
+    return [json.loads(line)["result"] for line in output.getvalue().splitlines()]
+
+
+def test_mcp_tools_list_follows_vr_mode(tmp_path, monkeypatch):
+    listed = _mcp_replies(
+        tmp_path,
+        monkeypatch,
+        [{"id": 1, "method": "tools/list", "params": {}}],
+        vr_tools_enabled=True,
+    )
+    names = {tool["name"] for tool in listed[0]["tools"]}
+    assert names == {"vr_sources", "vr_search", "vr_read"}
+
+    hidden = _mcp_replies(
+        tmp_path,
+        monkeypatch,
+        [{"id": 1, "method": "tools/list", "params": {}}],
+        vr_tools_enabled=False,
+    )
+    assert hidden[0]["tools"] == []
+
+
+def test_mcp_off_refuses_vr_tool_without_retrieval(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import mcp_server
+
+    calls: list[tuple] = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("retrieval não deveria executar")
+
+    monkeypatch.setattr(mcp_server, "run_vr_tool", forbidden)
+    replies = _mcp_replies(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "vr_search", "arguments": {"query": "sped"}},
+            }
+        ],
+        vr_tools_enabled=False,
+    )
+    assert replies[0]["isError"] is True
+    assert "modo OFF" in replies[0]["content"][0]["text"]
+    assert calls == []
+
+
+def test_mcp_off_keeps_only_monitor_tools(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import mcp_server
+    from vrsoft_extractor.mary.monitor_adapter import MONITOR_TOOL_NAMES, MonitorToolResult
+
+    class Monitor:
+        def execute(self, tool_name, arguments, conversation_id):
+            return MonitorToolResult(
+                text=json.dumps({"ok": tool_name}), parsed={"ok": tool_name}
+            )
+
+    monkeypatch.setattr(mcp_server.MonitorAdapter, "from_path", lambda path: Monitor())
+    replies = _mcp_replies(
+        tmp_path,
+        monkeypatch,
+        [
+            {"id": 1, "method": "tools/list", "params": {}},
+            {
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "get_connections", "arguments": {}},
+            },
+        ],
+        vr_tools_enabled=False,
+        monitor_session_id="00000000-0000-0000-0000-000000000001",
+    )
+    names = {tool["name"] for tool in replies[0]["tools"]}
+    assert names == set(MONITOR_TOOL_NAMES)
+    assert replies[1]["isError"] is False
+
+
 def test_mcp_transport_allows_large_monitor_results_and_later_calls(tmp_path, monkeypatch):
     from io import StringIO
     from vrsoft_extractor.mary import mcp_server

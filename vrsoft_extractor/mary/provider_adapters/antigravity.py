@@ -193,6 +193,7 @@ class AntigravityProvider(AgentProvider):
                     Path(self.knowledge_root),
                     options.knowledge_context_path,
                     cid,
+                    vr_tools_enabled=options.vr_enabled,
                 )
                 params["mcpServers"] = [{
                     "name": "vr-mary-studio", "command": command[0],

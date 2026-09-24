@@ -483,6 +483,55 @@ def test_mcp_server_subprocess_transport(tmp_path: Path):
         proc.wait(timeout=5)
 
 
+def test_mcp_server_off_transport_hides_and_refuses_vr_tools(tmp_path: Path):
+    from vrsoft_extractor.mary.knowledge_access import mcp_command
+
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    cmd = mcp_command(settings.root, vr_tools_enabled=False)
+    assert "--disable-vr-tools" in cmd
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        proc.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            + "\n"
+        )
+        proc.stdin.flush()
+        proc.stdout.readline()
+
+        proc.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            + "\n"
+        )
+        proc.stdin.flush()
+        list_resp = json.loads(proc.stdout.readline())
+        assert list_resp["result"]["tools"] == []
+
+        proc.stdin.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {"name": "vr_search", "arguments": {"query": "SPED"}},
+                }
+            )
+            + "\n"
+        )
+        proc.stdin.flush()
+        call_resp = json.loads(proc.stdout.readline())
+        assert call_resp["result"]["isError"] is True
+        assert "modo OFF" in call_resp["result"]["content"][0]["text"]
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
 def test_provider_adapters_mcp_configurations(tmp_path: Path):
     settings, database, code_index, service = _setup_test_env(tmp_path)
 
@@ -608,7 +657,7 @@ def test_native_dynamic_vr_tools_allow_unlimited_pages_and_calls(
     orchestrator.retrieval_service = LargeReadService()
     orchestrator.providers = {"codex": AvailableProvider()}
     conversation_id = orchestrator.new_conversation(
-        "codex", "sol", defer_provider_start=True, vr_enabled=False
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
     )
     responses: list[RuntimeEvent] = []
     completed = threading.Event()
@@ -651,6 +700,60 @@ def test_native_dynamic_vr_tools_allow_unlimited_pages_and_calls(
         ]
         assert sum(len(payload["content"]) for payload in payloads) > 192_000
         assert all("budget" not in payload for payload in payloads)
+    finally:
+        orchestrator.close()
+
+
+def test_off_mode_refuses_stale_vr_tool_without_retrieval(tmp_path: Path):
+    settings, database, _, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.retrieval_service = service
+    calls = _mode_calls(orchestrator)
+
+    class AvailableProvider:
+        def available(self):
+            return True
+
+        def close(self):
+            return None
+
+    orchestrator.providers = {"codex": AvailableProvider()}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+    responses: list[RuntimeEvent] = []
+    orchestrator._pending_user_messages[conversation_id] = 1
+    orchestrator._turn_access_paths[conversation_id] = ""
+    orchestrator._turn_dynamic_candidates[conversation_id] = []
+    orchestrator._external_callbacks[conversation_id] = responses.append
+    orchestrator._callback_generations[conversation_id] = 1
+    try:
+        orchestrator._handle_dynamic_tool(
+            RuntimeEvent(
+                conversation_id,
+                "dynamic_tool_requested",
+                "vr_read",
+                {
+                    "tool": "vr_read",
+                    "request_id": "stale-read",
+                    "arguments": {
+                        "reference": "br.com.vrsoftware.fiscal.SpedFiscalManager"
+                    },
+                },
+            )
+        )
+        assert len(responses) == 1
+        assert responses[0].kind == "tool_event"
+        assert responses[0].payload["success"] is False
+        assert "Tool VR indisponível no modo OFF." in responses[0].payload["output"]
+        assert calls == {
+            "route": 0,
+            "route_source": [],
+            "route_code_source": 0,
+            "route_vr_sources": 0,
+            "ultra": 0,
+        }
+        assert orchestrator._turn_dynamic_candidates[conversation_id] == []
     finally:
         orchestrator.close()
 

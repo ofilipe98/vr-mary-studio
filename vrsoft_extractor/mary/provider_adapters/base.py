@@ -377,6 +377,7 @@ def _opencode_environment(
     knowledge_root: Path | None = None,
     knowledge_context_path: str = "",
     monitor_session_id: str = "",
+    vr_tools_enabled: bool = True,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     config: dict[str, Any] = {}
@@ -421,7 +422,10 @@ def _opencode_environment(
         config.setdefault("mcp", {})["vr-mary-studio"] = {
             "type": "local",
             "command": mcp_command(
-                knowledge_root, knowledge_context_path, monitor_session_id
+                knowledge_root,
+                knowledge_context_path,
+                monitor_session_id,
+                vr_tools_enabled=vr_tools_enabled,
             ),
         }
         if isinstance(permission, dict):

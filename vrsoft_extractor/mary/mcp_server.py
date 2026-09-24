@@ -61,6 +61,7 @@ def run_mcp_server(
     root_path: Path | None = None,
     context_path: str = "",
     monitor_session_id: str = "",
+    vr_tools_enabled: bool = True,
 ) -> None:
     root = root_path or Path(os.environ.get("VR_STUDIO_ROOT", ".")).resolve()
     settings = load_vr_settings(root=root)
@@ -119,7 +120,9 @@ def run_mcp_server(
             if req_id is not None:
                 write_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": {}})
         elif method == "tools/list":
-            specs = all_vr_tools_specs()
+            # OFF keeps the built-in server available only for non-VR
+            # integrations (VRMonitor); the VR tools belong to VR/Ultra.
+            specs = all_vr_tools_specs() if vr_tools_enabled else []
             if monitor is not None:
                 specs = (*specs, *monitor_tool_specs())
             mcp_tools = [
@@ -140,6 +143,11 @@ def run_mcp_server(
             tool_name = params.get("name")
             arguments = params.get("arguments") or {}
             try:
+                if (
+                    tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME)
+                    and not vr_tools_enabled
+                ):
+                    raise ValueError("Tool VR indisponível no modo OFF.")
                 scope = load_scope(context_path)
                 if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
                     exec_res = run_vr_tool(tool_name, arguments, service, **scope)
@@ -212,8 +220,18 @@ def main() -> None:
     parser.add_argument(
         "--monitor-session", default="", help="UUID da conversa vinculada ao VRMonitor"
     )
+    parser.add_argument(
+        "--disable-vr-tools",
+        action="store_true",
+        help="Não expõe vr_sources, vr_search e vr_read (modo OFF)",
+    )
     args = parser.parse_args()
-    run_mcp_server(args.root, args.context, args.monitor_session)
+    run_mcp_server(
+        args.root,
+        args.context,
+        args.monitor_session,
+        vr_tools_enabled=not args.disable_vr_tools,
+    )
 
 
 if __name__ == "__main__":

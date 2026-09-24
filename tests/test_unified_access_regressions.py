@@ -96,6 +96,31 @@ def test_opencode_registers_mcp_in_every_profile(tmp_path, profile):
     assert "vr-mary-studio" in config.get("mcp", {})
 
 
+@pytest.mark.parametrize("vr_tools_enabled", [False, True])
+def test_opencode_mcp_command_follows_vr_mode_without_losing_read_access(
+    tmp_path, vr_tools_enabled
+):
+    knowledge = (tmp_path / "mary").resolve()
+    knowledge.mkdir()
+    config = json.loads(
+        _opencode_environment(
+            "auto", knowledge, vr_tools_enabled=vr_tools_enabled
+        )["OPENCODE_CONFIG_CONTENT"]
+    )
+    command = config["mcp"]["vr-mary-studio"]["command"]
+    assert ("--disable-vr-tools" in command) is not vr_tools_enabled
+    pattern = str(knowledge).replace("\\", "/") + "/**"
+    permission = config["permission"]
+    assert permission["external_directory"][pattern] == "allow"
+    for capability in ("read", "glob", "grep", "list"):
+        assert permission[capability] == "allow"
+    assert permission["edit"][pattern] == "deny"
+    assert any(
+        key.endswith("/tools/vr-search.ps1*") and value == "allow"
+        for key, value in permission["bash"].items()
+    )
+
+
 def test_mcp_real_process_obeys_frozen_scope_and_reads_returned_reference(tmp_path):
     index, contexts = indexed_contexts(tmp_path / "mary")
     scope_path = create_scope()
@@ -233,7 +258,7 @@ def test_mismatched_stack_trace_falls_back_to_available_release(tmp_path):
         orchestrator.close()
 
 
-def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_path):
+def test_vr_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_path):
     settings, database, _, _ = _setup_test_env(tmp_path)
     orchestrator = ChatOrchestrator(settings, database)
     started, done = threading.Event(), threading.Event()
@@ -245,17 +270,18 @@ def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_pat
             assert success
             payload = json.loads(content_items[0]["text"])
             self.answer = payload["content"]
-            self.callback(RuntimeEvent(self.cid, "assistant_delta", self.answer))
+            self.callback(RuntimeEvent(self.cid, "assistant_completed", payload={
+                "final_text": self.answer, "validated_public": True}))
             self.callback(RuntimeEvent(self.cid, "turn_completed"))
     provider = ToolProvider("codex")
     orchestrator.providers["codex"] = provider
-    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_mode="vr")
     try:
-        orchestrator.send(cid, "Leia a classe", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=False)
+        orchestrator.send(cid, "Leia a classe", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=True)
         assert started.wait(10)
         path = orchestrator._turn_access_paths[cid]
         with pytest.raises(Exception):
-            orchestrator.send(cid, "Rejeitar", lambda e: None, use_vr=False, application_contexts=[])
+            orchestrator.send(cid, "Rejeitar", lambda e: None, use_vr=True, application_contexts=[])
         assert orchestrator._turn_access_paths[cid] == path
         assert orchestrator._turn_application_contexts[cid] is None
         provider.callback(RuntimeEvent(cid, "dynamic_tool_requested", "vr_read", {
@@ -264,6 +290,41 @@ def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_pat
         assert done.wait(10)
         assert "gerarSpedFiscal" in provider.answer
         assert not Path(path).exists()
+    finally:
+        orchestrator.close()
+
+
+def test_off_mode_refuses_vr_tool_and_keeps_turn_scope_untouched(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    started = threading.Event()
+    refusals: list[tuple[str, bool, str]] = []
+
+    class ToolProvider(FakeProvider, CodexProvider):
+        def send_message(self, cid, native, model, effort, workspace, message, callback, options=None, *args):
+            self.callback, self.cid = callback, cid
+            started.set()
+
+        def respond_dynamic_tool(self, request_id, content_items, success=True):
+            refusals.append((request_id, success, content_items[0]["text"]))
+
+    provider = ToolProvider("codex")
+    orchestrator.providers["codex"] = provider
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    try:
+        orchestrator.send(cid, "Leia a classe", lambda e: None, use_vr=False)
+        assert started.wait(10)
+        path = orchestrator._turn_access_paths[cid]
+        provider.callback(RuntimeEvent(cid, "dynamic_tool_requested", "vr_read", {
+            "tool": "vr_read", "request_id": "read-code", "arguments": {
+                "reference": "br.com.vrsoftware.fiscal.SpedFiscalManager"}}))
+        deadline = 5.0
+        while deadline > 0 and not refusals:
+            deadline -= 0.05
+            threading.Event().wait(0.05)
+        assert refusals == [("read-code", False, "Tool VR indisponível no modo OFF.")]
+        assert orchestrator._turn_dynamic_candidates.get(cid, []) == []
+        assert orchestrator._turn_access_paths[cid] == path
     finally:
         orchestrator.close()
 

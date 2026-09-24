@@ -168,6 +168,7 @@ class OpenCodeProvider(AgentProvider):
                     self.knowledge_root if self.knowledge_root else None,
                     options.knowledge_context_path,
                     conversation_id,
+                    vr_tools_enabled=options.vr_enabled,
                 ),
                 **startup_info,
             )

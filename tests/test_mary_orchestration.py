@@ -1741,9 +1741,11 @@ def test_claude_receives_project_and_knowledge_as_distinct_readable_roots(
     assert f"Grep({knowledge}/**)" in allowed
     assert f"Edit({knowledge}/**)" not in allowed
     assert popen.call_args.kwargs["cwd"] == project
+    mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
+    assert "--disable-vr-tools" not in mcp["vr-mary-studio"]["args"]
 
 
-def test_claude_native_mode_exposes_knowledge_through_mcp_only(
+def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
     tmp_path: Path,
 ) -> None:
     knowledge = (tmp_path / "VR_Mary_V2").resolve()
@@ -1775,12 +1777,22 @@ def test_claude_native_mode_exposes_knowledge_through_mcp_only(
     assert "mensagem nativa" not in command
     assert popen.call_args.kwargs["stdin"] == subprocess.PIPE
     assert "--permission-mode" not in command
-    assert "--add-dir" not in command
-    assert command[command.index("--allowedTools") + 1] == "mcp__vr-mary-studio__*"
+    add_dirs = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "--add-dir"
+    ]
+    assert add_dirs == [str(knowledge)]
+    assert str(project) not in add_dirs
+    allowed = command[command.index("--allowedTools") + 1]
+    assert allowed == "mcp__vr-mary-studio__*"
+    assert f"Edit({knowledge}/**)" not in allowed
+    assert f"Write({knowledge}/**)" not in allowed
     assert "--disallowedTools" not in command
     mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
     assert "vr-mary-studio" in mcp
     assert str(knowledge) in mcp["vr-mary-studio"]["args"]
+    assert "--disable-vr-tools" in mcp["vr-mary-studio"]["args"]
 
 
 @pytest.mark.parametrize(
@@ -1851,6 +1863,44 @@ def test_opencode_native_environment_does_not_expose_knowledge_root(
     assert f"{normalized}/**" in vr_permission["external_directory"]
     assert "external_directory" not in native_permission
     assert all(normalized not in key for key in native_permission["bash"])
+
+
+@pytest.mark.parametrize("vr_enabled", [False, True])
+def test_opencode_turn_environment_follows_vr_mode(
+    tmp_path: Path, vr_enabled: bool
+) -> None:
+    knowledge = (tmp_path / "mary").resolve()
+    knowledge.mkdir()
+    workspace = (tmp_path / "workspace").resolve()
+    workspace.mkdir()
+    provider = OpenCodeProvider(knowledge)
+    provider.command = "opencode"
+    provider._model_variants = {"opencode/fast-code": {"medium"}}
+
+    with (
+        patch(
+            "vrsoft_extractor.mary.providers.subprocess.Popen",
+            side_effect=OSError("stop after environment capture"),
+        ) as popen,
+        pytest.raises(OSError, match="environment capture"),
+    ):
+        provider.send_message(
+            "conversation",
+            "",
+            "opencode/fast-code",
+            "medium",
+            workspace,
+            "pergunta",
+            lambda _event: None,
+            ConversationOptions(vr_enabled=vr_enabled, approval_profile="auto"),
+        )
+
+    config = json.loads(popen.call_args.kwargs["env"]["OPENCODE_CONFIG_CONTENT"])
+    command = config["mcp"]["vr-mary-studio"]["command"]
+    assert ("--disable-vr-tools" in command) is not vr_enabled
+    pattern = str(knowledge).replace("\\", "/") + "/**"
+    assert config["permission"]["external_directory"][pattern] == "allow"
+    assert config["permission"]["read"] == "allow"
 
 
 def test_opencode_streams_json_and_announces_native_session(
@@ -2219,6 +2269,59 @@ def test_off_turn_does_not_register_local_tools_for_provider_decided_calls(
     assert "vr_search" not in _tool_names(provider.start_options[0])
     assert "vr_search" not in _tool_names(provider.sent[0]["options"])
     assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+
+
+def test_off_mode_refuses_vr_tool_request_before_approval_or_execution(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+
+    class Provider:
+        def available(self) -> bool:
+            return True
+
+        def close(self) -> None:
+            return None
+
+    orchestrator.providers = {"codex": Provider()}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+    events: list[RuntimeEvent] = []
+    orchestrator._pending_user_messages[conversation_id] = 1
+    orchestrator._turn_access_paths[conversation_id] = ""
+    orchestrator._external_callbacks[conversation_id] = events.append
+    orchestrator._callback_generations[conversation_id] = 1
+    try:
+        with patch.object(
+            orchestrator, "_execute_vr_native_tool"
+        ) as execute, patch.object(
+            orchestrator, "_handle_vr_native_tool"
+        ) as handle:
+            orchestrator._handle_dynamic_tool(
+                RuntimeEvent(
+                    conversation_id,
+                    "dynamic_tool_requested",
+                    "vr_read",
+                    {
+                        "tool": "vr_read",
+                        "request_id": "off-read",
+                        "arguments": {"reference": "example.Fiscal"},
+                    },
+                )
+            )
+        execute.assert_not_called()
+        handle.assert_not_called()
+        assert not any(
+            event.kind == "dynamic_tool_approval_requested" for event in events
+        )
+        tool_events = [event for event in events if event.kind == "tool_event"]
+        assert [event.payload["success"] for event in tool_events] == [False]
+        assert "Tool VR indisponível no modo OFF." in tool_events[0].payload["output"]
+    finally:
+        orchestrator.close()
 
 
 def test_off_turn_renews_codex_session_that_still_has_vr_tools(

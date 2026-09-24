@@ -96,11 +96,9 @@ class ClaudeProvider(AgentProvider):
         for root in image_roots:
             if root not in readable_roots:
                 readable_roots.append(root)
-        if (
-            options.vr_enabled
-            and self.knowledge_root
-            and self.knowledge_root not in readable_roots
-        ):
+        if self.knowledge_root and self.knowledge_root not in readable_roots:
+            # The configured source root stays natively readable in every mode;
+            # only the VR tools follow the mode.
             readable_roots.append(self.knowledge_root)
         allowed_tools = [
             f"{tool}({root}/**)"
@@ -134,7 +132,12 @@ class ClaudeProvider(AgentProvider):
                 ]
             )
         else:
-            for root in image_roots:
+            off_roots = list(image_roots)
+            if self.knowledge_root and self.knowledge_root not in off_roots:
+                # OFF keeps optional read-only access to the configured source
+                # root without making it the workspace or granting writes there.
+                off_roots.append(self.knowledge_root)
+            for root in off_roots:
                 command.extend(["--add-dir", str(root)])
             permission_mode = {
                 "workspace-write": "acceptEdits",
@@ -145,7 +148,10 @@ class ClaudeProvider(AgentProvider):
         if self.knowledge_root:
             from ..knowledge_access import mcp_command
             mcp_args = mcp_command(
-                self.knowledge_root, options.knowledge_context_path, conversation_id
+                self.knowledge_root,
+                options.knowledge_context_path,
+                conversation_id,
+                vr_tools_enabled=options.vr_enabled,
             )
             # Inline JSON avoids shared files in the user's project.
             command.extend(["--mcp-config", json.dumps({"mcpServers": {

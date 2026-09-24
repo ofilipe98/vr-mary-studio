@@ -48,6 +48,17 @@ opcional somente leitura.
 - **Ultra**: mantém o fan-out por fonte com agentes, o agente DEV Java opcional
   e a síntese única validada.
 
+O OFF não recebe as três tools VR em nenhum transporte built-in. As dynamic
+tools do Codex e o servidor MCP built-in `vr-mary-studio` (OpenCode, Claude e
+Antigravity) seguem o modo resolvido: no OFF o MCP recebe `--disable-vr-tools`,
+não anuncia nem executa VR tools e permanece disponível somente para
+integrações não-VR como o VRMonitor, quando configurado. A leitura opcional da
+raiz de fontes usa as capacidades nativas do provider: OpenCode mantém
+`external_directory` somente leitura, Claude recebe a raiz por `--add-dir` sem
+permissão de escrita e o Antigravity depende do filesystem do runtime, sem
+campo ACP novo. Uma requisição VR tool stale recebida em OFF é recusada sem
+executar retrieval.
+
 “Fontes disponíveis” não significa “fontes pré-carregadas”. O backend otimiza a
 consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
 `vr_search`), mas não pesquisa automaticamente antes da resposta.
