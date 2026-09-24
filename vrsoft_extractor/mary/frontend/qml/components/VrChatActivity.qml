@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
+import "../theme/ToolIcons.js" as ToolIcons
 
 Rectangle {
     id: root
@@ -15,13 +16,15 @@ Rectangle {
     property bool running: false
     property bool expanded: false
     readonly property string headerLabel: root.headerText()
+    readonly property bool reduceMotion: typeof frontend !== "undefined" && frontend !== null
+        ? frontend.reduceMotion : false
     signal toggleRequested()
 
     implicitHeight: content.implicitHeight
     color: "transparent"
     clip: true
     Behavior on implicitHeight {
-        enabled: !(typeof frontend !== "undefined" && frontend.reduceMotion) && !root.running
+        enabled: !root.reduceMotion && !root.running
         NumberAnimation { duration: Theme.fastDuration }
     }
 
@@ -33,6 +36,7 @@ Rectangle {
 
         Rectangle {
             id: activityHeader
+            objectName: "activityHeader"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: root.headerText()
@@ -42,23 +46,33 @@ Rectangle {
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.scaledGeometry(30)
-            radius: Theme.scaledGeometry(7)
-            color: "transparent"
+            Layout.preferredHeight: Theme.scaledGeometry(28)
+            radius: Theme.scaledGeometry(6)
+            color: headerHover.hovered ? Theme.palette.hover : "transparent"
+            Behavior on color { ColorAnimation { duration: Theme.fastDuration } }
 
             RowLayout {
                 anchors.fill: parent
+                anchors.leftMargin: Theme.scaledGeometry(2)
+                anchors.rightMargin: Theme.scaledGeometry(2)
                 spacing: Theme.scaledGeometry(6)
 
-                VrLineIcon {
-                    Layout.preferredWidth: Theme.iconSmall
-                    Layout.preferredHeight: Theme.iconSmall
-                    kind: root.headerIcon()
-                    foreground: Theme.palette.mutedText
+                Item {
+                    Layout.preferredWidth: Theme.scaledGeometry(24)
+                    Layout.preferredHeight: Theme.scaledGeometry(24)
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: Theme.iconSmall
+                        height: Theme.iconSmall
+                        kind: root.headerIcon()
+                        opacity: 0.9
+                        foreground: Theme.palette.mutedText
+                    }
                 }
 
                 VrShimmerText {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     text: root.headerText()
                     running: root.running
                     color: Theme.palette.mutedText
@@ -69,24 +83,21 @@ Rectangle {
                     elide: Text.ElideRight
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.iconSmall
-                    Layout.preferredHeight: Theme.iconSmall
-                    kind: root.expanded ? "chevronDown" : "chevronRight"
+                    Layout.preferredWidth: Theme.iconMicro
+                    Layout.preferredHeight: Theme.iconMicro
+                    kind: "chevronRight"
                     foreground: Theme.palette.mutedText
+                    opacity: 0.7
+                    rotation: root.expanded ? 90 : 0
+                    Behavior on rotation {
+                        enabled: !root.reduceMotion
+                        NumberAnimation { duration: Theme.fastDuration; easing.type: Easing.OutCubic }
+                    }
                 }
             }
 
-            HoverHandler { cursorShape: Qt.PointingHandCursor }
+            HoverHandler { id: headerHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.toggleRequested() }
-        }
-
-        // Horizontal hairline separator below header
-        Rectangle {
-            visible: (root.expanded || root.visibleItems().length > 0) && root.items && root.items.length > 0
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.palette.chatBorder
-            opacity: 0.6
         }
 
         ColumnLayout {
@@ -231,13 +242,7 @@ Rectangle {
     }
 
     function itemIcon(item) {
-        if (item.state === "error" || item.state === "failed") return "close"
-        var itemType = String(item.itemType || "")
-        var text = String(item.text || "").toLowerCase()
-        if (itemType === "commandExecution" || text.indexOf("command") >= 0 || text.indexOf("terminal") >= 0 || text.indexOf("git ") >= 0 || text.indexOf("running git") >= 0 || text.indexOf("running ") === 0) {
-            return "terminalPrompt"
-        }
-        return "hammer"
+        return ToolIcons.kindFor(item)
     }
 
     function headerIcon() {

@@ -32,6 +32,26 @@ def _activity_cards(item) -> list:
     return cards
 
 
+def _find_item(item, name):
+    if item.objectName() == name:
+        return item
+    for child in item.childItems():
+        found = _find_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _text_values(item) -> list:
+    values = []
+    for child in item.childItems():
+        text = child.property("text")
+        if isinstance(text, str) and text:
+            values.append(text)
+        values.extend(_text_values(child))
+    return values
+
+
 def _create_activity(engine):
     activity_path = QML_DIR / "components/VrChatActivity.qml"
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(activity_path)))
@@ -167,6 +187,84 @@ def test_tool_error_disclosure_deduplicates_and_fits_narrow_layout(qml_env):
         assert item.implicitHeight() < 60
     finally:
         window.close()
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_tool_group_card_expands_member_rows_with_their_own_data(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrToolGroupCard.qml"))
+    )
+    assert not component.isError(), [e.toString() for e in component.errors()]
+    item = component.create()
+    assert item is not None
+    try:
+        item.setProperty("modelData", {
+            "id": "grp",
+            "kind": "action_group",
+            "state": "completed",
+            "text": "2 ferramentas executadas",
+            "items": [
+                {
+                    "id": "cmd-1",
+                    "kind": "tool",
+                    "itemType": "commandExecution",
+                    "state": "completed",
+                    "command": "rg calcularImposto",
+                    "durationLabel": "500ms",
+                    "output": "src/service.py:374",
+                },
+                {
+                    "id": "read-1",
+                    "kind": "tool",
+                    "itemType": "fileRead",
+                    "state": "completed",
+                    "text": "Leu normalizer.py",
+                    "detail": "def normalize(): pass",
+                },
+            ],
+        })
+        item.setProperty("groupExpanded", True)
+        app.processEvents()
+        command = _find_item(item, "commandCard")
+        tool = _find_item(item, "toolCard")
+        assert command is not None
+        assert tool is not None
+        # Member rows must render the event they represent, not the card defaults.
+        assert command.property("commandText") == "rg calcularImposto"
+        assert tool.property("titleText") == "Leu normalizer.py"
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_tool_card_expansion_offers_no_copy_action(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrToolCard.qml"))
+    )
+    assert not component.isError(), [e.toString() for e in component.errors()]
+    item = component.create()
+    assert item is not None
+    try:
+        item.setWidth(480)
+        item.setProperty("modelData", {
+            "id": "todo-1",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "3 todos",
+            "detail": '[{"content": "Localizar a nota", "status": "in_progress"}]',
+        })
+        item.setProperty("detailExpanded", True)
+        app.processEvents()
+        assert _find_item(item, "toolDetails") is not None
+        # T3 Code keeps tool details copy-free; selection is the copy path.
+        texts = _text_values(item)
+        assert "Copiar" not in texts
+        assert "Detalhes" not in texts
+    finally:
         item.deleteLater()
         app.processEvents()
 
