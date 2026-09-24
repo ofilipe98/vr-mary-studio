@@ -2556,6 +2556,12 @@ class ChatBridge(QObject):
     def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
         return self._CodeAdmin_domain.refreshCodeAnalysisReleases()
 
+    @Slot()
+    def refreshCodeAnalysisReleasesMetadata(self) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.refreshCodeAnalysisReleases(
+            refresh_applications_catalog=False
+        )
+
     @Slot(str)
     def selectApplication(self, app_id: str) -> None:  # noqa: N802
         return self._CodeAdmin_domain.selectApplication(app_id)

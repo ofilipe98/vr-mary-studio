@@ -1830,6 +1830,20 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(manifest["updated_applications"], ["VRPdv"])
             bridge.close()
 
+    def test_applications_page_refreshes_metadata_on_completed(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "Component.onCompleted: chat.refreshCodeAnalysisReleasesMetadata()",
+            qml,
+        )
+        self.assertNotIn(
+            "Component.onCompleted: chat.refreshCodeAnalysisReleases()",
+            qml,
+        )
+
     def test_vr_ultra_release_import_explains_auto_detection_and_partial_packages(self):
         qml = (
             MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"

@@ -2194,7 +2194,9 @@ class CodeAdminDomain:
             self._warm_release_coverage()
 
 
-    def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
+    def refreshCodeAnalysisReleases(
+        self, *, refresh_applications_catalog: bool = True
+    ) -> None:  # noqa: N802
         previous = self._code_analysis_release
         was_enabled = self._code_analysis_enabled
         preferences_changed = False
@@ -2217,7 +2219,8 @@ class CodeAdminDomain:
         if preferences_changed:
             self._preferences.sync()
         self.refreshCodeProcessingStatus()
-        self.refreshApplicationsCatalog()
+        if refresh_applications_catalog:
+            self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
     def refreshApplicationsCatalog(self) -> None:  # noqa: N802

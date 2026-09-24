@@ -108,7 +108,7 @@ Item {
             }
         }
     }
-    Component.onCompleted: chat.refreshCodeAnalysisReleases()
+    Component.onCompleted: chat.refreshCodeAnalysisReleasesMetadata()
 
     onActiveAppIdChanged: {
         if (!activeAppId && navigationLevel > 0) {

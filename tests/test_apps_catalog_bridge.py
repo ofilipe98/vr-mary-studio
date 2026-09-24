@@ -54,6 +54,79 @@ def test_refresh_loading_flag_flips_immediately_and_clears(bridge):
     assert bridge.applicationsCatalogLoading is False
 
 
+def test_metadata_refresh_updates_release_state_without_catalog_refresh(
+    bridge, monkeypatch
+):
+    statuses = [{
+        "release_id": "r1",
+        "release_manifest_sha256": "hash1",
+        "state": "completed",
+        "freshness": "fresh",
+        "jar_count": 1,
+    }]
+    monkeypatch.setattr(
+        codeadmin.ErpReleaseCatalog,
+        "list_statuses",
+        lambda self: list(statuses),
+    )
+    bridge._release_coverage_cache["r1:hash1"] = {"covered_jar_count": 1}
+
+    assert bridge._apps_catalog_thread is None
+    assert bridge.metaObject().indexOfMethod(
+        "refreshCodeAnalysisReleasesMetadata()"
+    ) >= 0
+    with (
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshApplicationsCatalog",
+            autospec=True,
+        ) as refresh_catalog,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "_refresh_code_analysis_jar_sources",
+            autospec=True,
+        ) as refresh_jar_sources,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshCodeProcessingStatus",
+            autospec=True,
+        ) as refresh_processing,
+    ):
+        bridge.refreshCodeAnalysisReleasesMetadata()
+
+    refresh_catalog.assert_not_called()
+    refresh_jar_sources.assert_called_once()
+    refresh_processing.assert_called_once()
+    assert bridge._apps_catalog_thread is None
+    assert bridge.applicationsCatalogLoading is False
+    assert [item["releaseId"] for item in bridge.codeAnalysisReleaseItems] == ["r1"]
+    assert bridge.codeAnalysisRelease == "r1"
+
+
+def test_legacy_release_refresh_still_refreshes_applications_catalog(bridge):
+    with (
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshApplicationsCatalog",
+            autospec=True,
+        ) as refresh_catalog,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "_refresh_code_analysis_jar_sources",
+            autospec=True,
+        ),
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshCodeProcessingStatus",
+            autospec=True,
+        ),
+    ):
+        bridge.refreshCodeAnalysisReleases()
+
+    refresh_catalog.assert_called_once()
+    assert bridge._apps_catalog_thread is None
+
+
 def test_refresh_keeps_previous_catalog_and_error_hides_empty(bridge):
     """Previous list stays visible in refresh; error never shows empty state."""
     store = ErpReleaseCatalog(bridge._settings.root).apps_store
