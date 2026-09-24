@@ -3564,7 +3564,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("hasImageAttachments", composer_qml)
         self.assertIn("fillMode: Image.PreserveAspectCrop", composer_qml)
         markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
-        self.assertIn("Theme.bodySize", markdown_qml)
+        self.assertIn("Theme.markdownBodySize", markdown_qml)
         self.assertIn("Qt.PointingHandCursor", markdown_qml)
         self.assertIn('objectName: "messageScrollBar"', chat_qml)
         self.assertIn("if (followTail) tailTimer.restart()", chat_qml)

@@ -237,26 +237,26 @@ Item {
             id: settingsNavigation
             objectName: "settingsNavigation"
             visible: !root.compactSettings
-            SplitView.minimumWidth: Theme.scaledGeometry(220)
-            SplitView.preferredWidth: Theme.scaledGeometry(260)
+            SplitView.minimumWidth: Theme.navigationWidthMinimum
+            SplitView.preferredWidth: Theme.navigationWidth
             SplitView.maximumWidth: Theme.scaledGeometry(430)
             color: Theme.palette.navigationBackground
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.scaledGeometry(12)
+                anchors.margins: Theme.sidebarContentInset
                 spacing: Theme.scaledGeometry(4)
 
                 Item {
                     id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Theme.scaledGeometry(34)
+                    Layout.preferredHeight: Theme.sidebarRowHeight
 
                     VrTextField {
                         id: settingsConversationSearch
                         objectName: "settingsConversationSearch"
                         anchors.fill: parent
-                        leftPadding: Theme.scaledGeometry(35)
+                        leftPadding: Theme.scaledGeometry(32)
                         rightPadding: Theme.scaledGeometry(32)
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeControl
@@ -265,7 +265,7 @@ Item {
                         placeholderTextColor: Theme.palette.navMuted
                         color: Theme.palette.navText
                         background: Rectangle {
-                            radius: Theme.scaledGeometry(6)
+                            radius: Theme.radiusControl
                             color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.chatControl
                                 : (settingsConversationSearch.hovered
@@ -307,7 +307,7 @@ Item {
 
                     VrLineIcon {
                         anchors.left: parent.left
-                        anchors.leftMargin: Theme.iconMicro
+                        anchors.leftMargin: Theme.sidebarContentInset
                         anchors.verticalCenter: parent.verticalCenter
                         width: Theme.iconSmall
                         height: Theme.iconSmall
@@ -350,10 +350,10 @@ Item {
                         anchors.rightMargin: Theme.scaledGeometry(4)
                         anchors.verticalCenter: parent.verticalCenter
                         visible: settingsConversationSearch.text.length > 0
-                        width: Theme.scaledGeometry(26)
-                        height: Theme.scaledGeometry(26)
+                        width: Theme.iconButtonCompact
+                        height: Theme.iconButtonCompact
                         iconKind: "close"
-                        iconSize: Theme.iconMicro
+                        iconSize: Theme.iconCompact
                         foreground: Theme.palette.mutedText
                         Accessible.name: "Limpar pesquisa"
                         onClicked: settingsConversationSearch.clear()

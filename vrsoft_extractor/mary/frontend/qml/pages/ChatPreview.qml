@@ -150,7 +150,8 @@ Item {
     property string projectSettingsIconEmoji: ""
     property string projectSettingsIconColor: ""
     property string projectSettingsIconText: ""
-    property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 220 : 260) : 0
+    property real conversationSidebarWidth: conversationSidebarVisible
+        ? (width < 760 ? Theme.navigationWidthMinimum : Theme.navigationWidth) : 0
     readonly property real sidebarBorderX: conversationSidebarVisible && conversationSidebar.visible
         ? (conversationSidebar.width + 3)
         : 0
@@ -381,7 +382,7 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.scaledGeometry(10)
+                anchors.margins: Theme.sidebarContentInset
                 spacing: Theme.scaledGeometry(6)
 
                 Item {
@@ -405,7 +406,7 @@ Item {
                                 id: conversationSearch
                                 objectName: "conversationSearch"
                                 anchors.fill: parent
-                                leftPadding: Theme.scaledGeometry(30)
+                                leftPadding: Theme.scaledGeometry(32)
                                 rightPadding: Theme.scaledGeometry(6)
                                 placeholderText: "Pesquisar"
                                 Accessible.name: "Pesquisar conversas"
@@ -439,7 +440,7 @@ Item {
                             }
                             VrLineIcon {
                                 anchors.left: parent.left
-                                anchors.leftMargin: Theme.scaledGeometry(7)
+                                anchors.leftMargin: Theme.sidebarContentInset
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Theme.iconSmall
                                 height: Theme.iconSmall
@@ -454,7 +455,7 @@ Item {
                             id: folderActionsCapsule
                             Layout.preferredHeight: Theme.scaledGeometry(32)
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: folderActionsRow.implicitWidth + 4
+                            implicitWidth: folderActionsRow.implicitWidth + 2
                             radius: Theme.scaledGeometry(8)
                             color: "transparent"
                             border.width: 0
@@ -462,7 +463,7 @@ Item {
                             RowLayout {
                                 id: folderActionsRow
                                 anchors.centerIn: parent
-                                spacing: Theme.scaledGeometry(4)
+                                spacing: Theme.scaledGeometry(2)
 
                                 VrProjectSelector {
                                     id: projectSelector
@@ -487,9 +488,9 @@ Item {
                                 VrIconButton {
                                     id: addProjectButton
                                     objectName: "addProjectButton"
-                                    implicitWidth: Theme.scaledGeometry(32)
-                                    implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: Theme.iconSmall
+                                    implicitWidth: Theme.iconButtonCompact
+                                    implicitHeight: Theme.iconButtonCompact
+                                    iconSize: Theme.iconCompact
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -504,9 +505,9 @@ Item {
                                 VrIconButton {
                                     id: newChatButton
                                     objectName: "newChatButton"
-                                    implicitWidth: Theme.scaledGeometry(32)
-                                    implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: Theme.iconSmall
+                                    implicitWidth: Theme.iconButtonCompact
+                                    implicitHeight: Theme.iconButtonCompact
+                                    iconSize: Theme.iconCompact
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -573,8 +574,8 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.leftMargin: Theme.scaledGeometry(9)
-                            anchors.rightMargin: Theme.scaledGeometry(9)
+                            anchors.leftMargin: Theme.sidebarRowInset
+                            anchors.rightMargin: Theme.sidebarRowInset
                             anchors.topMargin: Theme.scaledGeometry(6)
                             anchors.bottomMargin: Theme.scaledGeometry(6)
                             spacing: 2
@@ -636,8 +637,8 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: Theme.iconSmall
-                                    Layout.preferredHeight: Theme.iconSmall
+                                    Layout.preferredWidth: Theme.iconMicro
+                                    Layout.preferredHeight: Theme.iconMicro
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }

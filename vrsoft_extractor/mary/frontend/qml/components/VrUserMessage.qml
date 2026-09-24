@@ -46,7 +46,8 @@ Item {
                 renderType: Theme.textRenderType
                 selectionColor: Theme.palette.selection
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.bodySize
+                // T3 user messages use the same text-sm markdown body.
+                font.pixelSize: Theme.markdownBodySize
             }
         }
     }

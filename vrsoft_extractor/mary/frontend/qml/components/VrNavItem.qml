@@ -19,8 +19,10 @@ Item {
     readonly property color navRestFill: Qt.rgba(
         navHoverFill.r, navHoverFill.g, navHoverFill.b, 0)
 
-    implicitHeight: Theme.scaledGeometry(34)
-    implicitWidth: compact ? 34 : navLabel.implicitWidth + 50
+    // T3 settings navigation row: h-8 (32), rounded-md (8), px-2 (8), gap-2 (8),
+    // text-sm (14) and a size-4 (16) icon.
+    implicitHeight: Theme.sidebarRowHeight
+    implicitWidth: compact ? Theme.scaledGeometry(34) : navLabel.implicitWidth + 44
     focus: false
     activeFocusOnTab: true
     transformOrigin: Item.Center
@@ -38,7 +40,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: Theme.scaledGeometry(6)
+        radius: Theme.radiusControl
         color: root.selected
             ? Theme.palette.chatControl
             : (pointer.hovered || root.activeFocus ? root.navHoverFill : root.navRestFill)
@@ -55,12 +57,12 @@ Item {
 
     Row {
         anchors.fill: parent
-        anchors.leftMargin: root.compact ? 0 : 10
-        anchors.rightMargin: root.compact ? 0 : 10
-        spacing: Theme.scaledGeometry(9)
+        anchors.leftMargin: root.compact ? 0 : Theme.sidebarContentInset
+        anchors.rightMargin: root.compact ? 0 : Theme.sidebarContentInset
+        spacing: Theme.sidebarControlGap
 
         Item {
-            width: root.compact ? parent.width : 18
+            width: root.compact ? parent.width : Theme.iconSmall
             height: parent.height
 
             Image {
@@ -92,7 +94,7 @@ Item {
         Text {
             id: navLabel
             visible: !root.compact
-            width: Math.max(0, parent.width - 27)
+            width: Math.max(0, parent.width - Theme.iconSmall - Theme.sidebarControlGap)
             height: parent.height
             text: root.title
             color: root.selected ? "#FFFFFF" : Theme.palette.navText

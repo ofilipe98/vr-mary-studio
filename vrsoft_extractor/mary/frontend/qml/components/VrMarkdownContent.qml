@@ -7,6 +7,9 @@ TextEdit {
     objectName: "messageBody"
     property string markdown: ""
     property bool applyingStyle: false
+    // T3 chat markdown renders at text-sm (14) with leading-relaxed. The table
+    // block reuses this surface at .75rem (12) like `.chat-markdown table`.
+    property real fontPixelSize: Theme.markdownBodySize
     text: markdown
     textFormat: TextEdit.MarkdownText
     readOnly: true
@@ -18,7 +21,7 @@ TextEdit {
     selectionColor: Theme.palette.selection
     selectedTextColor: Theme.palette.text
     font.family: Theme.fontFamily
-    font.pixelSize: Theme.bodySize
+    font.pixelSize: control.fontPixelSize
     // Rhythm for Markdown blocks comes from frontend.styleMessageDocument
     // (QTextDocument block line-height, T3 leading-relaxed equivalent).
     height: paintedHeight
@@ -40,6 +43,7 @@ TextEdit {
     }
     // Finish layout before ListView measures a newly visible/reused delegate.
     onTextChanged: applyStyle()
+    onFontPixelSizeChanged: applyStyle()
     Component.onCompleted: applyStyle()
     Connections {
         target: frontend

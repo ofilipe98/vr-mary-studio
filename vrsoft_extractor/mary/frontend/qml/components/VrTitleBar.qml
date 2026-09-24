@@ -19,11 +19,11 @@ Item {
         : (root.hubPage ? root.hubPage.sidebarBorderOffset > 0 : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980))
     readonly property real sidebarWidth: isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760
-            ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : 264))
+            ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : Theme.navigationWidth))
             : 0)
         : (root.hubPage && root.hubPage.sidebarBorderOffset > 0
             ? root.hubPage.sidebarBorderOffset
-            : (hasSidebar ? 264 : 0))
+            : (hasSidebar ? Theme.navigationWidth : 0))
     readonly property real surfaceWidth: isChatPage
         ? (root.chatPage && root.chatPage.surfaceVisible && root.chatPage.width >= 1000
             ? (root.chatPage.surfaceBorderOffset > 0 ? root.chatPage.surfaceBorderOffset : root.chatPage.surfacePanelWidth + 4)
@@ -95,8 +95,8 @@ Item {
             id: conversationSidebarToggle
             objectName: "conversationSidebarToggle"
             visible: root.isChatPage && root.chatPage !== null
-            implicitWidth: 32
-            implicitHeight: 32
+            implicitWidth: Theme.iconButtonNormal
+            implicitHeight: Theme.iconButtonNormal
             iconKind: "panelLeft"
             iconSize: Theme.iconSmall
             focusPolicy: Qt.NoFocus
@@ -350,8 +350,8 @@ Item {
             id: surfaceExpandButton
             objectName: "surfaceToggleButton"
             visible: root.isChatPage && root.chatPage !== null
-            implicitWidth: 32
-            implicitHeight: 32
+            implicitWidth: Theme.iconButtonNormal
+            implicitHeight: Theme.iconButtonNormal
             iconSize: Theme.iconSmall
             iconKind: "panelRight"
             focusPolicy: Qt.NoFocus

@@ -43,6 +43,8 @@ Column {
             objectName: "tableBody"
             width: root.expanded ? Math.max(viewport.width * 1.35, root.columns * 220) : viewport.width
             markdown: root.markdown
+            // T3 `.chat-markdown table{font-size:.75rem}`.
+            fontPixelSize: Theme.markdownTableSize
             onPaintedHeightChanged: rulesTimer.restart()
             onWidthChanged: rulesTimer.restart()
             Component.onCompleted: rulesTimer.restart()

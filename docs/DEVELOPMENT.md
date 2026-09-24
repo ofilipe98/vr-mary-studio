@@ -216,9 +216,22 @@ No frontend, os ícones de linha usam a geometria oficial do Lucide em
 `frontend/qml/theme/LucidePaths.js`, compartilhada por todas as instâncias de
 `VrLineIcon`; somente os kinds sem equivalente Lucide continuam desenhados no
 componente. Os tamanhos seguem os tokens `Theme.iconMicro`/`iconCompact`/
-`iconSmall`/`iconMedium`/`iconSize` (escala 12/14/16/18/20 do T3 Code). A
+`iconSmall`/`iconMedium`/`iconSize` (escala 12/14/16/18/20 do T3 Code) e as
+caixas seguem `Theme.iconButtonCompact` (24, `icon-xs`)/`iconButtonNormal` (28,
+`icon-sm`)/`iconButtonLarge` (32, `icon`), com `compactControlHeight` em 28
+(`h-7`). As laterais usam `Theme.navigationWidth` (256, mínimo
+`navigationWidthMinimum` 208) com `sidebarContentInset` 8 e `sidebarRowHeight`
+32, e a coluna do chat usa `Theme.contentWidth` (768, `max-w-3xl`). A
 rasterização de texto vem da preferência `appearance/text_rendering` (`qt` ou
 `native`), aplicada em `create_engine` e exposta em Tipografia.
+
+O markdown do chat segue `.chat-markdown` do T3 Code: corpo em
+`Theme.markdownBodySize` (14, `text-sm`) com ritmo 1.625 (`leading-relaxed`),
+títulos em 1.25/1.125/1/0.875 rem, código inline e células de tabela em
+`markdownCodeSize`/`markdownTableSize` (12, `.75rem`), entrelinha de título
+1.3 e margens `.65rem`/`1.25rem 0 .5rem`. `frontend/text_rendering.py` aplica
+essas razões ao `QTextDocument`, então a hierarquia acompanha a escala da
+interface.
 
 Em VR e Ultra, o código do VRMaster (app central) é fallback do escopo
 selecionado: `code_context.master_fallback_context` resolve o contexto do mesmo

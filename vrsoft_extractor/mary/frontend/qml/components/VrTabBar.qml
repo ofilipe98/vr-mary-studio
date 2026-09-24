@@ -38,7 +38,7 @@ Item {
                 required property int index
                 required property string modelData
 
-                width: tabLabel.implicitWidth + 28
+                width: tabLabel.implicitWidth + Theme.spaceXl
                 height: Math.max(Theme.compactControlHeight, tabLabel.implicitHeight + Theme.spaceMd)
                 activeFocusOnTab: true
                 transformOrigin: Item.Center
