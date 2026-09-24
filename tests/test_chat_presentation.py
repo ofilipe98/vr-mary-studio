@@ -2,12 +2,13 @@
 import pytest
 
 import os
+import threading
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt
+from PySide6.QtCore import QMetaObject, QObject, QSettings, Qt
 from PySide6.QtGui import QColor, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -158,6 +159,14 @@ def find_items(item, name):
     for child in item.childItems():
         result.extend(find_items(child, name))
     return result
+
+
+def wait_until(predicate, timeout_ms=3000):
+    for _ in range(max(1, timeout_ms // 10)):
+        if predicate():
+            return True
+        QTest.qWait(10)
+    return bool(predicate())
 
 
 def test_streaming_preserves_blocks_scroll_copy_and_theme(tmp_path):
@@ -323,62 +332,164 @@ def test_chat_opens_file_reference_in_files_surface(tmp_path):
         chat.close()
 
 
-def test_open_decompiled_reference_resolves_and_emits(tmp_path):
+def test_open_decompiled_reference_resolves_and_emits_from_worker(tmp_path):
     QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
     prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
     db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
     chat = ChatBridge(settings, db, prefs)
     received = []
-    chat.decompiledPreviewRequested.connect(lambda payload: received.append(dict(payload)))
-    fake_payload = {
-        "state": "ready",
-        "title": "NotaSaidaFiscalService",
-        "target_symbol": "calcularImpostoItem",
-        "clean_target_line": 42,
-    }
+    delivery_threads = []
+    calls = []
+    qt_thread = threading.get_ident()
+
+    def receive(payload):
+        received.append(dict(payload))
+        delivery_threads.append(threading.get_ident())
+
+    chat.decompiledSourcePreviewRequested.connect(receive)
+
+    def resolve(reference, **kwargs):
+        calls.append((reference, kwargs, threading.get_ident(), threading.current_thread().name))
+        return {
+            "state": "ready",
+            "reference": reference,
+            "release_id": kwargs["release_id"],
+            "title": "NotaSaidaFiscalService",
+            "clean_target_line": 42,
+        }
+
     try:
-        with patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", return_value=fake_payload):
-            chat.openDecompiledReference("vr-code:NotaSaidaFiscalService.calcularImpostoItem")
-            for _ in range(150):
-                QTest.qWait(20)
-                if received:
-                    break
-            assert len(received) == 1
-            assert received[0]["state"] == "ready"
-            assert received[0]["title"] == "NotaSaidaFiscalService"
-            assert received[0]["clean_target_line"] == 42
-            assert chat.decompiledPreviewPayload["title"] == "NotaSaidaFiscalService"
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert received[0]["state"] == "loading"
+            assert wait_until(lambda: len(received) == 2)
+
+        assert [payload["state"] for payload in received] == ["loading", "ready"]
+        assert delivery_threads == [qt_thread, qt_thread]
+        assert type(calls[0][0]) is str
+        assert calls[0][0] == "NotaSaidaFiscalService.calcularImpostoItem"
+        assert calls[0][1] == {"release_id": received[0]["release_id"]}
+        assert calls[0][2] != qt_thread
+        assert calls[0][3] == "vr-code-preview"
     finally:
         chat.close()
 
 
 def test_open_decompiled_reference_discards_superseded_request(tmp_path):
-    import time
     QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
     prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
     db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
     chat = ChatBridge(settings, db, prefs)
     received = []
-    chat.decompiledPreviewRequested.connect(lambda payload: received.append(dict(payload)))
+    first_started = threading.Event()
+    release_first = threading.Event()
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
 
-    def slow_resolve(ref, **kwargs):
-        if "First" in str(ref):
-            time.sleep(0.15)
-            return {"state": "ready", "title": "First"}
-        return {"state": "ready", "title": "Second"}
+    def resolve(reference, **kwargs):
+        if str(reference).startswith("First"):
+            first_started.set()
+            release_first.wait(2.0)
+        return {"state": "ready", "reference": reference, "title": str(reference)}
 
     try:
-        with patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", side_effect=slow_resolve):
-            chat.openDecompiledReference("vr-code:First.m")
-            chat.openDecompiledReference("vr-code:Second.m")
-            for _ in range(150):
-                QTest.qWait(20)
-                if len(received) >= 1 and received[-1]["title"] == "Second":
-                    break
-            assert len(received) == 1
-            assert received[0]["title"] == "Second"
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference("vr-code:First.method")
+            assert first_started.wait(1.0)
+            chat.openDecompiledReference("vr-code:Second.method")
+            release_first.set()
+            assert wait_until(
+                lambda: any(
+                    payload["state"] == "ready" and payload["title"] == "Second.method"
+                    for payload in received
+                )
+            )
+            QTest.qWait(100)
+
+        assert [payload["state"] for payload in received[:2]] == [
+            "loading",
+            "loading",
+        ]
+        assert [
+            payload["title"]
+            for payload in received
+            if payload["state"] == "ready"
+        ] == ["Second.method"]
+    finally:
+        release_first.set()
+        chat.close()
+
+
+def test_open_decompiled_reference_close_discards_late_result(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    entered = threading.Event()
+    release_worker = threading.Event()
+    closed = False
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    def resolve(reference, **kwargs):
+        entered.set()
+        release_worker.wait(2.0)
+        return {"state": "ready", "reference": reference, "title": "Late"}
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference("vr-code:Late.method")
+            assert entered.wait(1.0)
+            chat.close()
+            closed = True
+            release_worker.set()
+            QTest.qWait(150)
+
+        assert [payload["state"] for payload in received] == ["loading"]
+    finally:
+        release_worker.set()
+        if not closed:
+            chat.close()
+
+
+def test_open_decompiled_reference_rejects_invalid_uri_and_raw_reference(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference"
+        ) as resolver:
+            chat.openDecompiledReference("NotaSaidaFiscalService.calcularImpostoItem")
+            chat.openDecompiledReference("vr-code:invalid%20reference")
+            QTest.qWait(100)
+
+        resolver.assert_not_called()
+        assert received == []
     finally:
         chat.close()
 
@@ -390,18 +501,22 @@ def test_open_decompiled_reference_handles_unexpected_error(tmp_path):
     db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
     chat = ChatBridge(settings, db, prefs)
     received = []
-    chat.decompiledPreviewRequested.connect(lambda payload: received.append(dict(payload)))
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
 
     try:
-        with patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", side_effect=RuntimeError("Index crash")):
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=RuntimeError("Index crash"),
+        ):
             chat.openDecompiledReference("vr-code:Broken.method")
-            for _ in range(150):
-                QTest.qWait(20)
-                if received:
-                    break
-            assert len(received) == 1
-            assert received[0]["state"] == "error"
-            assert "Index crash" in received[0]["message"]
+            assert wait_until(lambda: len(received) == 2)
+
+        assert [payload["state"] for payload in received] == ["loading", "error"]
+        assert received[1]["reference"] == "Broken.method"
+        assert received[1]["release_id"] == received[0]["release_id"]
+        assert "Index crash" in received[1]["message"]
     finally:
         chat.close()
 
@@ -418,43 +533,131 @@ def test_chat_opens_decompiled_code_surface(tmp_path):
     chat = ChatBridge(settings, db, prefs)
     studio = StudioBridge(settings, db, prefs)
     window = None
+    clean_lines = ["class NotaSaidaFiscalService {"]
+    clean_lines.extend(f"    private int field{index};" for index in range(1, 41))
+    clean_lines.append("}")
+    clean_lines.insert(29, "    public void calcularImpostoItem() {")
+    clean_body = "\n".join(clean_lines)
+    raw_body = "class NotaSaidaFiscalService {\n" + "\n".join(
+        f"    private int rawField{index};" for index in range(1, 46)
+    ) + "\n}"
     fake_payload = {
         "state": "ready",
+        "reference": "NotaSaidaFiscalService.calcularImpostoItem",
+        "release_id": "r1",
         "title": "NotaSaidaFiscalService",
-        "package_name": "br.com.vrsoft.fiscal",
         "qualified_name": "br.com.vrsoft.fiscal.NotaSaidaFiscalService",
+        "jar_relative_path": "lib/nota-fiscal.jar",
         "target_symbol": "calcularImpostoItem",
+        "overload_count": 1,
+        "raw_target_line": 35,
+        "clean_target_line": 30,
+        "clean_available": True,
         "clean_status": "cleaned",
-        "tool": "CFR",
-        "raw_target_line": 15,
-        "clean_target_line": 5,
-        "truncated": False,
-        "body": "package br.com.vrsoft.fiscal;\n\npublic class NotaSaidaFiscalService {\n    // raw body\n}",
-        "clean_body": "package br.com.vrsoft.fiscal;\n\npublic class NotaSaidaFiscalService {\n    // clean body line 4\n    public void calcularImpostoItem() {\n        int x = 1;\n    }\n}",
+        "truncated": True,
+        "body": raw_body,
+        "clean_body": clean_body,
     }
+    received = []
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
     try:
-        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None), patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", return_value=fake_payload):
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None), patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            return_value=fake_payload,
+        ):
             engine = create_engine(frontend, chat, studio)
             assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
             window = engine.rootObjects()[0]
             window.setWidth(1366)
             window.setHeight(768)
             QTest.qWait(250)
+            displays = [
+                str(chat.messages.item(index).get("displayContent") or "")
+                for index in range(chat.messages.rowCount())
+            ]
+            assert any(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem" in display
+                for display in displays
+            )
             page = window.findChild(QObject, "chatPage")
-            chat.openDecompiledReference("vr-code:NotaSaidaFiscalService.calcularImpostoItem")
-            for _ in range(150):
-                QTest.qWait(20)
-                if page.property("surfaceVisible") and page.property("surfaceIndex") == 6:
-                    break
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert wait_until(
+                lambda: sum(item["state"] == "ready" for item in received) == 1
+            )
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert wait_until(
+                lambda: sum(item["state"] == "ready" for item in received) == 2
+            )
+            QTest.qWait(150)
+
             assert page.property("surfaceVisible")
             assert page.property("surfaceIndex") == 6
-            surface_view = window.findChild(QObject, "decompiledSurfaceView")
-            assert surface_view is not None
-            assert surface_view.property("hasCode")
-            assert "calcularImpostoItem" in surface_view.property("displayedCode")
-            code_body = window.findChild(QObject, "decompiledCodeBody")
-            assert code_body is not None
-            assert "calcularImpostoItem" in code_body.property("text")
+            tabs = page.property("openSurfaceTabs")
+            tabs = tabs.toVariant() if hasattr(tabs, "toVariant") else tabs
+            assert sum(int(tab["page"]) == 6 for tab in tabs) == 1
+            source_viewer = window.findChild(QObject, "decompiledSourceViewer")
+            source_viewport = window.findChild(QObject, "decompiledSourceViewport")
+            source_body = window.findChild(QObject, "decompiledSourceBody")
+            assert source_viewer is not None
+            assert source_viewport is not None
+            assert source_body is not None
+            assert source_viewer.property("code") == clean_body
+            assert source_viewer.property("targetLine") == 30
+            assert source_viewer.property("language") == "java"
+            assert source_body.property("text") == clean_body
+
+            clean_button = window.findChild(QObject, "decompiledCodeCleanModeButton")
+            raw_button = window.findChild(QObject, "decompiledCodeRawModeButton")
+            copy_button = window.findChild(QObject, "copyDecompiledCodeButton")
+            assert clean_button is not None
+            assert raw_button is not None
+            assert copy_button is not None
+            assert clean_button.property("enabled")
+
+            raw_button.click()
+            QTest.qWait(100)
+            assert not page.property("decompiledCodeCleanMode")
+            assert source_viewer.property("code") == raw_body
+            assert source_viewer.property("targetLine") == 35
+            copy_button.click()
+            QTest.qWait(50)
+            assert QApplication.instance().clipboard().text() == raw_body
+
+            clean_button.click()
+            QTest.qWait(100)
+            assert page.property("decompiledCodeCleanMode")
+            assert source_viewer.property("code") == clean_body
+            assert source_viewer.property("targetLine") == 30
+            copy_button.click()
+            QTest.qWait(50)
+            assert QApplication.instance().clipboard().text() == clean_body
+
+            source_body.select(0, 5)
+            selected_text = source_body.property("selectedText")
+            cursor_position = source_body.property("cursorPosition")
+            assert selected_text
+            QMetaObject.invokeMethod(source_viewer, "revealLine")
+            QTest.qWait(100)
+            assert source_body.property("selectedText") == selected_text
+            assert source_body.property("cursorPosition") == cursor_position
+            assert source_viewport.property("contentY") > 0
+
+            for removed_name in (
+                "decompiledSurfaceView",
+                "decompiledCodeScroll",
+                "decompiledCodeBody",
+                "decompiledStatusNotice",
+                "decompiledAmbiguousList",
+                "lineGutter",
+                "gutterText",
+            ):
+                assert find_items(window.contentItem(), removed_name) == []
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:
@@ -488,17 +691,15 @@ def test_chat_decompiled_surface_not_found(tmp_path):
             QTest.qWait(250)
             page = window.findChild(QObject, "chatPage")
             chat.openDecompiledReference("vr-code:UnknownClass.method")
-            for _ in range(150):
-                QTest.qWait(20)
-                if page.property("surfaceVisible") and page.property("surfaceIndex") == 6:
-                    break
+            assert wait_until(
+                lambda: page.property("surfaceIndex") == 6
+                and window.findChild(QObject, "decompiledCodeStatusMessage") is not None
+                and "não encontrado"
+                in window.findChild(QObject, "decompiledCodeStatusMessage").property("text")
+            )
             assert page.property("surfaceVisible")
             assert page.property("surfaceIndex") == 6
-            surface_view = window.findChild(QObject, "decompiledSurfaceView")
-            assert surface_view is not None
-            assert not surface_view.property("hasCode")
-            status_notice = window.findChild(QObject, "decompiledStatusNotice")
-            assert status_notice is not None
+            status_notice = window.findChild(QObject, "decompiledCodeStatusMessage")
             assert "não encontrado" in status_notice.property("text")
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
@@ -521,10 +722,13 @@ def test_chat_decompiled_surface_ambiguous(tmp_path):
     fake_payload = {
         "state": "ambiguous",
         "reference": "CommonService.execute",
-        "message": "Múltiplas classes encontradas. Selecione um candidato:",
+        "message": "Múltiplas classes encontradas.",
         "candidates": [
-            {"canonical": "br.com.vr.pkg1.CommonService.execute", "package_name": "br.com.vr.pkg1"},
-            {"canonical": "br.com.vr.pkg2.CommonService.execute", "package_name": "br.com.vr.pkg2"},
+            {
+                "qualified_name": f"br.com.vr.pkg{index}.CommonService",
+                "jar_relative_path": f"lib/common-{index}.jar",
+            }
+            for index in range(22)
         ],
     }
     try:
@@ -537,18 +741,17 @@ def test_chat_decompiled_surface_ambiguous(tmp_path):
             QTest.qWait(250)
             page = window.findChild(QObject, "chatPage")
             chat.openDecompiledReference("vr-code:CommonService.execute")
-            for _ in range(150):
-                QTest.qWait(20)
-                if page.property("surfaceVisible") and page.property("surfaceIndex") == 6:
-                    break
+            assert wait_until(
+                lambda: window.findChild(QObject, "decompiledCodeCandidateList") is not None
+                and window.findChild(
+                    QObject, "decompiledCodeCandidateList"
+                ).property("count") == 20
+            )
             assert page.property("surfaceVisible")
             assert page.property("surfaceIndex") == 6
-            surface_view = window.findChild(QObject, "decompiledSurfaceView")
-            assert surface_view is not None
-            assert surface_view.property("state") == "ambiguous"
-            ambiguous_list = window.findChild(QObject, "decompiledAmbiguousList")
-            assert ambiguous_list is not None
-            assert ambiguous_list.property("count") == 2
+            assert "Múltiplas" in window.findChild(
+                QObject, "decompiledCodeAmbiguousMessage"
+            ).property("text")
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:

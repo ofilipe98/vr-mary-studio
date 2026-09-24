@@ -124,7 +124,8 @@ Item {
     property string surfaceFilePreview: ""
     property int surfaceFileLine: 0
     property int surfaceFileColumn: 0
-    property var surfaceDecompiledPayload: ({})
+    property var decompiledPreview: ({})
+    property bool decompiledCodeCleanMode: true
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
@@ -230,8 +231,8 @@ Item {
         function onFilePreviewRequested(path, line, column) {
             root.openFileSurface(path, line, column)
         }
-        function onDecompiledPreviewRequested(payload) {
-            root.openDecompiledSurface(payload)
+        function onDecompiledSourcePreviewRequested(payload) {
+            root.openCodeSurface(payload)
         }
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
@@ -2314,16 +2315,265 @@ Item {
                             }
                         }
                     }
-                    VrDecompiledSourceView {
-                        id: decompiledSurfaceView
-                        objectName: "decompiledSurfaceView"
+                    Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        payload: root.surfaceDecompiledPayload
-                        frontendBridge: root.frontendBridge
-                        onCandidateSelected: function(candidate) {
-                            if (root.chatBridge) {
-                                root.chatBridge.openDecompiledReference("vr-code:" + candidate)
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.scaledGeometry(16)
+                            visible: String((root.decompiledPreview || {}).state || "") !== "ready"
+                            spacing: Theme.scaledGeometry(12)
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: String((root.decompiledPreview || {}).state || "") === "loading"
+                                spacing: Theme.scaledGeometry(8)
+
+                                BusyIndicator {
+                                    running: visible
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeLoadingReference"
+                                    text: "Resolvendo " + String((root.decompiledPreview || {}).reference || "referência") + "…"
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(13)
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeStatusMessage"
+                                visible: {
+                                    var currentState = String((root.decompiledPreview || {}).state || "")
+                                    return currentState === "not_found" || currentState === "error"
+                                }
+                                text: {
+                                    var payload = root.decompiledPreview || {}
+                                    var currentState = String(payload.state || "")
+                                    if (currentState === "error")
+                                        return String(payload.message || "Erro ao carregar código descompilado.")
+                                    return String(payload.message || "Classe ou método não encontrado na release ativa.")
+                                }
+                                color: String((root.decompiledPreview || {}).state || "") === "error"
+                                    ? Theme.palette.danger : Theme.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(13)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                visible: String((root.decompiledPreview || {}).state || "") === "ambiguous"
+                                spacing: Theme.scaledGeometry(8)
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeAmbiguousMessage"
+                                    text: String((root.decompiledPreview || {}).message || "Múltiplas classes encontradas.")
+                                    color: Theme.palette.text
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(13)
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                ListView {
+                                    id: decompiledCodeCandidateList
+                                    objectName: "decompiledCodeCandidateList"
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    spacing: Theme.scaledGeometry(6)
+                                    model: (((root.decompiledPreview || {}).candidates) || []).slice(0, 20)
+                                    ScrollBar.vertical: VrScrollBar { }
+
+                                    delegate: Rectangle {
+                                        objectName: "decompiledCodeCandidate"
+                                        required property var modelData
+                                        width: decompiledCodeCandidateList.width
+                                        height: Theme.scaledGeometry(52)
+                                        color: Theme.palette.chatControl
+                                        border.width: 1
+                                        border.color: Theme.palette.chatBorder
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.scaledGeometry(8)
+                                            spacing: 2
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: String(modelData.qualified_name || "")
+                                                color: Theme.palette.text
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize(12)
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideMiddle
+                                            }
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: String(modelData.jar_relative_path || "")
+                                                color: Theme.palette.mutedText
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeMicro
+                                                elide: Text.ElideMiddle
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            visible: String((root.decompiledPreview || {}).state || "") === "ready"
+                            spacing: Theme.scaledGeometry(8)
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeTitle"
+                                text: String((root.decompiledPreview || {}).title || "")
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(16)
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeQualifiedName"
+                                text: String((root.decompiledPreview || {}).qualified_name || "")
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(12)
+                                elide: Text.ElideMiddle
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeJarPath"
+                                text: String((root.decompiledPreview || {}).jar_relative_path || "")
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeMicro
+                                elide: Text.ElideMiddle
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.scaledGeometry(10)
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeTargetLine"
+                                    visible: {
+                                        var payload = root.decompiledPreview || {}
+                                        var line = root.decompiledCodeCleanMode
+                                            ? Number(payload.clean_target_line || 0)
+                                            : Number(payload.raw_target_line || 0)
+                                        return String(payload.target_symbol || "").length > 0
+                                            && Number(payload.overload_count || 0) === 1
+                                            && line > 0
+                                    }
+                                    text: {
+                                        var payload = root.decompiledPreview || {}
+                                        var line = root.decompiledCodeCleanMode
+                                            ? Number(payload.clean_target_line || 0)
+                                            : Number(payload.raw_target_line || 0)
+                                        return String(payload.target_symbol || "") + " · L" + line
+                                    }
+                                    color: Theme.palette.brandOrange
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    objectName: "decompiledCodeOverloads"
+                                    visible: Number((root.decompiledPreview || {}).overload_count || 0) > 1
+                                    text: String((root.decompiledPreview || {}).target_symbol || "")
+                                        + " · " + Number((root.decompiledPreview || {}).overload_count || 0)
+                                        + " sobrecargas"
+                                    color: Theme.palette.warning
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                }
+
+                                Text {
+                                    objectName: "decompiledCodeTruncated"
+                                    visible: Boolean((root.decompiledPreview || {}).truncated)
+                                    text: "Truncado"
+                                    color: Theme.palette.warning
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.scaledGeometry(10)
+                                Layout.rightMargin: Theme.scaledGeometry(10)
+                                spacing: Theme.scaledGeometry(6)
+
+                                VrButton {
+                                    objectName: "decompiledCodeCleanModeButton"
+                                    Layout.fillWidth: true
+                                    text: "Limpo"
+                                    enabled: Boolean((root.decompiledPreview || {}).clean_available)
+                                    variant: root.decompiledCodeCleanMode ? "primary" : "secondary"
+                                    onClicked: {
+                                        root.decompiledCodeCleanMode = true
+                                        Qt.callLater(function() { decompiledSourceViewer.revealLine() })
+                                    }
+                                }
+
+                                VrButton {
+                                    objectName: "decompiledCodeRawModeButton"
+                                    Layout.fillWidth: true
+                                    text: "Descompilado"
+                                    variant: root.decompiledCodeCleanMode ? "secondary" : "primary"
+                                    onClicked: {
+                                        root.decompiledCodeCleanMode = false
+                                        Qt.callLater(function() { decompiledSourceViewer.revealLine() })
+                                    }
+                                }
+
+                                VrButton {
+                                    objectName: "copyDecompiledCodeButton"
+                                    Layout.fillWidth: true
+                                    text: "Copiar"
+                                    enabled: decompiledSourceViewer.code.length > 0
+                                    onClicked: root.studioBridge.copyText(decompiledSourceViewer.code)
+                                }
+                            }
+
+                            VrDecompiledSourceView {
+                                id: decompiledSourceViewer
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.topMargin: Theme.scaledGeometry(2)
+                                frontendBridge: root.frontendBridge
+                                code: root.decompiledCodeCleanMode
+                                    ? String((root.decompiledPreview || {}).clean_body || "")
+                                    : String((root.decompiledPreview || {}).body || "")
+                                targetLine: root.decompiledCodeCleanMode
+                                    ? Math.max(0, Number((root.decompiledPreview || {}).clean_target_line || 0))
+                                    : Math.max(0, Number((root.decompiledPreview || {}).raw_target_line || 0))
+                                onCodeChanged: Qt.callLater(function() { decompiledSourceViewer.revealLine() })
                             }
                         }
                     }
@@ -3041,9 +3291,6 @@ Item {
         }
         if (page === 5 && root.selectedAgentIndex < 0 && root.chatBridge.agentItems.length)
             root.selectedAgentIndex = 0
-        if (page === 6 && (!root.surfaceDecompiledPayload || !root.surfaceDecompiledPayload.state)) {
-            root.surfaceDecompiledPayload = root.chatBridge ? root.chatBridge.decompiledPreviewPayload : ({})
-        }
     }
 
     // Open a chat file reference in the Arquivos surface and reveal its line.
@@ -3059,16 +3306,12 @@ Item {
         Qt.callLater(root.scrollFilePreviewToLine)
     }
 
-    function openDecompiledSurface(payload) {
-        var data = payload || (root.chatBridge ? root.chatBridge.decompiledPreviewPayload : ({}))
-        root.surfaceDecompiledPayload = data
+    function openCodeSurface(payload) {
+        var data = payload || ({})
+        root.decompiledPreview = data
+        if (String(data.state || "") === "loading")
+            root.decompiledCodeCleanMode = true
         root.openSurface(6)
-        Qt.callLater(function() {
-            if (decompiledSurfaceView) {
-                decompiledSurfaceView.payload = data
-                decompiledSurfaceView.scrollToTargetLine()
-            }
-        })
     }
 
     function revealFileFolder(path) {

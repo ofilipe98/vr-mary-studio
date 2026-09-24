@@ -14,6 +14,7 @@ from vrsoft_extractor.mary.code_index import (
 )
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import (
+    DecompilationBatchError,
     DecompilationBatchExecutor,
     DecompilationBatchPlanner,
 )
@@ -135,6 +136,34 @@ public class Venda extends Base implements Runnable {
         ("extends", "Base"),
         ("implements", "Runnable"),
     }
+
+
+def test_structural_parser_ignores_new_expression_as_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> object:
+        raise code_index_module.JavaAstUnavailable("not installed")
+
+    monkeypatch.setattr(code_index_module, "parse_java_ast", unavailable)
+
+    parsed = parse_java_source("class X { void x() { return new Venda(); } }")
+    multiline_parsed = parse_java_source(
+        "class X {\n  void x() {\n    return new Venda();\n  }\n}"
+    )
+
+    assert not any(
+        symbol["kind"] == "method" and symbol["simple_name"] == "Venda"
+        for symbol in parsed.symbols
+    )
+    assert not any(
+        symbol["kind"] == "method" and symbol["simple_name"] == "Venda"
+        for symbol in multiline_parsed.symbols
+    )
+
+
+def test_resolve_output_rejects_path_outside_code_index(tmp_path: Path) -> None:
+    with pytest.raises(DecompilationBatchError, match="fora do índice permitido"):
+        code_index_module._resolve_output(tmp_path, "../outside")
 
 
 def test_batch_rollback_does_not_double_count_indexed_sources(tmp_path, monkeypatch):
@@ -588,6 +617,40 @@ def test_resolve_decompiled_reference_clean_banner_line_offset(tmp_path: Path) -
     assert "public int calcularTotal" in clean_lines[res["clean_target_line"] - 1]
 
 
+def test_resolve_decompiled_reference_clean_line_requires_matching_signature(
+    tmp_path: Path,
+) -> None:
+    index, _, plan_id = _indexed_project(tmp_path)
+    index.index_plan(plan_id)
+    raw_body = (
+        "package br.vr;   \n"
+        "public class Outer {   \n"
+        "    public int calcularTotal(int value) {   \n"
+        "        return value;\n"
+        "    }\n"
+        "}\n"
+    )
+    with index.store.connect() as connection:
+        source_id = connection.execute(
+            "SELECT id FROM code_sources WHERE qualified_name = 'br.vr.Outer'"
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE code_sources SET body = ? WHERE id = ?",
+            (raw_body, source_id),
+        )
+        connection.execute(
+            """UPDATE code_symbols SET signature = ?
+               WHERE source_id = ? AND simple_name = 'calcularTotal'""",
+            ("int calcularTotal(String value)", source_id),
+        )
+        connection.commit()
+
+    result = index.resolve_decompiled_reference("Outer.calcularTotal", release_id="r1")
+
+    assert result["clean_status"] == "cleaned"
+    assert result["clean_target_line"] == 0
+
+
 def test_resolve_decompiled_reference_max_body_chars_truncation(tmp_path: Path) -> None:
     index, _, plan_id = _indexed_project(tmp_path)
     index.index_plan(plan_id)
@@ -599,3 +662,29 @@ def test_resolve_decompiled_reference_max_body_chars_truncation(tmp_path: Path) 
     assert res["truncated"] is True
     assert res["raw_target_line"] == 0
     assert res["clean_target_line"] == 0
+
+
+def test_resolve_decompiled_reference_truncation_without_newline_is_empty(
+    tmp_path: Path,
+) -> None:
+    index, _, plan_id = _indexed_project(tmp_path)
+    index.index_plan(plan_id)
+    with index.store.connect() as connection:
+        connection.execute(
+            "UPDATE code_sources SET body = ? WHERE qualified_name = 'br.vr.Outer'",
+            ("class Outer { void calcularTotal() {} }",),
+        )
+        connection.commit()
+
+    result = index.resolve_decompiled_reference(
+        "Outer.calcularTotal",
+        release_id="r1",
+        max_body_chars=12,
+    )
+
+    assert result["state"] == "ready"
+    assert result["truncated"] is True
+    assert result["body"] == ""
+    assert result["clean_body"] == ""
+    assert result["raw_target_line"] == 0
+    assert result["clean_target_line"] == 0

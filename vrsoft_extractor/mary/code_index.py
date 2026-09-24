@@ -88,7 +88,92 @@ class JavaCodeIndex:
         with self.store.connect() as connection:
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS code_sources (\n                    id INTEGER PRIMARY KEY,\n                    source_key TEXT NOT NULL UNIQUE,\n                    schema_version INTEGER NOT NULL,\n                    release_id TEXT NOT NULL,\n                    release_hash TEXT NOT NULL,\n                    jar_relative_path TEXT NOT NULL,\n                    artifact_sha256 TEXT NOT NULL,\n                    batch_id TEXT NOT NULL,\n                    class_version INTEGER NOT NULL DEFAULT 0,\n                    tool TEXT NOT NULL,\n                    output_reference TEXT NOT NULL,\n                    source_relative_path TEXT NOT NULL,\n                    source_sha256 TEXT NOT NULL,\n                    package_name TEXT NOT NULL,\n                    primary_type TEXT NOT NULL,\n                    qualified_name TEXT NOT NULL,\n                    logical_names_json TEXT NOT NULL,\n                    content_hashes_json TEXT NOT NULL,\n                    occurrence_count INTEGER NOT NULL,\n                    parser_kind TEXT NOT NULL DEFAULT 'structural_fallback',\n                    syntax_error_count INTEGER NOT NULL DEFAULT 0,\n                    symbols_text TEXT NOT NULL,\n                    body TEXT NOT NULL,\n                    indexed_at TEXT NOT NULL\n                );\n                CREATE INDEX IF NOT EXISTS idx_code_sources_release\n                    ON code_sources(release_id, release_hash);\n                CREATE INDEX IF NOT EXISTS idx_code_sources_release_jar\n                    ON code_sources(release_id, jar_relative_path);\n                CREATE INDEX IF NOT EXISTS idx_code_sources_schema\n                    ON code_sources(schema_version);\n                CREATE INDEX IF NOT EXISTS idx_code_sources_qualified\n                    ON code_sources(qualified_name COLLATE NOCASE);\n                CREATE TABLE IF NOT EXISTS code_symbols (\n                    id INTEGER PRIMARY KEY,\n                    source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,\n                    kind TEXT NOT NULL,\n                    simple_name TEXT NOT NULL,\n                    qualified_name TEXT NOT NULL,\n                    signature TEXT NOT NULL,\n                    visibility TEXT NOT NULL,\n                    line_start INTEGER NOT NULL\n                );\n                CREATE INDEX IF NOT EXISTS idx_code_symbols_name\n                    ON code_symbols(simple_name COLLATE NOCASE, qualified_name COLLATE NOCASE);\n                CREATE INDEX IF NOT EXISTS idx_code_symbols_source_id\n                    ON code_symbols(source_id);\n                CREATE TABLE IF NOT EXISTS code_relations (\n                    id INTEGER PRIMARY KEY,\n                    source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,\n                    kind TEXT NOT NULL,\n                    target TEXT NOT NULL,\n                    source_symbol TEXT NOT NULL DEFAULT '',\n                    confidence REAL NOT NULL DEFAULT 0.0,\n                    line_start INTEGER NOT NULL\n                );\n                CREATE INDEX IF NOT EXISTS idx_code_relations_target\n                    ON code_relations(target COLLATE NOCASE);\n                CREATE INDEX IF NOT EXISTS idx_code_relations_kind_target\n                    ON code_relations(kind, target COLLATE NOCASE);\n                CREATE INDEX IF NOT EXISTS idx_code_relations_source_id\n                    ON code_relations(source_id);\n                CREATE VIRTUAL TABLE IF NOT EXISTS code_sources_fts USING fts5(\n                    qualified_name,\n                    symbols_text,\n                    body,\n                    content='code_sources',\n                    content_rowid='id',\n                    tokenize='unicode61 remove_diacritics 2'\n                );\n                CREATE TRIGGER IF NOT EXISTS code_sources_ai AFTER INSERT ON code_sources BEGIN\n                  INSERT INTO code_sources_fts(rowid,qualified_name,symbols_text,body)\n                  VALUES(new.id,new.qualified_name,new.symbols_text,new.body);\n                END;\n                CREATE TRIGGER IF NOT EXISTS code_sources_ad AFTER DELETE ON code_sources BEGIN\n                  INSERT INTO code_sources_fts(code_sources_fts,rowid,qualified_name,symbols_text,body)\n                  VALUES('delete',old.id,old.qualified_name,old.symbols_text,old.body);\n                END;\n                CREATE TRIGGER IF NOT EXISTS code_sources_au AFTER UPDATE ON code_sources BEGIN\n                  INSERT INTO code_sources_fts(code_sources_fts,rowid,qualified_name,symbols_text,body)\n                  VALUES('delete',old.id,old.qualified_name,old.symbols_text,old.body);\n                  INSERT INTO code_sources_fts(rowid,qualified_name,symbols_text,body)\n                  VALUES(new.id,new.qualified_name,new.symbols_text,new.body);\n                END;\n                """
+                CREATE TABLE IF NOT EXISTS code_sources (
+                    id INTEGER PRIMARY KEY,
+                    source_key TEXT NOT NULL UNIQUE,
+                    schema_version INTEGER NOT NULL,
+                    release_id TEXT NOT NULL,
+                    release_hash TEXT NOT NULL,
+                    jar_relative_path TEXT NOT NULL,
+                    artifact_sha256 TEXT NOT NULL,
+                    batch_id TEXT NOT NULL,
+                    class_version INTEGER NOT NULL DEFAULT 0,
+                    tool TEXT NOT NULL,
+                    output_reference TEXT NOT NULL,
+                    source_relative_path TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    package_name TEXT NOT NULL,
+                    primary_type TEXT NOT NULL,
+                    qualified_name TEXT NOT NULL,
+                    logical_names_json TEXT NOT NULL,
+                    content_hashes_json TEXT NOT NULL,
+                    occurrence_count INTEGER NOT NULL,
+                    parser_kind TEXT NOT NULL DEFAULT 'structural_fallback',
+                    syntax_error_count INTEGER NOT NULL DEFAULT 0,
+                    symbols_text TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    indexed_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_code_sources_release
+                    ON code_sources(release_id, release_hash);
+                CREATE INDEX IF NOT EXISTS idx_code_sources_release_jar
+                    ON code_sources(release_id, jar_relative_path);
+                CREATE INDEX IF NOT EXISTS idx_code_sources_schema
+                    ON code_sources(schema_version);
+                CREATE INDEX IF NOT EXISTS idx_code_sources_qualified
+                    ON code_sources(qualified_name COLLATE NOCASE);
+                CREATE TABLE IF NOT EXISTS code_symbols (
+                    id INTEGER PRIMARY KEY,
+                    source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    simple_name TEXT NOT NULL,
+                    qualified_name TEXT NOT NULL,
+                    signature TEXT NOT NULL,
+                    visibility TEXT NOT NULL,
+                    line_start INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_code_symbols_name
+                    ON code_symbols(simple_name COLLATE NOCASE, qualified_name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_symbols_source_id
+                    ON code_symbols(source_id);
+                CREATE TABLE IF NOT EXISTS code_relations (
+                    id INTEGER PRIMARY KEY,
+                    source_id INTEGER NOT NULL REFERENCES code_sources(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    source_symbol TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    line_start INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_code_relations_target
+                    ON code_relations(target COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_relations_kind_target
+                    ON code_relations(kind, target COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS idx_code_relations_source_id
+                    ON code_relations(source_id);
+                CREATE VIRTUAL TABLE IF NOT EXISTS code_sources_fts USING fts5(
+                    qualified_name,
+                    symbols_text,
+                    body,
+                    content='code_sources',
+                    content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+                CREATE TRIGGER IF NOT EXISTS code_sources_ai AFTER INSERT ON code_sources BEGIN
+                  INSERT INTO code_sources_fts(rowid,qualified_name,symbols_text,body)
+                  VALUES(new.id,new.qualified_name,new.symbols_text,new.body);
+                END;
+                CREATE TRIGGER IF NOT EXISTS code_sources_ad AFTER DELETE ON code_sources BEGIN
+                  INSERT INTO code_sources_fts(code_sources_fts,rowid,qualified_name,symbols_text,body)
+                  VALUES('delete',old.id,old.qualified_name,old.symbols_text,old.body);
+                END;
+                CREATE TRIGGER IF NOT EXISTS code_sources_au AFTER UPDATE ON code_sources BEGIN
+                  INSERT INTO code_sources_fts(code_sources_fts,rowid,qualified_name,symbols_text,body)
+                  VALUES('delete',old.id,old.qualified_name,old.symbols_text,old.body);
+                  INSERT INTO code_sources_fts(rowid,qualified_name,symbols_text,body)
+                  VALUES(new.id,new.qualified_name,new.symbols_text,new.body);
+                END;
+                """
             )
             _ensure_column(
                 connection,
@@ -1040,16 +1125,7 @@ class JavaCodeIndex:
             if len(clean_matches) == 1:
                 clean_target_line = int(clean_matches[0]["line_start"])
             else:
-                clean_name_matches = [
-                    s
-                    for s in parsed_clean.symbols
-                    if s["kind"] == matched_symbol_info["kind"]
-                    and s["simple_name"] == matched_symbol_info["simple_name"]
-                ]
-                if len(clean_name_matches) == 1:
-                    clean_target_line = int(clean_name_matches[0]["line_start"])
-                else:
-                    clean_target_line = 0
+                clean_target_line = 0
         else:
             clean_target_line = raw_target_line
 
@@ -1058,7 +1134,7 @@ class JavaCodeIndex:
                 return text, False
             cutoff = text.rfind("\n", 0, max_chars + 1)
             if cutoff == -1:
-                cutoff = max_chars
+                return "", True
             return text[:cutoff], True
 
         final_raw_body, raw_truncated = _truncate_decompiled_body(raw_body, max_body_chars)
@@ -1432,13 +1508,20 @@ def _parse_java_source_structural(
                             "kind": relation_kind,
                             "target": target,
                             "source_symbol": qualified,
-                            "confidence": 0.8,
-                            "line_start": _line_number(body, relation.start()),
+                            "confidence": 0.55,
+                            "line_start": _line_number(body, match.start()),
                         }
                     )
     for match in _METHOD_RE.finditer(body):
         name = match.group("name")
-        signature = _compact(match.group(0).rstrip(";{\n"))
+        return_type = _compact(match.group("return")).casefold()
+        statement_words = {"return", "throw", "new", "case", "yield", "else"}
+        if (
+            name in {"if", "for", "while", "switch", "catch", "return", "new"}
+            or statement_words & set(return_type.split())
+        ):
+            continue
+        signature = _compact(match.group(0).rstrip("{;"))
         symbol_kind = "constructor" if name == primary_type else "method"
         symbols.append(
             {
@@ -1546,48 +1629,55 @@ def _fts_query(tokens: Iterable[str]) -> str:
 def _source_excerpt(
     body: str,
     tokens: Sequence[str],
+    radius: int = 4,
     *,
-    radius: int = 3,
     preferred_line: int = 0,
 ) -> tuple[int, int, str]:
     lines = body.splitlines()
     if not lines:
         return 1, 1, ""
-    best_index = max(0, preferred_line - 1) if preferred_line > 0 else None
-    if best_index is None and tokens:
-        lowered_tokens = [t.casefold() for t in tokens]
-        best_score = -1
-        for idx, line in enumerate(lines):
-            lowered = line.casefold()
-            score = sum(lowered.count(token) for token in lowered_tokens)
-            if score > best_score:
-                best_score = score
-                best_index = idx
-    if best_index is None:
-        best_index = 0
-    start = max(0, best_index - radius)
-    end = min(len(lines), best_index + radius + 1)
+    lowered = [line.casefold() for line in lines]
+    match_index = (
+        min(len(lines) - 1, preferred_line - 1)
+        if preferred_line > 0
+        else next(
+            (
+                index
+                for index, line in enumerate(lowered)
+                if any(token.casefold() in line for token in tokens)
+            ),
+            0,
+        )
+    )
+    start = max(0, match_index - radius)
+    end = min(len(lines), match_index + radius + 1)
     return start + 1, end, "\n".join(lines[start:end])
 
 
-def _resolve_output(root: Path, output_reference: str) -> Path:
-    target = Path(output_reference)
-    return target if target.is_absolute() else (root / target).resolve()
+def _resolve_output(root: Path, value: str) -> Path:
+    path = Path(value)
+    resolved = (path if path.is_absolute() else root / path).resolve()
+    allowed = (root / "indice" / "codigo" / "decompilation").resolve()
+    try:
+        resolved.relative_to(allowed)
+    except ValueError as exc:
+        raise DecompilationBatchError("Saída de código fora do índice permitido.") from exc
+    return resolved
 
 
 def _ensure_column(
     connection: sqlite3.Connection,
     table: str,
     column: str,
-    col_type: str,
+    declaration: str,
 ) -> None:
-    columns = {
-        item[1]
-        for item in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
     }
-    if column not in columns:
-        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    if column not in existing:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")

@@ -199,13 +199,15 @@ converte em links `vr-file:`; o clique chama `ChatBridge.openFileReference`, que
 abre o arquivo na superfície Arquivos pelo sinal `filePreviewRequested`.
 
 `frontend/code_links.py` e `code_references.py` reconhecem referências a classes e
-métodos Java em inline code do chat e as convertem em links `vr-code:`; o clique
-chama `ChatBridge.openDecompiledReference`, que resolve a referência de forma assíncrona
-no `JavaCodeIndex` da release ativa (ou atual) via `CodePreviewDomain` (`bridges/codepreview.py`),
-com proteção contra respostas obsoletas por geração incremental. A prévia é exibida
-na superfície Código (`VrDecompiledSourceView.qml`) na barra lateral direita com fonte
-monoespaçada, realce Java, numeração de linhas, alternância entre código limpo e bruto,
-posicionamento no símbolo identificado e lista de desambiguação para referências ambíguas.
+métodos Java em inline code do chat e as convertem em links `vr-code:`. O link é
+criado sintaticamente no display; o clique chama `ChatBridge.openDecompiledReference`,
+e `CodePreviewDomain` (`bridges/codepreview.py`) executa
+`JavaCodeIndex.resolve_decompiled_reference` em um worker, com a referência canônica
+como entrada. O resultado volta à thread Qt por um signal queued e respostas obsoletas
+são descartadas por geração incremental. A resolução no `JavaCodeIndex` é exata,
+sem busca textual ou fallback. A superfície Código é a page 6, reutilizada para
+cada resultado, com visualização Java realçada, alternância Limpo/Descompilado e
+posicionamento por scroll no símbolo. O fluxo `vr-file:` permanece independente.
 `VrAssistantMessage.qml` atualiza os blocos existentes, preservando os controles
 de quebra de linha e ampliação. `VrTableBlock.qml` mantém seleção nativa, rolagem
 horizontal e cópia em Markdown, CSV ou TSV; as divisórias seguem as posições
