@@ -27,12 +27,16 @@ instalação, recursos QML, scripts e PyInstaller.
 
 ## Modos de resposta (OFF, VR e Ultra)
 
-O modo controla a estratégia de resposta; as fontes locais são as mesmas nos
-três modos.
+O modo controla a estratégia de resposta; VR e Ultra compartilham as mesmas
+fontes e tools, e o OFF recebe a raiz de fontes configurada como contexto
+opcional somente leitura.
 
-- **OFF**: o provedor decide quando pesquisar e as fontes internas ficam
-  disponíveis sob demanda. Não há retrieval automático, classificação VR nem
-  fan-out.
+- **OFF**: modelo direto. O turno recebe o workspace/projeto e a raiz de fontes
+  configurada (`MarySettings.root`) como contexto opcional somente leitura; não
+  registra `vr_sources`, `vr_search` ou `vr_read` e não há retrieval automático,
+  `RetrievalService`, `KnowledgeRouter`, classificação VR nem fan-out. O modelo
+  consulta a raiz apenas pelas capacidades nativas do provider e pode responder
+  sem consultá-la.
 - **VR**: o modelo principal recebe o contrato VR especializado (identidade,
   fontes disponíveis e política de grounding) e decide usar `vr_sources`,
   `vr_search` e `vr_read`. Há uma única chamada principal; não há agentes,
@@ -49,20 +53,21 @@ consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
 `vr_search`), mas não pesquisa automaticamente antes da resposta.
 Prefetch/cache de consulta não pertencem a este contrato.
 
-As três tools VR têm paginação continuável por chamada: `vr_sources` aceita
-até 50 itens, `vr_search` até 20 resultados e `vr_read` até 8.000 caracteres
-por página. Esses valores pertencem à chamada individual e não constituem
-quota do turno. Não existe quota cumulativa por chamadas, caracteres, tempo ou
-tokens no chat; a investigação segue até a conclusão do provider, cancelamento
-explícito, substituição do turno, erro real ou rate limit externo. A
-paginação é transporte, não orçamento. OFF e VR também podem investigar até
-uma conclusão, cancelamento explícito, substituição do turno, erro real ou
-rate limit externo. `source=""` realiza pesquisa multi-source, enquanto uma
-fonte explícita continua isolada. A orientação para tentar outra fonte é uma
-decisão do modelo e não um fallback automático.
-No OFF, essas fontes são opcionais: o modelo pode responder com stack trace,
-código fornecido e raciocínio próprio sem consultar a documentação. O VR normal
-mantém o mesmo acesso sob demanda dentro do contrato tool-driven.
+As três tools VR, registradas somente em VR/Ultra, têm paginação continuável
+por chamada: `vr_sources` aceita até 50 itens, `vr_search` até 20 resultados e
+`vr_read` até 8.000 caracteres por página. Esses valores pertencem à chamada
+individual e não constituem quota do turno. Quando as tools estão ativas, não
+existe quota cumulativa por chamadas, caracteres, tempo ou tokens no chat; a
+investigação segue até a conclusão do provider, cancelamento explícito,
+substituição do turno, erro real ou rate limit externo. A paginação é
+transporte, não orçamento. `source=""` realiza pesquisa multi-source, enquanto
+uma fonte explícita continua isolada. A orientação para tentar outra fonte é
+uma decisão do modelo e não um fallback automático.
+No OFF não há tools VR: o modelo pode responder com stack trace, código
+fornecido e raciocínio próprio, consultando a raiz de fontes configurada
+somente quando o provider tiver capacidade nativa de leitura e busca de
+arquivos. O VR normal mantém o acesso sob demanda dentro do contrato
+tool-driven.
 
 Ultra registra telemetria de chamadas, tokens e tempo, além de manter a
 concorrência controlada pelo executor. Esses números não são usados para

@@ -355,7 +355,13 @@ def test_vr_off_bypasses_personality_base_and_orchestration(tmp_path: Path) -> N
 
     assert completed.wait(5)
     assert len(provider.sent) == 1
-    assert provider.sent[0]["message"] == "Responda como o Codex nativo."
+    prompt = provider.sent[0]["message"]
+    assert "MODO VR ATIVO" not in prompt
+    assert "Contrato de acesso tool-driven" not in prompt
+    assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in prompt
+    assert "SOLICITAÇÃO DO USUÁRIO:\nResponda como o Codex nativo." in prompt
+    for name in ("vr_sources", "vr_search", "vr_read"):
+        assert name not in prompt
     assert provider.sent[0]["options"].vr_enabled is False
     assert provider.start_options[0].vr_enabled is False
     assert not any(":vr:" in item["conversation_id"] for item in provider.sent)
@@ -2123,7 +2129,7 @@ def _tool_names(options: ConversationOptions | None) -> set[str]:
     }
 
 
-def test_off_turn_registers_all_local_tools(tmp_path: Path) -> None:
+def test_off_turn_does_not_register_vr_tools(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = MaryDatabase(settings.database_path, root=settings.root)
     orchestrator = ChatOrchestrator(settings, database)
@@ -2142,16 +2148,16 @@ def test_off_turn_registers_all_local_tools(tmp_path: Path) -> None:
     )
     assert completed.wait(5)
 
-    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
-        provider.start_options[0]
+    assert {"vr_sources", "vr_search", "vr_read"}.isdisjoint(
+        _tool_names(provider.start_options[0])
     )
-    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
-        provider.sent[0]["options"]
+    assert {"vr_sources", "vr_search", "vr_read"}.isdisjoint(
+        _tool_names(provider.sent[0]["options"])
     )
     assert len(provider.sent) == 1
 
 
-def test_legacy_vr_native_search_env_does_not_remove_off_tools(
+def test_legacy_vr_native_search_env_does_not_add_off_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("VR_NATIVE_SEARCH_ENABLED", "0")
@@ -2181,15 +2187,15 @@ def test_legacy_vr_native_search_env_does_not_remove_off_tools(
     )
     assert completed.wait(5)
 
-    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
-        provider.start_options[0]
+    assert {"vr_sources", "vr_search", "vr_read"}.isdisjoint(
+        _tool_names(provider.start_options[0])
     )
-    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
-        provider.sent[0]["options"]
+    assert {"vr_sources", "vr_search", "vr_read"}.isdisjoint(
+        _tool_names(provider.sent[0]["options"])
     )
 
 
-def test_off_turn_registers_local_tools_for_provider_decided_calls(
+def test_off_turn_does_not_register_local_tools_for_provider_decided_calls(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
@@ -2210,9 +2216,82 @@ def test_off_turn_registers_local_tools_for_provider_decided_calls(
     )
     assert completed.wait(5)
 
-    assert "vr_search" in _tool_names(provider.start_options[0])
-    assert "vr_search" in _tool_names(provider.sent[0]["options"])
+    assert "vr_search" not in _tool_names(provider.start_options[0])
+    assert "vr_search" not in _tool_names(provider.sent[0]["options"])
     assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+
+
+def test_off_turn_renews_codex_session_that_still_has_vr_tools(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    database.update_conversation(
+        conversation_id,
+        native_id="legacy-off-thread",
+        native_tools_id="legacy-off-thread",
+    )
+    database.add_message(conversation_id, "user", "HISTORY_MUST_SURVIVE")
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind == "turn_completed":
+            completed.set()
+
+    orchestrator.send(conversation_id, "Continue", callback, use_vr=False)
+    assert completed.wait(5)
+
+    row = database.get_conversation(conversation_id)
+    assert provider.starts == [conversation_id]
+    assert row["native_id"] == f"native:{conversation_id}" != "legacy-off-thread"
+    assert row["native_tools_id"] == ""
+    assert {"vr_sources", "vr_search", "vr_read"}.isdisjoint(
+        _tool_names(provider.start_options[0])
+    )
+    assert "HISTORY_MUST_SURVIVE" in provider.sent[0]["message"]
+    assert any(
+        row["content"] == "HISTORY_MUST_SURVIVE"
+        for row in database.messages(conversation_id)
+    )
+    assert any(event.kind == "context_transferred" for event in events)
+
+
+def test_vr_turn_renews_codex_session_without_tool_marker(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    database.update_conversation(conversation_id, native_id_vr="legacy-vr-thread")
+    completed = threading.Event()
+
+    orchestrator.send(
+        conversation_id,
+        "Pergunta VR em sessão antiga",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=True,
+    )
+    assert completed.wait(5)
+
+    row = database.get_conversation(conversation_id)
+    assert provider.starts == [conversation_id]
+    assert row["native_id_vr"] == f"native:{conversation_id}"
+    assert row["native_tools_id_vr"] == row["native_id_vr"] != "legacy-vr-thread"
+    assert {"vr_sources", "vr_search", "vr_read"} <= _tool_names(
+        provider.start_options[0]
+    )
+    assert provider.sent[0]["native_id"] == row["native_id_vr"]
 
 
 class ToolCallingProvider(FakeProvider):
@@ -2274,7 +2353,9 @@ class ToolCallingProvider(FakeProvider):
         )
 
 
-def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
+def test_vr_turn_answers_vr_search_without_upfront_pipeline(
+    tmp_path: Path,
+) -> None:
     settings = MarySettings(
         app_dir=(tmp_path / "app").resolve(),
         root=(tmp_path / "mary").resolve(),
@@ -2287,7 +2368,7 @@ def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
     orchestrator = ChatOrchestrator(settings, database)
     orchestrator.providers = {"codex": ToolCallingProvider()}
     conversation_id = orchestrator.new_conversation(
-        "codex", "sol", defer_provider_start=True
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
     )
     events: list[RuntimeEvent] = []
     completed = threading.Event()
@@ -2301,7 +2382,7 @@ def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
         conversation_id,
         "Onde o SPED grava as notas?",
         callback,
-        use_vr=False,
+        use_vr=True,
     )
 
     assert completed.wait(5)
@@ -2316,11 +2397,12 @@ def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
     payload = json.loads(str(tool_events[0].payload["output"]))
     assert payload["query"] == "sped fiscal"
     assert payload["total"] == 0
-    # The upfront VR pipeline must stay out of native turns.
+    # Tool-driven VR keeps the single main call: no routed bundle, no agents.
     assert not any(event.kind == "knowledge_routed" for event in events)
-    assert not any(event.kind == "intent_analysis_started" for event in events)
+    assert not any(event.kind == "research_started" for event in events)
+    assert not any(event.kind == "agent_started" for event in events)
     orchestrator.drain_turn_finalizations()
-    assert database.messages(conversation_id)[-1]["response_mode"] == "native"
+    assert database.messages(conversation_id)[-1]["response_mode"] == "vr"
     assert conversation_id not in orchestrator._external_callbacks
     assert conversation_id not in orchestrator._callback_generations
     assert not orchestrator._dynamic_tool_callbacks

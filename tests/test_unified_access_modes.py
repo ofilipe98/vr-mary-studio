@@ -205,7 +205,7 @@ def test_vr_sources_inventory_discovery(tmp_path: Path):
     assert "applications" in code_list.parsed
 
 
-def test_off_mode_orchestrator_options_include_tools(tmp_path: Path):
+def test_off_mode_orchestrator_options_exclude_vr_tools(tmp_path: Path):
     settings, database, code_index, service = _setup_test_env(tmp_path)
     orchestrator = ChatOrchestrator(settings, database)
     orchestrator.retrieval_service = service
@@ -213,9 +213,76 @@ def test_off_mode_orchestrator_options_include_tools(tmp_path: Path):
 
     options = orchestrator._conversation_options(conv_id, use_vr=False)
     tool_names = {d.get("name") for d in options.dynamic_tools}
-    assert VR_SOURCES_TOOL_NAME in tool_names
-    assert VR_SEARCH_TOOL_NAME in tool_names
-    assert VR_READ_TOOL_NAME in tool_names
+    assert VR_SOURCES_TOOL_NAME not in tool_names
+    assert VR_SEARCH_TOOL_NAME not in tool_names
+    assert VR_READ_TOOL_NAME not in tool_names
+
+
+def test_vr_mode_orchestrator_options_include_exactly_three_vr_tools(
+    tmp_path: Path,
+):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.retrieval_service = service
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+
+    options = orchestrator._conversation_options(conv_id, use_vr=True)
+    tool_names = {d.get("name") for d in options.dynamic_tools}
+    assert tool_names == {
+        VR_SOURCES_TOOL_NAME,
+        VR_SEARCH_TOOL_NAME,
+        VR_READ_TOOL_NAME,
+    }
+
+
+def test_ultra_mode_orchestrator_options_include_exactly_three_vr_tools(
+    tmp_path: Path,
+):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.retrieval_service = service
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+
+    options = orchestrator._conversation_options(conv_id, use_vr=True)
+    tool_names = {d.get("name") for d in options.dynamic_tools}
+    assert tool_names == {
+        VR_SOURCES_TOOL_NAME,
+        VR_SEARCH_TOOL_NAME,
+        VR_READ_TOOL_NAME,
+    }
+
+
+def test_off_mode_filters_custom_tool_that_reuses_vr_name(tmp_path: Path):
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    orchestrator.retrieval_service = service
+    custom_id = database.create_tool(
+        "vr_read",
+        "Leitura customizada selecionada pelo usuário",
+        {"type": "object"},
+        sys.executable,
+        ["-V"],
+        safety="read_only",
+    )
+
+    off_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="off"
+    )
+    database.set_conversation_tools(off_id, [custom_id], [])
+    off_options = orchestrator._conversation_options(off_id, use_vr=False)
+    assert {d.get("name") for d in off_options.dynamic_tools} == set()
+
+    vr_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    database.set_conversation_tools(vr_id, [custom_id], [])
+    vr_options = orchestrator._conversation_options(vr_id, use_vr=True)
+    names = [d.get("name") for d in vr_options.dynamic_tools]
+    assert names.count("vr_read") == 1
 
 
 def test_off_mode_project_instructions_and_file_listing(tmp_path: Path):
@@ -241,7 +308,8 @@ def test_off_mode_project_instructions_and_file_listing(tmp_path: Path):
     assert "Regras internas de contabilidade VR" in enriched
     assert "MATERIAIS E ARQUIVOS DO PROJETO:" in enriched
     assert "manual.txt" in enriched
-    assert "ACESSO LOCAL SOB DEMANDA:" in enriched
+    assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in enriched
+    assert str(settings.root.resolve()) in enriched
 
 
 def test_off_mode_scratchpad_workspace_no_inheritance(tmp_path: Path):
@@ -262,7 +330,11 @@ def test_off_mode_scratchpad_workspace_no_inheritance(tmp_path: Path):
         workspace=ws,
     )
     # Managed scratchpad workspace should not inject project instructions
-    assert enriched == "Pergunta geral"
+    assert "INSTRUÇÕES DO PROJETO:" not in enriched
+    assert "MATERIAIS E ARQUIVOS DO PROJETO:" not in enriched
+    assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in enriched
+    assert str(settings.root.resolve()) in enriched
+    assert enriched.rstrip().endswith("Pergunta geral")
 
 
 def test_citations_persistence_additive_with_code_sources(tmp_path: Path):
@@ -614,9 +686,66 @@ def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
     assert "agent_started" not in kinds
     assert turn_options, "o turno OFF não produziu opções"
     tool_names = {tool.get("name") for tool in turn_options[-1].dynamic_tools}
-    assert VR_SOURCES_TOOL_NAME in tool_names
-    assert VR_SEARCH_TOOL_NAME in tool_names
-    assert VR_READ_TOOL_NAME in tool_names
+    assert VR_SOURCES_TOOL_NAME not in tool_names
+    assert VR_SEARCH_TOOL_NAME not in tool_names
+    assert VR_READ_TOOL_NAME not in tool_names
+
+
+def test_switching_vr_off_vr_keeps_separate_tool_contracts(tmp_path: Path):
+    from test_mary_orchestration import FakeProvider
+
+    settings = MarySettings(
+        app_dir=(tmp_path / "app").resolve(),
+        root=(tmp_path / "mary").resolve(),
+        old_root=(tmp_path / "old").resolve(),
+    )
+    settings.app_dir.mkdir(parents=True, exist_ok=True)
+    settings.old_root.mkdir(parents=True, exist_ok=True)
+    settings.ensure_dirs()
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex")
+    orchestrator.providers = {"codex": provider}
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="vr"
+    )
+    database.update_conversation(
+        conv_id, native_id_vr="native-vr", native_tools_id_vr="native-vr"
+    )
+
+    def _send(use_vr: bool, text: str) -> None:
+        done = threading.Event()
+        orchestrator.send(
+            conv_id,
+            text,
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=use_vr,
+        )
+        assert done.wait(30), "turno não concluiu"
+
+    try:
+        _send(False, "Pergunta nativa")
+        row = database.get_conversation(conv_id)
+        assert row["native_id_vr"] == "native-vr"
+        assert row["native_tools_id_vr"] == "native-vr"
+        assert row["native_tools_id"] == ""
+        off_options = provider.sent[0]["options"]
+        assert not any(
+            tool.get("name")
+            in {VR_SOURCES_TOOL_NAME, VR_SEARCH_TOOL_NAME, VR_READ_TOOL_NAME}
+            for tool in off_options.dynamic_tools
+        )
+        assert provider.sent[0]["native_id"] == row["native_id"] != "native-vr"
+
+        orchestrator.update_vr_mode(conv_id, True)
+        _send(True, "De volta ao VR")
+        assert provider.sent[-1]["native_id"] == "native-vr"
+        vr_options = provider.sent[-1]["options"]
+        assert {
+            tool.get("name") for tool in vr_options.dynamic_tools
+        } >= {VR_SOURCES_TOOL_NAME, VR_SEARCH_TOOL_NAME, VR_READ_TOOL_NAME}
+    finally:
+        orchestrator.close()
 
 
 def test_vr_normal_is_tool_driven_without_agents_or_automatic_retrieval(

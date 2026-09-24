@@ -355,18 +355,18 @@ def test_legacy_codex_session_gets_tools_without_losing_local_history(tmp_path):
     orchestrator = ChatOrchestrator(settings, database)
     provider = FakeProvider("codex")
     orchestrator.providers["codex"] = provider
-    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
-    database.update_conversation(cid, native_id="legacy-thread")
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=True)
+    database.update_conversation(cid, native_id_vr="legacy-thread")
     database.add_message(cid, "user", "HISTORY_MUST_SURVIVE")
     done = threading.Event()
     try:
-        orchestrator.send(cid, "Continue", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=False)
+        orchestrator.send(cid, "Continue", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=True)
         assert done.wait(10)
         assert provider.starts == [cid]
         assert "HISTORY_MUST_SURVIVE" in provider.sent[0]["message"]
         assert {t["name"] for t in provider.start_options[0].dynamic_tools} >= {"vr_search", "vr_sources", "vr_read"}
         row = database.get_conversation(cid)
-        assert row["native_id"] == row["native_tools_id"] != "legacy-thread"
+        assert row["native_id_vr"] == row["native_tools_id_vr"] != "legacy-thread"
         assert any(m["content"] == "HISTORY_MUST_SURVIVE" for m in database.messages(cid))
     finally:
         orchestrator.close()

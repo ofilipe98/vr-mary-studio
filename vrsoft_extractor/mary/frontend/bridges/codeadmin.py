@@ -2234,6 +2234,11 @@ class CodeAdminDomain:
         phase_signal = getattr(self, "applicationsCatalogPhase", None)
         stop = self._release_coverage_stop
         self._apps_catalog_dirty = False
+        self._apps_catalog_phase = ""
+        self._apps_catalog_phase_apps = 0
+        self._apps_catalog_phase_versions = 0
+        self._apps_catalog_progress_current = 0
+        self._apps_catalog_progress_total = 0
         if phase_signal is not None:
             try:
                 phase_signal.emit("detecting_apps", 0, 0)
@@ -2257,12 +2262,33 @@ class CodeAdminDomain:
                         pass
                 index = JavaCodeIndex(workspace)
                 coverage = {}
+                candidates = []
                 for package_id in data["packages"]:
                     if stop.is_set():
                         return
                     if (catalog.paths.manifest_for(package_id).is_file()
                             and catalog.status(package_id).get("freshness") == "fresh"):
-                        coverage[package_id] = index.coverage(package_id)
+                        candidates.append(package_id)
+                total_candidates = len(candidates)
+                if phase_signal is not None and total_candidates and not stop.is_set():
+                    try:
+                        phase_signal.emit("indexing_coverage", 0, total_candidates)
+                    except RuntimeError:
+                        pass
+                last_progress_emit = 0.0
+                for position, package_id in enumerate(candidates, start=1):
+                    if stop.is_set():
+                        return
+                    coverage[package_id] = index.coverage(package_id)
+                    now = time.monotonic()
+                    if (phase_signal is not None and not stop.is_set()
+                            and (position == total_candidates
+                                 or now - last_progress_emit >= 0.2)):
+                        last_progress_emit = now
+                        try:
+                            phase_signal.emit("indexing_coverage", position, total_candidates)
+                        except RuntimeError:
+                            pass
                 plans = index.store.status() if coverage else []
                 for application in data["applications"].values():
                     for version in application["versions"].values():

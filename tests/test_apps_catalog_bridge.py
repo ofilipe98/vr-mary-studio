@@ -177,6 +177,52 @@ def test_ready_phase_reports_real_version_totals(bridge):
     assert loading and loading[-1][2] == 2
 
 
+def test_refresh_publishes_index_coverage_progress(bridge, tmp_path):
+    """A refresh over a fresh release drives the determinate catalog bar."""
+    source = tmp_path / "source"
+    _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))
+    _vr_jar(source / "VROther.jar", (1, 0, 0, 0))
+    catalog = ErpReleaseCatalog(bridge._settings.root, expected_jar_count=2)
+    catalog.import_release("one", source)
+    phases = []
+    bridge.applicationsCatalogPhase.connect(
+        lambda phase, current, total: phases.append((phase, current, total))
+    )
+    bridge.refreshApplicationsCatalog()
+    assert bridge.applicationsCatalogLoading is True
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    coverage = [item for item in phases if item[0] == "indexing_coverage"]
+    assert coverage, phases
+    assert coverage[0] == ("indexing_coverage", 0, 1)
+    assert coverage[-1][1] == coverage[-1][2] == 1
+    # Once the refresh settles the card state returns to neutral.
+    assert bridge.applicationsCatalogLoading is False
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert bridge.applicationsCatalogStatusText == ""
+
+
+def test_catalog_progress_properties_follow_phase_events(bridge):
+    """Phase updates feed the label, percent and indeterminate decision."""
+    bridge._apps_catalog_thread = object()
+    bridge._on_applications_catalog_phase("loading_versions", 3, 9)
+    assert bridge.applicationsCatalogLoading is True
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert "3 aplicativo" in bridge.applicationsCatalogStatusText
+
+    bridge._on_applications_catalog_phase("indexing_coverage", 2, 8)
+    assert bridge.applicationsCatalogProgress == 25.0
+    assert bridge.applicationsCatalogProgressTotal == 8
+    assert "2/8" in bridge.applicationsCatalogStatusText
+
+    bridge._apps_catalog_thread = None
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert bridge.applicationsCatalogStatusText == ""
+
+
 def test_studio_save_settings_root_change_stays_on_old_root(tmp_path, monkeypatch):
     """Strategy A: new root persists to .env; live bridges keep the old root."""
     for key in (

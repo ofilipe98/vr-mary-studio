@@ -514,6 +514,20 @@ def test_conversation_options_register_vr_search_when_vr_enabled(
     assert VR_SEARCH_TOOL_NAME in names
 
 
+def test_conversation_options_skip_vr_search_in_off_mode(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+
+    options = orchestrator._conversation_options(conversation_id, use_vr=False)
+
+    names = [tool["name"] for tool in options.dynamic_tools]
+    assert VR_SEARCH_TOOL_NAME not in names
+
+
 class _RecordingCodex:
     def __init__(self) -> None:
         self.responses: list[dict[str, Any]] = []

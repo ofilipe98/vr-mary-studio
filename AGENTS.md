@@ -22,9 +22,11 @@ A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki`
 
 ---
 
-## Tools VR e paginação
+## Tools VR, OFF e paginação
 
-As tools `vr_sources`, `vr_search` e `vr_read` não possuem quota cumulativa por chamadas, caracteres, tempo ou tokens no chat. Cada chamada respeita o limite da própria ferramenta e a paginação por cursor/next_cursor continua sendo a forma de aprofundar resultados longos. Paginação é transporte, não orçamento. Cancelamento explícito, substituição do turno e limites externos inevitáveis do provider e do contexto permanecem válidos. Ausência ou falha em uma fonte específica não implica ausência nas demais fontes; quando o modelo escolhe uma fonte, nenhuma alternativa é acionada automaticamente.
+`vr_sources`, `vr_search` e `vr_read` pertencem somente aos modos VR e Ultra. O modo OFF não registra nem executa essas tools built-in: ele é um fluxo de modelo direto, recebe `MarySettings.root` como raiz de fontes opcional somente leitura e depende das capacidades nativas do provider para listar, buscar e ler arquivos. O OFF não executa retrieval automático, `RetrievalService`, `KnowledgeRouter`, fan-out ou agentes VR; tools customizadas e MCPs explicitamente escolhidos pelo usuário permanecem disponíveis.
+
+Quando as tools estão ativas em VR/Ultra, elas não possuem quota cumulativa por chamadas, caracteres, tempo ou tokens no chat. Cada chamada respeita o limite da própria ferramenta e a paginação por cursor/next_cursor continua sendo a forma de aprofundar resultados longos. Paginação é transporte, não orçamento. Cancelamento explícito, substituição do turno e limites externos inevitáveis do provider e do contexto permanecem válidos. Ausência ou falha em uma fonte específica não implica ausência nas demais fontes; quando o modelo escolhe uma fonte, nenhuma alternativa é acionada automaticamente.
 
 ---
 

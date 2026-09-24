@@ -80,6 +80,26 @@ def _bundle(*, candidates: int = 1) -> EvidenceBundle:
     )
 
 
+def _assert_off_source_root_contract(
+    prompt: str, settings: MarySettings, request: str
+) -> None:
+    assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in prompt
+    assert str(settings.root.resolve()) in prompt
+    assert "somente leitura" in prompt
+    assert "Responda primeiro com raciocínio próprio" in prompt
+    assert "consulte essa raiz apenas quando a análise se beneficiar" in prompt
+    assert "capacidades nativas do provedor" in prompt
+    assert "Nunca crie, edite, mova, renomeie ou exclua" in prompt
+    assert "não houver acesso nativo ao filesystem" in prompt
+    assert "não prova inexistência global" in prompt
+    for name in ("vr_sources", "vr_search", "vr_read"):
+        assert name not in prompt
+    assert 'source=""' not in prompt
+    assert "CONSULTA SOB DEMANDA" not in prompt
+    assert "SOLICITAÇÃO DO USUÁRIO:" in prompt
+    assert prompt.rstrip().endswith(request)
+
+
 # ---------------------------------------------------------------- #3 cache
 
 
@@ -107,30 +127,56 @@ class TestPromptPrefixCache:
             assert name in prompt
         assert "<user_request>" in prompt
 
-    def test_off_prompt_keeps_knowledge_optional_and_reasoning_based(
+    def test_off_prompt_points_to_read_only_source_root_without_vr_tools(
         self, tmp_path: Path
     ) -> None:
-        _settings, orchestrator = _orchestrator(tmp_path)
+        settings, orchestrator = _orchestrator(tmp_path)
         workspace = tmp_path / "project"
         workspace.mkdir()
+        (workspace / "INSTRUCTIONS.md").write_text(
+            "Regras internas do projeto", encoding="utf-8"
+        )
+        (workspace / "manual.txt").write_text("Manual", encoding="utf-8")
         conversation_id = orchestrator.new_conversation(
             "codex", "sol", defer_provider_start=True, workspace=workspace, vr_enabled=False
         )
         conversation = dict(orchestrator._conversation(conversation_id))
+        request = "Analise este stack trace sem consultar a base."
         with patch.object(
             orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
         ):
             prompt = orchestrator._enrich_off_prompt(
-                "Analise este stack trace sem consultar a base.",
+                request,
                 conversation=conversation,
                 workspace=workspace,
             )
-        assert "ACESSO LOCAL SOB DEMANDA" in prompt
-        assert "opcionais" in prompt
-        assert "stack trace" in prompt
-        assert "sem consultar a documentação" in prompt
-        assert "source=\"\"" in prompt
-        assert "CONSULTA SOB DEMANDA" not in prompt
+        assert "INSTRUÇÕES DO PROJETO:" in prompt
+        assert "Regras internas do projeto" in prompt
+        assert "MATERIAIS E ARQUIVOS DO PROJETO:" in prompt
+        assert "manual.txt" in prompt
+        _assert_off_source_root_contract(prompt, settings, request)
+
+    def test_off_prompt_managed_workspace_keeps_source_root_without_inheritance(
+        self, tmp_path: Path
+    ) -> None:
+        settings, orchestrator = _orchestrator(tmp_path)
+        conversation_id = orchestrator.new_conversation(
+            "codex", "sol", defer_provider_start=True, vr_enabled=False
+        )
+        conversation = dict(orchestrator._conversation(conversation_id))
+        workspace = settings.resolve_path(conversation["workspace"])
+        request = "Pergunta geral sem projeto."
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompt = orchestrator._enrich_off_prompt(
+                request,
+                conversation=conversation,
+                workspace=workspace,
+            )
+        assert "INSTRUÇÕES DO PROJETO:" not in prompt
+        assert "MATERIAIS E ARQUIVOS DO PROJETO:" not in prompt
+        _assert_off_source_root_contract(prompt, settings, request)
 
     def test_empty_bundle_also_skips_automatic_search(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)

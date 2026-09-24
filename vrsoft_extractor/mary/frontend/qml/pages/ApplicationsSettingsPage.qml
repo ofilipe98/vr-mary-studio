@@ -148,6 +148,51 @@ Item {
                 }
 
                 Rectangle {
+                    objectName: "applicationsCatalogProgressCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: chat.applicationsCatalogLoading
+                    implicitHeight: applicationsCatalogProgressLayout.implicitHeight + Theme.spaceMd
+                    radius: Theme.radiusSmall
+                    color: Theme.palette.codeSurface
+                    border.width: 1
+                    border.color: Theme.palette.chatBorder
+
+                    ColumnLayout {
+                        id: applicationsCatalogProgressLayout
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceSm
+                        spacing: Theme.spaceXs
+
+                        Text {
+                            objectName: "applicationsCatalogProgressLabel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: chat.applicationsCatalogStatusText
+                            color: Theme.palette.headingText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.weight: Theme.weightMedium
+                            elide: Text.ElideRight
+                            renderType: Theme.textRenderType
+                        }
+
+                        VrProgressBar {
+                            objectName: "applicationsCatalogProgressBar"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            barHeight: 6
+                            accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.applicationsCatalogProgress
+                            indeterminate: chat.applicationsCatalogLoading
+                                && chat.applicationsCatalogProgressTotal <= 0
+                        }
+                    }
+                }
+
+                Rectangle {
                     objectName: "decompiledExportProgressCard"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
@@ -1265,24 +1310,6 @@ Item {
                 Layout.minimumWidth: 0
                 spacing: Theme.scaledGeometry(16)
                 visible: root.navigationLevel === 0
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: chat.applicationsCatalogLoading && chat.applicationsCatalog.length > 0
-                    spacing: Theme.scaledGeometry(8)
-                    VrProgressBar {
-                        Layout.fillWidth: true
-                        barHeight: 3
-                        indeterminate: true
-                        accentColor: Theme.palette.brandOrange
-                    }
-                    Text {
-                        text: "Atualizando catálogo…"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeCaption
-                    }
-                }
 
                 Text {
                     Layout.fillWidth: true

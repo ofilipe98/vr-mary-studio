@@ -405,7 +405,7 @@ class ChatOrchestrator:
                 conversation_id,
                 **{self._native_column(bool(vr_enabled)): native_id,
                    "native_tools_id_vr" if vr_enabled else "native_tools_id":
-                       native_id if any(t.get("name") == VR_READ_TOOL_NAME for t in options.dynamic_tools) else ""},
+                       native_id if self._has_vr_tools(options.dynamic_tools) else ""},
             )
         return conversation_id
 
@@ -483,12 +483,16 @@ class ChatOrchestrator:
         native_column = self._native_column(use_vr)
         native_id = str(conversation[native_column] or "")
         tools_column = "native_tools_id_vr" if use_vr else "native_tools_id"
+        desired_has_vr_tools = self._has_vr_tools(options.dynamic_tools)
+        session_has_vr_tools = bool(native_id) and (
+            str(conversation[tools_column] or "") == native_id
+        )
         if (conversation["provider"] == "codex" and native_id
-                and conversation[tools_column] != native_id
-                and any(tool.get("name") == VR_READ_TOOL_NAME for tool in options.dynamic_tools)):
+                and desired_has_vr_tools != session_has_vr_tools):
             # Codex registers dynamic tools only on thread/start. Reuse the local
-            # conversation and its normal history transfer when upgrading an old
-            # native session; thread/resume cannot add the new tool contract.
+            # conversation and its normal history transfer when the native
+            # session contract must gain the VR tools (VR/Ultra) or drop them
+            # (OFF); thread/resume cannot change the registered tool set.
             native_id = ""
         if resume_run_id:
             # A cancelled research may never have sent a turn to its main native thread.
@@ -514,7 +518,7 @@ class ChatOrchestrator:
                 )
                 self.database.update_conversation(
                     conversation_id, **{native_column: native_id, tools_column:
-                        native_id if any(t.get("name") == VR_READ_TOOL_NAME for t in options.dynamic_tools) else ""}
+                        native_id if desired_has_vr_tools else ""}
                 )
             local_query = (
                 self._local_search_query(
@@ -2052,52 +2056,51 @@ class ChatOrchestrator:
         workspace: Path,
     ) -> str:
         from .workspace import is_managed_conversation_workspace
-        if is_managed_conversation_workspace(self.settings, workspace):
-            # Managed scratchpads have no persistent project instructions to
-            # inherit. Local knowledge remains available through registered
-            # tools/MCP without altering the user's prompt.
-            return text
-
-        instructions_text = ""
-        for name in ("INSTRUCTIONS.md", "instructions.md"):
-            instr_path = workspace / name
-            if instr_path.is_file() and instr_path.resolve().is_relative_to(workspace.resolve()):
-                try:
-                    with instr_path.open(encoding="utf-8", errors="replace") as stream:
-                        instructions_text = stream.read(8000).strip()
-                    if instructions_text:
-                        break
-                except Exception:
-                    pass
-
-        project_files: list[str] = []
-        try:
-            for item in sorted(workspace.iterdir()):
-                if len(project_files) >= 50:
-                    break
-                if item.name.startswith(".") or item.name.startswith("__"):
-                    continue
-                kind = "diretório" if item.is_dir() else "arquivo"
-                project_files.append(f"- {item.name} ({kind})")
-        except Exception:
-            pass
-
+        source_root = self.settings.root.resolve()
         sections: list[str] = []
-        if instructions_text:
-            sections.append(f"INSTRUÇÕES DO PROJETO:\n{instructions_text}")
-        if project_files:
-            file_list = "\n".join(project_files[:50])
-            sections.append(f"MATERIAIS E ARQUIVOS DO PROJETO:\n{file_list}")
+
+        if not is_managed_conversation_workspace(self.settings, workspace):
+            instructions_text = ""
+            for name in ("INSTRUCTIONS.md", "instructions.md"):
+                instr_path = workspace / name
+                if instr_path.is_file() and instr_path.resolve().is_relative_to(workspace.resolve()):
+                    try:
+                        with instr_path.open(encoding="utf-8", errors="replace") as stream:
+                            instructions_text = stream.read(8000).strip()
+                        if instructions_text:
+                            break
+                    except Exception:
+                        pass
+
+            project_files: list[str] = []
+            try:
+                for item in sorted(workspace.iterdir()):
+                    if len(project_files) >= 50:
+                        break
+                    if item.name.startswith(".") or item.name.startswith("__"):
+                        continue
+                    kind = "diretório" if item.is_dir() else "arquivo"
+                    project_files.append(f"- {item.name} ({kind})")
+            except Exception:
+                pass
+
+            if instructions_text:
+                sections.append(f"INSTRUÇÕES DO PROJETO:\n{instructions_text}")
+            if project_files:
+                file_list = "\n".join(project_files[:50])
+                sections.append(f"MATERIAIS E ARQUIVOS DO PROJETO:\n{file_list}")
 
         sections.append(
-            "ACESSO LOCAL SOB DEMANDA: As fontes locais são opcionais e ficam disponíveis "
-            "para consulta sob demanda por meio das ferramentas nativas `vr_sources`, `vr_search` "
-            "e `vr_read` (Wiki, KB, Schema e código Java descompilado). Você pode analisar "
-            "stack trace, código fornecido e seu próprio raciocínio sem consultar a documentação. "
-            "Se decidir consultar uma fonte e ela não resolver a pergunta, tente outra fonte "
-            "(Wiki, KB, Schema ou Code) ou source=\"\" antes de concluir que não há evidência. "
-            "Para arquivos compartilhados "
-            "do projeto, use source='project' e as referencias retornadas por vr_sources."
+            "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:\n"
+            f"A raiz de fontes locais configurada é {source_root} e deve ser "
+            "tratada como somente leitura. Responda primeiro com raciocínio "
+            "próprio; consulte essa raiz apenas quando a análise se beneficiar "
+            "de evidência local. Para consultar, use as capacidades nativas do "
+            "provedor para listar, buscar e ler arquivos. Nunca crie, edite, "
+            "mova, renomeie ou exclua arquivos dentro dessa raiz. Não afirme que "
+            "consultou a base quando não houver acesso nativo ao filesystem. A "
+            "ausência de resultado textual em um arquivo não prova inexistência "
+            "global."
         )
 
         prompt_header = "\n\n".join(sections)
@@ -3236,23 +3239,33 @@ class ChatOrchestrator:
             for tool_id in selected["dynamic"]
             if tool_id in definitions
         )
-        # In all modes (OFF, VR, ULTRA), register vr_sources, vr_search, vr_read
-        # so the model has on-demand access to local knowledge and code. The
-        # mode only selects the retrieval strategy, never source availability.
-        for spec in all_vr_tools_specs():
-            if not any(d.get("name") == spec.get("name") for d in dynamic):
-                dynamic = (*dynamic, spec)
-        if self._monitor_adapter is not None:
-            dynamic = tuple(
-                spec for spec in dynamic if spec.get("name") not in MONITOR_TOOL_NAMES
-            )
-            dynamic = (*dynamic, *monitor_tool_specs())
         base = ConversationOptions.from_mapping(row)
         row_mode = str(row["vr_mode"] or "").strip().casefold()
         if row_mode not in ConversationOptions.VALID_VR_MODES:
             row_mode = "vr" if base.vr_enabled else "off"
         if use_vr is False:
             row_mode = "off"
+        # VR and Ultra register vr_sources, vr_search and vr_read so the model
+        # can consult local knowledge and code on demand. OFF is a direct model
+        # flow and never registers the built-in VR tools.
+        if row_mode in {"vr", "ultra"}:
+            for spec in all_vr_tools_specs():
+                if not any(d.get("name") == spec.get("name") for d in dynamic):
+                    dynamic = (*dynamic, spec)
+        if self._monitor_adapter is not None:
+            dynamic = tuple(
+                spec for spec in dynamic if spec.get("name") not in MONITOR_TOOL_NAMES
+            )
+            dynamic = (*dynamic, *monitor_tool_specs())
+        if row_mode == "off":
+            vr_names = {
+                VR_SOURCES_TOOL_NAME,
+                VR_SEARCH_TOOL_NAME,
+                VR_READ_TOOL_NAME,
+            }
+            dynamic = tuple(
+                spec for spec in dynamic if spec.get("name") not in vr_names
+            )
         return ConversationOptions(
             model=base.model,
             effort=base.effort,
@@ -3373,6 +3386,15 @@ class ChatOrchestrator:
     @staticmethod
     def _native_column(use_vr: bool) -> str:
         return "native_id_vr" if use_vr else "native_id"
+
+    @staticmethod
+    def _has_vr_tools(dynamic_tools: Iterable[dict[str, Any]]) -> bool:
+        vr_names = {
+            VR_SOURCES_TOOL_NAME,
+            VR_SEARCH_TOOL_NAME,
+            VR_READ_TOOL_NAME,
+        }
+        return any(str(tool.get("name") or "") in vr_names for tool in dynamic_tools)
 
     def _conversation(self, conversation_id: str):
         row = self.database.get_conversation(conversation_id)

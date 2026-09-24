@@ -3183,7 +3183,7 @@ class MaryCoreTest(unittest.TestCase):
             self.assertNotIn("funcao-102--3742.md", prompt)
             self.assertNotIn("Atalho O", prompt)
 
-    def test_disabled_vr_flow_sends_plain_prompt_without_local_search(self):
+    def test_disabled_vr_flow_sends_direct_prompt_without_local_search(self):
         class FakeProvider:
             def __init__(self):
                 self.prompts = []
@@ -3222,7 +3222,13 @@ class MaryCoreTest(unittest.TestCase):
                 time.sleep(0.005)
 
         local_search.assert_not_called()
-        self.assertEqual(provider.prompts[-1], "Responda apenas com a LLM.")
+        prompt = provider.prompts[-1]
+        self.assertIn("FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:", prompt)
+        self.assertIn("SOLICITAÇÃO DO USUÁRIO:\nResponda apenas com a LLM.", prompt)
+        self.assertNotIn("Contrato de acesso tool-driven", prompt)
+        self.assertNotIn("vr_sources", prompt)
+        self.assertNotIn("vr_search", prompt)
+        self.assertNotIn("vr_read", prompt)
 
     def test_short_continuation_keeps_previous_user_subject(self):
         database = initialize_workspace(self.settings)

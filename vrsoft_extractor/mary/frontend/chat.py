@@ -320,10 +320,18 @@ class ChatBridge(QObject):
         self._apps_catalog_thread: threading.Thread | None = None
         self._apps_catalog_dirty = False
         self._applications_catalog_loaded = False
+        self._apps_catalog_phase = ""
+        self._apps_catalog_phase_apps = 0
+        self._apps_catalog_phase_versions = 0
+        self._apps_catalog_progress_current = 0
+        self._apps_catalog_progress_total = 0
         self._app_variants: list[dict[str, Any]] = []
         self._selected_app_origin_id = ""
         self._code_processing_relative_jars: tuple[str, ...] = ()
         self._applicationsLoaded.connect(self._on_applications_loaded, Qt.ConnectionType.QueuedConnection)
+        self.applicationsCatalogPhase.connect(
+            self._on_applications_catalog_phase, Qt.ConnectionType.QueuedConnection
+        )
         self._app_comparison_thread: threading.Thread | None = None
         self._app_sources = {}
         self._app_sources_thread = None
@@ -625,6 +633,47 @@ class ChatBridge(QObject):
     def applicationsCatalogLoaded(self) -> bool:  # noqa: N802
         return self._applications_catalog_loaded
 
+    @Property(str, notify=stateChanged)
+    def applicationsCatalogStatusText(self) -> str:  # noqa: N802
+        if not self.applicationsCatalogLoading:
+            return ""
+        phase = self._apps_catalog_phase
+        if phase == "indexing_coverage":
+            total = self._apps_catalog_progress_total
+            if total > 0:
+                percent = min(
+                    100.0,
+                    100.0 * self._apps_catalog_progress_current / total,
+                )
+                return (
+                    "Atualizando catálogo — verificando índice "
+                    f"({self._apps_catalog_progress_current}/{total} pacotes · "
+                    f"{percent:.0f}%)…"
+                )
+        elif phase == "loading_versions":
+            apps_count = self._apps_catalog_phase_apps
+            versions_count = self._apps_catalog_phase_versions
+            if apps_count > 0:
+                return (
+                    f"Atualizando catálogo — {apps_count} aplicativo(s) · "
+                    f"{versions_count} versão(ões) detectados, carregando metadados…"
+                )
+            return "Atualizando catálogo — carregando versões e metadados…"
+        return "Atualizando catálogo — detectando aplicativos…"
+
+    @Property(float, notify=stateChanged)
+    def applicationsCatalogProgress(self) -> float:  # noqa: N802
+        total = self._apps_catalog_progress_total
+        if not self.applicationsCatalogLoading or total <= 0:
+            return 0.0
+        return min(100.0, 100.0 * self._apps_catalog_progress_current / total)
+
+    @Property(int, notify=stateChanged)
+    def applicationsCatalogProgressTotal(self) -> int:  # noqa: N802
+        if not self.applicationsCatalogLoading:
+            return 0
+        return self._apps_catalog_progress_total
+
     @Property("QVariantList", notify=stateChanged)
     def appVariants(self) -> list[dict[str, Any]]:  # noqa: N802
         return [dict(item) for item in self._app_variants]
@@ -645,6 +694,19 @@ class ChatBridge(QObject):
     @Slot(object)
     def _on_applications_loaded(self, result: object) -> None:
         self._CodeAdmin_domain._on_applications_loaded(result)
+
+    @Slot(str, int, int)
+    def _on_applications_catalog_phase(self, phase: str, first: int, second: int) -> None:
+        if self._closed:
+            return
+        self._apps_catalog_phase = str(phase or "")
+        if self._apps_catalog_phase == "loading_versions":
+            self._apps_catalog_phase_apps = int(first)
+            self._apps_catalog_phase_versions = int(second)
+        elif self._apps_catalog_phase == "indexing_coverage":
+            self._apps_catalog_progress_current = int(first)
+            self._apps_catalog_progress_total = int(second)
+        self.stateChanged.emit()
 
     @Slot(object)
     def _on_app_comparison_loaded(self, result: object) -> None:
