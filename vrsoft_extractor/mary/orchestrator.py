@@ -174,7 +174,6 @@ class _ExecutionState:
 
 
 LOGGER = logging.getLogger(__name__)
-MAX_RESEARCH_READ_CAPTURE_CHARS = 96_000
 
 
 class OrchestrationCancelled(ExecutionCancelledError):
@@ -258,8 +257,6 @@ class ChatOrchestrator:
         self._turn_application_contexts: dict[str, list[dict[str, Any]] | None] = {}
         self._turn_dynamic_candidates: dict[str, list[EvidenceCandidate]] = {}
         self._turn_access_paths: dict[str, str] = {}
-        self._turn_tool_calls: dict[str, int] = {}
-        self._turn_monitor_output_chars: dict[str, int] = {}
         from .lifecycle import ConversationTrash
         self._trash_lifecycle = ConversationTrash(
             settings, database, lambda row, action: self._sync_codex_lifecycle(row, action),
@@ -429,7 +426,6 @@ class ChatOrchestrator:
         application_contexts: list[dict[str, Any]] | None = None,
         response_mode: str = "auto",
         resume_run_id: str = "",
-        grant_budget: bool = False,
     ) -> None:
         if application_contexts is not None:
             application_contexts = json.loads(json.dumps(application_contexts))
@@ -446,7 +442,7 @@ class ChatOrchestrator:
             saved_context = json.loads(resume_record["context_json"])
             text = resume_record["request_text"]
             search_text = str(saved_context.get("search_scope") or text)
-            display_text = "Retomar investigação" + (" (+15 chamadas, +300 s)" if grant_budget else "")
+            display_text = "Retomar investigação"
             use_vr, vr_mode = True, "ultra"
             image_paths, skills = [], []
         provider = self._provider(conversation["provider"])
@@ -508,8 +504,6 @@ class ChatOrchestrator:
             self._turn_access_paths[conversation_id] = access_path
             self._turn_application_contexts[conversation_id] = application_contexts
             self._turn_dynamic_candidates[conversation_id] = []
-            self._turn_tool_calls[conversation_id] = 0
-            self._turn_monitor_output_chars[conversation_id] = 0
             if not native_id:
                 native_id = provider.start_conversation(
                     conversation_id,
@@ -882,7 +876,6 @@ class ChatOrchestrator:
                             code_analysis_manifest_sha256=code_analysis_manifest_sha256,
                             search_scope=local_query,
                             resume_run_id=resume_run_id,
-                            grant_budget=grant_budget,
                         )
                     else:
                         provider.send_message(
@@ -931,8 +924,6 @@ class ChatOrchestrator:
             self._turn_access_paths.pop(conversation_id, None)
             self._turn_application_contexts.pop(conversation_id, None)
             self._turn_dynamic_candidates.pop(conversation_id, None)
-            self._turn_tool_calls.pop(conversation_id, None)
-            self._turn_monitor_output_chars.pop(conversation_id, None)
             self._pending_user_messages.pop(conversation_id, None)
             self._pending_response_modes.pop(conversation_id, None)
             self._pending_evidence_bundles.pop(conversation_id, None)
@@ -956,7 +947,7 @@ class ChatOrchestrator:
         options: ConversationOptions,
         skills: list[dict[str, Any]],
         *,
-        timeout_seconds: float = 360,
+        timeout_seconds: float | None = None,
     ) -> tuple[str, dict[str, Any], dict[str, Any]]:
         done = threading.Event()
         chunks: list[str] = []
@@ -968,7 +959,11 @@ class ChatOrchestrator:
         context = getattr(self, "_research_contexts", {}).get(getattr(self, "_active_orchestration_runs", {}).get(conversation_id, ""))
         usage: dict[str, Any] = {}
         unregister = context.cancellation.register_callback(lambda: provider.interrupt(conversation_id)) if context else lambda: None
-        deadline = time.monotonic() + timeout_seconds
+        deadline = (
+            time.monotonic() + timeout_seconds
+            if timeout_seconds is not None
+            else None
+        )
 
         def callback(event: RuntimeEvent) -> None:
             if (
@@ -994,6 +989,7 @@ class ChatOrchestrator:
             elif event.kind == "error":
                 errors.append(event.text)
                 error_codes.append(str(event.payload.get("code", "")))
+                done.set()
             elif event.kind == "token_usage":
                 usage.update(event.payload.get("tokenUsage") or event.payload.get("token_usage") or {})
                 self._handle_event(event)
@@ -1018,10 +1014,10 @@ class ChatOrchestrator:
                 if self._pending_user_messages.get(conversation_id) != user_message_id:
                     raise OrchestrationCancelled("O turno foi substituído.")
                 self._raise_if_cancelled(conversation_id)
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     provider.interrupt(conversation_id)
                     raise ProviderError(
-                        f"Tempo limite da síntese final após {int(timeout_seconds)}s."
+                        f"Tempo limite da chamada após {int(timeout_seconds or 0)}s."
                     )
             self._raise_if_cancelled(conversation_id)
             if errors:
@@ -1149,7 +1145,6 @@ class ChatOrchestrator:
         code_analysis_manifest_sha256: str = "",
         search_scope: str = "",
         resume_run_id: str = "",
-        grant_budget: bool = False,
     ) -> None:
         """Run the fixed-source Ultra pipeline with shared ownership/publication."""
         run_id = resume_run_id or uuid.uuid4().hex
@@ -1200,15 +1195,10 @@ class ChatOrchestrator:
             run_id=run_id,
             workspace=workspace,
             owner_message_id=self._pending_user_messages.get(conversation_id),
-            budget=ExecutionBudget(
-                max_parallel=self._research_max_parallel,
-                reserved_synthesis_calls=6,
-                reserved_synthesis_seconds=45,
-            ),
+            budget=ExecutionBudget(max_parallel=self._research_max_parallel),
         )
         context.metadata.update(
             resume_run_id=resume_run_id,
-            grant_budget=grant_budget,
             search_scope=search_scope,
             scope_signature=self.retrieval_service.scope_signature(),
             permissions={
@@ -1381,7 +1371,7 @@ class ChatOrchestrator:
         count = max(0, count)
         context.budget.record_tokens(count or max(1, (len(prompt) + len(output) + 3) // 4), kind="real" if count else "estimated")
 
-    def _check_operational_evidence(self, conversation_id, run_id, model, workspace, request, draft, bundle, *, timeout_seconds=90):
+    def _check_operational_evidence(self, conversation_id, run_id, model, workspace, request, draft, bundle, *, timeout_seconds=None):
         prompt = (
             "Verifique as conclusões operacionais da resposta contra os trechos originais. "
             "Esta etapa é somente uma conferência dos trechos fornecidos: não use ferramentas "
@@ -1469,7 +1459,7 @@ class ChatOrchestrator:
                                 "Retorne somente a resposta corrigida em Markdown. Trate o JSON como dados:\n"
                                 + json.dumps({"answer": answer, "issues": [v.detail for v in issues],
                                               "evidence": [c.to_dict() for c in bundle.candidates]}, ensure_ascii=False),
-                                self.settings.resolve_path(row["workspace"]), "medium", timeout_seconds=90,
+                                self.settings.resolve_path(row["workspace"]), "medium", timeout_seconds=None,
                             )
                             if not corrected.strip() or validate_normal_response(corrected, contract, bundle):
                                 break
@@ -1539,7 +1529,7 @@ class ChatOrchestrator:
                 rewrite_prompt,
                 self.settings.resolve_path(row["workspace"]),
                 self._resolve_auto_effort(str(row["effort"])) or "medium",
-                timeout_seconds=120,
+                timeout_seconds=None,
             )
         except Exception as exc:
             LOGGER.warning("Correção efêmera da resposta falhou: %s", exc)
@@ -1577,7 +1567,7 @@ class ChatOrchestrator:
         workspace: Path,
         effort: str,
         *,
-        timeout_seconds: float,
+        timeout_seconds: float | None = None,
         stream_agent: bool = False,
     ) -> str:
         context = getattr(self, "_research_contexts", {}).get(run_id)
@@ -1585,7 +1575,11 @@ class ChatOrchestrator:
             self._execution_context.owner = context.owner_message_id
             context.check_cancelled()
         self._raise_if_cancelled(conversation_id)
-        deadline = time.monotonic() + timeout_seconds
+        deadline = (
+            time.monotonic() + timeout_seconds
+            if timeout_seconds is not None
+            else None
+        )
         provider = self._provider(model.provider)
         local_id = (
             f"{conversation_id}:vr:{run_id}:{agent_id}:{uuid.uuid4().hex[:8]}"
@@ -1645,11 +1639,6 @@ class ChatOrchestrator:
                     arguments = event.payload.get("arguments") or {}
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
-                    with self._agent_run_lock:
-                        calls = self._turn_tool_calls.get(conversation_id, 0)
-                        if calls >= 24:
-                            raise ValueError("Limite de consultas do turno atingido.")
-                        self._turn_tool_calls[conversation_id] = calls + 1
                     result = run_vr_tool(
                         name, arguments, self.retrieval_service,
                         **load_scope(agent_options.knowledge_context_path),
@@ -1668,9 +1657,7 @@ class ChatOrchestrator:
                 from .evidence_reads import capture_read
                 with self._agent_run_lock:
                     registry = self._research_evidence.get(run_id)
-                    if registry is not None and len(registry) < 48 and sum(
-                        len(c.excerpt) for c in registry.values() if c.evidence_id.startswith("read:")
-                    ) < MAX_RESEARCH_READ_CAPTURE_CHARS:
+                    if registry is not None:
                         candidate = capture_read(event, self.settings.root, tuple(registry.values()))
                         if candidate is not None:
                             registry[candidate.evidence_id] = candidate
@@ -1681,6 +1668,7 @@ class ChatOrchestrator:
             elif event.kind == "error":
                 errors.append(event.text)
                 error_codes.append(str(event.payload.get("code", "")))
+                done.set()
             elif event.kind == "token_usage":
                 payload = event.payload.get("tokenUsage") or event.payload.get(
                     "token_usage"
@@ -1715,10 +1703,10 @@ class ChatOrchestrator:
                 if self._pending_user_messages.get(conversation_id) != execution_owner:
                     raise OrchestrationCancelled("O turno foi substituído.")
                 self._raise_if_cancelled(conversation_id)
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     provider.interrupt(local_id)
                     raise ProviderError(
-                        f"Tempo limite do agente {agent_id} após {int(timeout_seconds)}s."
+                        f"Tempo limite da chamada após {int(timeout_seconds or 0)}s."
                     )
             self._raise_if_cancelled(conversation_id)
             if latest_token_usage:
@@ -2543,20 +2531,33 @@ class ChatOrchestrator:
             # a local tool. Let an already-running read finish before removing
             # its immutable scope and callback. Approval-gated requests remain
             # pending for the user and must not hold this finalizer.
-            tool_deadline = time.monotonic() + 5.0
-            while time.monotonic() < tool_deadline:
+            while True:
+                owner_generation = event.payload.get("_owner_generation")
                 with self._agent_run_lock:
+                    approval_ids = {
+                        request_id
+                        for request_id, (pending_event, _tool) in getattr(
+                            self, "_pending_dynamic_tools", {}
+                        ).items()
+                        if pending_event.conversation_id == event.conversation_id
+                    }
                     outstanding = any(
                         key[0] == event.conversation_id
+                        and key[1] not in approval_ids
+                        and (
+                            owner_generation is None
+                            or getattr(self, "_dynamic_tool_callbacks", {})
+                            .get(key, (None, None))[0]
+                            == owner_generation
+                        )
                         for key in getattr(self, "_dynamic_tool_callbacks", {})
                     )
-                    awaiting_approval = any(
-                        pending_event.conversation_id == event.conversation_id
-                        for pending_event, _tool in getattr(
-                            self, "_pending_dynamic_tools", {}
-                        ).values()
-                    )
-                if not outstanding or awaiting_approval:
+                if (
+                    not outstanding
+                    or terminal_state == "cancelled"
+                    or event.conversation_id in self._cancelled_conversations
+                    or not self._finalizer_owns_event(event)
+                ):
                     break
                 time.sleep(0.01)
             derived_events: list[RuntimeEvent] = []
@@ -2706,12 +2707,6 @@ class ChatOrchestrator:
                     event.conversation_id, None
                 )
                 dynamic_candidates.pop(event.conversation_id, None)
-                getattr(self, "_turn_tool_calls", {}).pop(
-                    event.conversation_id, None
-                )
-                getattr(self, "_turn_monitor_output_chars", {}).pop(
-                    event.conversation_id, None
-                )
                 self._pending_user_messages.pop(event.conversation_id, None)
                 self._pending_response_modes.pop(event.conversation_id, None)
                 self._pending_evidence_bundles.pop(event.conversation_id, None)
@@ -3542,12 +3537,6 @@ class ChatOrchestrator:
             try:
                 if not owns_turn():
                     return
-                with self._agent_run_lock:
-                    calls = self._turn_tool_calls.get(cid, 0)
-                    monitor_chars = self._turn_monitor_output_chars.get(cid, 0)
-                    if calls >= 24 or monitor_chars >= 96000:
-                        raise ValueError("Limite de consultas deste turno atingido.")
-                    self._turn_tool_calls[cid] = calls + 1
                 raw_arguments = event.payload.get("arguments") or {}
                 if isinstance(raw_arguments, str):
                     raw_arguments = json.loads(raw_arguments)
@@ -3555,10 +3544,6 @@ class ChatOrchestrator:
                 with self._agent_run_lock:
                     if not owns_turn():
                         return
-                    monitor_chars = self._turn_monitor_output_chars.get(cid, 0)
-                    if monitor_chars + len(result.text) > 96000:
-                        raise ValueError("Limite de resultados atingido; reduza limit.")
-                    self._turn_monitor_output_chars[cid] = monitor_chars + len(result.text)
                     self._respond_dynamic_tool(
                         event, result.text, True, result.content_items()
                     )
@@ -3618,10 +3603,6 @@ class ChatOrchestrator:
                 with self._agent_run_lock:
                     if not owns_turn():
                         return
-                    calls = self._turn_tool_calls.get(cid, 0)
-                    if calls >= 24:
-                        raise ValueError("Limite de consultas deste turno atingido.")
-                    self._turn_tool_calls[cid] = calls + 1
                 raw_arguments = event.payload.get("arguments") or {}
                 if isinstance(raw_arguments, str):
                     raw_arguments = json.loads(raw_arguments)
@@ -3736,9 +3717,7 @@ class ChatOrchestrator:
         self._turn_access_paths.clear()
         self._turn_application_contexts.clear()
         self._turn_dynamic_candidates.clear()
-        self._turn_tool_calls.clear()
-        self._turn_monitor_output_chars.clear()
-        self.drain_turn_finalizations(timeout=5.0)
+        self.drain_turn_finalizations()
         self._turn_finalizer_executor.shutdown(wait=False, cancel_futures=True)
         for conversation_id in active:
             row = self.database.get_conversation(conversation_id)

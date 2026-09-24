@@ -1,15 +1,3 @@
-"""
-Testes de orçamento global e cancelamento do Ultra (Lote L2).
-
-Valida os requisitos especificados em PLANO_V2_ULTRA_BUSCA_ARQUITETURA.md:
-1. Reserva atômica de chamadas entre workers concorrentes.
-2. Cálculo dinâmico de timeout baseado no prazo restante.
-3. Reserva estrita de capacidade para síntese e validação.
-4. Contabilização de tokens (real, estimado, desconhecido).
-5. Cancelamento cooperativo imediato durante esperas e retry backoff.
-6. Preservação de achados parciais em caso de esgotamento de orçamento ou falha isolada de worker.
-"""
-
 from __future__ import annotations
 
 import json
@@ -23,7 +11,6 @@ import pytest
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.execution import (
-    CallReservationError,
     CancellationToken,
     ExecutionBudget,
     ExecutionContext,
@@ -37,172 +24,120 @@ from vrsoft_extractor.mary.models import (
     QueryProfile,
     SourceSearchReport,
 )
-from vrsoft_extractor.mary.research_fanout import (
-    ULTRA_MAX_PARALLEL_RESEARCHERS,
-)
-from vrsoft_extractor.mary.supervision import (
-    ResponseIntent,
-    build_response_contract,
-)
+from vrsoft_extractor.mary.research_fanout import ULTRA_MAX_PARALLEL_RESEARCHERS
+from vrsoft_extractor.mary.supervision import ResponseIntent, build_response_contract
 
 
-# ---------------------------------------------------------------------------
-# 1. Atomic Reservation & Competing Workers
-# ---------------------------------------------------------------------------
+class TestExecutionTelemetry:
+    def test_more_than_one_hundred_acquisitions_never_exhaust(self) -> None:
+        now = [100.0]
+        budget = ExecutionBudget(max_parallel=2, clock=lambda: now[0])
+        for _ in range(125):
+            assert budget.acquire_call(requested_timeout=1.0) is None
+        assert budget.calls_made == 125
+        assert budget.calls_in_flight == 125
+        assert budget.remaining_calls() is None
+        assert budget.time_remaining() is None
+        assert budget.has_synthesis_capacity() is True
+        assert budget.is_time_exhausted() is False
+        for _ in range(125):
+            budget.release_call(tokens_used=3, token_kind="estimated")
+        assert budget.calls_in_flight == 0
+        assert budget.tokens.estimated == 375
+        assert budget.tokens.total_known == 375
 
-class TestBudgetAtomicReservation:
-    def test_competing_workers_disputing_last_call(self) -> None:
-        """Multiple concurrent workers competing for the last available slot."""
-        # max_calls = 5, reserved_synthesis_calls = 2 -> only 3 researcher calls allowed
-        budget = ExecutionBudget(
-            max_active_seconds=60.0,
-            max_calls=5,
-            reserved_synthesis_calls=2,
-        )
-
-        successful_reservations = 0
+    def test_concurrent_acquisitions_are_telemetry_only(self) -> None:
+        budget = ExecutionBudget(max_parallel=1)
+        acquired: list[int] = []
         lock = threading.Lock()
 
-        def try_reserve():
-            nonlocal successful_reservations
-            try:
-                budget.acquire_call(is_synthesis=False)
-                with lock:
-                    successful_reservations += 1
-            except CallReservationError:
-                pass
-
-        # 10 workers concurrently compete
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(try_reserve) for _ in range(10)]
-            for f in futures:
-                f.result()
-
-        assert successful_reservations == 3
-        assert budget.remaining_calls() == 2
-        for _ in range(successful_reservations):
+        def worker() -> None:
+            budget.acquire_call()
+            with lock:
+                acquired.append(budget.calls_made)
             budget.release_call()
-        # Now synthesis can acquire the remaining 2 calls
-        t1 = budget.acquire_call(is_synthesis=True)
-        t2 = budget.acquire_call(is_synthesis=True)
-        assert t1 > 0
-        assert t2 > 0
-        assert budget.remaining_calls() == 0
 
-        # Further synthesis call raises error
-        with pytest.raises(CallReservationError):
-            budget.acquire_call(is_synthesis=True)
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            list(executor.map(lambda _: worker(), range(120)))
+        assert len(acquired) == 120
+        assert budget.calls_made == 120
+        assert budget.calls_in_flight == 0
 
-
-# ---------------------------------------------------------------------------
-# 2. Dynamic Timeout and Controlled Clock
-# ---------------------------------------------------------------------------
-
-class TestBudgetDynamicTimeout:
-    def test_timeout_is_min_of_requested_and_remaining(self) -> None:
-        simulated_time = 1000.0
-
-        def clock():
-            return simulated_time
-
-        budget = ExecutionBudget(
-            max_active_seconds=30.0,
-            max_calls=10,
-            clock=clock,
-        )
-
-        # Initially 30s remaining
-        assert budget.time_remaining() == 30.0
-        # Requested 150s, but only 30s left -> returns 30s
-        t = budget.acquire_call(is_synthesis=False, requested_timeout=150.0)
-        assert t == 30.0
+    def test_large_elapsed_clock_does_not_stop_new_calls(self) -> None:
+        now = [0.0]
+        budget = ExecutionBudget(clock=lambda: now[0])
+        now[0] = 10_000.0
+        budget.acquire_call()
         budget.release_call()
+        assert budget.elapsed_seconds() == 10_000.0
+        assert budget.acquire_call() is None
+        assert budget.calls_made == 2
 
-        # Advance simulated time by 25s -> only 5s left
-        simulated_time += 25.0
-        assert budget.time_remaining() == 5.0
-        t2 = budget.acquire_call(is_synthesis=False, requested_timeout=10.0)
-        assert t2 == 5.0
-        budget.release_call()
+    def test_token_categories_and_snapshot_are_preserved(self) -> None:
+        now = [10.0]
+        budget = ExecutionBudget(max_parallel=3, clock=lambda: now[0])
+        budget.record_tokens(7, kind="real")
+        budget.record_tokens(11, kind="estimated")
+        budget.record_tokens(13, kind="unknown")
+        budget.acquire_call()
+        snapshot = budget.to_dict()
+        assert snapshot["unlimited"] is True
+        assert set(snapshot) == {
+            "unlimited",
+            "max_parallel",
+            "calls_made",
+            "calls_in_flight",
+            "elapsed_seconds",
+            "tokens",
+        }
+        restored = ExecutionBudget.from_snapshot(snapshot, clock=lambda: now[0])
+        assert restored.max_parallel == 3
+        assert restored.calls_in_flight == 0
+        assert restored.tokens.to_dict() == budget.tokens.to_dict()
+        assert restored.remaining_calls() is None
+        assert restored.time_remaining() is None
 
-        # Advance simulated time past deadline
-        simulated_time += 10.0
-        assert budget.is_time_exhausted()
-        with pytest.raises(CallReservationError, match="Tempo máximo de execução esgotado"):
-            budget.acquire_call(is_synthesis=True)
+        legacy = {
+            "max_active_seconds": 1,
+            "max_calls": 1,
+            "max_retries_per_worker": 0,
+            "token_limit": 1,
+            "calls_made": 40,
+            "elapsed_seconds": 500,
+            "tokens": {"real": 2, "estimated": 0, "unknown": 0},
+        }
+        resumed = ExecutionBudget.from_snapshot(legacy, clock=lambda: now[0])
+        assert resumed.calls_made == 40
+        assert resumed.acquire_call() is None
+        assert resumed.tokens.real == 2
 
-
-# ---------------------------------------------------------------------------
-# 3. Token Accounting
-# ---------------------------------------------------------------------------
-
-class TestTokenAccounting:
-    def test_tokens_distinguish_real_estimated_unknown(self) -> None:
-        budget = ExecutionBudget(max_calls=10)
-        budget.record_tokens(150, kind="real")
-        budget.record_tokens(300, kind="estimated")
-        budget.record_tokens(50, kind="unknown")
-
-        tokens = budget.tokens
-        assert tokens.real == 150
-        assert tokens.estimated == 300
-        assert tokens.unknown == 50
-        assert tokens.total_known == 450
-
-        d = budget.to_dict()
-        assert d["tokens"]["real"] == 150
-        assert d["tokens"]["estimated"] == 300
-        assert d["tokens"]["unknown"] == 50
-        assert d["tokens"]["total_known"] == 450
-
-
-# ---------------------------------------------------------------------------
-# 4. Cooperative Cancellation
-# ---------------------------------------------------------------------------
 
 class TestCooperativeCancellation:
     def test_cancellation_wakes_wait_immediately(self) -> None:
         token = CancellationToken()
-        assert not token.is_cancelled
+        called = threading.Event()
 
-        callback_called = False
-
-        def on_cancel():
-            nonlocal callback_called
-            callback_called = True
+        def on_cancel() -> None:
+            called.set()
 
         token.register_callback(on_cancel)
+        result: list[bool] = []
 
-        # Start a thread that waits for 10 seconds
-        wait_result = []
+        def worker() -> None:
+            result.append(token.wait(10.0))
 
-        def wait_worker():
-            cancelled = token.wait(10.0)
-            wait_result.append(cancelled)
-
-        t = threading.Thread(target=wait_worker)
-        t.start()
-
-        # Cancel after 50ms
-        time.sleep(0.05)
+        thread = threading.Thread(target=worker)
+        thread.start()
         token.cancel(reason="user_stop")
-        t.join(timeout=1.0)
-
-        assert not t.is_alive()
-        assert wait_result == [True]
-        assert callback_called is True
-        assert token.is_cancelled
-        assert token.reason == "user_stop"
-
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+        assert result == [True]
+        assert called.is_set()
         with pytest.raises(ExecutionCancelledError, match="user_stop"):
             token.check_cancelled()
 
 
-# ---------------------------------------------------------------------------
-# 5. ExecutionRunner Integration with Budget and Cancellation
-# ---------------------------------------------------------------------------
-
-class TestUltraSourceFanoutBudget:
+class TestUltraSourceFanoutTelemetry:
     def _runner(
         self,
         tmp_path: Path,
@@ -248,18 +183,14 @@ class TestUltraSourceFanoutBudget:
                 ),
             )
 
-        retrieval.route_source.side_effect = (
-            lambda query, source: bundle_for(source)
-        )
+        retrieval.route_source.side_effect = lambda query, source: bundle_for(source)
         events: list[tuple[str, str, dict]] = []
         runner = ExecutionRunner(
             settings=settings,
             providers={},
             retrieval=retrieval,
-            event_emitter=(
-                lambda cid, kind, text, payload: events.append(
-                    (kind, text, payload)
-                )
+            event_emitter=lambda cid, kind, text, payload: events.append(
+                (kind, text, payload)
             ),
             ephemeral_turn_runner=ephemeral,
             buffered_turn_runner=buffered,
@@ -314,7 +245,7 @@ class TestUltraSourceFanoutBudget:
             request="pergunta",
         )
 
-    def test_ultra_executor_limits_parallelism_to_budget(self, tmp_path: Path) -> None:
+    def test_scheduler_caps_workers_without_budget_failure(self, tmp_path: Path) -> None:
         active = 0
         peak = 0
         lock = threading.Lock()
@@ -332,24 +263,16 @@ class TestUltraSourceFanoutBudget:
         runner, _events = self._runner(
             tmp_path, ephemeral=fake_ephemeral, buffered=self._buffered
         )
-        budget = ExecutionBudget(
-            max_active_seconds=60.0,
-            max_calls=15,
-            max_parallel=2,
-            reserved_synthesis_calls=2,
-        )
-
+        budget = ExecutionBudget(max_parallel=2)
         result = self._execute(
             runner, tmp_path, run_id="run-ultra-parallel", budget=budget
         )
-
         assert result.draft is not None
-        assert peak == 2, "o executor deve limitar a concorrência ao orçamento"
+        assert peak == 2
+        assert budget.calls_made >= 4
         assert budget.calls_in_flight == 0
 
-    def test_ultra_executor_runs_four_workers_when_budget_permits(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_four_workers_can_share_the_scheduler(self, tmp_path: Path, monkeypatch) -> None:
         barrier = threading.Barrier(4, timeout=5)
         active = 0
         peak = 0
@@ -392,13 +315,7 @@ class TestUltraSourceFanoutBudget:
             tmp_path, ephemeral=fake_ephemeral, buffered=self._buffered
         )
         runner.research_max_parallel = ULTRA_MAX_PARALLEL_RESEARCHERS
-        budget = ExecutionBudget(
-            max_active_seconds=60.0,
-            max_calls=15,
-            max_parallel=ULTRA_MAX_PARALLEL_RESEARCHERS,
-            reserved_synthesis_calls=2,
-        )
-
+        budget = ExecutionBudget(max_parallel=ULTRA_MAX_PARALLEL_RESEARCHERS)
         result = self._execute(
             runner,
             tmp_path,
@@ -406,43 +323,12 @@ class TestUltraSourceFanoutBudget:
             budget=budget,
             code_analysis_enabled=True,
         )
-
         assert result.draft is not None
-        assert not barrier.broken, "as quatro frentes precisam coexistir"
+        assert not barrier.broken
         assert peak == ULTRA_MAX_PARALLEL_RESEARCHERS
         assert budget.calls_in_flight == 0
 
-    def test_ultra_executor_preserves_synthesis_reservation(
-        self, tmp_path: Path
-    ) -> None:
-        runner, events = self._runner(
-            tmp_path, ephemeral=self._report, buffered=self._buffered
-        )
-        # 3 calls total, 2 reserved for synthesis -> exactly one researcher runs.
-        budget = ExecutionBudget(
-            max_active_seconds=60.0,
-            max_calls=3,
-            max_parallel=4,
-            reserved_synthesis_calls=2,
-        )
-
-        result = self._execute(
-            runner, tmp_path, run_id="run-ultra-reserved", budget=budget
-        )
-
-        assert result.draft is not None
-        assert budget.remaining_calls() == 1
-        failures = [
-            payload for kind, _text, payload in events if kind == "agent_failed"
-        ]
-        assert len(failures) == 2
-        assert all(
-            "reservada" in str(payload.get("error")) for payload in failures
-        )
-
-    def test_ultra_executor_cancellation_prevents_synthesis(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cancellation_prevents_synthesis(self, tmp_path: Path) -> None:
         buffered_calls: list[str] = []
 
         def fake_buffered(*args, **kwargs):
@@ -457,10 +343,9 @@ class TestUltraSourceFanoutBudget:
             conversation_id="conv-ultra-cancel",
             run_id="run-ultra-cancel",
             workspace=tmp_path,
-            budget=ExecutionBudget(max_active_seconds=60.0, max_calls=15),
+            budget=ExecutionBudget(),
         )
         context.cancellation.cancel("user_stop")
-
         with pytest.raises(ExecutionCancelledError, match="user_stop"):
             runner.execute_ultra_source_fanout(
                 context=context,

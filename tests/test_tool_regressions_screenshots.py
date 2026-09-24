@@ -112,27 +112,35 @@ def test_mcp_transport_allows_vr_responses_over_turn_character_total(tmp_path, m
     monkeypatch.setattr(mcp_server, "KnowledgeRouter", lambda *a, **kw: None)
     monkeypatch.setattr(mcp_server, "RetrievalService", lambda *a: Service())
     monkeypatch.setattr(mcp_server, "load_scope", lambda path: {"application_contexts": [{"app_id": "vratacarejo"}]})
-    requests = [{"id": 1, "method": "tools/call", "params": {
-        "name": "vr_search", "arguments": {"query": "fiscal", "limit": 20}}},
-        {"id": 2, "method": "tools/call", "params": {
-        "name": "vr_read", "arguments": {"reference": "example.Fiscal", "limit": 8000}}}]
+    requests = [
+        {
+            "id": index,
+            "method": "tools/call",
+            "params": {
+                "name": "vr_read",
+                "arguments": {"reference": "example.Fiscal", "limit": 8000},
+            },
+        }
+        for index in range(50)
+    ]
     monkeypatch.setattr(mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests)))
     output = StringIO()
     monkeypatch.setattr(mcp_server.sys, "stdout", output)
     mcp_server.run_mcp_server(tmp_path)
     replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
     texts = [reply["content"][0]["text"] for reply in replies]
+    assert len(replies) == 50
     assert not any(reply["isError"] for reply in replies)
-    assert sum(len(text) for text in texts) > 96_000
+    assert sum(len(text) for text in texts) > 192_000
     payloads = [json.loads(text) for text in texts]
     assert all("budget" not in payload for payload in payloads)
     assert all("remaining_chars" not in payload for payload in payloads)
-    read = payloads[1]
+    read = payloads[-1]
     assert read["has_more"]
     assert read["next_cursor"] == len(read["content"])
 
 
-def test_mcp_transport_keeps_the_24_call_loop_guard(tmp_path, monkeypatch):
+def test_mcp_transport_allows_more_than_forty_vr_calls(tmp_path, monkeypatch):
     from io import StringIO
     from vrsoft_extractor.mary import mcp_server
 
@@ -141,16 +149,55 @@ def test_mcp_transport_keeps_the_24_call_loop_guard(tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_server, "RetrievalService", lambda *a: Pages())
     monkeypatch.setattr(mcp_server, "load_scope", lambda path: {"application_contexts": [{"app_id": "vratacarejo"}]})
     requests = [
-        {"id": index, "method": "tools/call", "params": {
-            "name": "vr_read", "arguments": {"reference": "example.Fiscal"}}}
-        for index in range(25)
+        {
+            "id": index,
+            "method": "tools/call",
+            "params": {
+                "name": "vr_read",
+                "arguments": {"reference": "example.Fiscal", "limit": 8000},
+            },
+        }
+        for index in range(50)
     ]
     monkeypatch.setattr(mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests)))
     output = StringIO()
     monkeypatch.setattr(mcp_server.sys, "stdout", output)
     mcp_server.run_mcp_server(tmp_path)
     replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
-    assert len(replies) == 25
-    assert not any(reply["isError"] for reply in replies[:24])
-    assert replies[24]["isError"]
-    assert "Limite de consultas" in replies[24]["content"][0]["text"]
+    assert len(replies) == 50
+    assert not any(reply["isError"] for reply in replies)
+
+
+def test_mcp_transport_allows_large_monitor_results_and_later_calls(tmp_path, monkeypatch):
+    from io import StringIO
+    from vrsoft_extractor.mary import mcp_server
+    from vrsoft_extractor.mary.monitor_adapter import MonitorToolResult
+
+    class Monitor:
+        def execute(self, tool_name, arguments, conversation_id):
+            return MonitorToolResult(
+                text=json.dumps({"data": "x" * 5000}),
+                parsed={"data": "x" * 5000},
+            )
+
+    monkeypatch.setattr(mcp_server, "MaryDatabase", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "KnowledgeRouter", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "RetrievalService", lambda *a: Pages())
+    monkeypatch.setattr(mcp_server.MonitorAdapter, "from_path", lambda path: Monitor())
+    monkeypatch.setattr(mcp_server, "load_scope", lambda path: {})
+    requests = [
+        {
+            "id": index,
+            "method": "tools/call",
+            "params": {"name": "get_connections", "arguments": {}},
+        }
+        for index in range(50)
+    ]
+    monkeypatch.setattr(mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests)))
+    output = StringIO()
+    monkeypatch.setattr(mcp_server.sys, "stdout", output)
+    mcp_server.run_mcp_server(tmp_path, monitor_session_id="00000000-0000-0000-0000-000000000001")
+    replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
+    assert len(replies) == 50
+    assert not any(reply["isError"] for reply in replies)
+    assert sum(len(reply["content"][0]["text"]) for reply in replies) > 192_000

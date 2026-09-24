@@ -2843,17 +2843,30 @@ class ChatBridge(QObject):
 
     @Property("QVariantMap", notify=stateChanged)
     def resumableResearch(self) -> dict:  # noqa: N802
-        return {}
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id:
+            return {}
+        run = self._orchestrator.research_repository.latest_resumable(
+            conversation_id
+        )
+        if not run:
+            return {}
+        return {
+            "run_id": str(run["run_id"]),
+            "status": str(run["status"]),
+            "request_text": str(run["request_text"]),
+            "label": "Retomar investigação",
+        }
 
     @Property(QObject, constant=True)
     def retrievalSettings(self):  # noqa: N802
         return self._retrieval_settings
 
-    @Slot(bool)
-    def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        return None
+    @Slot()
+    def resumeResearch(self) -> None:  # noqa: N802
+        self._ProviderSettings_domain.resumeResearch()
 
-    def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> bool:
+    def _send_message(self, text: str, *, resume_run_id: str = "") -> bool:
         content = str(text or "").strip()
         if content.lower() == "/usage-limits" or content.lower().startswith("/usage-limits "):
             self.openUsageLimits()
@@ -3050,7 +3063,7 @@ class ChatBridge(QObject):
                     else ""
                 ),
                 response_mode=effective_response_mode,
-                **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
+                **({"resume_run_id": resume_run_id} if resume_run_id else {}),
             )
             self._draft_records.pop(conversation_id, None)
             self._persist_draft_records()

@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings
 
+from vrsoft_extractor.mary.chat_tools import VR_READ_TOOL_NAME
 from vrsoft_extractor.mary.config import MarySettings, load_vr_settings
 from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.frontend.chat import ChatBridge
@@ -2323,8 +2324,113 @@ def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
     assert conversation_id not in orchestrator._external_callbacks
     assert conversation_id not in orchestrator._callback_generations
     assert not orchestrator._dynamic_tool_callbacks
-    assert conversation_id not in orchestrator._turn_tool_calls
-    assert conversation_id not in orchestrator._turn_monitor_output_chars
+    assert not hasattr(orchestrator, "_turn_tool_calls")
+    assert not hasattr(orchestrator, "_turn_monitor_output_chars")
+    orchestrator.close()
+
+
+def test_resume_research_reuses_run_without_budget_concept(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    bridge = ChatBridge(
+        settings,
+        database,
+        QSettings(str(tmp_path / "preferences.ini"), QSettings.IniFormat),
+    )
+    conversation_id = bridge._orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+    run_id = "resume-run"
+    bridge._orchestrator.research_repository.create_run(
+        run_id,
+        conversation_id,
+        {},
+        "pergunta original",
+        {},
+    )
+    bridge._orchestrator.research_repository.update_run_status(run_id, "cancelled")
+    bridge._selected = {"conversationId": conversation_id}
+    with patch.object(bridge, "_send_message") as send:
+        bridge.resumeResearch()
+    send.assert_called_once_with(
+        "pergunta original", resume_run_id=run_id
+    )
+    assert bridge.resumableResearch["run_id"] == run_id
+    assert "grant_budget" not in send.call_args.kwargs
+    bridge.close()
+
+
+def test_monitor_and_vr_tools_share_no_turn_output_counter(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+
+    class Provider:
+        def available(self):
+            return True
+
+        def close(self):
+            return None
+
+    class Service:
+        def read(self, reference, *, cursor, limit, **scope):
+            return {
+                "state": "available",
+                "reference": reference,
+                "content": "v" * limit,
+                "cursor": cursor,
+                "limit": limit,
+                "has_more": True,
+                "next_cursor": cursor + limit,
+            }
+
+    class Monitor:
+        def execute(self, tool_name, arguments, conversation_id):
+            class Result:
+                text = "m" * 5000
+                parsed = {"data": "m" * 5000}
+
+                def content_items(self):
+                    return [{"type": "inputText", "text": self.text}]
+
+            return Result()
+
+    orchestrator.providers = {"codex": Provider()}
+    orchestrator.retrieval_service = Service()
+    orchestrator._monitor_adapter = Monitor()
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+    orchestrator._pending_user_messages[conversation_id] = 1
+    orchestrator._turn_access_paths[conversation_id] = ""
+    events: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if len(events) == 50:
+            completed.set()
+
+    orchestrator._external_callbacks[conversation_id] = callback
+    for index in range(50):
+        event = RuntimeEvent(
+            conversation_id,
+            "dynamic_tool_requested",
+            "tool",
+            {
+                "request_id": f"request-{index}",
+                "arguments": {"reference": "example.Fiscal"} if index % 2 else {},
+            },
+        )
+        if index % 2:
+            orchestrator._execute_vr_native_tool(event, VR_READ_TOOL_NAME)
+        else:
+            orchestrator._execute_monitor_tool(event, "get_connections")
+    assert completed.wait(5)
+    assert all(event.payload["success"] is True for event in events)
+    assert sum(len(str(event.payload["output"])) for event in events) > 192_000
+    assert not hasattr(orchestrator, "_turn_tool_calls")
+    assert not hasattr(orchestrator, "_turn_monitor_output_chars")
     orchestrator.close()
 
 
@@ -2364,3 +2470,52 @@ def test_should_suggest_vr_flow_targets_erp_questions(tmp_path: Path) -> None:
     # Errs toward omission on weak or generic signals.
     assert should_suggest_vr_flow(single_weak_hint) is False
     assert should_suggest_vr_flow(generic) is False
+
+
+def test_finalizer_waits_for_running_dynamic_tool_past_old_short_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    import vrsoft_extractor.mary.orchestrator as orchestrator_module
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True
+    )
+    owner = database.begin_user_turn(conversation_id, "pergunta")
+    orchestrator._pending_user_messages[conversation_id] = owner
+    orchestrator._callback_generations[conversation_id] = 1
+    orchestrator._dynamic_tool_callbacks[(conversation_id, "tool-1")] = (
+        1,
+        lambda event: None,
+    )
+    clock_calls = 0
+    real_monotonic = time.monotonic
+
+    def logical_clock() -> float:
+        nonlocal clock_calls
+        clock_calls += 1
+        return 6.0 if clock_calls > 1 else 0.0
+
+    monkeypatch.setattr(orchestrator_module.time, "monotonic", logical_clock)
+    finished = threading.Event()
+    event = RuntimeEvent(
+        conversation_id,
+        "turn_completed",
+        payload={"_owner_generation": 1, "_owner_message": owner},
+    )
+
+    def finalize() -> None:
+        orchestrator._finalize_turn_completed(event, "", False, "", "", None)
+        finished.set()
+
+    thread = threading.Thread(target=finalize)
+    thread.start()
+    assert not finished.wait(0.02)
+    with orchestrator._agent_run_lock:
+        orchestrator._dynamic_tool_callbacks.pop((conversation_id, "tool-1"), None)
+    assert finished.wait(2)
+    thread.join(2)
+    assert not thread.is_alive()
+    monkeypatch.setattr(orchestrator_module.time, "monotonic", real_monotonic)
+    orchestrator.close()

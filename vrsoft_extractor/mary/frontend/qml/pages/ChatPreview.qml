@@ -1324,7 +1324,7 @@ Item {
                 anchors.bottomMargin: Theme.scaledGeometry(10)
                 z: 20
                 research: root.chatBridge.resumableResearch || ({})
-                onResumeRequested: function(grantBudget) { root.chatBridge.resumeResearch(grantBudget) }
+                onResumeRequested: root.chatBridge.resumeResearch()
             }
 
             VrTaskBar {

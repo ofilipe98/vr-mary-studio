@@ -6,8 +6,8 @@ O checkout foi movido para `D:\Codex\VRStudio` durante a implementação. Os rel
 
 ## Implementado
 
-- Runner utilizado pelo chat com orçamento compartilhado, reserva para síntese e revisão, cancelamento e checkpoint periódico.
-- Propriedade persistida por processo, recuperação de execução órfã sem chamadas automáticas e retomada explícita pela interface. O run é preservado; cada retomada recebe uma nova execução local. A ampliação de orçamento exige a ação separada `+15 chamadas / +300 s`.
+- Runner utilizado pelo chat com telemetria compartilhada, cancelamento e checkpoint periódico; nenhuma métrica acumulada interrompe a investigação.
+- Propriedade persistida por processo, recuperação de execução órfã sem chamadas automáticas e retomada explícita pela interface. O run é preservado; cada retomada recebe uma nova execução local e não exige concessão adicional.
 - Validação de versão, permissões, modelo e conteúdo antes de reutilizar uma etapa; resultado e tentativa gravados juntos. Publicação local liga mensagem, citações e registro da investigação na mesma transação.
 - Modelos ONNX multilíngues em CPU, revisão e SHA-256 fixados. Download somente pela ação explícita de preparo. Índice em gerações com publicação atômica, atualização incremental, remoção de documentos antigos e fallback textual.
 - Candidatos semânticos entram nas trilhas do roteador, com filtros, RRF e o reranqueamento do domínio. Relações explícitas locais possuem trecho e hashes verificáveis; chamadas Java continuam identificadas como relações sintáticas.
@@ -23,7 +23,7 @@ Implementação L0–L8 concluída no checkout `D:\Codex\VRStudio`, referência 
 | Python e diff | `compileall`, Ruff `F821/F811` e `git diff --check` aprovados. [Resultado](../../reports/v2/conclusao/static-final.json). |
 | QML estático | 62 arquivos, **0 erros e 806 avisos**: 773 de acesso não qualificado, 26 de propriedade não inferida e 7 de posicionamento em layout. `ChatPreview`: 25, abaixo do limite de 50; compositor: 3; controles novos de busca e retomada: 0. [Saída integral](../../reports/v2/conclusao/qmllint-final.json). |
 | Chat renderizado | 14 capturas, claro/escuro, 1366×768, 1920×1080, 390×844 e 768×1024; texto longo, fontes, atividade, erro, cancelamento e conversa vazia. Zero avisos de execução QML. [Capturas](../../reports/v2/conclusao/visual/). |
-| Componentes V2 | 20 capturas, claro/escuro, larguras 700 e 390, modelo ausente, preparo, orçamento esgotado e publicação pronta. Zero avisos de execução QML. [Capturas](../../reports/v2/conclusao/visual-v2-final/). |
+| Componentes V2 | 20 capturas, claro/escuro, larguras 700 e 390, modelo ausente, preparo, execução longa e publicação pronta. Zero avisos de execução QML. [Capturas](../../reports/v2/conclusao/visual-v2-final/). |
 | Pacote final | PyInstaller concluído; ZIP extraído e executável aberto em chat escuro e configurações claras. Exit 0, sem download implícito de pesos. [Resultado](../../reports/v2/conclusao/portable-result-final.json). |
 
 Os 806 avisos estáticos são uma dívida remanescente, não foram suprimidos nem apresentados como corrigidos. As renderizações e testes de interação cobrem os estados citados, não todos os estados possíveis. A contagem preliminar feita por PowerShell subestimava o primeiro aviso de alguns arquivos; o relatório final usa a saída bruta do processo.
@@ -36,7 +36,7 @@ O corpus sintético congelado contém 96 documentos e 62 consultas, com subconju
 | --- | --- |
 | L0 | Contratos de protocolo, fixtures brutas, testes de mutação e inventário final com SHA-256. |
 | L1 | Runner e serviço de busca utilizados pelo chat; teste em processo novo bloqueia importações transitivas de Qt pelo backend. |
-| L2 | Orçamento compartilhado entre pesquisadores, código, síntese, revisão e correção; reserva atômica, concorrência limitada e cancelamento pelo adaptador. |
+| L2 | Telemetria compartilhada entre pesquisadores, código, síntese, revisão e correção; concorrência controlada pelo executor e cancelamento pelo adaptador. |
 | L3 | Checkpoints SQLite, propriedade por processo e instante de criação, recuperação de órfãos sem chamadas automáticas, retomada explícita e publicação local transacional. |
 | L4 | Dois modelos ONNX reais em CPU, revisões e hashes fixados, corpus dividido antes da avaliação e escolha pelo desenvolvimento. |
 | L5 | Busca híbrida nas trilhas do roteador real; filtros antes do ranking, RRF, gerações atômicas, atualização incremental e fallback textual. |
@@ -50,12 +50,12 @@ Os relatórios originais de L0/R2 não acompanharam a mudança de pasta. O inven
 
 - Corrigida a divergência entre a fachada do banco e o domínio de conversas, que rejeitava os argumentos de publicação V2. Mensagem, citações e registro de publicação agora são gravados juntos, com idempotência.
 - Restaurada a exclusão dos checkpoints e tentativas ao remover definitivamente uma conversa. A exportação portátil sanitiza pesquisas privadas e relações; o índice semântico derivado não faz parte da lista de índices exportáveis.
-- Retomada preserva consumo, contexto e run; modelo, permissões, fontes ou release incompatíveis invalidam reaproveitamento. A ampliação separada de `+15 chamadas / +300 s` não zera o consumo.
+- Retomada preserva telemetria, contexto e run; modelo, permissões, fontes ou release incompatíveis invalidam reaproveitamento. A retomada não exige concessão adicional de recursos.
 - Corrigida a normalização da release com análise de código desativada. A retomada explícita inicia uma nova sessão principal nativa, evitando depender de uma sessão Codex vazia que nunca persistiu um turno.
 - Uma segunda instância preserva conversas com pesquisa pertencente a processo vivo. Atualizações atrasadas usam o token imutável do proprietário.
 - Filtros de revisão, origem, produto e release são conferidos na busca e na montagem do contexto; o contexto de release acompanha as threads. Busca por ferramenta e refinamento também preparam o serviço híbrido.
 - Cache de assinatura invalidado por triggers SQLite, inclusive em escrita externa; mensagens de chat não invalidam os documentos. Ranking mantém o melhor trecho por documento, com desempate determinístico e fechamento de conexões em erro.
-- Corrigidos contador de minutos, referências de logging e transbordamento dos controles em telas estreitas. Publicação já pronta pode ser retomada sem pedir orçamento adicional.
+- Corrigidos contador de minutos, referências de logging e transbordamento dos controles em telas estreitas. Publicação já pronta pode ser retomada sem pedir uma concessão adicional.
 - Claude recebe prompts por stdin, preservando Unicode e quebras de linha, sem exceder o limite do `.cmd` nem colocar metacaracteres do prompt na linha de comando. Teste com subprocesso real cobre entrada maior que o pipe. A tentativa externa alcançou o protocolo e informou falta de login; não houve novas chamadas após a informação de ausência de assinatura.
 
 ## Busca medida no roteador de produção

@@ -206,8 +206,7 @@ class TestUltraEndToEndIntegration:
             repository=research_repo,
         )
 
-        # Setup context with strict budget
-        budget = ExecutionBudget(max_calls=10, max_active_seconds=30.0, reserved_synthesis_calls=1)
+        budget = ExecutionBudget()
         cancellation = CancellationToken()
 
         context_1 = ExecutionContext(
@@ -264,7 +263,8 @@ class TestUltraEndToEndIntegration:
             "vr_fanout_ultra_schema",
         }
         assert len(res_fanout_1.reports) == 3
-        assert budget.remaining_calls() < 10
+        assert budget.remaining_calls() is None
+        assert budget.time_remaining() is None
 
         # Check that steps are stored in SQLite
         steps_run_1 = research_repo.get_steps_for_run("run-step-1")
@@ -299,7 +299,7 @@ class TestUltraEndToEndIntegration:
             repository=research_repo,
         )
 
-        budget = ExecutionBudget(max_calls=5, max_active_seconds=10.0)
+        budget = ExecutionBudget()
         context = ExecutionContext(
             conversation_id="conv-cancel-test",
             run_id="run-cancel-1",

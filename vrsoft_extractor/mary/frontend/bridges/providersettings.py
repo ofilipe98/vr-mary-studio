@@ -972,5 +972,13 @@ class ProviderSettingsDomain:
         return f"research/workspaces/{workspace_id}/{name}"
 
 
-    def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        return None
+    def resumeResearch(self) -> None:  # noqa: N802
+        owner = self._owner
+        research = owner.resumableResearch
+        run_id = str(research.get("run_id") or "")
+        if not run_id or owner.turnRunning:
+            return
+        owner._send_message(
+            str(research.get("request_text") or ""),
+            resume_run_id=run_id,
+        )

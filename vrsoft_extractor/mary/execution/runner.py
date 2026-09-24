@@ -2,7 +2,7 @@
 Execution runner for VR Mary Studio.
 
 Extracts the multi-stage research fan-out, worker execution,
-budget tracking, cancellation, and draft synthesis coordination
+telemetry tracking, cancellation, and draft synthesis coordination
 out of ChatOrchestrator. Publication and provider lifecycle remain with the host.
 """
 
@@ -53,7 +53,7 @@ from ..supervision import (
     parse_final_draft,
     validate_fanout_draft,
 )
-from .budget import CallReservationError, ExecutionBudget
+from .budget import ExecutionBudget
 from .cancellation import ExecutionCancelledError
 from .repository import ResearchRepository, compute_step_input_hash
 from .contracts import (
@@ -68,7 +68,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ExecutionRunner:
-    """Coordinates fanout stage planning, budget tracking, parallel execution, and response synthesis."""
+    """Coordinates fanout planning, telemetry, parallel execution, and response synthesis."""
 
     def __init__(
         self,
@@ -234,7 +234,7 @@ class ExecutionRunner:
                             context.budget.to_dict(),
                         )
                     except Exception:
-                        LOGGER.exception("Falha no checkpoint periódico de orçamento")
+                        LOGGER.exception("Falha no checkpoint periódico de telemetria")
 
         thread = threading.Thread(
             target=heartbeat,
@@ -316,9 +316,6 @@ class ExecutionRunner:
             context.budget = ExecutionBudget.from_snapshot(
                 json.loads(previous["budget_json"])
             )
-            if context.metadata.get("grant_budget"):
-                context.budget.max_calls += 15
-                context.budget.max_active_seconds += 300
 
         main_model = resolve_model_ref(
             str(conversation["provider"]),
@@ -389,9 +386,9 @@ class ExecutionRunner:
 
         checkpoint_lock = threading.RLock()
 
-        def acquire_call(**kwargs: Any) -> float:
+        def acquire_call(**kwargs: Any) -> None:
             with checkpoint_lock:
-                timeout = context.budget.acquire_call(**kwargs)
+                context.budget.acquire_call(**kwargs)
                 if self.repository:
                     try:
                         self.repository.update_run_status(
@@ -403,7 +400,6 @@ class ExecutionRunner:
                     except Exception:
                         context.budget.release_call()
                         raise
-                return timeout
 
         def release_call() -> None:
             with checkpoint_lock:
@@ -527,17 +523,10 @@ class ExecutionRunner:
                 self.retrieval.prompt_for_role(bundle, f"source_{source}"),
             )
             outcome: SourceResearch | None = None
-            attempts = min(RESEARCH_ATTEMPTS, context.budget.max_retries_per_worker + 1)
+            attempts = RESEARCH_ATTEMPTS
             for attempt in range(attempts):
                 context.check_cancelled()
-                try:
-                    timeout = acquire_call(
-                        is_synthesis=False,
-                        requested_timeout=150.0 if attempt == 0 else 90.0,
-                    )
-                except CallReservationError as exc:
-                    outcome = SourceResearch(source=source, raw_error=str(exc))
-                    break
+                acquire_call(is_synthesis=False)
                 try:
                     raw = self.run_ephemeral_turn(
                         cid,
@@ -547,7 +536,7 @@ class ExecutionRunner:
                         prompt,
                         context.workspace,
                         RESEARCH_EFFORT,
-                        timeout_seconds=timeout,
+                        timeout_seconds=None,
                     )
                     outcome = parse_source_researcher_output(
                         raw,
@@ -647,10 +636,8 @@ class ExecutionRunner:
                     max_excerpt_chars=3000,
                     limit_per_query=3,
                     max_caller_nodes=3,
-                    max_seconds=min(0.3, context.budget.time_remaining()),
                     module=profile.module,
                     product=profile.product,
-                    budget_remaining=context.budget.time_remaining(),
                     master_fallback=application_contexts is not None,
                 )
                 if application_contexts is not None:
@@ -714,10 +701,7 @@ Evidências: {json.dumps([item.to_dict() for item in code_candidates], ensure_as
 Retorne somente JSON no mesmo formato estruturado dos pesquisadores, com
 source_status, findings, steps, conflicts, missing_information, warnings e sources."""
                     try:
-                        timeout = acquire_call(
-                            is_synthesis=False,
-                            requested_timeout=150.0,
-                        )
+                        acquire_call(is_synthesis=False)
                         try:
                             raw = self.run_ephemeral_turn(
                                 cid,
@@ -727,7 +711,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                                 code_prompt,
                                 context.workspace,
                                 RESEARCH_EFFORT,
-                                timeout_seconds=timeout,
+                                timeout_seconds=None,
                             )
                             parsed = parse_source_researcher_output(
                                 raw,
@@ -745,11 +729,6 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                                 )
                         finally:
                             release_call()
-                    except CallReservationError as exc:
-                        code_report = replace(
-                            fallback_report,
-                            warnings=(*fallback_report.warnings, str(exc)),
-                        )
                     except (ExecutionCancelledError, ProviderRateLimited):
                         raise
                     except Exception as exc:
@@ -991,7 +970,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
         synthesis_prompt: str,
         synthesis_bundle: EvidenceBundle,
         merged: Any,
-        acquire_call: Callable[..., float],
+        acquire_call: Callable[..., None],
         release_call: Callable[[], None],
     ) -> tuple[Any, tuple[ResponseViolation, ...], dict[str, Any], dict[str, Any]]:
         """Apply the same final parsing, validation, review, and repair policy."""
@@ -1004,7 +983,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
             dynamic_tools=(),
             tools_enabled=False,
         )
-        synthesis_timeout = acquire_call(is_synthesis=True)
+        acquire_call(is_synthesis=True)
         try:
             raw_draft, started_payload, completed_payload = self.run_buffered_main_turn(
                 context.conversation_id,
@@ -1016,7 +995,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                 synthesis_prompt,
                 synthesis_options,
                 skills,
-                timeout_seconds=synthesis_timeout,
+                timeout_seconds=None,
             )
         finally:
             release_call()
@@ -1059,10 +1038,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
             and self.operational_reviewer is not None
             and not context.cancellation.is_cancelled
         ):
-            review_timeout = acquire_call(
-                is_synthesis=True,
-                requested_timeout=90,
-            )
+            acquire_call(is_synthesis=True)
             try:
                 violations = self.operational_reviewer(
                     context.conversation_id,
@@ -1072,7 +1048,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                     request,
                     draft,
                     synthesis_bundle,
-                    timeout_seconds=review_timeout,
+                    timeout_seconds=None,
                 )
             finally:
                 release_call()
@@ -1081,13 +1057,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
             if not violations or draft.answer_status == "insufficient_evidence":
                 break
             context.check_cancelled()
-            try:
-                repair_timeout = acquire_call(is_synthesis=True)
-            except CallReservationError:
-                LOGGER.warning(
-                    "Orçamento esgotado durante tentativa de reparo de síntese."
-                )
-                break
+            acquire_call(is_synthesis=True)
             try:
                 rewrite_prompt = build_rewrite_prompt(
                     request,
@@ -1118,7 +1088,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                         rewrite_prompt,
                         synthesis_options,
                         skills,
-                        timeout_seconds=repair_timeout,
+                        timeout_seconds=None,
                     )
                 )
                 draft = parse_final_draft(
@@ -1147,20 +1117,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                 # retried again.
                 break
             if self.operational_reviewer is not None:
-                try:
-                    review_timeout = acquire_call(
-                        is_synthesis=True,
-                        requested_timeout=90,
-                    )
-                except CallReservationError:
-                    violations = (
-                        ResponseViolation(
-                            "unverified_repair",
-                            "Sem orçamento para conferir a reescrita",
-                            "Não publique uma reescrita sem conferência.",
-                        ),
-                    )
-                    break
+                acquire_call(is_synthesis=True)
                 try:
                     violations = self.operational_reviewer(
                         context.conversation_id,
@@ -1170,7 +1127,7 @@ source_status, findings, steps, conflicts, missing_information, warnings e sourc
                         request,
                         draft,
                         synthesis_bundle,
-                        timeout_seconds=review_timeout,
+                        timeout_seconds=None,
                     )
                 finally:
                     release_call()

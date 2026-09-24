@@ -8,8 +8,11 @@ from typing import Any
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.execution import ExecutionBudget
 from vrsoft_extractor.mary.models import (
+    ConversationOptions,
     EvidenceBundle,
+    EvidenceCandidate,
     KnowledgeDocument,
     ModelRef,
     RuntimeEvent,
@@ -638,6 +641,166 @@ def test_code_agent_rejects_stale_frozen_release_and_fanout_continues(
     assert failed.payload["release_manifest_sha256"] == "b" * 64
     assert "mudaram" in failed.payload["error"]
     assert any(event.kind == "turn_completed" for event in events)
+
+
+def test_researcher_prompt_has_no_document_budget() -> None:
+    from vrsoft_extractor.mary.research_fanout import build_source_researcher_prompt
+
+    prompt = build_source_researcher_prompt("wiki", "pergunta", "evidências")
+    assert "quantas evidências relevantes" in prompt
+    assert "budget" not in prompt.casefold()
+    assert "até 6 documentos" not in prompt.casefold()
+    assert "quantidade máxima" not in prompt.casefold()
+
+
+def test_ultra_telemetry_survives_old_call_and_time_thresholds() -> None:
+    now = [0.0]
+    budget = ExecutionBudget(clock=lambda: now[0])
+    for _ in range(40):
+        budget.acquire_call()
+        budget.release_call()
+    now[0] = 400.0
+    budget.acquire_call()
+    assert budget.calls_made == 41
+    assert budget.remaining_calls() is None
+    assert budget.time_remaining() is None
+    assert budget.has_synthesis_capacity() is True
+
+
+def test_buffered_synthesis_default_waits_for_provider_completion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _UltraFakeProvider()
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+    orchestrator._pending_user_messages[conversation_id] = 1
+    clock = [0.0]
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.time.monotonic", lambda: clock[0]
+    )
+
+    def send_message(*args, **kwargs):
+        clock[0] = 400.0
+        callback = args[6]
+        callback(RuntimeEvent(conversation_id, "turn_started"))
+        callback(RuntimeEvent(conversation_id, "assistant_delta", "resposta"))
+        callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+    provider.send_message = send_message
+    result = orchestrator._run_buffered_main_turn(
+        conversation_id,
+        "native",
+        provider,
+        "sol",
+        "medium",
+        settings.work_dir,
+        "prompt",
+        ConversationOptions(vr_mode="ultra"),
+        [],
+    )
+    assert result[0] == "resposta"
+    assert provider.calls == []
+    orchestrator.close()
+
+
+def test_research_registry_keeps_more_than_forty_eight_evidence_candidates(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+    run_id = "run-evidence-volume"
+    source_path = settings.root / "evidence.txt"
+    source_path.write_text("\n".join("x" * 2000 for _ in range(60)), encoding="utf-8")
+    seed = EvidenceCandidate(
+        evidence_id="wiki:evidence-seed",
+        source="wiki",
+        source_id="evidence-seed",
+        document_id=1,
+        chunk_id=1,
+        title="Evidence",
+        heading="",
+        content_type="text",
+        module="Fiscal",
+        product="",
+        excerpt="",
+        url="",
+        local_path="evidence.txt",
+    )
+    orchestrator._research_evidence[run_id] = {seed.evidence_id: seed}
+    orchestrator._pending_user_messages[conversation_id] = 1
+
+    class Provider:
+        def available(self):
+            return True
+
+        def start_conversation(self, *args, **kwargs):
+            return "native-agent"
+
+        def send_message(self, *args, **kwargs):
+            callback = args[6]
+            for index in range(60):
+                callback(
+                    RuntimeEvent(
+                        args[0],
+                        "tool_event",
+                        "read",
+                        {
+                            "part": {
+                                "tool": "read",
+                                "state": {
+                                    "status": "completed",
+                                    "input": {
+                                        "filePath": str(source_path),
+                                        "offset": index + 1,
+                                        "limit": 1,
+                                    },
+                                },
+                            }
+                        },
+                    )
+                )
+            callback(RuntimeEvent(args[0], "assistant_delta", "ok"))
+            callback(RuntimeEvent(args[0], "turn_completed"))
+
+        def release_conversation(self, *args, **kwargs):
+            return None
+
+        def interrupt(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+    orchestrator.providers = {"codex": Provider()}
+    try:
+        output = orchestrator._run_ephemeral_turn(
+            conversation_id,
+            run_id,
+            "evidence-reader",
+            ModelRef("codex", "sol"),
+            "read",
+            settings.work_dir,
+            "medium",
+            timeout_seconds=None,
+        )
+        assert output == "ok"
+        reads = [
+            candidate
+            for candidate in orchestrator._research_evidence[run_id].values()
+            if candidate.evidence_id.startswith("read:")
+        ]
+        assert len(reads) == 60
+        assert sum(len(candidate.excerpt) for candidate in reads) > 96_000
+    finally:
+        orchestrator.close()
 
 
 def test_code_agent_failure_degrades_without_stopping_synthesis(

@@ -14,7 +14,7 @@ Responsáveis: Gemini 3.8 Flash implementa todos os lotes; Codex revisa integral
 
 Este plano cobre os itens 4, 5 e 6 da proposta de versão 2:
 
-1. Ultra com orçamento global, cancelamento efetivo e retomada de etapas concluídas.
+1. Ultra com telemetria de execução, cancelamento efetivo e retomada de etapas concluídas.
 2. Busca textual e semântica combinadas, com relações verificáveis entre fontes.
 3. Separação incremental do núcleo, dos adaptadores e dos bridges QML.
 
@@ -68,7 +68,7 @@ Cada lote pode ser dividido em mudanças menores revisáveis. Não juntar extra�
 - Separação entre execução local, run de pesquisa, tentativa do provedor e mensagem. Mapear os IDs existentes antes de acrescentar campos.
 - Mensagens intermediárias públicas permanecem ordenadas e identificadas; seu término não encerra o turno.
 - Eventos internos de pesquisadores/revisores não viram mensagens públicas. Eventos atrasados não alteram outra tentativa ou execução.
-- Resposta final continua sujeita às validações existentes; um orçamento esgotado não autoriza publicar alegações reprovadas.
+- Resposta final continua sujeita às validações existentes; telemetria não autoriza publicar alegações reprovadas.
 - Origens `vrwiki` e `endoo` permanecem independentes após combinação e deduplicação. Falta de resultado e fonte indisponível permanecem distintas.
 - Escopo de projeto, fontes permitidas, produto e release é aplicado antes de recuperar, expandir ou reutilizar evidências.
 - Preservar hashes, JARs originais, índices históricos e dados de usuário. Migrações aditivas, idempotentes e compatíveis com o mecanismo atual.
@@ -98,30 +98,57 @@ Manter as entradas atuais como fachadas durante a transição. Injetar repositó
 
 **Auditoria:** comparar rastros normalizados por contrato, descartando somente campos variáveis como timestamps/IDs gerados. Verificar quem possui locks, callbacks e finalizadores após a extração.
 
-## 8. L2 — Orçamento e cancelamento do Ultra
+## 8. L2 — Telemetria e cancelamento do Ultra
 
 ### Comportamento
 
-Uma investigação recebe `ExecutionBudget`: limite de tempo ativo, chamadas, concorrência e tentativas. Registrar uso de tokens quando o provedor o informar, distinguindo valores reais, estimados e desconhecidos.
+Uma investigação recebe `ExecutionBudget` como registro de telemetria para
+calls, tempo e tokens. O limite físico de contexto, a concorrência do executor,
+o cancelamento explícito, a substituição do turno e erros reais do provider
+continuam sendo controles válidos. Nenhuma métrica acumulada encerra o run.
 
-- O orçamento é compartilhado por pesquisadores, agente de código, síntese, revisão e correção. Retries e recuperação de resposta vazia consomem esse mesmo orçamento.
-- A reserva de chamadas é atômica entre workers. O timeout de cada operação é o menor entre seu limite e o tempo restante.
-- Reservar capacidade para síntese e validação antes de abrir pesquisas opcionais. Sem capacidade de concluir com validação, encerrar com estado explícito e achados preservados.
-- Defaults iniciais devem reproduzir a política medida em L0. Perfis mais rápidos são habilitados depois da comparação; não reduzir limites arbitrariamente na extração.
-- Retry limitado para falhas transitórias. Negação de ferramenta, permissão insuficiente e entrada inválida não geram retry cego nem troca de provedor para contornar a restrição.
-- Respeitar a concorrência global existente e acrescentar limite por provedor quando necessário. Não substituir o modelo escolhido silenciosamente.
-- Cancelamento sinaliza os workers, interrompe chamadas pelos adaptadores e impede novas etapas. Limpeza de subprocessos se limita à operação pertencente à execução.
-- Eventos de progresso descrevem etapas reais. O estado da timeline acompanha a execução, preservando a semântica das mensagens intermediárias.
+- O registro é compartilhado por pesquisadores, agente de código, síntese,
+  revisão e correção. Retries e recuperação de resposta vazia continuam
+  visíveis na telemetria.
+- A concorrência é controlada pelo executor e sua fila. Um worker que encontra
+  todos os slots ocupados aguarda o próximo slot; essa espera não é uma falha
+  de orçamento.
+- `acquire_call` registra `calls_made` e `calls_in_flight` e retorna `None`.
+  Não calcula deadline nem reserva capacidade para uma etapa posterior.
+- Tokens fornecidos pelo provider são registrados como reais, estimados ou
+  desconhecidos, sem conversão para um limite de continuação.
+- Síntese, workers e revisão não recebem deadline artificial em produção. O
+  chamador pode passar timeout explícito em testes ou integrações técnicas.
+- Cancelamento sinaliza os workers, interrompe chamadas pelos adaptadores e
+  impede novas etapas. Limpeza de subprocessos se limita à operação pertencente
+  à execução.
+- Eventos de progresso descrevem etapas reais. O estado da timeline acompanha
+  a execução, preservando a semântica das mensagens intermediárias.
 
-Limite de tokens é estrito somente quando o provedor permite impor o teto. Contabilização recebida apenas no final permite interromper novas chamadas, não garantir o consumo máximo da chamada já iniciada. Não apresentar custo monetário sem dados suficientes.
+O nome `ExecutionBudget` e seus checkpoints são mantidos por compatibilidade.
+Snapshots legados são lidos para preservar calls, tempo e tokens, mas seus
+antigos limites nunca são reativados. A telemetria não representa uma quota de
+investigação.
 
 ### Testes e aceite
 
-Relógio controlado para prazo e backoff; workers concorrentes disputando a última chamada; timeout durante síntese; orçamento esgotado durante revisão; cancelamento durante espera/retry; callback tardio; falha de um pesquisador e resultado dos demais.
+Relógio controlado para verificar telemetria sem exaustão; workers concorrentes
+com fila; provider que conclui após longos tempos lógicos; cancelamento durante
+espera/retry; callback tardio; falha de um pesquisador e resultado dos demais.
 
-Nenhuma chamada nova começa sem reserva e prazo válidos. Um término lógico não é publicado duas vezes. A interface libera a execução cancelada sem esperar uma tarefa remota ilimitadamente e informa eventual interrupção remota não confirmada.
+Uma chamada nunca falha por calls, tempo, tokens ou reservas acumuladas. Um
+término lógico não é publicado duas vezes. A interface libera a execução
+cancelada sem transformar cancelamento em erro remoto e não publica um
+resultado parcial como conclusão validada.
 
-**Auditoria:** procurar esperas que ultrapassem o orçamento, contagem dupla de tokens, corrida na reserva e executores cujo shutdown bloqueie a finalização. `Future.cancel()` não interrompe tarefas em execução; a interrupção precisa alcançar o adaptador [Python](https://docs.python.org/3/library/concurrent.futures.html).
+**Auditoria:** procurar waits que dependam de deadline artificial, contagem
+dupla de tokens, perda de callback e executores cujo shutdown bloqueie a
+finalização. `Future.cancel()` não interrompe tarefas em execução; a interrupção
+precisa alcançar o adaptador [Python](https://docs.python.org/3/library/concurrent.futures.html).
+
+_Gate histórico: o plano L2 original descrevia orçamento finito, reservas de
+síntese e limites de tempo. Esse registro é histórico e não define o
+comportamento atual; o contrato vigente é a telemetria sem exaustão acima._
 
 ## 9. L3 — Persistência e retomada
 
@@ -129,7 +156,7 @@ Nenhuma chamada nova começa sem reserva e prazo válidos. Um término lógico n
 
 Adicionar repositório de investigações usando o SQLite existente. Reutilizar identidade/eventos já presentes, sem duplicar tabelas com a mesma função. Nomes orientativos: `research_runs`, `research_steps`, `research_step_attempts`.
 
-Persistir vínculo com conversa/execução, versão do contrato, plano, estados, hashes de entrada e saída, orçamento consumido, tentativas e resultado estruturado validado. Resultado e estado concluído são gravados na mesma transação.
+Persistir vínculo com conversa/execução, versão do contrato, plano, estados, hashes de entrada e saída, telemetria consumida, tentativas e resultado estruturado validado. Resultado e estado concluído são gravados na mesma transação.
 
 Estados do run: `pending`, `running`, `completed`, `partial`, `interrupted`, `cancelled`, `failed`. Estados de etapa: `pending`, `running`, `completed`, `failed`, `skipped`. Documentar transições válidas e impedir concorrência por claim atômico e identidade do dono/tentativa.
 
@@ -139,7 +166,7 @@ Ao reiniciar, jobs que perderam o dono ficam interrompidos. Não disparar novas 
 
 - Reutilizar somente resultados completos, validados e compatíveis com pergunta/contexto, escopo, fontes autorizadas, hashes dos documentos, manifesto ERP, versão do prompt/política e modelo relevante.
 - Resolver a release `current` para um manifesto concreto no início. Se o contexto ou as evidências mudarem, invalidar a etapa e seus dependentes com motivo visível.
-- Manter orçamento consumido; retomada não o zera. Persistir tempo ativo acumulado e reconstruir o relógio monotônico ao retomar; tempo com o app fechado não consome tempo ativo. Orçamento esgotado exige uma nova concessão explícita na ação de continuar.
+- Manter a telemetria de calls, tokens e tempo ativo; a retomada preserva o histórico registrado, mas não reativa limites legados nem exige concessão adicional. Persistir o tempo ativo acumulado e reconstruir o relógio monotônico ao retomar; tempo com o app fechado não consome tempo ativo.
 - Garantir idempotência local da publicação final e dos estados. Uma queda depois da resposta remota, antes do commit local, pode exigir repetir a chamada; registrar essa janela de incerteza, sem prometer execução remota exatamente uma vez.
 - Não repetir automaticamente ferramentas com efeitos externos. A primeira versão de retomada cobre etapas de pesquisa de leitura e síntese; efeito desconhecido fica pendente de decisão explícita.
 - Dados de pesquisa são privados como conversas: integrar arquivamento/lixeira/purge e excluir checkpoints/resultados privados da exportação de conhecimento.
@@ -229,9 +256,9 @@ Usar `.venv\Lib\site-packages\PySide6\qmllint.exe` com `-I vrsoft_extractor\mary
 | --- | --- |
 | Conversa nativa com várias mensagens | Ordem e identidade preservadas, uma finalização de turno |
 | VR simples, híbrido desligado | Compatibilidade com a referência e fontes corretas |
-| Ultra com vários pesquisadores | Orçamento compartilhado e revisão final válida |
+| Ultra com vários pesquisadores | Telemetria compartilhada e revisão final válida |
 | Provedor lento ou rate limit | Tentativas limitadas e interrupção sem contaminar outra execução |
-| Queda após uma etapa | Retomada reaproveita resultado válido e preserva consumo |
+| Queda após uma etapa | Retomada reaproveita resultado válido e preserva telemetria |
 | Mudança de release/permissão | Resultado incompatível não é reutilizado |
 | Sem modelo semântico/offline | Busca textual funcional e estado de degradação correto |
 | Corpus reindexado durante consulta | Uma geração consistente, sem evidência removida publicada |
@@ -266,7 +293,7 @@ O status de implementação por lote deve ser registrado nas entregas. As caixas
 
 - [x] L0 — referência atual e contratos auditados; relatórios históricos de L0/R2 não acompanharam a mudança de pasta.
 - [x] L1 — separação inicial auditada.
-- [x] L2 — orçamento e cancelamento auditados.
+- [x] L2 — telemetria e cancelamento auditados.
 - [x] L3 — persistência e retomada auditadas.
 - [x] L4 — avaliação e seleção semântica auditadas.
 - [x] L5 — busca híbrida auditada como opção; promoção a padrão reprovada pelo caso negativo adicional.

@@ -508,7 +508,7 @@ def _mode_calls(orchestrator):
     return calls
 
 
-def test_native_dynamic_vr_tools_allow_large_pages_and_keep_24_call_guard(
+def test_native_dynamic_vr_tools_allow_unlimited_pages_and_calls(
     tmp_path: Path,
 ):
     settings, database, _, _ = _setup_test_env(tmp_path)
@@ -544,17 +544,16 @@ def test_native_dynamic_vr_tools_allow_large_pages_and_keep_24_call_guard(
     def callback(event):
         if event.kind == "tool_event":
             responses.append(event)
-            if len(responses) == 25:
+            if len(responses) == 50:
                 completed.set()
 
     orchestrator._pending_user_messages[conversation_id] = 1
     orchestrator._turn_access_paths[conversation_id] = ""
     orchestrator._turn_dynamic_candidates[conversation_id] = []
-    orchestrator._turn_tool_calls[conversation_id] = 0
     orchestrator._external_callbacks[conversation_id] = callback
     orchestrator._callback_generations[conversation_id] = 1
     try:
-        for index in range(25):
+        for index in range(50):
             orchestrator._execute_vr_native_tool(
                 RuntimeEvent(
                     conversation_id,
@@ -572,16 +571,13 @@ def test_native_dynamic_vr_tools_allow_large_pages_and_keep_24_call_guard(
                 "vr_read",
             )
         assert completed.wait(10)
-        assert len(responses) == 25
-        successes = [event.payload["success"] for event in responses]
-        assert sum(successes) == 24
-        assert successes.count(False) == 1
+        assert len(responses) == 50
+        assert all(event.payload["success"] is True for event in responses)
         payloads = [
             json.loads(event.payload["output"])
             for event in responses
-            if event.payload["success"]
         ]
-        assert sum(len(payload["content"]) for payload in payloads) > 96_000
+        assert sum(len(payload["content"]) for payload in payloads) > 192_000
         assert all("budget" not in payload for payload in payloads)
     finally:
         orchestrator.close()

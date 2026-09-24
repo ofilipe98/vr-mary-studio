@@ -11,7 +11,7 @@ existentes e os nomes do instalador são preservados por compatibilidade.
 | --- | --- |
 | `vrsoft_extractor/` | Extrator de vídeos, CLI e serviços compartilhados. |
 | `vrsoft_extractor/mary/` | Conhecimento, provedores, chat, sincronização e análise Java. |
-| `vrsoft_extractor/mary/execution/` | Execução, orçamento, cancelamento e retomada. |
+| `vrsoft_extractor/mary/execution/` | Execução, telemetria, cancelamento e retomada. |
 | `vrsoft_extractor/mary/retrieval/` | Recuperação textual, semântica e relações. |
 | `vrsoft_extractor/mary/repositories/` | Acesso e persistência de dados. |
 | `vrsoft_extractor/mary/frontend/` | Bridges PySide6 e interface QML. |
@@ -51,14 +51,24 @@ Prefetch/cache de consulta não pertencem a este contrato.
 
 As três tools VR têm paginação continuável por chamada: `vr_sources` aceita
 até 50 itens, `vr_search` até 20 resultados e `vr_read` até 8.000 caracteres
-por página. Não existe teto cumulativo de 96.000 caracteres para as três tools
-em um turno; o limite de 24 chamadas por turno permanece como proteção contra
-loop infinito. `source=""` realiza pesquisa multi-source, enquanto uma fonte
-explícita continua isolada. A orientação para tentar outra fonte é uma decisão
-do modelo e não um fallback automático. No OFF, essas fontes são opcionais: o
-modelo pode responder com stack trace, código fornecido e raciocínio próprio sem
-consultar a documentação. O VR normal mantém o mesmo acesso sob demanda dentro
-do contrato tool-driven.
+por página. Esses valores pertencem à chamada individual e não constituem
+quota do turno. Não existe quota cumulativa por chamadas, caracteres, tempo ou
+tokens no chat; a investigação segue até a conclusão do provider, cancelamento
+explícito, substituição do turno, erro real ou rate limit externo. A
+paginação é transporte, não orçamento. OFF e VR também podem investigar até
+uma conclusão, cancelamento explícito, substituição do turno, erro real ou
+rate limit externo. `source=""` realiza pesquisa multi-source, enquanto uma
+fonte explícita continua isolada. A orientação para tentar outra fonte é uma
+decisão do modelo e não um fallback automático.
+No OFF, essas fontes são opcionais: o modelo pode responder com stack trace,
+código fornecido e raciocínio próprio sem consultar a documentação. O VR normal
+mantém o mesmo acesso sob demanda dentro do contrato tool-driven.
+
+Ultra registra telemetria de chamadas, tokens e tempo, além de manter a
+concorrência controlada pelo executor. Esses números não são usados para
+interromper a execução, reservar síntese ou descartar evidências. A
+persistência de checkpoints permanece para retomada, sem representar uma
+concessão finita de recursos.
 
 A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre VRWiki +
 Endoo, mesmo quando o toggle legado de Endoo está desligado. Cada origem é
@@ -83,7 +93,7 @@ alternar temporariamente para OFF e pode voltar a valer em VR/Ultra.
 
 Um perfil não habilita, desabilita, prioriza ou remove fontes; não altera o
 contrato de `vr_sources`, `vr_search` ou `vr_read`; não cria agentes; e não muda
-fontes, workers, paralelismo, ranqueamento, retries, orçamento ou fan-out do
+fontes, workers, paralelismo, ranqueamento, retries, telemetria ou fan-out do
 Ultra. VR normal continua decidindo no modelo quando e se consultará uma tool.
 
 **Adaptativa** é o primeiro perfil built-in e usa o identificador interno

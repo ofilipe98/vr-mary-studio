@@ -5,6 +5,6 @@ import ".."
 ColumnLayout {
     id: root
     required property var research
-    signal resumeRequested(bool grantBudget)
+    signal resumeRequested()
     visible: false
 }

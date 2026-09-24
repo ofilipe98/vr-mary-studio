@@ -24,7 +24,7 @@ A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki`
 
 ## Tools VR e paginação
 
-As tools `vr_sources`, `vr_search` e `vr_read` não possuem budget cumulativo de caracteres por turno. Cada chamada respeita o limite da própria ferramenta e a paginação por cursor/next_cursor continua sendo a forma de aprofundar resultados longos. O limite de 24 chamadas por turno permanece apenas como proteção contra loop infinito. Ausência ou falha em uma fonte específica não implica ausência nas demais fontes; quando o modelo escolhe uma fonte, nenhuma alternativa é acionada automaticamente.
+As tools `vr_sources`, `vr_search` e `vr_read` não possuem quota cumulativa por chamadas, caracteres, tempo ou tokens no chat. Cada chamada respeita o limite da própria ferramenta e a paginação por cursor/next_cursor continua sendo a forma de aprofundar resultados longos. Paginação é transporte, não orçamento. Cancelamento explícito, substituição do turno e limites externos inevitáveis do provider e do contexto permanecem válidos. Ausência ou falha em uma fonte específica não implica ausência nas demais fontes; quando o modelo escolhe uma fonte, nenhuma alternativa é acionada automaticamente.
 
 ---
 

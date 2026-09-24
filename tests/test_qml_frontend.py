@@ -122,6 +122,21 @@ class QmlFrontendTest(unittest.TestCase):
         finally:
             self.application.setFont(previous_font)
 
+    def test_resume_contract_has_no_budget_argument(self):
+        self.assertNotIn("grant_budget", ChatBridge.resumeResearch.__code__.co_varnames)
+        self.assertNotIn("grant_budget", ChatBridge._send_message.__code__.co_varnames)
+        component = (
+            Path(__file__).resolve().parents[1]
+            / "vrsoft_extractor"
+            / "mary"
+            / "frontend"
+            / "qml"
+            / "components"
+            / "VrResearchResume.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("signal resumeRequested()", component)
+        self.assertNotIn("grantBudget", component)
+
     def test_brand_palette_keeps_existing_vr_identity(self):
         light = brand.brand_palette("light")
         dark = brand.brand_palette("dark_orange")
