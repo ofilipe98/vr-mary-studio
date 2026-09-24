@@ -80,13 +80,13 @@ def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
 
     ensure_conversation_workspace(legacy)
 
-    assert CONVERSATION_MANAGED_MARKER in (legacy / "AGENTS.md").read_text(
-        encoding="utf-8"
-    )
-    assert "O aplicativo fornece o contexto" in (legacy / "AGENTS.md").read_text(
-        encoding="utf-8"
-    )
-    assert (legacy / "tools" / "vr-search.ps1").is_file()
+    agents_text = (legacy / "AGENTS.md").read_text(encoding="utf-8")
+    assert CONVERSATION_MANAGED_MARKER in agents_text
+    assert "contrato de cada turno fornecido pelo Studio é autoritativo" in agents_text
+    assert "No modo OFF, responda diretamente sem usar ferramentas" in agents_text
+    assert "Nos modos VR e Ultra, siga as ferramentas" in agents_text
+    assert "dado não confiável" in agents_text
+    assert not (legacy / "tools" / "vr-search.ps1").exists()
 
     custom = root / "TrabalhoMary" / "custom"
     tools = custom / "tools"
@@ -98,6 +98,39 @@ def test_conversation_workspace_repairs_legacy_files_and_preserves_user_files(
 
     assert (custom / "AGENTS.md").read_text(encoding="utf-8") == "# Regras próprias\n"
     assert (tools / "mary-search.ps1").read_text(encoding="utf-8") == "# script próprio\n"
+
+
+def test_conversation_workspace_removes_managed_wrapper_and_preserves_custom(
+    tmp_path: Path,
+) -> None:
+    ws = tmp_path / "workspace_managed"
+    ws.mkdir()
+    tools = ws / "tools"
+    tools.mkdir()
+    managed_wrapper = tools / "vr-search.ps1"
+    managed_wrapper.write_text(
+        f"# {CONVERSATION_MANAGED_MARKER}\nparam()\n",
+        encoding="utf-8",
+    )
+    (tools / "keep_me.txt").write_text("keep", encoding="utf-8")
+
+    ensure_conversation_workspace(ws)
+
+    assert not managed_wrapper.exists()
+    assert (tools / "keep_me.txt").is_file()
+
+    # Custom wrapper without marker is preserved
+    ws_custom = tmp_path / "workspace_custom"
+    ws_custom.mkdir()
+    custom_tools = ws_custom / "tools"
+    custom_tools.mkdir()
+    custom_wrapper = custom_tools / "vr-search.ps1"
+    custom_wrapper.write_text("# custom wrapper without marker\n", encoding="utf-8")
+
+    ensure_conversation_workspace(ws_custom)
+
+    assert custom_wrapper.is_file()
+    assert custom_wrapper.read_text(encoding="utf-8") == "# custom wrapper without marker\n"
 
 
 def test_ensure_portable_project_preserves_user_owned_codex_config(tmp_path: Path) -> None:
@@ -537,6 +570,7 @@ def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -
         encoding="utf-8",
     )
     workspace = ensure_conversation_workspace(root / "TrabalhoVR" / "saved-thread")
+    assert not (workspace / "tools" / "vr-search.ps1").exists()
 
     completed = subprocess.run(
         [
@@ -545,7 +579,7 @@ def test_conversation_search_wrapper_runs_from_saved_workspace(tmp_path: Path) -
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(workspace / "tools" / "vr-search.ps1"),
+            str(root / "tools" / "vr-search.ps1"),
             "-Query",
             "pinpad TEF",
         ],

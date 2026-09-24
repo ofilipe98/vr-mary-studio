@@ -405,18 +405,44 @@ def _opencode_environment(
             permission["bash"] = "allow"
         permission["webfetch"] = "allow"
         if knowledge_root:
-            resolved_root = str(knowledge_root.resolve()).replace("\\", "/")
-            knowledge_pattern = resolved_root.rstrip("/") + "/**"
-            permission["external_directory"] = {knowledge_pattern: "allow"}
-            if preset.sandbox != "read-only":
-                permission["edit"] = {"*": "allow", knowledge_pattern: "deny"}
-                search_script = resolved_root.rstrip("/") + "/tools/vr-search.ps1"
-                permission["bash"] = {
-                    "*": "allow",
-                    f"*{resolved_root}*": "deny",
-                    f"*{search_script}*": "allow",
-                }
-            permission["webfetch"] = "allow"
+            if vr_tools_enabled:
+                resolved_root = str(knowledge_root.resolve()).replace("\\", "/")
+                knowledge_pattern = resolved_root.rstrip("/") + "/**"
+                permission["external_directory"] = {knowledge_pattern: "allow"}
+                if preset.sandbox != "read-only":
+                    permission["edit"] = {"*": "allow", knowledge_pattern: "deny"}
+                    search_script = resolved_root.rstrip("/") + "/tools/vr-search.ps1"
+                    permission["bash"] = {
+                        "*": "allow",
+                        f"*{resolved_root}*": "deny",
+                        f"*{search_script}*": "allow",
+                    }
+                permission["webfetch"] = "allow"
+            else:
+                from ..direct_sources import existing_off_direct_source_roots
+
+                canonical_roots = existing_off_direct_source_roots(knowledge_root)
+                canon_patterns: list[str] = []
+                canon_path_strs: list[str] = []
+                for _name, canon_path in canonical_roots:
+                    norm_path = str(canon_path.resolve()).replace("\\", "/")
+                    canon_path_strs.append(norm_path)
+                    canon_patterns.append(norm_path.rstrip("/") + "/**")
+
+                if canon_patterns:
+                    permission["external_directory"] = {
+                        pattern: "allow" for pattern in canon_patterns
+                    }
+                if preset.sandbox != "read-only":
+                    edit_rules: dict[str, str] = {"*": "allow"}
+                    for pattern in canon_patterns:
+                        edit_rules[pattern] = "deny"
+                    permission["edit"] = edit_rules
+                    bash_rules: dict[str, str] = {"*": "allow"}
+                    for path_str in canon_path_strs:
+                        bash_rules[f"*{path_str}*"] = "deny"
+                    permission["bash"] = bash_rules
+                permission["webfetch"] = "allow"
     if knowledge_root:
         from ..knowledge_access import mcp_command
         config.setdefault("mcp", {})["vr-mary-studio"] = {

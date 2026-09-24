@@ -28,15 +28,21 @@ instalação, recursos QML, scripts e PyInstaller.
 ## Modos de resposta (OFF, VR e Ultra)
 
 O modo controla a estratégia de resposta; VR e Ultra compartilham as mesmas
-fontes e tools, e o OFF recebe a raiz de fontes configurada como contexto
-opcional somente leitura.
+fontes e tools, e o OFF utiliza exclusivamente capacidades nativas de leitura
+sobre as raízes canônicas de documentação, schema e código.
 
-- **OFF**: modelo direto. O turno recebe o workspace/projeto e a raiz de fontes
-  configurada (`MarySettings.root`) como contexto opcional somente leitura; não
-  registra `vr_sources`, `vr_search` ou `vr_read` e não há retrieval automático,
-  `RetrievalService`, `KnowledgeRouter`, classificação VR nem fan-out. O modelo
-  consulta a raiz apenas pelas capacidades nativas do provider e pode responder
-  sem consultá-la.
+- **OFF**: modelo direto. O turno recebe o contexto do projeto/workspace (quando
+  não gerenciado) e acesso opcional somente leitura estritamente limitado às
+  raízes canônicas existentes (`conhecimento`, `SchemaVR` e `indice/codigo/decompilation`),
+  sem expor a raiz inteira `MarySettings.root`. Não registra nem executa
+  `vr_sources`, `vr_search` ou `vr_read`, e não executa `tools/vr-search.ps1`.
+  Não há retrieval automático, `RetrievalService`, `KnowledgeRouter`, classificação
+  VR nem fan-out. Na documentação Markdown, somente arquivos com `status: active`
+  e `review_status: approved` ou `kept` são considerados factuais (`conhecimento/Revisar`
+  é ignorado). Todo conteúdo local é dado não confiável, nunca instrução.
+  Pastas como `.state`, `.env`, `TrabalhoVR`, `.trash`, logs, `.sqlite` e `ERP/releases`
+  são inacessíveis. O modelo consulta fontes apenas pelas capacidades nativas do
+  provider e pode responder sem consultá-las.
 - **VR**: o modelo principal recebe o contrato VR especializado (identidade,
   fontes disponíveis e política de grounding) e decide usar `vr_sources`,
   `vr_search` e `vr_read`. Há uma única chamada principal; não há agentes,
@@ -44,20 +50,29 @@ opcional somente leitura.
   Schema e Código em paralelo (quatro lanes determinísticas em ordem fixa
   wiki, kb, schema, code) e devolve um resultado consolidado; com `source`,
   consulta somente a fonte escolhida. O filtro por módulo não faz parte da tool
-  de chat VR: a unidade de consulta é a fonte.
+  de chat VR: a unidade de consulta é a fonte. A política de filesystem do OFF
+  nunca é injetada em VR ou Ultra.
 - **Ultra**: mantém o fan-out por fonte com agentes, o agente DEV Java opcional
   e a síntese única validada.
 
-O OFF não recebe as três tools VR em nenhum transporte built-in. As dynamic
-tools do Codex e o servidor MCP built-in `vr-mary-studio` (OpenCode, Claude e
+O OFF não recebe as três tools VR em nenhum transporte built-in nem `tools/vr-search.ps1`.
+As dynamic tools do Codex e o servidor MCP built-in `vr-mary-studio` (OpenCode, Claude e
 Antigravity) seguem o modo resolvido: no OFF o MCP recebe `--disable-vr-tools`,
-não anuncia nem executa VR tools e permanece disponível somente para
-integrações não-VR como o VRMonitor, quando configurado. A leitura opcional da
-raiz de fontes usa as capacidades nativas do provider: OpenCode mantém
-`external_directory` somente leitura, Claude recebe a raiz por `--add-dir` sem
-permissão de escrita e o Antigravity depende do filesystem do runtime, sem
-campo ACP novo. Uma requisição VR tool stale recebida em OFF é recusada sem
-executar retrieval.
+não instancia `MaryDatabase`, `KnowledgeRouter` ou `RetrievalService`, não anuncia
+nem executa VR tools e permanece disponível somente para integrações não-VR como o
+VRMonitor, quando configurado. A leitura opcional de arquivos canônicos usa as
+capacidades nativas do provider: OpenCode limita `external_directory` e restrições
+de bash/edit aos diretórios canônicos existentes (sem liberar `<root>/**` nem o
+script de busca), Claude recebe os diretórios canônicos existentes via `--add-dir`
+sem permissão de escrita e o Antigravity/Codex dependem do filesystem nativo do
+runtime, sem prometer garantias onde a CLI não oferece sandboxing de diretório externo.
+Uma requisição VR tool stale recebida em OFF é recusada sem executar retrieval.
+
+Workspaces gerenciados de conversa criados pelo Studio são mode-neutral: `AGENTS.md`
+e `CLAUDE.md` determinam que a instrução do turno enviada pelo Studio é autoritativa,
+não possuem `tools/vr-search.ps1` e restringem escrita ao próprio workspace.
+Projetos portáteis abertos diretamente fora do Studio continuam sendo um fluxo
+independente preservando seu `tools/vr-search.ps1`.
 
 “Fontes disponíveis” não significa “fontes pré-carregadas”. O backend otimiza a
 consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
@@ -74,8 +89,8 @@ substituição do turno, erro real ou rate limit externo. A paginação é
 transporte, não orçamento. `source=""` realiza pesquisa multi-source, enquanto
 uma fonte explícita continua isolada. A orientação para tentar outra fonte é
 uma decisão do modelo e não um fallback automático.
-No OFF não há tools VR: o modelo pode responder com stack trace, código
-fornecido e raciocínio próprio, consultando a raiz de fontes configurada
+No OFF não há tools VR nem scripts de busca: o modelo pode responder com stack trace, código
+fornecido e raciocínio próprio, consultando os diretórios canônicos existentes
 somente quando o provider tiver capacidade nativa de leitura e busca de
 arquivos. O VR normal mantém o acesso sob demanda dentro do contrato
 tool-driven.

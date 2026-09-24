@@ -204,6 +204,41 @@ def test_mcp_tools_list_follows_vr_mode(tmp_path, monkeypatch):
     assert hidden[0]["tools"] == []
 
 
+def test_mcp_off_does_not_instantiate_database_router_or_retrieval(tmp_path, monkeypatch):
+    from io import StringIO
+    from vrsoft_extractor.mary import mcp_server
+
+    def forbidden_constructor(*args, **kwargs):
+        raise AssertionError("Construtor de retrieval não deve ser chamado em modo OFF")
+
+    monkeypatch.setattr(mcp_server, "MaryDatabase", forbidden_constructor)
+    monkeypatch.setattr(mcp_server, "KnowledgeRouter", forbidden_constructor)
+    monkeypatch.setattr(mcp_server, "RetrievalService", forbidden_constructor)
+    monkeypatch.setattr(mcp_server, "load_scope", lambda path: {})
+
+    requests = [
+        {"id": 1, "method": "initialize", "params": {}},
+        {"id": 2, "method": "tools/list", "params": {}},
+        {
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "vr_search", "arguments": {"query": "sped"}},
+        },
+    ]
+    monkeypatch.setattr(
+        mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests))
+    )
+    output = StringIO()
+    monkeypatch.setattr(mcp_server.sys, "stdout", output)
+    mcp_server.run_mcp_server(tmp_path, vr_tools_enabled=False)
+
+    replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
+    assert len(replies) == 3
+    assert replies[1]["tools"] == []
+    assert replies[2]["isError"] is True
+    assert "modo OFF" in replies[2]["content"][0]["text"]
+
+
 def test_mcp_off_refuses_vr_tool_without_retrieval(tmp_path, monkeypatch):
     from vrsoft_extractor.mary import mcp_server
 

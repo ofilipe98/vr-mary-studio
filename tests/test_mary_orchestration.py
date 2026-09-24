@@ -1751,6 +1751,8 @@ def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
     knowledge = (tmp_path / "VR_Mary_V2").resolve()
     project = (tmp_path / "projeto").resolve()
     knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
     project.mkdir()
     provider = ClaudeProvider(knowledge)
     provider.command = "claude"
@@ -1782,12 +1784,15 @@ def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
         for index, value in enumerate(command)
         if value == "--add-dir"
     ]
-    assert add_dirs == [str(knowledge)]
+    assert add_dirs == [str(conhecimento)]
+    assert str(knowledge) not in add_dirs
     assert str(project) not in add_dirs
     allowed = command[command.index("--allowedTools") + 1]
     assert allowed == "mcp__vr-mary-studio__*"
     assert f"Edit({knowledge}/**)" not in allowed
     assert f"Write({knowledge}/**)" not in allowed
+    assert f"Edit({conhecimento}/**)" not in allowed
+    assert f"Write({conhecimento}/**)" not in allowed
     assert "--disallowedTools" not in command
     mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
     assert "vr-mary-studio" in mcp
@@ -1871,6 +1876,8 @@ def test_opencode_turn_environment_follows_vr_mode(
 ) -> None:
     knowledge = (tmp_path / "mary").resolve()
     knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
     workspace = (tmp_path / "workspace").resolve()
     workspace.mkdir()
     provider = OpenCodeProvider(knowledge)
@@ -1898,8 +1905,14 @@ def test_opencode_turn_environment_follows_vr_mode(
     config = json.loads(popen.call_args.kwargs["env"]["OPENCODE_CONFIG_CONTENT"])
     command = config["mcp"]["vr-mary-studio"]["command"]
     assert ("--disable-vr-tools" in command) is not vr_enabled
-    pattern = str(knowledge).replace("\\", "/") + "/**"
-    assert config["permission"]["external_directory"][pattern] == "allow"
+    if vr_enabled:
+        pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert config["permission"]["external_directory"][pattern] == "allow"
+    else:
+        pattern = str(conhecimento).replace("\\", "/") + "/**"
+        root_pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert config["permission"]["external_directory"][pattern] == "allow"
+        assert root_pattern not in config["permission"]["external_directory"]
     assert config["permission"]["read"] == "allow"
 
 

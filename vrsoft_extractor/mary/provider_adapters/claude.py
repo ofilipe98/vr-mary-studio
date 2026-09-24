@@ -132,11 +132,13 @@ class ClaudeProvider(AgentProvider):
                 ]
             )
         else:
+            from ..direct_sources import existing_off_direct_source_roots
+
             off_roots = list(image_roots)
-            if self.knowledge_root and self.knowledge_root not in off_roots:
-                # OFF keeps optional read-only access to the configured source
-                # root without making it the workspace or granting writes there.
-                off_roots.append(self.knowledge_root)
+            if self.knowledge_root:
+                for _name, canon_root in existing_off_direct_source_roots(self.knowledge_root):
+                    if canon_root not in off_roots:
+                        off_roots.append(canon_root)
             for root in off_roots:
                 command.extend(["--add-dir", str(root)])
             permission_mode = {

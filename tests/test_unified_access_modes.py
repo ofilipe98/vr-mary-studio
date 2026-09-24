@@ -309,7 +309,12 @@ def test_off_mode_project_instructions_and_file_listing(tmp_path: Path):
     assert "MATERIAIS E ARQUIVOS DO PROJETO:" in enriched
     assert "manual.txt" in enriched
     assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in enriched
-    assert str(settings.root.resolve()) in enriched
+    assert str((settings.root / "conhecimento").resolve()) in enriched
+    assert f"A raiz de fontes locais configurada é {settings.root.resolve()}" not in enriched
+    assert "status: active" in enriched
+    assert "review_status: approved ou kept" in enriched
+    assert "conhecimento/Revisar" in enriched
+    assert ".state" in enriched
 
 
 def test_off_mode_scratchpad_workspace_no_inheritance(tmp_path: Path):
@@ -333,7 +338,8 @@ def test_off_mode_scratchpad_workspace_no_inheritance(tmp_path: Path):
     assert "INSTRUÇÕES DO PROJETO:" not in enriched
     assert "MATERIAIS E ARQUIVOS DO PROJETO:" not in enriched
     assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in enriched
-    assert str(settings.root.resolve()) in enriched
+    assert str((settings.root / "conhecimento").resolve()) in enriched
+    assert f"A raiz de fontes locais configurada é {settings.root.resolve()}" not in enriched
     assert enriched.rstrip().endswith("Pergunta geral")
 
 

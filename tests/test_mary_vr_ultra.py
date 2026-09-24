@@ -918,3 +918,41 @@ def test_ultra_fanout_executes_source_pipeline_once(tmp_path: Path, monkeypatch)
 
     assert len(calls) == 1, "Ultra com fan-out ativo deve executar o pipeline por fonte"
     assert any(event.kind == "research_completed" for event in events)
+
+
+def test_vr_and_ultra_external_workspace_excludes_off_policy(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed_modules(database)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _UltraFakeProvider()
+    orchestrator.providers = {"codex": provider}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "INSTRUCTIONS.md").write_text("Instrucoes do projeto", encoding="utf-8")
+    (project / "dados.csv").write_text("1,2,3", encoding="utf-8")
+
+    cid = orchestrator.new_conversation(
+        "codex", "sol", workspace=str(project), defer_provider_start=True
+    )
+    events: list[RuntimeEvent] = []
+    done = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind in {"turn_completed", "turn_failed"}:
+            done.set()
+
+    orchestrator.send(
+        cid,
+        "como emitir NF no Fiscal E fechar o caixa no PDV",
+        callback,
+        use_vr=True,
+        vr_mode="ultra",
+    )
+    assert done.wait(30), "turno não concluiu"
+    assert provider.messages, "nenhuma mensagem enviada ao provedor"
+    assert any("Instrucoes do projeto" in msg for _cid, msg in provider.messages)
+    for _cid, msg in provider.messages:
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" not in msg

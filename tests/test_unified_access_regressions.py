@@ -102,6 +102,8 @@ def test_opencode_mcp_command_follows_vr_mode_without_losing_read_access(
 ):
     knowledge = (tmp_path / "mary").resolve()
     knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
     config = json.loads(
         _opencode_environment(
             "auto", knowledge, vr_tools_enabled=vr_tools_enabled
@@ -109,16 +111,28 @@ def test_opencode_mcp_command_follows_vr_mode_without_losing_read_access(
     )
     command = config["mcp"]["vr-mary-studio"]["command"]
     assert ("--disable-vr-tools" in command) is not vr_tools_enabled
-    pattern = str(knowledge).replace("\\", "/") + "/**"
     permission = config["permission"]
-    assert permission["external_directory"][pattern] == "allow"
     for capability in ("read", "glob", "grep", "list"):
         assert permission[capability] == "allow"
-    assert permission["edit"][pattern] == "deny"
-    assert any(
-        key.endswith("/tools/vr-search.ps1*") and value == "allow"
-        for key, value in permission["bash"].items()
-    )
+    if vr_tools_enabled:
+        pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert permission["edit"][pattern] == "deny"
+        assert any(
+            key.endswith("/tools/vr-search.ps1*") and value == "allow"
+            for key, value in permission["bash"].items()
+        )
+    else:
+        pattern = str(conhecimento).replace("\\", "/") + "/**"
+        root_pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert root_pattern not in permission["external_directory"]
+        assert permission["edit"][pattern] == "deny"
+        assert not any(
+            "vr-search.ps1" in key for key in permission["bash"].keys()
+        )
+        conhecimento_norm = str(conhecimento).replace("\\", "/")
+        assert permission["bash"][f"*{conhecimento_norm}*"] == "deny"
 
 
 def test_mcp_real_process_obeys_frozen_scope_and_reads_returned_reference(tmp_path):

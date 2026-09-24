@@ -65,13 +65,15 @@ def run_mcp_server(
 ) -> None:
     root = root_path or Path(os.environ.get("VR_STUDIO_ROOT", ".")).resolve()
     settings = load_vr_settings(root=root)
-    database = MaryDatabase(settings.database_path, root=settings.root)
-    router = KnowledgeRouter(
-        database,
-        settings.root,
-        disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
-    )
-    service = RetrievalService(router)
+    service = None
+    if vr_tools_enabled:
+        database = MaryDatabase(settings.database_path, root=settings.root)
+        router = KnowledgeRouter(
+            database,
+            settings.root,
+            disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
+        )
+        service = RetrievalService(router)
     try:
         monitor = (
             MonitorAdapter.from_path(settings.state_dir / "vrmonitor.json")
@@ -150,6 +152,8 @@ def run_mcp_server(
                     raise ValueError("Tool VR indisponível no modo OFF.")
                 scope = load_scope(context_path)
                 if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
+                    if service is None:
+                        raise ValueError("Tool VR indisponível no modo OFF.")
                     exec_res = run_vr_tool(tool_name, arguments, service, **scope)
                 elif monitor is not None and tool_name in MONITOR_TOOL_NAMES:
                     exec_res = monitor.execute(
