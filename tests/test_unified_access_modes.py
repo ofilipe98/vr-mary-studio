@@ -508,6 +508,85 @@ def _mode_calls(orchestrator):
     return calls
 
 
+def test_native_dynamic_vr_tools_allow_large_pages_and_keep_24_call_guard(
+    tmp_path: Path,
+):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+
+    class LargeReadService:
+        def read(self, reference, *, cursor, limit, **scope):
+            return {
+                "state": "available",
+                "reference": reference,
+                "content": "x" * limit,
+                "cursor": cursor,
+                "limit": limit,
+                "has_more": True,
+                "next_cursor": cursor + limit,
+            }
+
+    class AvailableProvider:
+        def available(self):
+            return True
+
+        def close(self):
+            return None
+
+    orchestrator.retrieval_service = LargeReadService()
+    orchestrator.providers = {"codex": AvailableProvider()}
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+    responses: list[RuntimeEvent] = []
+    completed = threading.Event()
+
+    def callback(event):
+        if event.kind == "tool_event":
+            responses.append(event)
+            if len(responses) == 25:
+                completed.set()
+
+    orchestrator._pending_user_messages[conversation_id] = 1
+    orchestrator._turn_access_paths[conversation_id] = ""
+    orchestrator._turn_dynamic_candidates[conversation_id] = []
+    orchestrator._turn_tool_calls[conversation_id] = 0
+    orchestrator._external_callbacks[conversation_id] = callback
+    orchestrator._callback_generations[conversation_id] = 1
+    try:
+        for index in range(25):
+            orchestrator._execute_vr_native_tool(
+                RuntimeEvent(
+                    conversation_id,
+                    "dynamic_tool_requested",
+                    "vr_read",
+                    {
+                        "tool": "vr_read",
+                        "request_id": f"read-{index}",
+                        "arguments": {
+                            "reference": "example.Fiscal",
+                            "limit": 8000,
+                        },
+                    },
+                ),
+                "vr_read",
+            )
+        assert completed.wait(10)
+        assert len(responses) == 25
+        successes = [event.payload["success"] for event in responses]
+        assert sum(successes) == 24
+        assert successes.count(False) == 1
+        payloads = [
+            json.loads(event.payload["output"])
+            for event in responses
+            if event.payload["success"]
+        ]
+        assert sum(len(payload["content"]) for payload in payloads) > 96_000
+        assert all("budget" not in payload for payload in payloads)
+    finally:
+        orchestrator.close()
+
+
 def test_off_mode_never_routes_or_fans_out(tmp_path: Path):
     from test_mary_vr_ultra import _orchestrator
 

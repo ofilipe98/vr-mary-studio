@@ -107,6 +107,31 @@ class TestPromptPrefixCache:
             assert name in prompt
         assert "<user_request>" in prompt
 
+    def test_off_prompt_keeps_knowledge_optional_and_reasoning_based(
+        self, tmp_path: Path
+    ) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        conversation_id = orchestrator.new_conversation(
+            "codex", "sol", defer_provider_start=True, workspace=workspace, vr_enabled=False
+        )
+        conversation = dict(orchestrator._conversation(conversation_id))
+        with patch.object(
+            orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
+        ):
+            prompt = orchestrator._enrich_off_prompt(
+                "Analise este stack trace sem consultar a base.",
+                conversation=conversation,
+                workspace=workspace,
+            )
+        assert "ACESSO LOCAL SOB DEMANDA" in prompt
+        assert "opcionais" in prompt
+        assert "stack trace" in prompt
+        assert "sem consultar a documentação" in prompt
+        assert "source=\"\"" in prompt
+        assert "CONSULTA SOB DEMANDA" not in prompt
+
     def test_empty_bundle_also_skips_automatic_search(self, tmp_path: Path) -> None:
         _settings, orchestrator = _orchestrator(tmp_path)
         empty = EvidenceBundle(

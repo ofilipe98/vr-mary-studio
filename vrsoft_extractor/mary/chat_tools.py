@@ -309,8 +309,13 @@ def vr_search_tool_spec() -> dict[str, Any]:
             "Sem `source`, consulta Wiki (funcionamento), KB (processos), Schema "
             "(banco) e Código Java descompilado em paralelo e devolve um "
             "resultado consolidado. Com `source`, consulta somente a fonte "
-            "escolhida. Use sempre que faltar detalhe confiável sobre regras, "
-            "procedimentos, funcionamento, rotinas ou implementações antes de responder."
+            "escolhida. Um resultado vazio ou indisponível em uma fonte específica "
+            "não prova ausência de evidência nas demais fontes. Se a pergunta "
+            "continuar sem resposta, reformule por conceitos de negócio ou sintomas "
+            "e tente outra fonte ou source=\"\". Não consulte fontes adicionais quando "
+            "a resposta já estiver suficientemente sustentada. Use sempre que faltar "
+            "detalhe confiável sobre regras, procedimentos, funcionamento, rotinas ou "
+            "implementações antes de responder."
         ),
         "inputSchema": VR_SEARCH_INPUT_SCHEMA,
     }
@@ -387,13 +392,26 @@ def run_vr_sources(arguments: dict[str, Any], router: Any, **kwargs: Any) -> Too
 def run_vr_search(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolExecutionResult:
     validate_tool_arguments(arguments, VR_SEARCH_INPUT_SCHEMA)
     service = _access_service(router)
-    options = {"source": str(arguments.get("source") or ""),
+    source = str(arguments.get("source") or "").strip().casefold()
+    options = {"source": source,
                "limit": max(1, min(20, int(arguments.get("limit") or 6)))}
     if arguments.get("context"):
         options["context"] = str(arguments["context"])
     if "cursor" in arguments:
         options["cursor"] = max(0, int(arguments["cursor"]))
     payload = service.search(str(arguments.get("query") or "").strip(), **options, **kwargs)
+    results = payload.get("results") if isinstance(payload, dict) else None
+    has_results = isinstance(results, list) and any(
+        isinstance(item, dict) and item for item in results
+    )
+    if source and not has_results:
+        payload = dict(payload)
+        payload["guidance"] = (
+            "O resultado vazio ou indisponível desta fonte específica não prova ausência "
+            "de evidência nas demais fontes. Considere outra fonte ou source=\"\", "
+            "reformulando a consulta por conceitos de negócio ou sintomas em vez de "
+            "repetir a mesma assinatura."
+        )
     return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
 
 
@@ -406,30 +424,11 @@ def run_vr_read(arguments: dict[str, Any], router: Any, **kwargs: Any) -> ToolEx
     return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
 
 
-def run_bounded_vr_tool(name: str, arguments: dict[str, Any], router: Any,
-                        remaining_chars: int, **scope: Any) -> ToolExecutionResult:
-    """Fit a real page, never truncate JSON or lose continuation references."""
-    runners = {VR_SEARCH_TOOL_NAME: (run_vr_search, 6),
-               VR_READ_TOOL_NAME: (run_vr_read, 4000),
-               VR_SOURCES_TOOL_NAME: (run_vr_sources, 20)}
-    runner, default_limit = runners[name]
-    options = dict(arguments)
-    size = max(1, int(options.get("limit") or default_limit))
-    while remaining_chars > 256:
-        options["limit"] = size
-        result = runner(options, router, **scope)
-        payload = dict(result.parsed)
-        payload["budget"] = {"remaining_chars": 0, "page_reduced": size < int(arguments.get("limit") or default_limit)}
-        # Reserve enough digits for the remaining budget before measuring.
-        payload["budget"]["remaining_chars"] = remaining_chars
-        text = json.dumps(payload, ensure_ascii=False)
-        if len(text) <= remaining_chars:
-            payload["budget"]["remaining_chars"] = remaining_chars - len(text)
-            return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
-        if size == 1 or payload.get("error"):
-            break
-        size = max(1, size // 2)
-    payload = {"state": "budget_exhausted", "remaining_chars": remaining_chars,
-               "error": "O saldo de respostas deste turno não comporta outra página. "
-                        "Use as evidências já recebidas ou continue em um novo turno; não repita a consulta."}
-    return ToolExecutionResult(text=json.dumps(payload, ensure_ascii=False), parsed=payload)
+def run_vr_tool(name: str, arguments: dict[str, Any], router: Any, **scope: Any) -> ToolExecutionResult:
+    if name == VR_SOURCES_TOOL_NAME:
+        return run_vr_sources(arguments, router, **scope)
+    if name == VR_SEARCH_TOOL_NAME:
+        return run_vr_search(arguments, router, **scope)
+    if name == VR_READ_TOOL_NAME:
+        return run_vr_read(arguments, router, **scope)
+    raise ValueError(f"Tool VR desconhecida: {name}")

@@ -26,9 +26,7 @@ from .chat_tools import (
     all_vr_tools_specs,
     dynamic_tool_spec,
     run_local_tool,
-    run_vr_search,
-    run_vr_sources,
-    run_vr_read,
+    run_vr_tool,
 )
 from .monitor_adapter import (
     MONITOR_TOOL_NAMES,
@@ -176,6 +174,7 @@ class _ExecutionState:
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_RESEARCH_READ_CAPTURE_CHARS = 96_000
 
 
 class OrchestrationCancelled(ExecutionCancelledError):
@@ -259,7 +258,8 @@ class ChatOrchestrator:
         self._turn_application_contexts: dict[str, list[dict[str, Any]] | None] = {}
         self._turn_dynamic_candidates: dict[str, list[EvidenceCandidate]] = {}
         self._turn_access_paths: dict[str, str] = {}
-        self._turn_tool_usage: dict[str, tuple[int, int]] = {}
+        self._turn_tool_calls: dict[str, int] = {}
+        self._turn_monitor_output_chars: dict[str, int] = {}
         from .lifecycle import ConversationTrash
         self._trash_lifecycle = ConversationTrash(
             settings, database, lambda row, action: self._sync_codex_lifecycle(row, action),
@@ -508,7 +508,8 @@ class ChatOrchestrator:
             self._turn_access_paths[conversation_id] = access_path
             self._turn_application_contexts[conversation_id] = application_contexts
             self._turn_dynamic_candidates[conversation_id] = []
-            self._turn_tool_usage[conversation_id] = (0, 0)
+            self._turn_tool_calls[conversation_id] = 0
+            self._turn_monitor_output_chars[conversation_id] = 0
             if not native_id:
                 native_id = provider.start_conversation(
                     conversation_id,
@@ -930,7 +931,8 @@ class ChatOrchestrator:
             self._turn_access_paths.pop(conversation_id, None)
             self._turn_application_contexts.pop(conversation_id, None)
             self._turn_dynamic_candidates.pop(conversation_id, None)
-            self._turn_tool_usage.pop(conversation_id, None)
+            self._turn_tool_calls.pop(conversation_id, None)
+            self._turn_monitor_output_chars.pop(conversation_id, None)
             self._pending_user_messages.pop(conversation_id, None)
             self._pending_response_modes.pop(conversation_id, None)
             self._pending_evidence_bundles.pop(conversation_id, None)
@@ -1640,24 +1642,21 @@ class ChatOrchestrator:
                 from .knowledge_access import load_scope, result_candidates
                 try:
                     name = str(event.payload.get("tool") or event.text)
-                    handler = {VR_SEARCH_TOOL_NAME: run_vr_search, VR_SOURCES_TOOL_NAME: run_vr_sources,
-                               VR_READ_TOOL_NAME: run_vr_read}[name]
                     arguments = event.payload.get("arguments") or {}
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
                     with self._agent_run_lock:
-                        calls, chars = self._turn_tool_usage.get(conversation_id, (0, 0))
-                        if calls >= 24 or chars >= 96000:
+                        calls = self._turn_tool_calls.get(conversation_id, 0)
+                        if calls >= 24:
                             raise ValueError("Limite de consultas do turno atingido.")
-                        self._turn_tool_usage[conversation_id] = (calls + 1, chars)
-                    result = handler(arguments, self.retrieval_service, **load_scope(agent_options.knowledge_context_path))
+                        self._turn_tool_calls[conversation_id] = calls + 1
+                    result = run_vr_tool(
+                        name, arguments, self.retrieval_service,
+                        **load_scope(agent_options.knowledge_context_path),
+                    )
                     with self._agent_run_lock:
                         if done.is_set() or self._pending_user_messages.get(conversation_id) != execution_owner:
                             return
-                        calls, chars = self._turn_tool_usage.get(conversation_id, (0, 0))
-                        if chars + len(result.text) > 96000:
-                            raise ValueError("Limite de resultados do turno atingido.")
-                        self._turn_tool_usage[conversation_id] = (calls, chars + len(result.text))
                         registry = self._research_evidence.get(run_id)
                         if registry is not None and name != VR_SOURCES_TOOL_NAME:
                             registry.update({c.evidence_id: c for c in result_candidates(result.parsed)})
@@ -1671,7 +1670,7 @@ class ChatOrchestrator:
                     registry = self._research_evidence.get(run_id)
                     if registry is not None and len(registry) < 48 and sum(
                         len(c.excerpt) for c in registry.values() if c.evidence_id.startswith("read:")
-                    ) < 96000:
+                    ) < MAX_RESEARCH_READ_CAPTURE_CHARS:
                         candidate = capture_read(event, self.settings.root, tuple(registry.values()))
                         if candidate is not None:
                             registry[candidate.evidence_id] = candidate
@@ -2103,9 +2102,14 @@ class ChatOrchestrator:
             sections.append(f"MATERIAIS E ARQUIVOS DO PROJETO:\n{file_list}")
 
         sections.append(
-            "ACESSO LOCAL SOB DEMANDA: Você tem ferramentas nativas `vr_sources`, `vr_search` e `vr_read` "
-            "disponíveis para consultar o conhecimento local VR (Wiki, KB, Schema) e código Java descompilado quando relevante."
-            " Para arquivos compartilhados do projeto, use source='project' e as referencias retornadas por vr_sources."
+            "ACESSO LOCAL SOB DEMANDA: As fontes locais são opcionais e ficam disponíveis "
+            "para consulta sob demanda por meio das ferramentas nativas `vr_sources`, `vr_search` "
+            "e `vr_read` (Wiki, KB, Schema e código Java descompilado). Você pode analisar "
+            "stack trace, código fornecido e seu próprio raciocínio sem consultar a documentação. "
+            "Se decidir consultar uma fonte e ela não resolver a pergunta, tente outra fonte "
+            "(Wiki, KB, Schema ou Code) ou source=\"\" antes de concluir que não há evidência. "
+            "Para arquivos compartilhados "
+            "do projeto, use source='project' e as referencias retornadas por vr_sources."
         )
 
         prompt_header = "\n\n".join(sections)
@@ -2702,7 +2706,10 @@ class ChatOrchestrator:
                     event.conversation_id, None
                 )
                 dynamic_candidates.pop(event.conversation_id, None)
-                getattr(self, "_turn_tool_usage", {}).pop(
+                getattr(self, "_turn_tool_calls", {}).pop(
+                    event.conversation_id, None
+                )
+                getattr(self, "_turn_monitor_output_chars", {}).pop(
                     event.conversation_id, None
                 )
                 self._pending_user_messages.pop(event.conversation_id, None)
@@ -3536,10 +3543,11 @@ class ChatOrchestrator:
                 if not owns_turn():
                     return
                 with self._agent_run_lock:
-                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
-                    if calls >= 24 or chars >= 96000:
+                    calls = self._turn_tool_calls.get(cid, 0)
+                    monitor_chars = self._turn_monitor_output_chars.get(cid, 0)
+                    if calls >= 24 or monitor_chars >= 96000:
                         raise ValueError("Limite de consultas deste turno atingido.")
-                    self._turn_tool_usage[cid] = (calls + 1, chars)
+                    self._turn_tool_calls[cid] = calls + 1
                 raw_arguments = event.payload.get("arguments") or {}
                 if isinstance(raw_arguments, str):
                     raw_arguments = json.loads(raw_arguments)
@@ -3547,10 +3555,10 @@ class ChatOrchestrator:
                 with self._agent_run_lock:
                     if not owns_turn():
                         return
-                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
-                    if chars + len(result.text) > 96000:
+                    monitor_chars = self._turn_monitor_output_chars.get(cid, 0)
+                    if monitor_chars + len(result.text) > 96000:
                         raise ValueError("Limite de resultados atingido; reduza limit.")
-                    self._turn_tool_usage[cid] = (calls, chars + len(result.text))
+                    self._turn_monitor_output_chars[cid] = monitor_chars + len(result.text)
                     self._respond_dynamic_tool(
                         event, result.text, True, result.content_items()
                     )
@@ -3610,24 +3618,18 @@ class ChatOrchestrator:
                 with self._agent_run_lock:
                     if not owns_turn():
                         return
-                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
-                    if calls >= 24 or chars >= 96000:
+                    calls = self._turn_tool_calls.get(cid, 0)
+                    if calls >= 24:
                         raise ValueError("Limite de consultas deste turno atingido.")
-                    self._turn_tool_usage[cid] = (calls + 1, chars)
+                    self._turn_tool_calls[cid] = calls + 1
                 raw_arguments = event.payload.get("arguments") or {}
                 if isinstance(raw_arguments, str):
                     raw_arguments = json.loads(raw_arguments)
                 scope = load_scope(access_path) if access_path else {}
-                handler = {VR_SEARCH_TOOL_NAME: run_vr_search, VR_SOURCES_TOOL_NAME: run_vr_sources,
-                           VR_READ_TOOL_NAME: run_vr_read}[tool_name]
-                result = handler(raw_arguments, self.retrieval_service, **scope)
+                result = run_vr_tool(tool_name, raw_arguments, self.retrieval_service, **scope)
                 with self._agent_run_lock:
                     if not owns_turn():
                         return
-                    calls, chars = self._turn_tool_usage.get(cid, (0, 0))
-                    if chars + len(result.text) > 96000:
-                        raise ValueError("Limite de resultados atingido; reduza limit.")
-                    self._turn_tool_usage[cid] = (calls, chars + len(result.text))
                     if tool_name != VR_SOURCES_TOOL_NAME and isinstance(result.parsed, dict):
                         self._turn_dynamic_candidates.setdefault(cid, []).extend(result_candidates(result.parsed))
                     self._respond_dynamic_tool(event, result.text, not bool(result.parsed.get("error")), result.content_items())
@@ -3734,7 +3736,8 @@ class ChatOrchestrator:
         self._turn_access_paths.clear()
         self._turn_application_contexts.clear()
         self._turn_dynamic_candidates.clear()
-        self._turn_tool_usage.clear()
+        self._turn_tool_calls.clear()
+        self._turn_monitor_output_chars.clear()
         self.drain_turn_finalizations(timeout=5.0)
         self._turn_finalizer_executor.shutdown(wait=False, cancel_futures=True)
         for conversation_id in active:

@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
-from vrsoft_extractor.mary.chat_tools import run_bounded_vr_tool
+from vrsoft_extractor.mary.chat_tools import run_vr_tool
 from vrsoft_extractor.mary.code_context import application_context_warning
 from vrsoft_extractor.mary.models import RuntimeEvent
 from vrsoft_extractor.mary.provider_adapters.tool_normalizer import normalize_opencode_event
@@ -45,26 +45,50 @@ class Pages:
         return {"results": [{"reference": f"kb:{i}", "excerpt": "x" * 500} for i in range(cursor, cursor + limit)],
                 "has_more": True, "next_cursor": cursor + limit}
 
+    def sources(self, *, limit, cursor=0, **scope):
+        return {"state": "available", "results": [{"source_id": str(i)} for i in range(cursor, cursor + limit)],
+                "has_more": True, "next_cursor": cursor + limit}
 
-def test_budget_reduces_read_page_without_losing_continuation():
+
+def test_vr_tools_return_requested_pages_and_continuations():
     scope = {"application_contexts": [{"app_id": "vratacarejo"}]}
-    first = run_bounded_vr_tool("vr_read", {"reference": "example.Fiscal"}, Pages(), 1800, **scope)
-    assert len(first.text) <= 1800
-    assert first.parsed["budget"]["page_reduced"]
-    assert first.parsed["next_cursor"] == len(first.parsed["content"])
-    second = run_bounded_vr_tool("vr_read", {"reference": "example.Fiscal", "cursor": first.parsed["next_cursor"]}, Pages(), 1800, **scope)
-    assert second.parsed["cursor"] == len(first.parsed["content"])
+    first = run_vr_tool(
+        "vr_read", {"reference": "example.Fiscal", "limit": 8000}, Pages(), **scope
+    )
+    assert "budget" not in first.parsed
+    assert "remaining_chars" not in first.parsed
+    assert len(first.parsed["content"]) == 8000
+    assert first.parsed["next_cursor"] == 8000
+    assert first.parsed["has_more"]
+    second = run_vr_tool(
+        "vr_read",
+        {"reference": "example.Fiscal", "cursor": first.parsed["next_cursor"], "limit": 8000},
+        Pages(),
+        **scope,
+    )
+    assert second.parsed["cursor"] == first.parsed["next_cursor"]
     assert second.parsed["reference"] == first.parsed["reference"]
 
+    search = run_vr_tool(
+        "vr_search", {"query": "fiscal", "limit": 20, "cursor": 4}, Pages()
+    )
+    assert "budget" not in search.parsed
+    assert len(search.parsed["results"]) == 20
+    assert search.parsed["results"][0]["reference"] == "kb:4"
+    assert search.parsed["next_cursor"] == 24
+    assert search.parsed["has_more"]
 
-def test_budget_reduces_search_and_reports_exhaustion():
-    result = run_bounded_vr_tool("vr_search", {"query": "fiscal", "limit": 6, "cursor": 4}, Pages(), 1700)
-    assert len(result.text) <= 1700
-    assert result.parsed["next_cursor"] == 4 + len(result.parsed["results"])
-    assert result.parsed["results"][0]["reference"] == "kb:4"
-    exhausted = run_bounded_vr_tool("vr_search", {"query": "fiscal"}, Pages(), 10)
-    assert exhausted.parsed["state"] == "budget_exhausted"
-    assert exhausted.parsed["remaining_chars"] == 10
+
+def test_vr_tool_payloads_have_no_turn_budget_state():
+    payloads = [
+        run_vr_tool("vr_sources", {"limit": 50}, Pages(), application_contexts=[{"app_id": "vratacarejo"}]).parsed,
+        run_vr_tool("vr_search", {"query": "fiscal"}, Pages()).parsed,
+        run_vr_tool("vr_read", {"reference": "example.Fiscal"}, Pages(), application_contexts=[{"app_id": "vratacarejo"}]).parsed,
+    ]
+    for payload in payloads:
+        assert "budget" not in payload
+        assert "remaining_chars" not in payload
+        assert payload.get("state") not in {"", "exhausted"}
 
 
 @pytest.mark.parametrize("app,warning", [("vrmaster", True), ("vratacarejo", False)])
@@ -75,7 +99,7 @@ def test_product_stack_context_is_explicit(app, warning):
     assert not application_context_warning("br.com.vrsoftware.vrnfe.Nota.calcular(Nota.java:374)", contexts)
 
 
-def test_mcp_transport_adapts_to_remaining_turn_budget(tmp_path, monkeypatch):
+def test_mcp_transport_allows_vr_responses_over_turn_character_total(tmp_path, monkeypatch):
     from io import StringIO
     from vrsoft_extractor.mary import mcp_server
 
@@ -91,14 +115,42 @@ def test_mcp_transport_adapts_to_remaining_turn_budget(tmp_path, monkeypatch):
     requests = [{"id": 1, "method": "tools/call", "params": {
         "name": "vr_search", "arguments": {"query": "fiscal", "limit": 20}}},
         {"id": 2, "method": "tools/call", "params": {
-            "name": "vr_read", "arguments": {"reference": "example.Fiscal", "limit": 8000}}}]
+        "name": "vr_read", "arguments": {"reference": "example.Fiscal", "limit": 8000}}}]
     monkeypatch.setattr(mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests)))
     output = StringIO()
     monkeypatch.setattr(mcp_server.sys, "stdout", output)
     mcp_server.run_mcp_server(tmp_path)
     replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
+    texts = [reply["content"][0]["text"] for reply in replies]
     assert not any(reply["isError"] for reply in replies)
-    assert sum(len(reply["content"][0]["text"]) for reply in replies) <= 96000
-    read = json.loads(replies[1]["content"][0]["text"])
-    assert read["budget"]["page_reduced"] and read["has_more"]
+    assert sum(len(text) for text in texts) > 96_000
+    payloads = [json.loads(text) for text in texts]
+    assert all("budget" not in payload for payload in payloads)
+    assert all("remaining_chars" not in payload for payload in payloads)
+    read = payloads[1]
+    assert read["has_more"]
     assert read["next_cursor"] == len(read["content"])
+
+
+def test_mcp_transport_keeps_the_24_call_loop_guard(tmp_path, monkeypatch):
+    from io import StringIO
+    from vrsoft_extractor.mary import mcp_server
+
+    monkeypatch.setattr(mcp_server, "MaryDatabase", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "KnowledgeRouter", lambda *a, **kw: None)
+    monkeypatch.setattr(mcp_server, "RetrievalService", lambda *a: Pages())
+    monkeypatch.setattr(mcp_server, "load_scope", lambda path: {"application_contexts": [{"app_id": "vratacarejo"}]})
+    requests = [
+        {"id": index, "method": "tools/call", "params": {
+            "name": "vr_read", "arguments": {"reference": "example.Fiscal"}}}
+        for index in range(25)
+    ]
+    monkeypatch.setattr(mcp_server.sys, "stdin", StringIO("\n".join(json.dumps(r) for r in requests)))
+    output = StringIO()
+    monkeypatch.setattr(mcp_server.sys, "stdout", output)
+    mcp_server.run_mcp_server(tmp_path)
+    replies = [json.loads(line)["result"] for line in output.getvalue().splitlines()]
+    assert len(replies) == 25
+    assert not any(reply["isError"] for reply in replies[:24])
+    assert replies[24]["isError"]
+    assert "Limite de consultas" in replies[24]["content"][0]["text"]

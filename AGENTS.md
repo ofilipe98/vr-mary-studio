@@ -22,6 +22,12 @@ A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki`
 
 ---
 
+## Tools VR e paginação
+
+As tools `vr_sources`, `vr_search` e `vr_read` não possuem budget cumulativo de caracteres por turno. Cada chamada respeita o limite da própria ferramenta e a paginação por cursor/next_cursor continua sendo a forma de aprofundar resultados longos. O limite de 24 chamadas por turno permanece apenas como proteção contra loop infinito. Ausência ou falha em uma fonte específica não implica ausência nas demais fontes; quando o modelo escolhe uma fonte, nenhuma alternativa é acionada automaticamente.
+
+---
+
 ## Perfis especialistas
 
 Perfis especialistas são skills built-in injetadas exclusivamente nos modos VR e Ultra. Eles orientam apenas o comportamento e nunca alteram fontes, retrieval, tools ou fan-out. O modo OFF não exibe perfil ativo, não envia modo de perfil e não injeta política de perfil.

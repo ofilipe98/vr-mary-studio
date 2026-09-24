@@ -81,6 +81,8 @@ def test_vr_search_tool_spec_matches_schema() -> None:
     spec = vr_search_tool_spec()
     assert spec["name"] == VR_SEARCH_TOOL_NAME
     assert spec["type"] == "function"
+    assert "não prova ausência de evidência nas demais fontes" in spec["description"]
+    assert "source=\"\"" in spec["description"]
     assert set(VR_SEARCH_INPUT_SCHEMA["required"]) == {"query"}
     validate_tool_arguments({"query": "como gerar sped"}, VR_SEARCH_INPUT_SCHEMA)
 
@@ -227,6 +229,48 @@ def test_search_with_source_runs_only_that_lane(tmp_path: Path, monkeypatch) -> 
     assert called == ["schema"]
     assert set(payload["source_states"]) == {"schema"}
     assert [row["reference"] for row in payload["results"]] == ["schema:1"]
+
+
+class _GuidanceService:
+    def __init__(self, results: list[dict[str, Any]]) -> None:
+        self.results = results
+
+    def search(self, query: str, **options: Any) -> dict[str, Any]:
+        return {
+            "query": query,
+            "source": options.get("source", ""),
+            "results": self.results,
+            "total": len(self.results),
+            "source_states": {options.get("source", ""): "available"},
+        }
+
+
+def test_explicit_source_without_results_adds_alternative_guidance() -> None:
+    result = run_vr_search(
+        {"query": "erro na rotina", "source": "code"},
+        _GuidanceService([]),
+    )
+
+    assert result.parsed["source"] == "code"
+    assert result.parsed["guidance"]
+    assert "source=\"\"" in result.parsed["guidance"]
+    assert "sintomas" in result.parsed["guidance"]
+    assert "error" not in result.parsed
+
+
+def test_explicit_source_with_results_does_not_add_guidance() -> None:
+    result = run_vr_search(
+        {"query": "classe", "source": "code"},
+        _GuidanceService([{"reference": "code:1", "source": "code", "excerpt": "x"}]),
+    )
+
+    assert "guidance" not in result.parsed
+
+
+def test_search_without_source_does_not_add_guidance() -> None:
+    result = run_vr_search({"query": "sem resultados"}, _GuidanceService([]))
+
+    assert "guidance" not in result.parsed
 
 
 def test_search_with_source_document_error_is_reported_per_lane(

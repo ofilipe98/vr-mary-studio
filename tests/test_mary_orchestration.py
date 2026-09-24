@@ -2323,6 +2323,8 @@ def test_off_turn_answers_vr_search_without_vr_pipeline(tmp_path: Path) -> None:
     assert conversation_id not in orchestrator._external_callbacks
     assert conversation_id not in orchestrator._callback_generations
     assert not orchestrator._dynamic_tool_callbacks
+    assert conversation_id not in orchestrator._turn_tool_calls
+    assert conversation_id not in orchestrator._turn_monitor_output_chars
     orchestrator.close()
 
 

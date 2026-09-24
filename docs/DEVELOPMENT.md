@@ -49,6 +49,17 @@ consulta escolhida pelo modelo (por exemplo, o paralelismo interno de
 `vr_search`), mas não pesquisa automaticamente antes da resposta.
 Prefetch/cache de consulta não pertencem a este contrato.
 
+As três tools VR têm paginação continuável por chamada: `vr_sources` aceita
+até 50 itens, `vr_search` até 20 resultados e `vr_read` até 8.000 caracteres
+por página. Não existe teto cumulativo de 96.000 caracteres para as três tools
+em um turno; o limite de 24 chamadas por turno permanece como proteção contra
+loop infinito. `source=""` realiza pesquisa multi-source, enquanto uma fonte
+explícita continua isolada. A orientação para tentar outra fonte é uma decisão
+do modelo e não um fallback automático. No OFF, essas fontes são opcionais: o
+modelo pode responder com stack trace, código fornecido e raciocínio próprio sem
+consultar a documentação. O VR normal mantém o mesmo acesso sob demanda dentro
+do contrato tool-driven.
+
 A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre VRWiki +
 Endoo, mesmo quando o toggle legado de Endoo está desligado. Cada origem é
 consultada em bloco de erro independente: uma falha parcial mantém os hits da
