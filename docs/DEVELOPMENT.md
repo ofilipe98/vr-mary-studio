@@ -73,6 +73,10 @@ Antigravity/Codex dependem do filesystem nativo do runtime, sem prometer garanti
 CLI não oferece sandboxing de diretório externo. Uma requisição VR tool stale recebida em
 OFF é recusada sem executar retrieval.
 
+O modo efetivo (`effective_use_vr = resolved_vr_mode != "off"`) é a fonte única de verdade do turno no orquestrador: `use_vr=False` sempre prevalece e força `resolved_vr_mode="off"`, enquanto `vr_mode="off"` nunca executa branches de VR mesmo se `use_vr=True` for omitido ou passado por chamadores legados. A seleção de aplicativo e release do catálogo Java pertence exclusivamente aos modos VR e Ultra e não existe em OFF: qualquer seleção é descartada antes do turno, `application_contexts` permanece `None`, `master_fallback` permanece `False` e nenhum aviso de contexto de código indisponível é gerado.
+
+O transporte Antigravity (`session/prompt`) opera sem timeout total interno (`timeout=None`), delegando o controle do ciclo de vida à resposta do modelo ou ao cancelamento explícito pelo usuário (`interrupt` ou fechamento de sessão).
+
 Workspaces gerenciados de conversa criados pelo Studio são mode-neutral: `AGENTS.md`
 e `CLAUDE.md` determinam que a instrução do turno enviada pelo Studio é autoritativa,
 não possuem `tools/vr-search.ps1` e restringem escrita ao próprio workspace.
@@ -146,6 +150,36 @@ materializados como `SkillDefinition` com `scope="vr"`,
 `invocation_mode="injected"` e `source="app_managed"`. Eles não são arquivos
 editáveis em `VRProject` ou no workspace e não aparecem no gerenciador comum de
 skills. Adaptativa não é um agente independente.
+
+## Pacotes de conhecimento (Wiki, Endoo e KB)
+
+A aba "Wiki e KB" em Configurações exporta e importa documentos ativos das
+origens VRWiki, Wiki Endoo e KB Movidesk em um único `.zip` portátil
+(`vrstudio-knowledge-package`, manifesto `vrstudio-knowledge-export.json`,
+`documents.jsonl` e os `.md` canônicos em `files/`). Os anexos referenciados
+são sempre empacotados; anexos ausentes no disco são omitidos e contados no
+manifesto. A Wiki Endoo é conteúdo autenticado e só entra com seleção
+explícita (mesmo contrato do `--include-endoo` no export portátil).
+
+O banco é a fonte de verdade: o `.md` do pacote é regerado de
+`canonical_markdown`, e a importação valida manifesto, hashes de registros e
+de anexos antes da primeira escrita. O modo "Mesclar" preserva módulo e
+revisão aprovados localmente (`preserve_validated_classification`) e
+reenfileira revisão quando o conteúdo muda; "Restaurar" grava módulo e
+`review_status` do pacote (`upsert_document(preserve_local_review=False)`).
+Ao final o catálogo é regenerado (`export_catalog`) e as superfícies de
+conhecimento recarregam (`StudioBridge.refreshKnowledgeData`).
+
+O fluxo reutiliza a infraestrutura de tarefas do `ChatBridge`
+(`_start_knowledge_transfer_task`, fila, poll de 50 ms e
+`_release_snapshot_running`), com os slots `exportKnowledgePackage`,
+`detectKnowledgePackageArchive` e `importKnowledgePackageArchive`, os sinais
+`knowledgePackageDetected`, `knowledgePackageImported`,
+`knowledgePackageExported` e `knowledgeTransferFailed`, e os testes focados:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_knowledge_transfer.py tests/test_knowledge_transfer_bridge.py -q
+```
 
 ## Instalação e testes
 

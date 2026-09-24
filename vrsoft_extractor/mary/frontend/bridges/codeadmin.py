@@ -1710,6 +1710,12 @@ class CodeAdminDomain:
                 self._apply_decompiled_import_progress(current, total)
                 self.stateChanged.emit()
                 return
+            if progress_operation in {"export_knowledge", "import_knowledge"}:
+                self._KnowledgeTransfer_domain._apply_knowledge_transfer_progress(
+                    current, total
+                )
+                self.stateChanged.emit()
+                return
             stage = str(latest_progress.get("stage") or "")
             filename = str(latest_progress.get("file") or "")
             stage_labels = {
@@ -1742,8 +1748,46 @@ class CodeAdminDomain:
             self._decompiled_export_running = False
         elif operation == "import_decompiled":
             self._decompiled_import_running = False
+        if operation in {"export_knowledge", "import_knowledge", "detect_knowledge"}:
+            self._knowledge_transfer_running = False
         self._release_snapshot_poll_timer.stop()
         if latest.get("workspace", self._settings.root) != self._settings.root:
+            self.stateChanged.emit()
+            return
+        if operation in {"detect_knowledge", "import_knowledge", "export_knowledge"}:
+            if latest.get("ok"):
+                result = latest["result"]
+                if operation == "detect_knowledge":
+                    self._release_snapshot_status = result.get(
+                        "error", "Confira os documentos detectados no pacote."
+                    )
+                    self.knowledgePackageDetected.emit(result)
+                elif operation == "export_knowledge":
+                    self._release_snapshot_status = (
+                        "Conhecimento exportado com sucesso. "
+                        f"{result['document_count']:,} documentos e "
+                        f"{result['asset_count']:,} anexos empacotados."
+                    ).replace(",", ".")
+                    self.knowledgePackageExported.emit(result)
+                else:
+                    failures = int(result.get("error_count") or 0)
+                    self._release_snapshot_status = (
+                        "Importação de conhecimento concluída: "
+                        f"{result['created']:,} criados, "
+                        f"{result['updated']:,} atualizados, "
+                        f"{result['unchanged']:,} inalterados."
+                        + (f" {failures:,} falhas." if failures else "")
+                    ).replace(",", ".")
+                    self._KnowledgeTransfer_domain.refreshKnowledgeTransferSummary()
+                    self.knowledgePackageImported.emit(result)
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível exportar o conhecimento: {detail}"
+                    if operation == "export_knowledge"
+                    else detail
+                )
+                self.knowledgeTransferFailed.emit(detail)
             self.stateChanged.emit()
             return
         if operation in {"detect_decompiled", "import_decompiled", "export_decompiled", "delete_source_jars"}:

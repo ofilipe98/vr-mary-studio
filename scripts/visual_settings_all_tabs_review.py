@@ -129,7 +129,7 @@ def main():
             page = window.findChild(QObject, "settingsPage")
             assert page is not None, "settingsPage not found"
 
-            tab_names = ["0_geral", "1_provedores", "2_vr_ultra", "3_aplicativos", "4_aparencia", "5_browser", "6_arquivados", "7_skills"]
+            tab_names = ["0_geral", "1_provedores", "2_vr_ultra", "3_aplicativos", "4_aparencia", "5_browser", "6_arquivados", "7_skills", "8_wiki_kb"]
 
             scenarios = [(1280, 820, "100"), (1280, 820, "125"), (1920, 1080, "100"), (768, 1024, "100"), (390, 844, "100"), (390, 844, "125"), (1280, 820, "150")]
             captures = []
@@ -143,7 +143,7 @@ def main():
                         page.setProperty("tabIndex", idx)
                         QTest.qWait(120)
                         app.processEvents()
-                        scroll_name = {0: "generalScroll", 2: "vrUltraSettingsScroll", 3: "appsSettingsScroll", 4: "appearanceSettingsScroll", 5: "browserSettingsScroll"}.get(idx)
+                        scroll_name = {0: "generalScroll", 2: "vrUltraSettingsScroll", 3: "appsSettingsScroll", 4: "appearanceSettingsScroll", 5: "browserSettingsScroll", 8: "knowledgeTransferScroll"}.get(idx)
                         scroll = window.findChild(QObject, scroll_name) if scroll_name else None
                         flick = scroll.property("contentItem") if scroll else None
                         if flick:

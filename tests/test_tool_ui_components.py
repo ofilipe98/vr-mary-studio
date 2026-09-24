@@ -505,6 +505,44 @@ def test_vr_chat_activity_live_turn_keeps_tool_trace_visible(qml_env):
         app.processEvents()
 
 
+def test_vr_chat_activity_divider_separates_header_from_visible_tools(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    live_items = [
+        {
+            "id": "cmd-divider",
+            "kind": "tool",
+            "itemType": "commandExecution",
+            "state": "running",
+            "text": "Executando os testes",
+            "command": "python -m pytest -q",
+        }
+    ]
+    try:
+        item.setProperty("items", live_items)
+        item.setProperty("running", True)
+        app.processEvents()
+
+        divider = _find_item(item, "activityHeaderDivider")
+        assert divider is not None
+        assert divider.property("visible") is True
+
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        item.setProperty("expanded", False)
+        app.processEvents()
+        assert divider.property("visible") is False
+
+        item.setProperty("expanded", True)
+        app.processEvents()
+        assert divider.property("visible") is True
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
 def test_vr_chat_activity_settled_failure_keeps_failure_summary_visible(qml_env):
     app, engine, frontend, chat, studio = qml_env
     warning_count = len(engine._qml_warnings)

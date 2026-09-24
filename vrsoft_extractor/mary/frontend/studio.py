@@ -660,6 +660,17 @@ class StudioBridge(QObject):
         self.refreshProviders()
         self.refreshArchived("")
 
+    @Slot()
+    def refreshKnowledgeData(self) -> None:  # noqa: N802
+        """Reload knowledge surfaces after an imported knowledge package."""
+
+        self._loaded_pages.add(2)
+        self._refresh_dashboard()
+        self._load_knowledge()
+        self._load_reviews()
+        self._clear_review_selection()
+        self._refresh_review_filter_values()
+
     def _refresh_dashboard(self) -> None:
         source_specs = {
             "vrwiki": ("wiki", "vrwiki"),

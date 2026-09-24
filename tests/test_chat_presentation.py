@@ -758,3 +758,38 @@ def test_chat_decompiled_surface_ambiguous(tmp_path):
             window.close()
         studio.close()
         chat.close()
+
+
+def test_vr_shimmer_text_fluid_properties():
+    import re
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQuick import QQuickView
+
+    app = QApplication.instance() or QApplication([])
+    view = QQuickView()
+    view.setSource(QUrl.fromLocalFile("vrsoft_extractor/mary/frontend/qml/components/VrShimmerText.qml"))
+    item = view.rootObject()
+    assert item is not None
+    item.setProperty("text", "Trabalhando há 5s")
+    item.setProperty("running", True)
+
+    # Boundaries (-0.4 and 1.4) must match resting color without popping
+    item.setProperty("phase", -0.4)
+    markup_left = item.shimmerMarkup("Trabalhando há 5s")
+    item.setProperty("phase", 1.4)
+    markup_right = item.shimmerMarkup("Trabalhando há 5s")
+    assert markup_left == markup_right
+
+    # Mid phase must provide smooth highlight
+    item.setProperty("phase", 0.5)
+    markup_mid = item.shimmerMarkup("Trabalhando há 5s")
+    colors_mid = re.findall(r'<font color="#([0-9a-f]{6})">', markup_mid)
+    colors_rest = re.findall(r'<font color="#([0-9a-f]{6})">', markup_left)
+    assert any(c != colors_rest[0] for c in colors_mid)
+
+    # Empty string handling
+    assert item.shimmerMarkup("") == ""
+
+    # Non-running state turns off shimmering
+    item.setProperty("running", False)
+    assert not item.property("shimmering")

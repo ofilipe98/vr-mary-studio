@@ -26,10 +26,16 @@ class FakeClient:
     instances = []
     session_error = False
 
+    SESSION_TIMEOUT = 90.0
+
     def __init__(self, **kwargs):
         self.callbacks = kwargs
         self.calls = []
+        self.request_timeouts = []
         self.closed = False
+        self.block_prompt = getattr(self.__class__, "block_prompt", False)
+        self.prompt_started = threading.Event()
+        self.prompt_unblock = threading.Event()
         self.capabilities = {"sessionCapabilities": {"resume": {}}, "promptCapabilities": {"image": True}}
         self.process = None
         self.instances.append(self)
@@ -37,13 +43,19 @@ class FakeClient:
     def start(self):
         assert not self.closed
 
-    def request(self, method, params, timeout=None):
+    def request(self, method, params, timeout=SESSION_TIMEOUT):
         self.calls.append((method, params))
+        self.request_timeouts.append((method, timeout))
         if method in ("session/new", "session/resume", "session/load"):
             if self.session_error:
                 raise AcpError(method, -32603)
             return SESSION
         if method == "session/prompt":
+            if self.block_prompt:
+                self.prompt_started.set()
+                self.prompt_unblock.wait(5.0)
+                if self.closed:
+                    raise AcpError("session/prompt")
             self.callbacks["on_notification"]("session/update", {"sessionId": "native", "update": {
                 "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "OK"}}})
             return {"stopReason": "end_turn"}
@@ -994,3 +1006,54 @@ def test_acp_client_ignores_non_oauth_url_when_unattended():
     client._fail_pending.assert_called_once()
     err = client._fail_pending.call_args[0][0]
     assert err.code == -32000
+
+
+@pytest.mark.parametrize("vr_mode,vr_enabled", [
+    ("off", False),
+    ("vr", True),
+    ("ultra", True),
+])
+def test_antigravity_prompt_timeout_is_none_in_all_modes(fake_runtime, tmp_path, vr_mode, vr_enabled):
+    provider = AntigravityProvider()
+    done, events = threading.Event(), []
+    def receive(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+    opts = ConversationOptions(vr_mode=vr_mode, vr_enabled=vr_enabled)
+    provider.send_message("conv-timeout", "", "gemini-test", "auto", tmp_path, "Pergunta", receive, options=opts)
+    assert done.wait(2)
+    client = FakeClient.instances[0]
+    prompt_timeouts = [t for m, t in client.request_timeouts if m == "session/prompt"]
+    assert len(prompt_timeouts) == 1
+    assert prompt_timeouts[0] is None
+    # Technical session calls keep their default timeout (90.0)
+    tech_timeouts = [t for m, t in client.request_timeouts if m in ("authenticate", "session/new", "session/resume")]
+    assert all(t == 90.0 for t in tech_timeouts)
+
+
+def test_antigravity_cancellation_during_prompt_with_none_timeout(fake_runtime, tmp_path):
+    provider = AntigravityProvider()
+    done, events = threading.Event(), []
+    def receive(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+    # Set FakeClient to block on prompt
+    FakeClient.block_prompt = True
+    try:
+        provider.send_message("conv-cancel", "", "gemini-test", "auto", tmp_path, "Bloqueado", receive,
+                              options=ConversationOptions(vr_mode="off", vr_enabled=False))
+        # Wait until prompt is entered
+        client = FakeClient.instances[-1]
+        assert client.prompt_started.wait(2.0)
+        # Cancel conversation while prompt is waiting without deadline
+        provider.interrupt("conv-cancel")
+        client.prompt_unblock.set()
+        assert done.wait(2.0)
+        assert client.closed
+        completed = next(e for e in events if e.kind == "turn_completed")
+        assert completed.payload.get("cancelled") is True
+        assert not any(e.kind == "error" for e in events)
+    finally:
+        FakeClient.block_prompt = False

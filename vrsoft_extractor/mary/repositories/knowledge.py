@@ -63,7 +63,18 @@ class KnowledgeRepositoryMixin:
         return tuple(str(row["source_origin"]) for row in rows)
 
 
-    def upsert_document(self, document: KnowledgeDocument) -> tuple[int, str]:
+    def upsert_document(
+        self,
+        document: KnowledgeDocument,
+        *,
+        preserve_local_review: bool = True,
+    ) -> tuple[int, str]:
+        """Persist one document.
+
+        ``preserve_local_review=False`` is the explicit restore contract: the
+        incoming module and review_status overwrite a local approved/kept
+        decision instead of being protected by the conflict rules.
+        """
         if self.root:
             document.local_path = to_portable_path(self.root, document.local_path)
             document.assets = [
@@ -144,6 +155,17 @@ class KnowledgeRepositoryMixin:
                     json.dumps(document.assets, ensure_ascii=False),
                 ),
             )
+            if not preserve_local_review:
+                connection.execute(
+                    """UPDATE documents SET module=?,review_status=?
+                        WHERE source=? AND source_id=?""",
+                    (
+                        document.module,
+                        document.review_status,
+                        document.source,
+                        document.source_id,
+                    ),
+                )
             row = connection.execute(
                 "SELECT id FROM documents WHERE source=? AND source_id=?",
                 (document.source, document.source_id),

@@ -305,6 +305,8 @@ class TestPromptPrefixCache:
         assert f"- {settings.root.resolve()}" not in prompt
 
         # 3. Prompt does not offer .state, .env, TrabalhoVR, .trash, logs, assets, SQLite, ERP/releases nor tools as internal base
+        assert "Não use como fonte interna nem consulte como base do OFF:" in prompt
+        assert "Não há acesso e não consulte:" not in prompt
         for forbidden in (
             ".state",
             ".env",

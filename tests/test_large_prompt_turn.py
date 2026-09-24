@@ -44,7 +44,7 @@ def test_stop_during_preparation_completes_without_provider_callback(tmp_path, m
 
     try:
         orchestrator.send(cid, "\n".join(f"linha {i}" for i in range(1000)), callback,
-                          use_vr=phase == "retrieval")
+                          use_vr=True)
         assert entered.wait(5)
         orchestrator.interrupt(cid)
         assert done.wait(5), "Stop must not wait for preparation to finish"

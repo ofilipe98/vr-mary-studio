@@ -226,7 +226,7 @@ class AntigravityProvider(AgentProvider):
                 path = Path(image_path)
                 content.append({"type": "image", "mimeType": mimetypes.guess_type(path.name)[0] or "image/png",
                                 "data": base64.b64encode(path.read_bytes()).decode("ascii")})
-            result = client.request("session/prompt", {"sessionId": session_id, "prompt": content}, timeout=600)
+            result = client.request("session/prompt", {"sessionId": session_id, "prompt": content}, timeout=None)
             if result.get("stopReason") == "cancelled":
                 state["cancelled"] = True
             elif result.get("stopReason") not in ("end_turn", "max_tokens"):

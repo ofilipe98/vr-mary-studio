@@ -217,8 +217,12 @@ def test_turn_freezes_ui_selection_in_all_modes(tmp_path, mode):
         orchestrator.send(cid, "Outer", lambda event: done.set() if event.kind == "turn_completed" else None,
             use_vr=mode != "off", vr_mode=mode, application_contexts=selections)
         assert done.wait(20)
-        assert captured and captured[0]["application_contexts"] == [contexts[0]]
-        assert captured[0]["master_fallback"] == (mode != "off")
+        if mode == "off":
+            assert captured and captured[0]["application_contexts"] is None
+            assert captured[0]["master_fallback"] is False
+        else:
+            assert captured and captured[0]["application_contexts"] == [contexts[0]]
+            assert captured[0]["master_fallback"] is True
         if mode == "vr":
             # Tool-driven VR: the frozen selection is not injected as context;
             # the model reaches it through the knowledge tools.
@@ -479,5 +483,31 @@ def test_legacy_codex_session_gets_tools_without_losing_local_history(tmp_path):
         row = database.get_conversation(cid)
         assert row["native_id_vr"] == row["native_tools_id_vr"] != "legacy-thread"
         assert any(m["content"] == "HISTORY_MUST_SURVIVE" for m in database.messages(cid))
+    finally:
+        orchestrator.close()
+
+
+def test_off_ignores_invalid_application_contexts_without_warning(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta local")
+    orchestrator.providers["codex"] = provider
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    done = threading.Event()
+    invalid_contexts = [{"app_id": "nonexistent_app", "version": "99.0", "variant_id": "default", "package_id": "none"}]
+    try:
+        orchestrator.send(
+            cid,
+            "Pergunta geral em OFF",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=False,
+            vr_mode="off",
+            application_contexts=invalid_contexts,
+        )
+        assert done.wait(20)
+        sent_message = provider.sent[0]["message"]
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in sent_message
+        assert "O contexto de codigo selecionado esta indisponivel" not in sent_message
+        assert "contexto de codigo" not in sent_message
     finally:
         orchestrator.close()

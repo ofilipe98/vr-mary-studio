@@ -25,7 +25,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
-from vrsoft_extractor.mary.frontend.bridges import codeadmin
+from vrsoft_extractor.mary.frontend.bridges import codeadmin, knowledgetransfer
 from vrsoft_extractor.mary.frontend.chat import (
     CODE_PROCESSING_HARDWARE,
     DEFAULT_ERP_JAR_SOURCE_PATH,
@@ -1896,6 +1896,27 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', apps_qml)
         self.assertIn("chat.codeProcessingCoveredJars", apps_qml)
         self.assertIn("enabled: chat.codeProcessingRunning", apps_qml)
+
+    def test_knowledge_transfer_tab_is_lazy_and_explicit(self):
+        qml_root = MAIN_QML.parent
+        settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
+            encoding="utf-8"
+        )
+        transfer_qml = (
+            qml_root / "pages" / "KnowledgeTransferSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"Wiki e KB"', settings_qml)
+        self.assertIn('objectName: "knowledgeTransferSettingsLoader"', settings_qml)
+        self.assertIn("active: root.tabIndex === 8", settings_qml)
+        self.assertIn("root.knowledgeVisited", settings_qml)
+        self.assertIn("Math.min(8, Number(index))", settings_qml)
+        self.assertIn('objectName: "exportKnowledgePackageButton"', transfer_qml)
+        self.assertIn('objectName: "importKnowledgePackageButton"', transfer_qml)
+        self.assertIn('objectName: "knowledgeImportDialog"', transfer_qml)
+        self.assertIn('objectName: "knowledgeTransferProgressBar"', transfer_qml)
+        self.assertIn("chat.knowledgeTransferSources", transfer_qml)
+        self.assertIn("studio.refreshKnowledgeData()", transfer_qml)
 
     def test_ocr_removed_from_settings_and_dashboard_ui(self):
         qml_root = MAIN_QML.parent
@@ -4795,7 +4816,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(settings_results.property("visible"))
             self.assertGreater(settings_results.property("count"), 0)
             self.assertEqual(chat_bridge.search, "")
-            self.assertEqual(tab_bar.property("count"), 8)
+            self.assertEqual(tab_bar.property("count"), 9)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             self.assertTrue(settings_hub.activateSettingSearchResult(0))
             self.application.processEvents()
@@ -4884,6 +4905,227 @@ class QmlFrontendTest(unittest.TestCase):
             chat_settings = window.findChild(QObject, "chatSettingsButton")
             self.assertIsNotNone(chat_settings)
             self.assertTrue(chat_settings.property("visible"))
+
+    def test_knowledge_transfer_tab_runs_export_and_import_actions(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(
+                root, theme="dark_orange", initial_page="Configurações"
+            )
+            studio_bridge = StudioBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            export_calls = []
+            import_calls = []
+            detection = {
+                "is_valid": True,
+                "knowledge_package": True,
+                "scope": "knowledge",
+                "source_archive": str(root / "conhecimento.zip"),
+                "package_id": "knowledge-test",
+                "exported_at": "2026-01-01T00:00:00+00:00",
+                "origins": [
+                    {
+                        "source": "wiki",
+                        "source_origin": "vrwiki",
+                        "label": "VRWiki pública",
+                        "documents": 2,
+                        "assets": 1,
+                    }
+                ],
+                "modules": ["Fiscal"],
+                "document_count": 2,
+                "asset_count": 1,
+                "total_bytes": 2048,
+                "missing_asset_count": 0,
+                "preview": [],
+                "manifest": {},
+            }
+
+            def fake_export(
+                workspace, destination, *, origins=None, module="", progress=None
+            ):
+                export_calls.append(
+                    (
+                        tuple(tuple(item) for item in origins),
+                        module,
+                        str(destination),
+                    )
+                )
+                return {
+                    "success": True,
+                    "destination": str(destination),
+                    "package_id": "knowledge-test",
+                    "document_count": 2,
+                    "asset_count": 1,
+                    "missing_asset_count": 0,
+                    "file_count": 3,
+                    "total_bytes": 2048,
+                }
+
+            def fake_import(
+                workspace,
+                archive,
+                *,
+                mode="merge",
+                origins=None,
+                database=None,
+                progress=None,
+            ):
+                import_calls.append((str(archive), mode))
+                return {
+                    "success": True,
+                    "package_id": "knowledge-test",
+                    "mode": mode,
+                    "document_count": 2,
+                    "asset_count": 1,
+                    "created": 2,
+                    "updated": 0,
+                    "unchanged": 0,
+                    "review_queued": 0,
+                    "error_count": 0,
+                    "errors": [],
+                }
+
+            with (
+                patch.object(
+                    knowledgetransfer,
+                    "export_knowledge_package",
+                    side_effect=fake_export,
+                ),
+                patch.object(
+                    knowledgetransfer,
+                    "import_knowledge_package_archive",
+                    side_effect=fake_import,
+                ),
+                patch.object(
+                    knowledgetransfer,
+                    "detect_knowledge_package_archive",
+                    return_value=detection,
+                ),
+                patch.object(
+                    knowledgetransfer.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(root / "conhecimento.zip"), ""),
+                ),
+                patch.object(
+                    knowledgetransfer.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(root / "conhecimento.zip"), ""),
+                ),
+            ):
+                engine = create_engine(bridge, chat_bridge, studio_bridge)
+                self.application.processEvents()
+                self.assertEqual(
+                    len(engine.rootObjects()),
+                    1,
+                    [warning.toString() for warning in engine._qml_warnings],
+                )
+                window = engine.rootObjects()[0]
+                window.setWidth(1280)
+                window.setHeight(820)
+                window.show()
+                settings_page = window.findChild(QObject, "settingsPage")
+                settings_page.setProperty("tabIndex", 8)
+                page = None
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    page = window.findChild(
+                        QObject, "knowledgeTransferSettingsPage"
+                    )
+                    if page is not None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNotNone(page)
+                progress_bar = window.findChild(
+                    QObject, "knowledgeTransferProgressBar"
+                )
+                self.assertIsNotNone(progress_bar)
+
+                export_button = window.findChild(
+                    QObject, "exportKnowledgePackageButton"
+                )
+                self.assertIsNotNone(export_button)
+                self.assertTrue(export_button.property("enabled"))
+                self.assertTrue(
+                    QMetaObject.invokeMethod(export_button, "click")
+                )
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if export_calls and not chat_bridge.knowledgeTransferRunning:
+                        break
+                    QTest.qWait(10)
+                self.assertEqual(len(export_calls), 1)
+                self.assertEqual(
+                    export_calls[0][0],
+                    (("wiki", "vrwiki"), ("kb", "movidesk")),
+                )
+                self.assertTrue(export_calls[0][2].endswith(".zip"))
+                self.assertIn("Pacote exportado", page.property("resultMessage"))
+
+                import_button = window.findChild(
+                    QObject, "importKnowledgePackageButton"
+                )
+                self.assertIsNotNone(import_button)
+                self.assertTrue(
+                    QMetaObject.invokeMethod(import_button, "click")
+                )
+                dialog = window.findChild(QObject, "knowledgeImportDialog")
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if dialog.property("visible"):
+                        break
+                    QTest.qWait(10)
+                self.assertTrue(dialog.property("visible"))
+                summary = window.findChild(QObject, "knowledgeImportSummary")
+                self.assertIsNotNone(summary)
+                self.assertIn("knowledge-test", summary.property("text"))
+                mode_combo = window.findChild(QObject, "knowledgeImportModeCombo")
+                self.assertIsNotNone(mode_combo)
+                self.assertEqual(mode_combo.property("currentIndex"), 0)
+                mode_combo.setProperty("currentIndex", 1)
+                self.application.processEvents()
+                restore_warning = window.findChild(
+                    QObject, "knowledgeImportRestoreWarning"
+                )
+                self.assertTrue(restore_warning.property("visible"))
+                mode_combo.setProperty("currentIndex", 0)
+                self.application.processEvents()
+
+                confirm = window.findChild(
+                    QObject, "confirmKnowledgeImportButton"
+                )
+                self.assertIsNotNone(confirm)
+                self.assertTrue(QMetaObject.invokeMethod(confirm, "click"))
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if import_calls and not chat_bridge.knowledgeTransferRunning:
+                        break
+                    QTest.qWait(10)
+                self.assertEqual(
+                    import_calls, [(str(root / "conhecimento.zip"), "merge")]
+                )
+                self.assertFalse(dialog.property("visible"))
+                self.assertIn(
+                    "Importação concluída", page.property("resultMessage")
+                )
+                self.assertFalse(engine._qml_warnings, [w.toString() for w in engine._qml_warnings])
+            studio_bridge.close()
+            chat_bridge.close()
+            self.application.processEvents()
 
     def test_sidebar_hover_transition_never_darkens_below_its_endpoints(self):
         from test_chat_presentation import find_items

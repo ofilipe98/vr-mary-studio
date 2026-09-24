@@ -2724,3 +2724,34 @@ def test_finalizer_waits_for_running_dynamic_tool_past_old_short_deadline(
     assert not thread.is_alive()
     monkeypatch.setattr(orchestrator_module.time, "monotonic", real_monotonic)
     orchestrator.close()
+
+
+def test_off_mode_uses_off_native_column_when_use_vr_omitted(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta OFF")
+    orchestrator.providers = {"codex": provider}
+
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+    # Set a sentinel native_id_vr to ensure it is not touched
+    database.update_conversation(conv_id, native_id_vr="native-vr-sentinel")
+
+    completed = threading.Event()
+    # Note: use_vr is omitted here (defaults to True); vr_mode="off" must resolve to effective_use_vr=False
+    orchestrator.send(
+        conv_id,
+        "Pergunta sem use_vr mas com vr_mode off",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        vr_mode="off",
+    )
+    assert completed.wait(5)
+
+    row = database.get_conversation(conv_id)
+    # The native column updated must be 'native_id', NOT 'native_id_vr'
+    assert row["native_id"].startswith("native:")
+    assert row["native_id_vr"] == "native-vr-sentinel"
+    assert provider.sent[0]["native_id"] == row["native_id"]
+    orchestrator.close()

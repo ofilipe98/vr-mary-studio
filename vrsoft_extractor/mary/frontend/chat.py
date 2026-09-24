@@ -86,6 +86,7 @@ from .bridges.presentation import (
 )
 from .file_links import parse_file_reference, resolve_markdown_file_link
 from .bridges.codeadmin import CodeAdminDomain
+from .bridges.knowledgetransfer import KnowledgeTransferDomain
 from .bridges.providersettings import ProviderSettingsDomain
 from .bridges.activity import ActivityDomain
 from .bridges.conversations import ConversationsDomain
@@ -95,6 +96,10 @@ class ChatBridge(QObject):
     @property
     def _CodeAdmin_domain(self):
         return CodeAdminDomain(self)
+
+    @property
+    def _KnowledgeTransfer_domain(self):
+        return KnowledgeTransferDomain(self)
 
     @property
     def _ProviderSettings_domain(self):
@@ -122,6 +127,10 @@ class ChatBridge(QObject):
     messageCopied = Signal(str)
     stateChanged = Signal()
     decompiledDirectoryDetected = Signal("QVariantMap")
+    knowledgePackageDetected = Signal("QVariantMap")
+    knowledgePackageImported = Signal("QVariantMap")
+    knowledgePackageExported = Signal("QVariantMap")
+    knowledgeTransferFailed = Signal(str)
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     filePreviewRequested = Signal(str, int, int)
@@ -290,6 +299,12 @@ class ChatBridge(QObject):
         self._decompiled_import_progress = 0.0
         self._decompiled_import_processed = 0
         self._decompiled_import_total = 0
+        self._knowledge_transfer_running = False
+        self._knowledge_transfer_operation = ""
+        self._knowledge_transfer_progress = 0.0
+        self._knowledge_transfer_processed = 0
+        self._knowledge_transfer_total = 0
+        self._knowledge_transfer_sources: list[dict[str, Any]] = []
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -924,6 +939,30 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def decompiledImportTotal(self) -> int:  # noqa: N802
         return self._decompiled_import_total
+
+    @Property(bool, notify=stateChanged)
+    def knowledgeTransferRunning(self) -> bool:  # noqa: N802
+        return self._knowledge_transfer_running
+
+    @Property(str, notify=stateChanged)
+    def knowledgeTransferOperation(self) -> str:  # noqa: N802
+        return self._knowledge_transfer_operation
+
+    @Property(float, notify=stateChanged)
+    def knowledgeTransferProgress(self) -> float:  # noqa: N802
+        return self._knowledge_transfer_progress
+
+    @Property(int, notify=stateChanged)
+    def knowledgeTransferProcessed(self) -> int:  # noqa: N802
+        return self._knowledge_transfer_processed
+
+    @Property(int, notify=stateChanged)
+    def knowledgeTransferTotal(self) -> int:  # noqa: N802
+        return self._knowledge_transfer_total
+
+    @Property("QVariantList", notify=stateChanged)
+    def knowledgeTransferSources(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._knowledge_transfer_sources]
 
     @Property(bool, notify=stateChanged)
     def decompiledCodeExportAvailable(self) -> bool:  # noqa: N802
@@ -2678,6 +2717,28 @@ class ChatBridge(QObject):
     @Slot(str, str, result="QVariantMap")
     def exportDecompiledPackage(self, package_id: str, destination_file: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.exportDecompiledPackage(package_id, destination_file)
+
+    @Slot()
+    def refreshKnowledgeTransferSummary(self) -> None:  # noqa: N802
+        return self._KnowledgeTransfer_domain.refreshKnowledgeTransferSummary()
+
+    @Slot(bool, bool, bool, str, result="QVariantMap")
+    @Slot(bool, bool, bool, str, str, result="QVariantMap")
+    def exportKnowledgePackage(self, include_vrwiki: bool, include_endoo: bool, include_kb: bool, module: str = "", destination_file: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.exportKnowledgePackage(
+            include_vrwiki, include_endoo, include_kb, module, destination_file
+        )
+
+    @Slot(result="QVariantMap")
+    @Slot(str, result="QVariantMap")
+    def detectKnowledgePackageArchive(self, archive_path: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.detectKnowledgePackageArchive(archive_path)
+
+    @Slot(str, str, result="QVariantMap")
+    def importKnowledgePackageArchive(self, archive_path: str, mode: str = "merge") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.importKnowledgePackageArchive(
+            archive_path, mode
+        )
 
     @Slot(str, result=bool)
     @Slot(str, bool, result=bool)

@@ -14,7 +14,7 @@ Item {
     property int elide: Text.ElideRight
     property alias renderType: label.renderType
     property bool running: false
-    property real phase: 0
+    property real phase: -0.4
 
     readonly property bool reduceMotion: typeof frontend !== "undefined"
         && frontend !== null && frontend.reduceMotion
@@ -46,27 +46,35 @@ Item {
         text: root.shimmering ? root.shimmerMarkup(fitted.elidedText) : fitted.elidedText
     }
 
-    NumberAnimation on phase {
+    SequentialAnimation on phase {
         running: root.shimmering
-        from: 0
-        to: 1
-        duration: 1700
         loops: Animation.Infinite
-        easing.type: Easing.InOutSine
+        NumberAnimation {
+            from: -0.4
+            to: 1.4
+            duration: 1800
+            easing.type: Easing.InOutSine
+        }
+        PauseAnimation {
+            duration: 350
+        }
     }
 
     function channel(value) {
-        var text = Math.round(value).toString(16)
+        var text = Math.max(0, Math.min(255, Math.round(value))).toString(16)
         return text.length < 2 ? "0" + text : text
     }
 
     function shimmerMarkup(value) {
+        if (!value || value.length === 0) return ""
         var base = root.color
-        var dim = 0.4
-        var red = base.r * 255 * dim
-        var green = base.g * 255 * dim
-        var blue = base.b * 255 * dim
+        var dim = 0.75
+        var baseR = base.r * 255 * dim
+        var baseG = base.g * 255 * dim
+        var baseB = base.b * 255 * dim
         var length = value.length
+        var radius = Math.max(0.20, Math.min(0.40, 4.5 / Math.max(1, length - 1)))
+        var currentPhase = root.phase
         var markup = ""
         for (var index = 0; index < length; ++index) {
             var character = value.charAt(index)
@@ -75,11 +83,14 @@ Item {
             else if (character === ">") character = "&gt;"
             else if (character === " ") character = "&nbsp;"
             var position = length > 1 ? index / (length - 1) : 0.5
-            var glow = Math.max(0, 1 - Math.abs(position - root.phase) / 0.5)
-            glow = glow * glow
-            var r = red + (255 - red) * glow
-            var g = green + (255 - green) * glow
-            var b = blue + (255 - blue) * glow
+            var dist = Math.abs(position - currentPhase) / radius
+            var glow = 0.0
+            if (dist < 1.0) {
+                glow = 0.5 * (1.0 + Math.cos(dist * Math.PI))
+            }
+            var r = baseR + (255 - baseR) * glow
+            var g = baseG + (255 - baseG) * glow
+            var b = baseB + (255 - baseB) * glow
             markup += '<font color="#' + channel(r) + channel(g) + channel(b) + '">' + character + '</font>'
         }
         return markup

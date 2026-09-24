@@ -99,6 +99,16 @@ Rectangle {
             TapHandler { onTapped: root.toggleRequested() }
         }
 
+        Rectangle {
+            objectName: "activityHeaderDivider"
+            visible: (root.expanded || root.visibleItems().length > 0)
+                && root.items && root.items.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: Theme.palette.chatBorder
+            opacity: 0.6
+        }
+
         ColumnLayout {
             visible: root.expanded || root.visibleItems().length > 0
             Layout.fillWidth: true

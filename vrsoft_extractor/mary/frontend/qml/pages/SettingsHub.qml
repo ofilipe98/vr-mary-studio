@@ -51,7 +51,10 @@ Item {
         { title: "Suavização de fontes e quebra de linha (Word wrap)", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Browser e acesso do agente", category: "Browser", tab: 5, icon: "browser" },
         { title: "Projetos arquivados", category: "Projetos arquivados", tab: 6, icon: "archive" },
-        { title: "Skills e ferramentas", category: "Skills", tab: 7, icon: "settings" }
+        { title: "Skills e ferramentas", category: "Skills", tab: 7, icon: "settings" },
+        { title: "Importação e exportação de Wiki, Endoo e KB", category: "Wiki e KB", tab: 8, icon: "package" },
+        { title: "Pacotes de conhecimento (.zip)", category: "Wiki e KB", tab: 8, icon: "folder" },
+        { title: "Exportar anexos e documentos da base", category: "Wiki e KB", tab: 8, icon: "files" }
     ]
     readonly property var filteredSettings: settingsSearchItems.filter(function(item) {
         var query = root.settingsSearch.trim().toLocaleLowerCase()

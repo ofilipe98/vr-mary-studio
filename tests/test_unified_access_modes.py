@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import zipfile
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.jvm_batches import (
@@ -1241,3 +1242,100 @@ def test_vr_normal_code_lane_without_results_stays_exhausted(
         "Falha na trilha CODE" in warning for warning in bundle.warnings
     )
     assert "code" in bundle.missing_sources
+
+
+def test_send_vr_mode_off_without_use_vr_enforces_off_contract(tmp_path: Path):
+    from unittest.mock import MagicMock
+    from test_mary_orchestration import FakeProvider
+
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta OFF pura")
+    orchestrator.providers["codex"] = provider
+
+    classify_spy = MagicMock(wraps=orchestrator.retrieval_service.classify)
+    route_vr_sources_spy = MagicMock(wraps=orchestrator.retrieval_service.route_vr_sources)
+    route_source_spy = MagicMock(wraps=orchestrator.retrieval_service.route_source)
+    route_code_source_spy = MagicMock(wraps=orchestrator.retrieval_service.route_code_source)
+    ultra_spy = MagicMock(wraps=orchestrator._run_ultra_source_fanout)
+
+    orchestrator.retrieval_service.classify = classify_spy
+    orchestrator.retrieval_service.route_vr_sources = route_vr_sources_spy
+    orchestrator.retrieval_service.route_source = route_source_spy
+    orchestrator.retrieval_service.route_code_source = route_code_source_spy
+    orchestrator._run_ultra_source_fanout = ultra_spy
+
+    conv_id = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=True)
+    done = threading.Event()
+    try:
+        orchestrator.send(
+            conv_id,
+            "Explique a contabilidade sem VR",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            vr_mode="off",
+        )
+        assert done.wait(10)
+        assert len(provider.sent) == 1
+        sent = provider.sent[0]
+        options = sent["options"]
+        assert options is not None
+        assert options.vr_enabled is False
+        assert options.vr_mode == "off"
+        vr_tools = {"vr_sources", "vr_search", "vr_read"}
+        tool_names = {t.get("name") for t in (options.dynamic_tools or ())}
+        assert not vr_tools.intersection(tool_names)
+
+        message = sent["message"]
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in message
+        assert "MODO VR ATIVO" not in message
+
+        assert classify_spy.call_count == 0
+        assert route_vr_sources_spy.call_count == 0
+        assert route_source_spy.call_count == 0
+        assert route_code_source_spy.call_count == 0
+        assert ultra_spy.call_count == 0
+
+        messages = [dict(m) for m in database.messages(conv_id) if m["role"] == "assistant"]
+        assert len(messages) >= 1
+        assert messages[-1]["response_mode"] == "native"
+    finally:
+        orchestrator.close()
+
+
+@pytest.mark.parametrize("mode", ["vr", "ultra"])
+def test_send_vr_modes_preserve_vr_contract(tmp_path: Path, mode: str):
+    from test_mary_orchestration import FakeProvider
+
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text=f"Resposta em {mode}")
+    orchestrator.providers["codex"] = provider
+
+    conv_id = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    done = threading.Event()
+    try:
+        orchestrator.send(
+            conv_id,
+            f"Consulta em {mode}",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            vr_mode=mode,
+        )
+        assert done.wait(10)
+        assert len(provider.sent) >= 1
+        for s in provider.sent:
+            assert s["options"] is not None
+            assert s["options"].vr_enabled is True
+            assert s["options"].vr_mode == mode
+        if mode == "vr":
+            sent = provider.sent[0]
+            options = sent["options"]
+            vr_tools = {"vr_sources", "vr_search", "vr_read"}
+            tool_names = {t.get("name") for t in (options.dynamic_tools or ())}
+            assert vr_tools.issubset(tool_names)
+            message = sent["message"]
+            assert "MODO VR ATIVO" in message
+        messages = [dict(m) for m in database.messages(conv_id) if m["role"] == "assistant"]
+        assert len(messages) >= 1
+        assert messages[-1]["response_mode"] == "vr"
+    finally:
+        orchestrator.close()

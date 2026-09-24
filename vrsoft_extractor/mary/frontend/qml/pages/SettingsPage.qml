@@ -14,6 +14,7 @@ Item {
     property bool appsVisited: false
     property bool providersVisited: false
     property bool skillsVisited: false
+    property bool knowledgeVisited: false
     onTabIndexChanged: {
         if (typeof settingsTabBar !== "undefined" && settingsTabBar && settingsTabBar.currentIndex !== tabIndex)
             settingsTabBar.currentIndex = tabIndex
@@ -21,12 +22,13 @@ Item {
         if (tabIndex === 2) vrUltraVisited = true
         if (tabIndex === 3) appsVisited = true
         if (tabIndex === 7) skillsVisited = true
+        if (tabIndex === 8) knowledgeVisited = true
         if (!frontend.reduceMotion)
             tabTransition.restart()
     }
 
     function openSearchResult(index) {
-        root.tabIndex = Math.max(0, Math.min(7, Number(index)))
+        root.tabIndex = Math.max(0, Math.min(8, Number(index)))
     }
 
     Rectangle { anchors.fill: parent; color: Theme.palette.chatBackground }
@@ -60,7 +62,7 @@ Item {
             Layout.minimumWidth: 0
             objectName: "settingsTabBar"
             Layout.fillWidth: true
-            model: ["Geral", "Provedores", "VR Ultra", "Aplicativos e versões", "Aparência", "Browser", "Projetos arquivados", "Skills"]
+            model: ["Geral", "Provedores", "VR Ultra", "Aplicativos e versões", "Aparência", "Browser", "Projetos arquivados", "Skills", "Wiki e KB"]
             currentIndex: root.tabIndex
             Binding on currentIndex {
                 value: root.tabIndex
@@ -1086,6 +1088,16 @@ Item {
                 asynchronous: root.tabIndex !== 7
                 sourceComponent: Component { VrSkillsSettings { studio: root.studio } }
             }
+
+            // -------------------------------------------------------- Wiki e KB
+            Loader {
+                id: knowledgeTransferSettingsLoader
+                objectName: "knowledgeTransferSettingsLoader"
+                active: root.tabIndex === 8 || root.knowledgeVisited
+                visible: root.tabIndex === 8
+                asynchronous: root.tabIndex !== 8
+                sourceComponent: knowledgeTransferSettingsComponent
+            }
         }
     }
 
@@ -1099,6 +1111,11 @@ Item {
     Component {
         id: appsSettingsComponent
         ApplicationsSettingsPage { }
+    }
+
+    Component {
+        id: knowledgeTransferSettingsComponent
+        KnowledgeTransferSettingsPage { }
     }
 
     Timer { id: archiveDelay; interval: 180; onTriggered: studio.refreshArchived(archivedSearch.text) }
