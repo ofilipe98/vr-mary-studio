@@ -33,7 +33,7 @@ O OFF é um fluxo de modelo direto. As três raízes canônicas definem o escopo
 
 A seleção de aplicativo e release do catálogo Java pertence exclusivamente aos modos VR e Ultra e não existe em OFF: qualquer seleção é descartada antes do turno, `application_contexts` permanece `None`, `master_fallback` permanece `False` e nenhum aviso de contexto de código indisponível é gerado.
 
-O modo efetivo (`effective_use_vr = resolved_vr_mode != "off"`) é a única fonte de verdade para o turno dentro do orquestrador: `use_vr=False` sempre prevalece e força `resolved_vr_mode="off"`, enquanto `vr_mode="off"` nunca executa branches de VR mesmo se `use_vr=True` for omitido ou passado por chamadores legados.
+O modo efetivo (`effective_use_vr = resolved_vr_mode != "off"`) é a única fonte de verdade para o turno dentro do orquestrador. A precedência de resolução do modo é: `resume_run_id` força `ultra`; `use_vr=False` força `off`; `vr_mode` explícito válido vence quando `use_vr is not False`; `use_vr=True` sem `vr_mode` explícito é o override legado explícito e preserva `vr`/`ultra` persistido, transformando persistido `off` ou inválido em `vr`; `use_vr=None` (omitido) sem `vr_mode` explícito usa o modo persistido `off`, `vr` ou `ultra`; e `use_vr=None` com modo persistido inválido deriva de `vr_enabled`. Assim, `vr_mode="off"` explícito com `use_vr=True` permanece OFF porque o modo explícito válido é avaliado antes do override legado.
 
 O adapter Antigravity aguarda o turno sem prazo total interno (`timeout=None`), delegando o encerramento à resposta do modelo ou a cancelamento explícito via interrupção (`interrupt`) ou encerramento de sessão.
 

@@ -1442,6 +1442,7 @@ class CodeAdminDomain:
                 return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             "Validando prévia…"
             if preview_fingerprint is not None
@@ -1554,6 +1555,7 @@ class CodeAdminDomain:
             return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             f"Removendo o índice da release {selected_release} localmente..."
         )
@@ -1609,6 +1611,7 @@ class CodeAdminDomain:
         ):
             return False
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
         self.stateChanged.emit()
         results = self._release_snapshot_results
@@ -1716,6 +1719,10 @@ class CodeAdminDomain:
                 )
                 self.stateChanged.emit()
                 return
+            if total > 0:
+                self._release_snapshot_progress = round(
+                    max(0.0, min(100.0, 100.0 * current / total)), 1
+                )
             stage = str(latest_progress.get("stage") or "")
             filename = str(latest_progress.get("file") or "")
             stage_labels = {
@@ -1744,6 +1751,7 @@ class CodeAdminDomain:
 
         operation = str(latest.get("operation") or "")
         self._release_snapshot_running = False
+        self._release_snapshot_progress = 0.0
         if operation == "export_decompiled":
             self._decompiled_export_running = False
         elif operation == "import_decompiled":
@@ -2503,6 +2511,7 @@ class CodeAdminDomain:
         stop = self._release_coverage_stop
         self._application_import_preview = {"state": "running"}
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = "Detectando aplicativos…"
 
         def progress_cb(event: dict[str, Any]) -> None:
@@ -2735,6 +2744,7 @@ class CodeAdminDomain:
         results = self._release_snapshot_results
         signal = self._releaseSnapshotReady
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = {
             "detect_decompiled": "Detectando fontes...",
             "import_decompiled": "Importando fontes...",
@@ -2802,6 +2812,7 @@ class CodeAdminDomain:
             return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             f"Removendo pacote '{selected}' e excluindo índices e descompilados..."
         )

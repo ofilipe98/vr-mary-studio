@@ -181,11 +181,12 @@ Item {
                             objectName: "applicationsCatalogProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.applicationsCatalogProgress
+                            accessibleName: "Progresso do catálogo de aplicativos"
                             indeterminate: chat.applicationsCatalogLoading
                                 && chat.applicationsCatalogProgressTotal <= 0
                         }
@@ -231,11 +232,12 @@ Item {
                             objectName: "decompiledExportProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.decompiledExportProgress
+                            accessibleName: "Progresso da exportação de código descompilado"
                             indeterminate: chat.decompiledExportRunning && chat.decompiledExportTotal === 0
                         }
                     }
@@ -280,11 +282,12 @@ Item {
                             objectName: "decompiledImportProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.decompiledImportProgress
+                            accessibleName: "Progresso da importação de código descompilado"
                             indeterminate: chat.decompiledImportRunning && chat.decompiledImportTotal === 0
                         }
                     }
@@ -584,14 +587,33 @@ Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         visible: chat.applicationImportPreview.state === "running"
-                        spacing: Theme.scaledGeometry(6)
+                        spacing: Theme.spaceXs
 
-                        VrProgressBar {
+                        Text {
+                            objectName: "applicationImportProgressLabel"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            indeterminate: true
-                            barHeight: 6
+                            text: chat.releaseSnapshotStatus
+                            visible: text.length > 0
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            elide: Text.ElideRight
+                            renderType: Theme.textRenderType
+                        }
+
+                        VrProgressBar {
+                            objectName: "applicationImportProgressBar"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.releaseSnapshotProgress
+                            showPercentage: true
+                            accessibleName: "Progresso da importação de aplicativos"
+                            indeterminate: chat.releaseSnapshotProgress <= 0
                         }
                     }
 
@@ -1491,12 +1513,14 @@ Item {
                         }
 
                         VrProgressBar {
+                            objectName: "appsBatchProcessingProgress"
                             Layout.fillWidth: true
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: Number(chat.codeProcessingProgress) || 0
+                            accessibleName: "Progresso da descompilação e indexação"
                             indeterminate: chat.codeProcessingRunning && (!chat.codeProcessingProgress || chat.codeProcessingProgress === 0)
                         }
                     }
@@ -2362,11 +2386,12 @@ Item {
                             VrProgressBar {
                                 objectName: "vrUltraCodeProcessingProgress"
                                 Layout.fillWidth: true
-                                barHeight: 6
+                                barHeight: Theme.scaledGeometry(6)
                                 accentColor: Theme.palette.brandOrange
                                 from: 0
                                 to: 100
                                 value: chat.codeProcessingProgress
+                                accessibleName: "Progresso do processamento de código"
                                 indeterminate: chat.codeProcessingRunning && chat.codeProcessingProgress === 0
                             }
 

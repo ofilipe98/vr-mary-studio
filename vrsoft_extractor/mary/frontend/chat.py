@@ -291,6 +291,7 @@ class ChatBridge(QObject):
         self._application_preview_thread = None
         self._package_operation_thread = None
         self._release_snapshot_running = False
+        self._release_snapshot_progress = 0.0
         self._decompiled_export_running = False
         self._decompiled_export_progress = 0.0
         self._decompiled_export_processed = 0
@@ -907,6 +908,11 @@ class ChatBridge(QObject):
     @Property(str, notify=stateChanged)
     def releaseSnapshotStatus(self) -> str:  # noqa: N802
         return self._release_snapshot_status
+
+    @Property(float, notify=stateChanged)
+    def releaseSnapshotProgress(self) -> float:  # noqa: N802
+        """Percentual real do snapshot/release em andamento (0.0 quando não há total)."""
+        return self._release_snapshot_progress
 
     @Property(bool, notify=stateChanged)
     def decompiledExportRunning(self) -> bool:  # noqa: N802

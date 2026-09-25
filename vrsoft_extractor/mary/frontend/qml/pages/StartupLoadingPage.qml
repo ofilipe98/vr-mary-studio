@@ -10,6 +10,23 @@ Rectangle {
     objectName: "startupLoadingPage"
     color: Theme.palette.background
 
+    readonly property string bootstrapState: (typeof bootstrap !== "undefined" && bootstrap)
+        ? String(bootstrap.state || "") : ""
+    // Two real catalog stages (apps, versions); no fabricated percentage.
+    readonly property int catalogStage: {
+        if (root.bootstrapState === "ready") return 2;
+        if (root.bootstrapState === "loading_versions") return 1;
+        return 0;
+    }
+    readonly property bool catalogStageKnown: root.bootstrapState === "loading_versions"
+        || root.bootstrapState === "ready"
+    readonly property string catalogStageLabel: {
+        if (root.bootstrapState === "ready") return "Concluído";
+        if (root.bootstrapState === "loading_versions") return "Etapa 2 de 2";
+        if (root.bootstrapState === "loading_apps") return "Etapa 1 de 2";
+        return "Preparando…";
+    }
+
     Item {
         // Same compact central envelope as the setup page: concentrated
         // content with generous outer margins on wide windows.
@@ -81,14 +98,43 @@ Rectangle {
                 }
             }
 
-            // Progress Bar
+            // Progress Bar: determinate across the two real catalog stages.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: progressBar.visible
+                spacing: Theme.spaceSm
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Etapas do catálogo"
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeMicro
+                    renderType: Theme.textRenderType
+                }
+
+                Text {
+                    text: root.catalogStageLabel
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeMicro
+                    font.weight: Theme.weightMedium
+                    renderType: Theme.textRenderType
+                }
+            }
+
             VrProgressBar {
                 id: progressBar
+                objectName: "startupCatalogProgress"
                 Layout.fillWidth: true
-                barHeight: 5
-                indeterminate: typeof bootstrap === "undefined" || !bootstrap || (bootstrap.state !== "ready" && bootstrap.state !== "error")
+                barHeight: Theme.scaledGeometry(6)
+                from: 0
+                to: 2
+                value: root.catalogStage
+                indeterminate: !root.catalogStageKnown
                 visible: typeof bootstrap === "undefined" || !bootstrap || bootstrap.state !== "error"
                 accentColor: Theme.palette.brandOrange
+                Accessible.name: "Etapas da inicialização"
             }
 
             // Step status card

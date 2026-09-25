@@ -1509,6 +1509,47 @@ def test_use_vr_false_overrides_explicit_vr_mode(tmp_path: Path):
         orchestrator.close()
 
 
+def test_explicit_off_mode_overrides_legacy_use_vr_true(tmp_path: Path):
+    from test_mary_orchestration import FakeProvider
+
+    settings, database, code_index, service = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta OFF explícita")
+    orchestrator.providers["codex"] = provider
+
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True, vr_mode="vr"
+    )
+    done = threading.Event()
+    try:
+        orchestrator.send(
+            conv_id,
+            "Pergunta com use_vr True e vr_mode off",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=True,
+            vr_mode="off",
+        )
+        assert done.wait(10)
+        assert len(provider.sent) == 1
+        options = provider.sent[0]["options"]
+        assert options is not None
+        assert options.vr_enabled is False
+        assert options.vr_mode == "off"
+        vr_tools = {"vr_sources", "vr_search", "vr_read"}
+        tool_names = {t.get("name") for t in (options.dynamic_tools or ())}
+        assert not vr_tools.intersection(tool_names)
+        message = provider.sent[0]["message"]
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in message
+        assert "MODO VR ATIVO" not in message
+        messages = [dict(m) for m in database.messages(conv_id) if m["role"] == "assistant"]
+        assert messages[-1]["response_mode"] == "native"
+        row = database.get_conversation(conv_id)
+        assert row["vr_mode"] == "off"
+        assert row["vr_enabled"] == 0
+    finally:
+        orchestrator.close()
+
+
 @pytest.mark.parametrize(("vr_enabled", "expected"), [(0, "off"), (1, "vr")])
 def test_legacy_persisted_vr_mode_falls_back_to_vr_enabled(
     tmp_path: Path, vr_enabled: int, expected: str

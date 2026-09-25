@@ -271,6 +271,8 @@ def test_scenario_11_progress_events_keep_running_state(bridge):
     assert bridge.releaseSnapshotRunning is True
     assert bridge._release_snapshot_poll_timer.isActive()
     assert "Copiando JARs — 5/10 · test.jar" in bridge.releaseSnapshotStatus
+    # The import preview bar reads the same real current/total.
+    assert bridge.releaseSnapshotProgress == 50.0
 
 
 # Scenario 12

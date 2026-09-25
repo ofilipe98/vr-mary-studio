@@ -587,3 +587,135 @@ def test_vr_chat_activity_settled_failure_keeps_failure_summary_visible(qml_env)
     finally:
         item.deleteLater()
         app.processEvents()
+
+
+def _create_progress_bar(engine):
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrProgressBar.qml"))
+    )
+    assert not component.isError(), [error.toString() for error in component.errors()]
+    item = component.create()
+    assert item is not None
+    return component, item
+
+
+def test_progress_bar_percentage_text_uses_real_position(qml_env):
+    app, engine, _frontend, _chat, _studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+
+        assert item.property("percentageText") == "0%"
+        item.setProperty("value", 4)
+        app.processEvents()
+        assert item.property("percentageText") == "4.0%"
+        item.setProperty("value", 42.5)
+        app.processEvents()
+        assert item.property("percentageText") == "43%"
+        item.setProperty("value", 100)
+        app.processEvents()
+        assert item.property("percentageText") == "100%"
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_caption_and_low_percentage_fill_stay_legible(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    frontend.setReduceMotion(True)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("barHeight", 6)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+        item.setProperty("value", 2)
+        app.processEvents()
+
+        assert item.property("implicitHeight") == 6
+        fill = _find_item(item, "progressFill")
+        assert fill is not None
+        assert fill.property("visible") is True
+        # The rounded cap never collapses below the track height.
+        assert fill.property("width") == 6
+        assert abs(fill.property("radius") - 3) < 0.01
+
+        item.setProperty("showPercentage", True)
+        app.processEvents()
+        label = _find_item(item, "progressPercentage")
+        assert label is not None
+        assert label.property("visible") is True
+        assert label.property("text") == "2.0%"
+        assert item.property("implicitHeight") > 6
+    finally:
+        frontend.setReduceMotion(False)
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_indeterminate_modes_follow_reduce_motion(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    frontend.setReduceMotion(False)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("indeterminate", True)
+        app.processEvents()
+
+        beam = _find_item(item, "progressBeam")
+        static_beam = _find_item(item, "progressStaticBeam")
+        assert beam.property("visible") is True
+        assert static_beam.property("visible") is False
+
+        frontend.setReduceMotion(True)
+        app.processEvents()
+        assert beam.property("visible") is False
+        assert static_beam.property("visible") is True
+        assert static_beam.property("width") == 240
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        frontend.setReduceMotion(False)
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_marker_and_thresholds_stay_inside_track(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    frontend.setReduceMotion(True)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 200)
+        item.setProperty("barHeight", 6)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+        app.processEvents()
+
+        marker = _find_item(item, "progressMarker")
+        assert marker is not None
+        assert marker.property("visible") is False
+
+        item.setProperty("markerPosition", 0.5)
+        app.processEvents()
+        assert marker.property("visible") is True
+        assert abs(marker.property("x") - 100) < 2
+
+        item.setProperty("markerPosition", 2)
+        app.processEvents()
+        assert abs(marker.property("x") - 198) < 2
+
+        accent = item.property("accentColor")
+        item.setProperty("value", 42)
+        app.processEvents()
+        assert item.property("effectiveAccentColor") == accent
+        item.setProperty("warningThreshold", 0.4)
+        app.processEvents()
+        assert item.property("effectiveAccentColor") != accent
+    finally:
+        frontend.setReduceMotion(False)
+        item.deleteLater()
+        app.processEvents()

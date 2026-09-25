@@ -144,11 +144,13 @@ Item {
                             objectName: "knowledgeTransferProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.knowledgeTransferProgress
+                            showPercentage: true
+                            accessibleName: "Progresso da transferência de conhecimento"
                             indeterminate: chat.knowledgeTransferRunning
                                 && chat.knowledgeTransferTotal <= 0
                         }

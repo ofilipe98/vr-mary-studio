@@ -158,11 +158,14 @@ Button {
 
             VrProgressBar {
                 Layout.fillWidth: true
-                barHeight: 5
-                accentColor: control.fraction > 0.9 ? Theme.palette.danger : (control.fraction > 0.75 ? Theme.palette.warning : Theme.palette.brandOrange)
+                barHeight: Theme.scaledGeometry(6)
+                accentColor: Theme.palette.brandOrange
+                warningThreshold: 0.75
+                dangerThreshold: 0.9
                 from: 0
                 to: 1
                 value: control.fraction
+                accessibleName: "Uso da janela de contexto"
             }
 
             RowLayout {

@@ -5054,6 +5054,7 @@ class QmlFrontendTest(unittest.TestCase):
                     QObject, "knowledgeTransferProgressBar"
                 )
                 self.assertIsNotNone(progress_bar)
+                self.assertTrue(bool(progress_bar.property("showPercentage")))
 
                 export_button = window.findChild(
                     QObject, "exportKnowledgePackageButton"
@@ -6239,6 +6240,38 @@ class QmlFrontendTest(unittest.TestCase):
                 chat_bridge.stateChanged.emit()
                 self.application.processEvents()
                 self.assertFalse(import_progress_card.property("visible"))
+
+                # Application import preview: real percent from the bridge.
+                application_progress_bar = find_by_name(
+                    window.contentItem(), "applicationImportProgressBar"
+                )
+                application_progress_label = find_by_name(
+                    window.contentItem(), "applicationImportProgressLabel"
+                )
+                self.assertIsNotNone(application_progress_bar)
+                self.assertIsNotNone(application_progress_label)
+                chat_bridge._application_import_preview = {"state": "running"}
+                chat_bridge._release_snapshot_running = True
+                chat_bridge._release_snapshot_progress = 42.5
+                chat_bridge._release_snapshot_status = "Copiando JARs — 5/10 · test.jar"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(50)
+                self.assertAlmostEqual(
+                    float(application_progress_bar.property("value")), 42.5, places=1
+                )
+                self.assertFalse(bool(application_progress_bar.property("indeterminate")))
+                self.assertEqual(
+                    application_progress_label.property("text"),
+                    "Copiando JARs — 5/10 · test.jar",
+                )
+                chat_bridge._application_import_preview = {}
+                chat_bridge._release_snapshot_running = False
+                chat_bridge._release_snapshot_progress = 0.0
+                chat_bridge._release_snapshot_status = ""
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(application_progress_bar.property("visible"))
 
             finally:
                 window.close()

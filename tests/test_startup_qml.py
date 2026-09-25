@@ -253,6 +253,50 @@ class StartupQmlTest(unittest.TestCase):
             self.assertTrue(bootstrap_bridge.isReady)
             self.assertEqual(bootstrap_bridge.state, "ready")
 
+    def test_startup_catalog_stage_bar_is_determinate_without_fabricated_percent(self):
+        """The loading bar tracks the two real catalog stages, never a fake fraction."""
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app_dir = root / "app"
+            app_dir.mkdir()
+            settings = load_vr_settings(str(app_dir), str(root))
+            prefs = QSettings(str(root / "preferences.ini"), QSettings.Format.IniFormat)
+            frontend_bridge = FrontendBridge(settings, prefs)
+
+            bootstrap_bridge = BootstrapBridge(settings, prefs, initial_state="loading_apps")
+            engine = create_engine(
+                frontend_bridge,
+                chat_bridge=None,
+                studio_bridge=None,
+                bootstrap_bridge=bootstrap_bridge,
+            )
+            self.application.processEvents()
+
+            window = engine.rootObjects()[0]
+            self.assertIsNotNone(window)
+            for _ in range(30):
+                self.application.processEvents()
+                if window.findChild(QObject, "startupCatalogProgress") is not None:
+                    break
+                QTest.qWait(10)
+
+            stage_bar = window.findChild(QObject, "startupCatalogProgress")
+            self.assertIsNotNone(stage_bar)
+            # First stage has no exact denominator yet: still indeterminate.
+            self.assertTrue(bool(stage_bar.property("indeterminate")))
+            self.assertEqual(int(stage_bar.property("to")), 2)
+
+            bootstrap_bridge._on_catalog_phase("loading_versions", 1, 3)
+            self.application.processEvents()
+            self.assertFalse(bool(stage_bar.property("indeterminate")))
+            self.assertEqual(int(stage_bar.property("value")), 1)
+
+            # Ready destroys the loading page; the bridge state is authoritative.
+            bootstrap_bridge._on_catalog_phase("ready", 1, 3)
+            self.application.processEvents()
+            self.assertTrue(bootstrap_bridge.isReady)
+            self.assertEqual(bootstrap_bridge.state, "ready")
+
     def test_startup_loading_retry_from_error_clears_error_state_and_shows_initializing(self):
         """Simulate error -> retry -> initializing in QML shell: error state is cleared."""
         with TemporaryDirectory() as temporary:

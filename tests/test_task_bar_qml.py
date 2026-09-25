@@ -108,6 +108,10 @@ def test_vr_task_bar_uses_backend_progress_and_keeps_a11y():
     assert "Accessible.role" in text
     assert "ScrollBar.horizontal.policy: ScrollBar.AlwaysOff" in text
     assert "elide: Text.ElideRight" in text
+    # Real progress is a rising bar with the backend completed/total, never ticks.
+    assert "objectName: \"taskPlanProgress\"" in text
+    assert "VrProgressBar" in text
+    assert "to: root.effectiveTotal()" in text
     # Visual identity stays on Theme tokens; no hardcoded drawer colors.
     assert "Theme.palette" in text
     assert "#18A8E8" not in text
@@ -184,6 +188,25 @@ def test_vr_task_bar_runtime_interactions_and_lifecycle(tmp_path):
         assert chat.taskPlanVisible is True
         assert bar.property("visible") is True
         assert bar.property("expanded") is False
+
+        # Progress bar follows the backend completed/total (no fabricated value).
+        progress_bar = window.findChild(QObject, "taskPlanProgress")
+        assert progress_bar is not None
+        assert int(progress_bar.property("to")) == 2
+        assert int(progress_bar.property("value")) == 0
+
+        chat._apply_task_snapshot(
+            cid,
+            [
+                {"text": "Task Step 1 with long description for narrow testing", "state": "completed"},
+                {"text": "Task Step 2", "state": "running"},
+            ],
+            "2026-09-13T12:00:00Z",
+        )
+        chat.stateChanged.emit()
+        app.processEvents()
+        assert chat.taskProgress.get("completed") == 1, chat.taskProgress
+        assert int(progress_bar.property("value")) == 1
 
         # 1. Click toggle (expanding)
         point = header.mapToScene(QPoint(20, 12)).toPoint()

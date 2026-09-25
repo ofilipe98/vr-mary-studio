@@ -78,25 +78,32 @@ Rectangle {
                     maximumLineCount: 1
                 }
                 Text {
-                    text: root.effectiveCompleted() + "/" + root.effectiveTotal() + (root.width >= 400 ? " concluídas" : "")
+                    text: {
+                        var total = root.effectiveTotal();
+                        if (total <= 0)
+                            return "";
+                        var label = root.effectiveCompleted() + "/" + total;
+                        if (root.width >= 400)
+                            label += " concluídas · " + Math.round(100 * root.effectiveCompleted() / total) + "%";
+                        return label;
+                    }
                     color: root.effectiveCompleted() === root.effectiveTotal() ? Theme.palette.success : Theme.palette.mutedText
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.Medium
                 }
-                Row {
-                    visible: root.steps.length > 1 && root.steps.length <= 10 && root.width >= 600
-                    spacing: 2
-                    Repeater {
-                        model: root.steps.length
-                        delegate: Rectangle {
-                            required property int index
-                            width: (80 - (root.steps.length - 1) * 2) / root.steps.length
-                            height: Theme.scaledGeometry(3)
-                            radius: 2
-                            color: root.segmentColor(index)
-                        }
-                    }
+                VrProgressBar {
+                    objectName: "taskPlanProgress"
+                    visible: root.effectiveTotal() > 0 && root.width >= 600
+                    Layout.preferredWidth: Theme.scaledGeometry(80)
+                    Layout.preferredHeight: Theme.scaledGeometry(4)
+                    barHeight: Theme.scaledGeometry(4)
+                    from: 0
+                    to: root.effectiveTotal()
+                    value: root.effectiveCompleted()
+                    accentColor: root.effectiveCompleted() >= root.effectiveTotal()
+                        ? Theme.palette.success : Theme.palette.brandOrange
+                    Accessible.name: "Progresso das tarefas"
                 }
                 VrLineIcon {
                     Layout.preferredWidth: Theme.scaledGeometry(24)
@@ -243,18 +250,5 @@ Rectangle {
     function durationText(milliseconds) {
         var seconds = Math.floor(milliseconds / 1000)
         return seconds >= 60 ? Math.floor(seconds / 60) + "m " + (seconds % 60) + "s" : seconds + "s"
-    }
-
-    function stateColor(state) {
-        if (state === "completed") return Theme.palette.success
-        if (state === "error" || state === "cancelled") return Theme.palette.danger
-        if (state === "running") return Theme.palette.brandOrange
-        return "transparent"
-    }
-
-    function segmentColor(index) {
-        var step = root.steps[index] || ({})
-        return root.stateColor(String(step.state || "pending")) === "transparent"
-            ? Theme.palette.chatBorder : root.stateColor(String(step.state || "pending"))
     }
 }

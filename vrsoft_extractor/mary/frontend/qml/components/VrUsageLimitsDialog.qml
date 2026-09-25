@@ -194,30 +194,23 @@ Dialog {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: Theme.scaledGeometry(40)
                                 Layout.preferredHeight: Theme.scaledGeometry(20)
-                                Rectangle {
-                                    id: track
+
+                                VrProgressBar {
+                                    objectName: "usageFill"
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width
-                                    height: Theme.scaledGeometry(10)
-                                    radius: Theme.scaledGeometry(5)
-                                    color: Theme.palette.chatControl
-                                    Rectangle {
-                                        objectName: "usageFill"
-                                        height: parent.height
-                                        width: parent.width * Math.max(0, windowRow.remaining) / 100
-                                        radius: parent.radius
-                                        color: Theme.palette.text
-                                        visible: windowRow.remaining > 0
-                                    }
-                                    Rectangle {
-                                        visible: windowRow.pace >= 0
-                                        x: Math.max(0, Math.min(track.width - width, track.width * windowRow.pace))
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: 1
-                                        height: Theme.scaledGeometry(18)
-                                        color: Theme.palette.mutedText
-                                        opacity: 0.6
-                                    }
+                                    barHeight: Theme.scaledGeometry(10)
+                                    from: 0
+                                    to: 100
+                                    value: Math.max(0, windowRow.remaining)
+                                    markerPosition: windowRow.pace
+                                    accentColor: windowRow.remaining <= 15
+                                        ? Theme.palette.danger
+                                        : (windowRow.remaining <= 40
+                                            ? Theme.palette.warning
+                                            : Theme.palette.text)
+                                    accessibleName: (windowRow.modelData.label || "Limite") + " restante"
                                 }
                             }
                             RowLayout {
