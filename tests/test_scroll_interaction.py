@@ -8,6 +8,7 @@ from test_chat_presentation import (
 )
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent, QTextDocument
+from PySide6.QtQml import QQmlProperty
 from vrsoft_extractor.mary.frontend.text_rendering import apply_message_document_style
 
 
@@ -240,6 +241,16 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             assert tray.property('visible')
             assert tray.property('opacity') > 0.99
             assert surface.height() < composer.height()
+            # T3 parity: retracted, one continuous backdrop (card + context
+            # strip) paints fill and outline; surface and tray stay transparent
+            # so no second border or seam shows between them.
+            silhouette = window.findChild(QObject, 'chatComposerRestingSurface')
+            assert silhouette is not None
+            assert silhouette.property('visible')
+            assert abs(silhouette.width() - composer.width()) < 1
+            assert abs(silhouette.height() - compact_height) < 1
+            assert surface.property('color').alpha() == 0
+            assert QQmlProperty(surface, 'border.width').read() == 0
             assert tray.y() < surface.height()
             assert tray.y() + tray.height() <= composer.height() + 1
             assert abs((tray.y() + tray.height()) - composer.height()) < 1
@@ -267,6 +278,9 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             # Expandido: card único; a linha de controles fica integrada à
             # base da superfície, sem bandeja separada abaixo do composer.
             assert abs(surface.height() - composer.height()) < 1
+            assert not silhouette.property('visible')
+            assert surface.property('color').alpha() == 255
+            assert QQmlProperty(surface, 'border.width').read() == 1
             assert 0 < tray.y()
             # T3 Code footer uses pb-4 (16px) below the integrated controls.
             assert abs((tray.y() + tray.height()) - (composer.height() - 16)) < 1

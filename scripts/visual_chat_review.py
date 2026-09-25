@@ -331,6 +331,9 @@ Entregue o resultado e as evidências de validação.
                 window.setWidth(width)
                 window.setHeight(height)
                 QTest.qWait(250)
+                # Reading state: the composer rests only when the reader is
+                # detached from the live edge (followTail), like T3 Code.
+                timeline.setProperty("followTail", False)
                 timeline.setProperty("contentY", 0)
                 QTest.qWait(100)
                 prefix = f"output-{theme}-{width}-{scale}"

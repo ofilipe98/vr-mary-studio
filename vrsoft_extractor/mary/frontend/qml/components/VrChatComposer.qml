@@ -107,6 +107,10 @@ Item {
     // `rounded-b-2xl` for the inset bottom band.
     readonly property real compactInset: Theme.scaledGeometry(22)
     readonly property int compactStripRadius: Theme.radiusLg
+    // Retraído, o campo reserva a largura real de VR + anexo + enviar para o
+    // texto nunca correr sob os controles, em qualquer escala da interface.
+    readonly property real compactActionsReserve: Math.max(Theme.scaledGeometry(86),
+        composerSurface.width - vrModeButton.x + Theme.spaceSm)
 
     objectName: "chatComposerCard"
     z: 20
@@ -130,7 +134,9 @@ Item {
     }
 
     TapHandler {
-        enabled: composerCard.isCompact && !composerCard.page.chatBridge.turnRunning
+        // T3 Code lifts the resting composer on any composer interaction,
+        // including a click while a turn is still streaming.
+        enabled: composerCard.isCompact
         onTapped: {
             composerInput.forceActiveFocus()
         }
@@ -306,7 +312,9 @@ Item {
                     Image {
                         id: thumbImage
                         anchors.fill: parent
-                        source: thumbDelegate.imageSource
+                        // Non-image attachments get a chip instead; without this
+                        // gate the decoder logs spurious format errors.
+                        source: thumbDelegate.isImage ? thumbDelegate.imageSource : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: true
@@ -423,8 +431,8 @@ Item {
             property alias text: composerInput.text
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: Theme.scaledGeometry(16)
-            anchors.rightMargin: composerCard.isCompact ? 86 : 16
+            anchors.leftMargin: Theme.spaceLg
+            anchors.rightMargin: composerCard.isCompact ? composerCard.compactActionsReserve : Theme.spaceLg
             anchors.top: parent.top
             anchors.topMargin: composerCard.composerTopMargin
             height: composerCard.isCompact ? Theme.scaledGeometry(34) : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(70),
