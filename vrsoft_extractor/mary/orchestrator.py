@@ -820,6 +820,13 @@ class ChatOrchestrator:
                             evidence_bundle=evidence_bundle,
                             has_images=bool(image_paths),
                             supports_native_tools=str(conversation["provider"]) == "codex",
+                            direct_folder_access=bool(
+                                getattr(
+                                    getattr(provider, "capabilities", None),
+                                    "vr_direct_file_access",
+                                    True,
+                                )
+                            ),
                             expert_profile_instructions=profile_instructions,
                         )
                         if effective_use_vr
@@ -1994,6 +2001,7 @@ class ChatOrchestrator:
         evidence_bundle: EvidenceBundle | None = None,
         has_images: bool = False,
         supports_native_tools: bool = False,
+        direct_folder_access: bool = True,
         expert_profile_instructions: str = "",
     ) -> str:
         # Stable prefix first: identical across turns so provider prompt
@@ -2006,10 +2014,11 @@ class ChatOrchestrator:
                 "(ex.: `java -version`) retornam código 1 quando a saída é redirecionada com `2>&1` — "
                 'para checar versões use `cmd /c "java -version"`.'
             )
-        if supports_native_tools:
-            # Providers with a native dynamic-tool cycle use only the
-            # traceable vr_sources/vr_search/vr_read path. The folder path and
-            # the search script stay out of this transport.
+        if supports_native_tools or not direct_folder_access:
+            # Providers with a native dynamic-tool cycle, and transports whose
+            # runtime does not expose the knowledge root to native file tools,
+            # use only the traceable vr_sources/vr_search/vr_read path. The
+            # folder path and the search script stay out of this transport.
             access_note = (
                 "ACESSO À FONTE VR: use somente as ferramentas nativas `vr_sources`, "
                 + "`vr_search` e `vr_read` para descobrir fontes e contextos, buscar "

@@ -200,7 +200,20 @@ class AntigravityProvider(AgentProvider):
                     "args": command[1:], "env": [],
                 }]
             if options.vr_enabled and self.knowledge_root:
-                message += "\n\nUse as fontes já fornecidas. Se uma ferramenta for recusada, não repita a operação; responda com o contexto disponível e indique lacunas."
+                if options.tools_enabled:
+                    message += (
+                        "\n\nAMBIENTE ANTIGRAVITY: as ferramentas de arquivo deste "
+                        "runtime ficam restritas à pasta de trabalho da conversa; a "
+                        "base VR não é legível diretamente. Consulte a base somente "
+                        "com `vr_sources`, `vr_search` e `vr_read`. Se uma chamada "
+                        "for recusada, não a repita: responda com o contexto "
+                        "disponível e indique as lacunas."
+                    )
+                else:
+                    message += (
+                        "\n\nSe uma ferramenta for recusada, não repita a operação; "
+                        "responda com o contexto disponível e indique lacunas."
+                    )
             if native_id:
                 session_id = native_id[len(NATIVE_PREFIX):]
                 state["session"] = session_id

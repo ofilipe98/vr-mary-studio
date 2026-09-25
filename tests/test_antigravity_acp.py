@@ -138,6 +138,45 @@ def test_stdio_mcp_is_registered_without_optional_capability_flag(
     assert "additionalDirectories" not in params
 
 
+@pytest.mark.parametrize(
+    "vr_enabled,tools_enabled",
+    [(True, True), (True, False), (False, True)],
+)
+def test_vr_message_explains_workspace_sandbox(
+    fake_runtime, tmp_path, vr_enabled, tools_enabled
+):
+    provider = AntigravityProvider(tmp_path)
+    done = threading.Event()
+    provider.send_message(
+        "conversation",
+        "",
+        "gemini-test",
+        "auto",
+        tmp_path,
+        "Hello",
+        lambda event: done.set() if event.kind == "turn_completed" else None,
+        ConversationOptions(vr_enabled=vr_enabled, tools_enabled=tools_enabled),
+    )
+    assert done.wait(2)
+    params = next(
+        params for method, params in FakeClient.instances[0].calls
+        if method == "session/prompt"
+    )
+    message = "".join(block.get("text", "") for block in params["prompt"])
+    assert "Use as fontes já fornecidas" not in message
+    if vr_enabled and tools_enabled:
+        assert "AMBIENTE ANTIGRAVITY" in message
+        assert "não é legível diretamente" in message
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in message
+    elif vr_enabled:
+        assert "AMBIENTE ANTIGRAVITY" not in message
+        assert "Se uma ferramenta for recusada" in message
+    else:
+        assert "AMBIENTE ANTIGRAVITY" not in message
+        assert "Se uma ferramenta for recusada" not in message
+
+
 @pytest.mark.parametrize("native", ["", "acp:native"])
 @pytest.mark.parametrize("enabled", [False, True])
 def test_research_mcp_registration_respects_tool_switch(fake_runtime, tmp_path, native, enabled):

@@ -450,7 +450,7 @@ def test_chat_bridge_sends_effective_expert_profile_mode(tmp_path: Path) -> None
             bridge.close()
 
 
-@pytest.mark.parametrize("provider_name", ("codex", "opencode"))
+@pytest.mark.parametrize("provider_name", ("codex", "opencode", "antigravity"))
 def test_vr_on_direct_adds_identity_and_local_base(
     tmp_path: Path,
     provider_name: str,
@@ -486,9 +486,9 @@ def test_vr_on_direct_adds_identity_and_local_base(
     assert "vr_sources" in prompt
     assert "vr_search" in prompt
     assert "vr_read" in prompt
-    if provider_name == "codex":
-        # Native dynamic tools keep the folder path and the script out of the
-        # prompt; providers without that cycle keep the folder/script fallback.
+    if provider_name in ("codex", "antigravity"):
+        # Providers whose runtime keeps the base out of the native file tools
+        # never see the folder path nor the search script in the prompt.
         assert str(settings.root) not in prompt
         assert "vr-search.ps1" not in prompt
     else:

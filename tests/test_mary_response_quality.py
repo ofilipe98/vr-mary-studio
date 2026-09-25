@@ -344,6 +344,26 @@ class TestPromptPrefixCache:
         assert "O fallback estruturado" in opencode_prompt
         assert "O fallback estruturado" not in codex_prompt
 
+    def test_transport_without_folder_access_uses_tool_driven_contract(
+        self, tmp_path: Path
+    ) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        prompt = orchestrator._enrich_prompt(
+            "pergunta",
+            supports_native_tools=False,
+            direct_folder_access=False,
+        )
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in prompt
+        assert VRMASTER_TOOL_DRIVEN_ACCESS_POLICY in prompt
+        assert "acessado sempre por referência" in prompt
+        # Transports without direct folder access never see the folder path,
+        # the structured search script or its fallback note.
+        assert "vr-search.ps1" not in prompt
+        assert str(orchestrator.settings.root.resolve()) not in prompt
+        assert "O fallback estruturado" not in prompt
+        assert "CONSULTA SOB DEMANDA" in prompt
+
     def test_reference_based_code_reads_are_mandatory_for_vr_prompts(
         self, tmp_path: Path
     ) -> None:

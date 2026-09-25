@@ -61,7 +61,12 @@ sobre as raízes canônicas de documentação, schema e código.
   wiki, kb, schema, code) e devolve um resultado consolidado; com `source`,
   consulta somente a fonte escolhida. O filtro por módulo não faz parte da tool
   de chat VR: a unidade de consulta é a fonte. A política de filesystem do OFF
-  nunca é injetada em VR ou Ultra.
+  nunca é injetada em VR ou Ultra. Providers cujo runtime não expõe a base às
+  ferramentas nativas de arquivo (Codex e Antigravity) recebem somente o contrato
+  tool-driven: o caminho da pasta e `tools/vr-search.ps1` não aparecem no prompt.
+  No Antigravity, as ferramentas de arquivo do runtime ficam restritas à pasta de
+  trabalho da conversa (`cwd + gemini_home + skills`); `additionalDirectories` do
+  ACP não amplia esse limite nesta versão e por isso não é enviado.
 - **Ultra**: mantém o fan-out por fonte com agentes, o agente DEV Java opcional
   e a síntese única validada.
 
